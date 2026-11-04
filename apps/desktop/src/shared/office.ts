@@ -58,14 +58,28 @@ export interface OfficeAgentAskEvent {
   anchor?: OfficeAskAnchor
 }
 
-/** 选区锚点：Word 用顶层块索引区间，Excel 用 sheetId + A1 区域。 */
+/**
+ * 选区锚点：四种编辑器各自的定位字段并列在这里，宿主只做透传。
+ * - Word：顶层块索引区间
+ * - Excel：sheetId + A1 区域
+ * - PPT：页码（0 起）+ 选中元素的 durable id
+ * - PDF：原始页序（0 起，旋转稳定）+ PDF 坐标的选区 quads
+ */
 export interface OfficeAskAnchor {
+  // Word
   fromBlockIndex?: number
   toBlockIndex?: number
   kind?: string
+  // Excel
   sheetId?: string
   sheetName?: string
   range?: string
+  // PPT
+  slideIndex?: number
+  elementIds?: string[]
+  // PDF
+  pageIndex?: number
+  quads?: number[][]
 }
 
 /**

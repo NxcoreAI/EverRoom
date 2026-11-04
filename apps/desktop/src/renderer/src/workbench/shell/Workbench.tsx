@@ -148,7 +148,7 @@ export function Workbench() {
     })
   }, [])
 
-  /** 批注队列快照同步：宿主队列（事实）→ 主进程 → 对应文档视图（锚点 + 面板）。 */
+  /** 批注队列快照同步：宿主队列（事实）→ 主进程 → 对应编辑器视图（文档内锚点）。 */
   const askDrafts = useWorkbenchStore((state) => state.askDrafts)
   const syncedAskQueues = useRef<Map<string, string>>(new Map())
   useEffect(() => {
@@ -165,9 +165,7 @@ export function Workbench() {
         id: draft.id,
         instruction: draft.instruction ?? draft.displayMessage ?? draft.message,
         ...(draft.excerpt ? { excerpt: draft.excerpt } : {}),
-        fromBlockIndex: draft.anchor?.fromBlockIndex ?? 0,
-        toBlockIndex: draft.anchor?.toBlockIndex ?? 0,
-        kind: draft.anchor?.kind ?? 'text',
+        ...(draft.anchor ? { anchor: draft.anchor } : {}),
       }))
       const signature = JSON.stringify(items)
       if (syncedAskQueues.current.get(fileId) === signature) continue

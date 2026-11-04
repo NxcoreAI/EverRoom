@@ -35,7 +35,7 @@ import type {
 } from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
@@ -248,14 +248,13 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('office:agent-file', handler)
       return () => ipcRenderer.removeListener('office:agent-file', handler)
     },
-    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的 docs 视图（文档内高亮/面板）。 */
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
     syncAskQueue: (input: { fileId: string; items: Array<{
       id: string
       instruction: string
       excerpt?: string
-      fromBlockIndex: number
-      toBlockIndex: number
-      kind: string
+      /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+      anchor?: OfficeAskAnchor
     }> }) => ipcRenderer.send('office:ask-queue-sync', input),
     /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
     onAskQueueAction: (listener: (event: OfficeAskQueueActionEvent) => void) => {

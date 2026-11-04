@@ -101,7 +101,7 @@ import type {
   WorkspaceActivityQuery,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -821,16 +821,15 @@ export interface NxcoreDesktopApi {
     onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
-    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的 docs 视图。 */
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
     syncAskQueue(input: {
       fileId: string
       items: Array<{
         id: string
         instruction: string
         excerpt?: string
-        fromBlockIndex: number
-        toBlockIndex: number
-        kind: string
+        /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+        anchor?: OfficeAskAnchor
       }>
     }): void
     /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */

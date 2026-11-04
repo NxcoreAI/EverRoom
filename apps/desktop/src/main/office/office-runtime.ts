@@ -281,10 +281,18 @@ export interface GenOfficeSheetsRuntime {
             sheetId?: string
             sheetName?: string
             range?: string
+            /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
+            excerpt?: string
             mode?: 'now' | 'queue'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
+  ): void
+  /** 批注队列快照下发到某个 sheets 视图（空数组 = 清空单元格区域锚点）。 */
+  pushSheetsAskQueue?(wcId: number, items: SheetsAskQueueItem[]): void
+  /** sheets 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSheetsAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
   ): void
   setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
@@ -298,6 +306,35 @@ export interface GenOfficeSheetsRuntime {
     contents: WebContents,
     calls: GenOfficeAgentToolCall[],
   ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+}
+
+/** 宿主批注队列快照条目：各格式只有定位字段不同，id/instruction/excerpt 共用。 */
+export interface SheetsAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  sheetId?: string
+  sheetName?: string
+  range?: string
+}
+
+export interface SlidesAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  slideIndex?: number
+  /** 被批注元素的 durable id（滑页重排后按 id 反查）。 */
+  elementIds?: string[]
+}
+
+export interface PdfAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  /** 原始页序（0 起，旋转稳定）。 */
+  pageIndex?: number
+  /** PDF 坐标的选区 quads（格式同 PDF 原生 markup）。 */
+  quads?: number[][]
 }
 
 export interface GenOfficeAgentDeckResult {
@@ -345,7 +382,7 @@ export interface GenOfficeSlidesRuntime {
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
   setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
-  /** 「AI 修改」弹层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
+  /** 「AI 修改」浮层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
   setSlidesAgentAskHook(
     hook:
       | ((
@@ -357,9 +394,18 @@ export interface GenOfficeSlidesRuntime {
               id: string
               desc: { type: string; text?: string; rows?: number; cols?: number }
             }>
+            /** 选区纯文本摘要（≤200 字）。 */
+            excerpt?: string
+            mode?: 'now' | 'queue'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
+  ): void
+  /** 批注队列快照下发到某个 slides 视图（空数组 = 清空元素锚点）。 */
+  pushSlidesAskQueue?(wcId: number, items: SlidesAskQueueItem[]): void
+  /** slides 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSlidesAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
   ): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
@@ -412,6 +458,30 @@ export interface GenOfficePdfRuntime {
   waitForAgentReady?(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
   /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
   setPdfFileSavedHook?(hook: ((wc: WebContents, filePath: string) => void) | null): void
+  /**
+   * 选区「注释」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带原始页序 + PDF 坐标 quads + 选区摘要。
+   */
+  setPdfAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            pageIndex: number
+            quads: number[][]
+            excerpt?: string
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 pdf 视图（空数组 = 清空页面锚点）。 */
+  pushPdfAskQueue?(wcId: number, items: PdfAskQueueItem[]): void
+  /** pdf 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setPdfAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
 }
 
 /** pdf describe 结果：上下文 + embed 安全的工具词汇表。 */

@@ -79,6 +79,10 @@ export interface SlidesAgentAskPayload {
     id: string
     desc: { type: string; text?: string; rows?: number; cols?: number }
   }>
+  /** 选区纯文本摘要（≤200 字）：批注卡片显示原文，Agent 重新读大纲后交叉校验。 */
+  excerpt?: string
+  /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+  mode?: 'now' | 'queue'
 }
 
 /** fork NodeDescriptor.type（RenderNodeType）→ 中文类型名。 */
@@ -108,7 +112,8 @@ function describeAskTarget(target: SlidesAgentAskPayload['targets'][number]): st
 export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): string {
   const targets = op.targets.map(describeAskTarget).join('、')
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
-  return `我在 PPT《${title}》第 ${op.slideIndex + 1} 页选中了元素 ${targets}：${instruction}。`
+  const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 40)}」）` : ''
+  return `我在 PPT《${title}》第 ${op.slideIndex + 1} 页选中了元素 ${targets}${excerpt}：${instruction}。`
 }
 
 /** 同一请求的用户可见文案：只留页码与用户原话，元素 id / fileId 不出现在社交层。 */
@@ -122,7 +127,7 @@ export type AgentAskForwardEvent = OfficeAgentAskEvent
 
 let agentAskWired = false
 
-/** 全局只装一次（幂等）：slides 弹层转发 → 反查 Room → 广播给渲染层注入对话框。 */
+/** 全局只装一次（幂等）：slides 弹层转发 → 反查 Room/工作空间 → 广播渲染层注入对话框。 */
 export function wireSlidesAgentAsk(
   target: PreparedGenOfficeRuntime,
   deps: {
@@ -137,16 +142,28 @@ export function wireSlidesAgentAsk(
   },
 ): void {
   if (agentAskWired) return
+  // 老 runtime（未重建 genoffice）没有这个 hook：静默跳过，浮层保持关闭。
+  if (typeof target.slides.setSlidesAgentAskHook !== 'function') return
   target.slides.registerSlidesIpc()
   target.slides.setSlidesAgentAskHook(async (wcId, op) => {
     const instance = deps.resolveInstance(wcId)
     if (!instance) return { ok: false, error: '未找到该 PPT 对应的打开实例' }
-    if (!instance.roomId) {
-      return { ok: false, error: '该文件未在 Room 中打开，无法转发给 Agent（请在 Room 产物库打开后再试）' }
+    const workspaceId = instance.workspaceId ?? instance.roomId ?? null
+    if (!workspaceId) {
+      return { ok: false, error: '该文件未归属任何工作空间，无法转发给 Agent（请在工作空间产物库中打开后再试）' }
     }
     deps.forward({
       roomId: instance.roomId,
-      ...(instance.workspaceId ? { workspaceId: instance.workspaceId } : {}),
+      workspaceId,
+      ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
+      title: instance.title,
+      fileId: instance.fileId,
+      instruction: op.instruction,
+      ...(op.excerpt ? { excerpt: op.excerpt } : {}),
+      anchor: {
+        slideIndex: op.slideIndex,
+        elementIds: op.targets.map((item) => item.id),
+      },
       message: buildAgentAskMessage(instance.title, op),
       displayMessage: buildAgentAskDisplayMessage(instance.title, op),
     })
@@ -271,6 +288,8 @@ export interface SheetsAgentAskPayload {
   sheetId?: string
   sheetName?: string
   range?: string
+  /** 选区纯文本摘要（≤200 字）：批注卡片显示原文，Agent 重新读工作簿后交叉校验。 */
+  excerpt?: string
   mode?: 'now' | 'queue'
 }
 
@@ -287,7 +306,8 @@ function describeSheetsAskScope(op: SheetsAgentAskPayload): string {
 export function buildSheetsAgentAskMessage(title: string, op: SheetsAgentAskPayload): string {
   const sheetId = op.sheetId?.trim() ? `（sheetId=${op.sheetId.trim()}）` : ''
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
-  return `我在 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中了这块内容：${instruction}。`
+  const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 40)}」）` : ''
+  return `我在 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中了这块内容${excerpt}：${instruction}。`
 }
 
 /** 同一请求的用户可见文案：只留位置与用户原话，sheetId 与工具名不出现。 */
@@ -330,6 +350,7 @@ export function wireSheetsAgentAsk(
       title: instance.title,
       fileId: instance.fileId,
       instruction: op.instruction,
+      ...(op.excerpt ? { excerpt: op.excerpt } : {}),
       ...(op.range ? { anchor: { sheetId: op.sheetId, sheetName: op.sheetName, range: op.range } } : {}),
       message: buildSheetsAgentAskMessage(instance.title, op),
       displayMessage: buildSheetsAgentAskDisplayMessage(instance.title, op),
@@ -339,18 +360,41 @@ export function wireSheetsAgentAsk(
   sheetsAgentAskWired = true
 }
 
-// ── 批注队列：宿主下发快照 ↔ 文档面板动作 ──
-
-/** 文档内批注面板动作：跨进程形状见 shared/office.ts（update 分支由文档侧同事补充）。 */
-export type DocsAskQueueAction = OfficeAskQueueAction
-
-let docsAskQueueWired = false
+// ── 「注释」转发：pdf 选区浮层提交 → 工作空间对话 ──
 
 /**
- * 全局只装一次（幂等）：把宿主的批注队列快照下发给文档视图，并把文档面板的
- * 动作（全部发送 / 移除）回灌给渲染层。队列事实只存在宿主侧，文档只渲染。
+ * pdf 选区「注释」的载荷：报告页用**原始页序**（旋转/重排稳定），选区用 PDF 坐标
+ * quads（与 PDF 原生 markup 同一坐标空间），摘要供 Agent 重新读页面时交叉校验。
  */
-export function wireDocsAskQueue(
+export interface PdfAgentAskPayload {
+  instruction: string
+  pageIndex: number
+  quads: number[][]
+  excerpt?: string
+  /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+  mode?: 'now' | 'queue'
+}
+
+/**
+ * 注入对话的用户消息：只带「哪份文件、第几页、原文摘要」的位置事实 + 用户原话，
+ * 不预设动作（框选可能只是提问；改还是答由 Agent 按原话自行理解）。
+ */
+export function buildPdfAgentAskMessage(title: string, op: PdfAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 60)}」）` : ''
+  return `我在 PDF《${title}》第 ${op.pageIndex + 1} 页选中了这段内容${excerpt}：${instruction}。`
+}
+
+/** 用户可见文案：只留页码与用户原话，quads / 文件 id 不上社交层。 */
+export function buildPdfAgentAskDisplayMessage(title: string, op: PdfAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  return `关于 PDF《${title}》第 ${op.pageIndex + 1} 页选中的内容：${instruction}。`
+}
+
+let pdfAgentAskWired = false
+
+/** 全局只装一次（幂等）：pdf 选区浮层 → 反查工作空间 → 广播渲染层注入对话框。 */
+export function wirePdfAgentAsk(
   target: PreparedGenOfficeRuntime,
   deps: {
     resolveInstance(wcId: number): {
@@ -360,22 +404,119 @@ export function wireDocsAskQueue(
       roomId: string | null
       workspaceId?: string | null
     } | null
-    forwardAction(event: {
-      fileId: string | null
-      workspaceId: string
-      action: DocsAskQueueAction
-    }): void
+    forward(event: AgentAskForwardEvent): void
   },
+): void {
+  if (pdfAgentAskWired) return
+  // 老 runtime（未重建 genoffice）没有这个 hook：静默跳过，浮层保持关闭。
+  if (typeof target.pdf.setPdfAgentAskHook !== 'function') return
+  target.pdf.setPdfAgentAskHook(async (wcId, op) => {
+    const instance = deps.resolveInstance(wcId)
+    if (!instance) return { ok: false, error: '未找到该 PDF 对应的打开实例' }
+    const workspaceId = instance.workspaceId ?? instance.roomId ?? null
+    if (!workspaceId) {
+      return { ok: false, error: '该文件未归属任何工作空间，无法转发给 Agent（请在工作空间产物库中打开后再试）' }
+    }
+    deps.forward({
+      roomId: instance.roomId,
+      workspaceId,
+      ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
+      title: instance.title,
+      fileId: instance.fileId,
+      instruction: op.instruction,
+      ...(op.excerpt ? { excerpt: op.excerpt } : {}),
+      anchor: { pageIndex: op.pageIndex, quads: op.quads },
+      message: buildPdfAgentAskMessage(instance.title, op),
+      displayMessage: buildPdfAgentAskDisplayMessage(instance.title, op),
+    })
+    return { ok: true }
+  })
+  pdfAgentAskWired = true
+}
+
+// ── 批注队列：宿主下发快照 ↔ 各编辑器内的锚点动作 ──
+
+/** 批注队列动作：跨进程形状见 shared/office.ts。 */
+export type DocsAskQueueAction = OfficeAskQueueAction
+
+interface AskQueueInstance {
+  fileId: string
+  title: string
+  kind: string
+  roomId: string | null
+  workspaceId?: string | null
+}
+
+interface AskQueueWiringDeps {
+  resolveInstance(wcId: number): AskQueueInstance | null
+  forwardAction(event: {
+    fileId: string | null
+    workspaceId: string
+    action: OfficeAskQueueAction
+  }): void
+}
+
+/** 编辑器内锚点动作 → 反查所属工作空间 → 回灌渲染层（队列事实只在宿主侧）。 */
+function forwardAskQueueAction(deps: AskQueueWiringDeps, wcId: number, action: OfficeAskQueueAction): void {
+  const instance = deps.resolveInstance(wcId)
+  const workspaceId = instance?.workspaceId ?? instance?.roomId ?? null
+  if (!workspaceId) return
+  deps.forwardAction({ fileId: instance?.fileId ?? null, workspaceId, action })
+}
+
+let docsAskQueueWired = false
+
+/**
+ * 全局只装一次（幂等）：把宿主的批注队列快照下发给文档视图，并把文档内锚点的
+ * 动作（全部发送 / 移除 / 改写）回灌给渲染层。
+ */
+export function wireDocsAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: AskQueueWiringDeps,
 ): void {
   if (docsAskQueueWired) return
   if (typeof target.docs.setDocsAskQueueActionHook !== 'function') return
-  target.docs.setDocsAskQueueActionHook((wcId, action) => {
-    const instance = deps.resolveInstance(wcId)
-    const workspaceId = instance?.workspaceId ?? instance?.roomId ?? null
-    if (!workspaceId) return
-    deps.forwardAction({ fileId: instance?.fileId ?? null, workspaceId, action })
-  })
+  target.docs.setDocsAskQueueActionHook((wcId, action) => forwardAskQueueAction(deps, wcId, action))
   docsAskQueueWired = true
+}
+
+let sheetsAskQueueWired = false
+
+/** 全局只装一次（幂等）：Excel 单元格区域锚点的动作回灌宿主。 */
+export function wireSheetsAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: AskQueueWiringDeps,
+): void {
+  if (sheetsAskQueueWired) return
+  if (typeof target.sheets.setSheetsAskQueueActionHook !== 'function') return
+  target.sheets.setSheetsAskQueueActionHook((wcId, action) => forwardAskQueueAction(deps, wcId, action))
+  sheetsAskQueueWired = true
+}
+
+let slidesAskQueueWired = false
+
+/** 全局只装一次（幂等）：PPT 元素锚点的动作回灌宿主。 */
+export function wireSlidesAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: AskQueueWiringDeps,
+): void {
+  if (slidesAskQueueWired) return
+  if (typeof target.slides.setSlidesAskQueueActionHook !== 'function') return
+  target.slides.setSlidesAskQueueActionHook((wcId, action) => forwardAskQueueAction(deps, wcId, action))
+  slidesAskQueueWired = true
+}
+
+let pdfAskQueueWired = false
+
+/** 全局只装一次（幂等）：PDF 页面锚点的动作回灌宿主。 */
+export function wirePdfAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: AskQueueWiringDeps,
+): void {
+  if (pdfAskQueueWired) return
+  if (typeof target.pdf.setPdfAskQueueActionHook !== 'function') return
+  target.pdf.setPdfAskQueueActionHook((wcId, action) => forwardAskQueueAction(deps, wcId, action))
+  pdfAskQueueWired = true
 }
 
 export interface GeneratedDocx {

@@ -82,7 +82,7 @@ import {
   type OfficeExportPdfRequest,
   type OfficeExportPdfResult,
 } from './gateway/office-bridge'
-import type { OfficeAgentFileEvent, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
+import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
@@ -822,11 +822,66 @@ function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
   }
 }
 
-/** office:ask-queue-action 扇出：文档内批注面板的动作（全部发送 / 移除）→ 渲染层队列事实。 */
+/** office:ask-queue-action 扇出：编辑器内批注锚点的动作（全部发送 / 移除 / 改写）→ 渲染层队列事实。 */
 function broadcastAskQueueActionEvent(event: OfficeAskQueueActionEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('office:ask-queue-action', event)
   }
+}
+
+/** 数值锚点字段：有限数字才收（渲染层可能传 NaN/字符串）。 */
+function askAnchorNumber(value: unknown): number | undefined {
+  return Number.isFinite(Number(value)) ? Number(value) : undefined
+}
+
+/** 文本锚点字段：截断长度上限，避免渲染层把长文本塞进编辑器 IPC。 */
+function askAnchorText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text ? text.slice(0, max) : undefined
+}
+
+/**
+ * office:ask-queue-sync 的单条归一化：只保留四种编辑器契约里的锚点字段。
+ * 队列事实在渲染层，主进程只做透传，不理解的字段一律丢弃。
+ */
+function normalizeAskQueueAnchor(raw: unknown): OfficeAskAnchor | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const value = raw as Record<string, unknown>
+  const anchor: OfficeAskAnchor = {}
+  const fromBlockIndex = askAnchorNumber(value.fromBlockIndex)
+  const toBlockIndex = askAnchorNumber(value.toBlockIndex)
+  if (fromBlockIndex !== undefined) anchor.fromBlockIndex = Math.max(0, Math.trunc(fromBlockIndex))
+  if (toBlockIndex !== undefined) anchor.toBlockIndex = Math.max(0, Math.trunc(toBlockIndex))
+  const kind = askAnchorText(value.kind, 24)
+  if (kind) anchor.kind = kind
+  const sheetId = askAnchorText(value.sheetId, 120)
+  if (sheetId) anchor.sheetId = sheetId
+  const sheetName = askAnchorText(value.sheetName, 120)
+  if (sheetName) anchor.sheetName = sheetName
+  const range = askAnchorText(value.range, 64)
+  if (range) anchor.range = range
+  const slideIndex = askAnchorNumber(value.slideIndex)
+  if (slideIndex !== undefined) anchor.slideIndex = Math.max(0, Math.trunc(slideIndex))
+  if (Array.isArray(value.elementIds)) {
+    const elementIds = value.elementIds
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .slice(0, 20)
+      .map((id) => id.slice(0, 120))
+    if (elementIds.length > 0) anchor.elementIds = elementIds
+  }
+  const pageIndex = askAnchorNumber(value.pageIndex)
+  if (pageIndex !== undefined) anchor.pageIndex = Math.max(0, Math.trunc(pageIndex))
+  if (Array.isArray(value.quads)) {
+    const quads = value.quads
+      .filter((quad): quad is unknown[] => Array.isArray(quad))
+      // 上限与 genoffice pdf host-ask 的 MAX_QUADS 对齐：长选区（多行高亮）不能被截断。
+      .slice(0, 200)
+      .map((quad) => quad.slice(0, 8).map((entry) => Number(entry)))
+      .filter((quad) => quad.length >= 4 && quad.every((entry) => Number.isFinite(entry)))
+    if (quads.length > 0) anchor.quads = quads
+  }
+  return Object.keys(anchor).length > 0 ? anchor : undefined
 }
 
 const queuedProtocolUrls: string[] = []
@@ -4091,22 +4146,25 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
     officePreviewRegistry.setAskQueueActionForward(broadcastAskQueueActionEvent)
 
-    // 批注队列快照（渲染层→主进程→对应文件的 docs 视图）：文档内高亮/面板据此渲染。
-    // 空数组同样下发，用来清掉文档里已发送/已移除的锚点。
+    // 批注队列快照（渲染层→主进程→对应文件的编辑器视图）：文档内锚点据此渲染。
+    // 空数组同样下发，用来清掉已发送/已移除的锚点。锚点字段按实例格式透传。
     ipcMain.on('office:ask-queue-sync', (_event, payload?: unknown) => {
       const value = (payload ?? {}) as { fileId?: unknown; items?: unknown }
       if (typeof value.fileId !== 'string' || !value.fileId || !Array.isArray(value.items)) return
       const items = value.items
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
         .slice(0, 20)
-        .map((item) => ({
-          id: String(item.id ?? ''),
-          instruction: String(item.instruction ?? ''),
-          excerpt: typeof item.excerpt === 'string' ? item.excerpt : undefined,
-          fromBlockIndex: Number.isFinite(Number(item.fromBlockIndex)) ? Number(item.fromBlockIndex) : 0,
-          toBlockIndex: Number.isFinite(Number(item.toBlockIndex)) ? Number(item.toBlockIndex) : 0,
-          kind: typeof item.kind === 'string' ? item.kind : 'text',
-        }))
+        .map((item) => {
+          const anchor = normalizeAskQueueAnchor(item.anchor)
+          return {
+            id: String(item.id ?? '').slice(0, 80),
+            instruction: String(item.instruction ?? '').slice(0, 2000),
+            ...(typeof item.excerpt === 'string' && item.excerpt
+              ? { excerpt: item.excerpt.slice(0, 400) }
+              : {}),
+            ...(anchor ? { anchor } : {}),
+          }
+        })
         .filter((item) => item.id && item.instruction)
       officePreviewRegistry.pushAskQueue(value.fileId, items)
     })

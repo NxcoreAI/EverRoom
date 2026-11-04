@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
-const { savedListenersByWc, createCalls, slidesCalls, sheetCalls, pdfUserData } = vi.hoisted(() => ({
+const { savedListenersByWc, domReadyByWc, createCalls, slidesCalls, sheetCalls, pdfUserData } = vi.hoisted(() => ({
   savedListenersByWc: new Map<number, Set<(filePath: string) => void>>(),
+  /** wcId → 该视图注册的 dom-ready 回调（批注快照重放测试用）。 */
+  domReadyByWc: new Map<number, () => void>(),
   createCalls: { options: [] as Array<{ editable?: boolean }> },
   slidesCalls: { options: [] as Array<{ editable?: boolean }> },
   sheetCalls: { options: [] as Array<{ editable?: boolean }> },
@@ -15,7 +17,15 @@ const { savedListenersByWc, createCalls, slidesCalls, sheetCalls, pdfUserData } 
 }))
 
 vi.mock('electron', () => ({
-  webContents: { fromId: vi.fn((id: number) => ({ id, isDestroyed: () => false })) },
+  webContents: {
+    fromId: vi.fn((id: number) => ({
+      id,
+      isDestroyed: () => false,
+      once: (event: string, callback: () => void) => {
+        if (event === 'dom-ready') domReadyByWc.set(id, callback)
+      },
+    })),
+  },
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
   app: { getPath: (_name: string) => pdfUserData.dir },
 }))
@@ -34,6 +44,14 @@ vi.mock('../src/main/office/office-generation', () => ({
     }
   }),
   wireOfficeSavedHooks: vi.fn(),
+  wireDocsAgentAsk: vi.fn(),
+  wireSheetsAgentAsk: vi.fn(),
+  wireSlidesAgentAsk: vi.fn(),
+  wirePdfAgentAsk: vi.fn(),
+  wireDocsAskQueue: vi.fn(),
+  wireSheetsAskQueue: vi.fn(),
+  wireSlidesAskQueue: vi.fn(),
+  wirePdfAskQueue: vi.fn(),
 }))
 vi.mock('../src/main/office/office-view-manager', () => ({
   OfficeViewManager: {
@@ -114,6 +132,8 @@ function makeView(kind: string): {
 
 const runtime = {
   docs: {
+    pushDocsAskQueue: vi.fn(),
+    setDocsAskQueueActionHook: vi.fn(),
     setDocsShellWindow: vi.fn(),
     setActiveDocsResolver: vi.fn(),
     setDocsMenuGate: vi.fn(),
@@ -128,6 +148,8 @@ const runtime = {
     })),
   },
   sheets: {
+    pushSheetsAskQueue: vi.fn(),
+    setSheetsAskQueueActionHook: vi.fn(),
     setSheetsShellWindow: vi.fn(),
     setActiveSheetsWebContents: vi.fn(),
     stopSheetsSidecar: vi.fn(),
@@ -147,6 +169,8 @@ const runtime = {
     })),
   },
   slides: {
+    pushSlidesAskQueue: vi.fn(),
+    setSlidesAskQueueActionHook: vi.fn(),
     setSlidesShellWindow: vi.fn(),
     setActiveSlidesWebContents: vi.fn(),
     describeAgentDeck: vi.fn(),
@@ -154,6 +178,9 @@ const runtime = {
     applyAgentDeckPage: vi.fn(),
   },
   pdf: {
+    pushPdfAskQueue: vi.fn(),
+    setPdfAskQueueActionHook: vi.fn(),
+    setPdfAgentAskHook: vi.fn(),
     // 后台 PDF 隐藏会话的面：建视图 / 就绪闸门 / 描述 / 应用（pdf 无 teardown 通道）。
     createPdfView: vi.fn(() => makeView('pdf-hidden')),
     waitForAgentReady: vi.fn(async () => true),
@@ -272,7 +299,101 @@ describe('OfficePreviewRegistry', () => {
     slidesCalls.options.length = 0
     sheetCalls.options.length = 0
     savedListenersByWc.clear()
+    domReadyByWc.clear()
     registry = new OfficePreviewRegistry(0)
+  })
+
+  describe('批注队列快照路由（按实例 kind 映射成各编辑器扁平条目）', () => {
+    it('docx → docs.pushDocsAskQueue：块索引区间 + 类型，空锚点退化成第 0 块正文', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-d', 'a.docx'))
+      const wcId = viewCalls[0]!.webContentsId
+      const changed = registry.pushAskQueue('file-d', [
+        { id: 'd1', instruction: '这段改短', excerpt: '原文摘录', anchor: { fromBlockIndex: 2, toBlockIndex: 3, kind: 'table' } },
+        { id: 'd2', instruction: '没锚点也要能显示' },
+      ])
+      expect(changed).toBe(true)
+      expect(runtime.docs.pushDocsAskQueue).toHaveBeenCalledWith(wcId, [
+        { id: 'd1', instruction: '这段改短', excerpt: '原文摘录', fromBlockIndex: 2, toBlockIndex: 3, kind: 'table' },
+        { id: 'd2', instruction: '没锚点也要能显示', fromBlockIndex: 0, toBlockIndex: 0, kind: 'text' },
+      ])
+    })
+
+    it('spreadsheet → sheets.pushSheetsAskQueue：sheetId / 表名 / A1 区域', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-x', 'book.xlsx'))
+      const wcId = viewCalls[0]!.webContentsId
+      expect(registry.pushAskQueue('file-x', [
+        { id: 'd1', instruction: '合计行加粗', excerpt: '合计 1200', anchor: { sheetId: 'sheet-1', sheetName: '预算', range: 'B2:C4' } },
+      ])).toBe(true)
+      expect(runtime.sheets.pushSheetsAskQueue).toHaveBeenCalledWith(wcId, [
+        { id: 'd1', instruction: '合计行加粗', excerpt: '合计 1200', sheetId: 'sheet-1', sheetName: '预算', range: 'B2:C4' },
+      ])
+    })
+
+    it('slides → slides.pushSlidesAskQueue：页码 + 元素 durable id', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-s', 'deck.pptx'))
+      const wcId = viewCalls[0]!.webContentsId
+      expect(registry.pushAskQueue('file-s', [
+        { id: 'd1', instruction: '字号调大', anchor: { slideIndex: 2, elementIds: ['text-7', 'shape-1'] } },
+      ])).toBe(true)
+      expect(runtime.slides.pushSlidesAskQueue).toHaveBeenCalledWith(wcId, [
+        { id: 'd1', instruction: '字号调大', slideIndex: 2, elementIds: ['text-7', 'shape-1'] },
+      ])
+    })
+
+    it('pdf → pdf.pushPdfAskQueue：原始页序 + PDF 坐标 quads', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-p', 'report.pdf'))
+      const wcId = viewCalls[0]!.webContentsId
+      const quads = [[72, 700, 300, 700, 72, 680, 300, 680]]
+      expect(registry.pushAskQueue('file-p', [
+        { id: 'd1', instruction: '核对来源', excerpt: '营收 18%', anchor: { pageIndex: 2, quads } },
+      ])).toBe(true)
+      expect(runtime.pdf.pushPdfAskQueue).toHaveBeenCalledWith(wcId, [
+        { id: 'd1', instruction: '核对来源', excerpt: '营收 18%', pageIndex: 2, quads },
+      ])
+    })
+
+    it('PDF 无锚点行被过滤：不把会整条静默丢弃的行投给编辑器', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-p', 'report.pdf'))
+      const wcId = viewCalls[0]!.webContentsId
+      registry.pushAskQueue('file-p', [
+        { id: 'd1', instruction: '没锚点' },
+        { id: 'd2', instruction: '有锚点', anchor: { pageIndex: 1, quads: [[0, 10, 5, 10, 0, 5, 5, 5]] } },
+      ])
+      expect(runtime.pdf.pushPdfAskQueue).toHaveBeenCalledWith(wcId, [
+        { id: 'd2', instruction: '有锚点', pageIndex: 1, quads: [[0, 10, 5, 10, 0, 5, 5, 5]] },
+      ])
+    })
+
+    it('视图重建后重放缓存的队列快照（文档内锚点不丢）', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-r', 'a.docx'))
+      registry.pushAskQueue('file-r', [{ id: 'd1', instruction: '改短' }])
+      expect(runtime.docs.pushDocsAskQueue).toHaveBeenCalledTimes(1)
+      await registry.close('file-r')
+      await registry.open(window, file('file-r', 'a.docx'))
+      const rebuiltWcId = viewCalls.at(-1)!.webContentsId
+      // 新视图的 dom-ready 触发后（120ms 重放）应再收到同一份快照。
+      domReadyByWc.get(rebuiltWcId)?.()
+      await new Promise((resolve) => setTimeout(resolve, 220))
+      expect(runtime.docs.pushDocsAskQueue).toHaveBeenCalledTimes(2)
+      expect(runtime.docs.pushDocsAskQueue).toHaveBeenLastCalledWith(rebuiltWcId, [
+        { id: 'd1', instruction: '改短', fromBlockIndex: 0, toBlockIndex: 0, kind: 'text' },
+      ])
+    })
+
+    it('空数组下发 = 清空该文件锚点；未知 fileId 返回 false', async () => {
+      const window = makeWindow()
+      await registry.open(window, file('file-d', 'a.docx'))
+      const wcId = viewCalls[0]!.webContentsId
+      expect(registry.pushAskQueue('file-d', [])).toBe(true)
+      expect(runtime.docs.pushDocsAskQueue).toHaveBeenCalledWith(wcId, [])
+      expect(registry.pushAskQueue('file-missing', [])).toBe(false)
+    })
   })
 
   describe('后台 Word 编辑（UI 隐藏/未打开）', () => {

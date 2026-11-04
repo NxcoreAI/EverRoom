@@ -6,6 +6,8 @@
  * 的合并：合并后仍然保持这个分层，气泡里不会出现块索引和工具名。
  */
 
+import type { OfficeAskAnchor } from '@/shared/office'
+
 export interface PendingAskDraft {
   id: string
   workspaceId: string
@@ -17,15 +19,8 @@ export interface PendingAskDraft {
   instruction?: string
   /** 原文摘录（选中时的文本快照）。 */
   excerpt?: string
-  /** 选区锚点（Word 块索引区间；Excel 为 sheetId + A1 区域）。 */
-  anchor?: {
-    fromBlockIndex?: number
-    toBlockIndex?: number
-    kind?: string
-    sheetId?: string
-    sheetName?: string
-    range?: string
-  }
+  /** 选区锚点（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+  anchor?: OfficeAskAnchor
   /** 技术指令：块索引/区域/工具提示，只进 runtime。 */
   message: string
   /** 用户可见的一句（气泡与会话标题用它）。 */

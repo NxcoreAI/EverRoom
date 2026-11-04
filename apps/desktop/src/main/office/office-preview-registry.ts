@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 
 import { BrowserWindow, webContents } from 'electron'
 
-import type { OfficeAgentFileEvent, OfficeAskQueueActionEvent } from '../../shared/office'
+import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent } from '../../shared/office'
 import { describeThesisError } from '../../shared/thesis-error-message'
 import { logDesktop } from '../logging/desktop-logger'
 import {
@@ -16,11 +16,20 @@ import {
   wireDocsAgentAsk,
   wireDocsAskQueue,
   wireOfficeSavedHooks,
+  wirePdfAgentAsk,
+  wirePdfAskQueue,
   wireSheetsAgentAsk,
+  wireSheetsAskQueue,
   wireSlidesAgentAsk,
+  wireSlidesAskQueue,
   type AgentAskForwardEvent,
 } from './office-generation'
-import type { GenOfficeMaterialResolver } from './office-runtime'
+import type {
+  GenOfficeMaterialResolver,
+  PdfAskQueueItem,
+  SheetsAskQueueItem,
+  SlidesAskQueueItem,
+} from './office-runtime'
 import {
   loadPreparedGenOfficeRuntime,
   type AgentSlidesDeckInfo,
@@ -104,6 +113,17 @@ interface OfficePreviewInstance {
   /** 未解析到归属时按默认工作区处理（资料库/上传/排版都能用）。 */
   workspaceId: string
   unsubscribeSaved: (() => void) | null
+}
+
+/**
+ * 宿主批注队列快照行（渲染层原始形状）：registry 缓存最近一次快照，
+ * 视图重建（重开/内容哈希变化/Agent 改写后重开）时重放，文档内锚点不丢。
+ */
+export interface OfficeAskQueueSnapshotRow {
+  id: string
+  instruction: string
+  excerpt?: string
+  anchor?: OfficeAskAnchor
 }
 
 /** 产物编辑回填的去抖合并窗口：连发保存（含关窗时的 Save）只落一次导入。 */
@@ -254,6 +274,8 @@ export class OfficePreviewRegistry {
   private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
   /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
   private readonly agentEditUnsubscribers = new Map<string, () => void>()
+  /** fileId → 最近一次批注队列快照：视图重建后重放（见 scheduleAskQueueReplay）。 */
+  private readonly askQueueSnapshots = new Map<string, OfficeAskQueueSnapshotRow[]>()
 
   /** 生成完成 → 渲染端自动打开的等待窗口；测试可传 0 关闭。 */
   constructor(
@@ -288,23 +310,117 @@ export class OfficePreviewRegistry {
   }
 
   /** 批注队列快照下发到该文件的 docs 视图（空数组 = 清空文档内锚点）。 */
-  pushAskQueue(
-    fileId: string,
-    items: Array<{
-      id: string
-      instruction: string
-      excerpt?: string
-      fromBlockIndex: number
-      toBlockIndex: number
-      kind: string
-    }>,
-  ): boolean {
+  /**
+   * 批注队列快照下发到对应文件的编辑器视图（空数组 = 清空文档内锚点）。
+   * 队列事实只在渲染层；这里按实例 kind 映射成各编辑器自己的扁平条目，
+   * 并缓存最近一次快照，供视图重建后重放。
+   */
+  pushAskQueue(fileId: string, items: OfficeAskQueueSnapshotRow[]): boolean {
+    this.askQueueSnapshots.set(fileId, items.slice(0, 20))
+    return this.deliverAskQueue(fileId)
+  }
+
+  /** 按实例 kind 把缓存快照投递到该文件的编辑器视图；实例不存在返回 false。 */
+  private deliverAskQueue(fileId: string): boolean {
     const instance = this.instances.get(fileId)
-    if (!instance || instance.descriptor.kind !== 'docx' || !this.runtime) return false
-    const wcId = instance.view.webContentsId
-    if (typeof wcId !== 'number' || wcId < 0) return false
-    this.runtime.docs.pushDocsAskQueue(wcId, items)
-    return true
+    const wcId = instance?.view.webContentsId
+    const rows = this.askQueueSnapshots.get(fileId)
+    if (!instance || typeof wcId !== 'number' || wcId < 0 || !rows) return false
+    const runtime = this.runtime
+    if (!runtime) return false
+    if (instance.descriptor.kind === 'docx') {
+      // 老运行时/裁剪过的 mock 可能缺这个导出：缺了只跳过锚点，不打断 IPC。
+      if (typeof runtime.docs.pushDocsAskQueue !== 'function') return false
+      runtime.docs.pushDocsAskQueue(
+        wcId,
+        rows.map((item) => ({
+          id: item.id,
+          instruction: item.instruction,
+          ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+          fromBlockIndex: item.anchor?.fromBlockIndex ?? 0,
+          toBlockIndex: item.anchor?.toBlockIndex ?? 0,
+          kind: item.anchor?.kind ?? 'text',
+        })),
+      )
+      return true
+    }
+    if (instance.descriptor.kind === 'spreadsheet') {
+      if (typeof runtime.sheets.pushSheetsAskQueue !== 'function') return false
+      const sheetRows: SheetsAskQueueItem[] = rows.map((item) => ({
+        id: item.id,
+        instruction: item.instruction,
+        ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+        ...(item.anchor?.sheetId ? { sheetId: item.anchor.sheetId } : {}),
+        ...(item.anchor?.sheetName ? { sheetName: item.anchor.sheetName } : {}),
+        ...(item.anchor?.range ? { range: item.anchor.range } : {}),
+      }))
+      runtime.sheets.pushSheetsAskQueue(wcId, sheetRows)
+      return true
+    }
+    if (instance.descriptor.kind === 'slides') {
+      if (typeof runtime.slides.pushSlidesAskQueue !== 'function') return false
+      const slideRows: SlidesAskQueueItem[] = rows.map((item) => ({
+        id: item.id,
+        instruction: item.instruction,
+        ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+        ...(item.anchor?.slideIndex !== undefined ? { slideIndex: item.anchor.slideIndex } : {}),
+        ...(item.anchor?.elementIds ? { elementIds: item.anchor.elementIds } : {}),
+      }))
+      runtime.slides.pushSlidesAskQueue(wcId, slideRows)
+      return true
+    }
+    if (instance.descriptor.kind === 'pdf') {
+      if (typeof runtime.pdf.pushPdfAskQueue !== 'function') return false
+      // PDF 锚点必须带页序 + quads：缺锚点的行 app 端会整条丢弃，这里提前过滤，
+      // 别让对话侧显示 N 条而页面上一个锚点也没有。
+      const pdfRows: PdfAskQueueItem[] = rows.flatMap((item) => {
+        const pageIndex = item.anchor?.pageIndex
+        const quads = item.anchor?.quads
+        if (pageIndex === undefined || !quads || quads.length === 0) return []
+        return [{
+          id: item.id,
+          instruction: item.instruction,
+          ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+          pageIndex,
+          quads,
+        }]
+      })
+      runtime.pdf.pushPdfAskQueue(wcId, pdfRows)
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 视图新建/重建后重放缓存的队列快照：app 侧队列是视图内存态，不重放就只剩
+   * 对话侧有批注、文档内锚点全丢。渲染层的 onAskQueue 订阅在挂载后才装，
+   * 所以 dom-ready 后再补两次（首帧/慢挂载），投递是幂等快照。
+   */
+  private scheduleAskQueueReplay(fileId: string): void {
+    const rows = this.askQueueSnapshots.get(fileId)
+    if (!rows || rows.length === 0) return
+    const wcId = this.instances.get(fileId)?.view.webContentsId
+    if (typeof wcId !== 'number' || wcId < 0) return
+    const replay = (): void => {
+      const current = this.instances.get(fileId)
+      if (!current || current.view.webContentsId !== wcId) return
+      const live = webContents.fromId(wcId)
+      if (!live || live.isDestroyed()) return
+      this.deliverAskQueue(fileId)
+    }
+    const later = (delay: number): void => {
+      const timer = setTimeout(replay, delay)
+      timer.unref?.()
+    }
+    const target = webContents.fromId(wcId)
+    if (target && !target.isDestroyed() && typeof target.once === 'function') {
+      target.once('dom-ready', () => {
+        later(120)
+        later(800)
+      })
+    }
+    // dom-ready 可能已经过去（复用/快视图），兜底按时间重放一次。
+    later(1_200)
   }
 
   setAgentAskForward(forward: ((event: AgentAskForwardEvent) => void) | null): void {
@@ -533,6 +649,7 @@ export class OfficePreviewRegistry {
       instance.unsubscribeSaved = onOfficeFileSaved(view.webContentsId, () => this.scheduleEditSync(fileId))
     }
     this.instances.set(file.id, instance)
+    this.scheduleAskQueueReplay(file.id)
     logOfficeDiag('office.diag.open.done', {
       fileId: file.id,
       kind,
@@ -1532,12 +1649,21 @@ export class OfficePreviewRegistry {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),
         forward: this.agentAskForward,
       })
-      // 批注队列：文档内锚点/面板 ↔ 宿主（队列事实只在宿主侧）。
+      // PDF 选区「注释」浮层：按原始页序 + PDF 坐标 quads 定位。
+      wirePdfAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
+      // 批注队列：编辑器内锚点动作 ↔ 宿主（队列事实只在宿主侧）。
       if (this.askQueueActionForward) {
-        wireDocsAskQueue(this.runtime, {
-          resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        const queueDeps = {
+          resolveInstance: (wcId: number) => this.findByWebContentsId(wcId),
           forwardAction: this.askQueueActionForward,
-        })
+        }
+        wireDocsAskQueue(this.runtime, queueDeps)
+        wireSheetsAskQueue(this.runtime, queueDeps)
+        wireSlidesAskQueue(this.runtime, queueDeps)
+        wirePdfAskQueue(this.runtime, queueDeps)
       }
     }
     // AI 页签论文排版桥（注入晚于首开也在此补挂，幂等）。

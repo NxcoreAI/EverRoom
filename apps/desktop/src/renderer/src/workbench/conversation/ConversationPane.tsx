@@ -314,8 +314,9 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const handledSendNonce = useRef(0)
   useEffect(() => {
     if (askQueueSendNonce === 0 || askQueueSendNonce === handledSendNonce.current) return
-    handledSendNonce.current = askQueueSendNonce
+    // 未 ready 时不能先记账：否则后续 ready 的重跑会被「已处理」挡掉，批注永远发不出去。
     if (workspaceAskDrafts.length === 0 || !hook.scopeReady || hook.loading) return
+    handledSendNonce.current = askQueueSendNonce
     sendAskDrafts()
   }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
 
