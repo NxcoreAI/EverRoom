@@ -131,6 +131,13 @@ describe('upsertPlanItem', () => {
     const next = upsertPlanItem(board, item('z', 'todo'))
     expect(next.at(-1)!.id).toBe('z')
   })
+
+  it('非对象输入（SSE ready 帧缺 item 的 undefined）原样丢弃，不污染数组', () => {
+    // 回归（2026-11-05）：undefined 曾被追加进数组，看板渲染即崩
+    // （Cannot read properties of undefined (reading 'status')）。
+    expect(upsertPlanItem([], undefined as unknown as Parameters<typeof upsertPlanItem>[1])).toEqual([])
+    expect(upsertPlanItem(board, undefined as unknown as Parameters<typeof upsertPlanItem>[1])).toEqual(board)
+  })
 })
 
 describe('展示辅助', () => {

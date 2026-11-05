@@ -83,8 +83,11 @@ export function applyLocalMove(
   return [...rest, moved]
 }
 
-/** 单条 upsert：实时推送与写回共用，保持列内顺序不跳。 */
+/** 单条 upsert：实时推送与写回共用，保持列内顺序不跳。
+ *  非对象输入（如 SSE ready 帧缺 item 时的 undefined）原样丢弃——数组一旦
+ *  混入 undefined，看板渲染即崩（reading 'status'）。 */
 export function upsertPlanItem(items: readonly PlanItem[], next: PlanItem): PlanItem[] {
+  if (!next || typeof next !== 'object') return items as PlanItem[]
   const index = items.findIndex((item) => item.id === next.id)
   if (index < 0) return [...items, next]
   const copy = [...items]
