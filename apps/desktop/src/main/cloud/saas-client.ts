@@ -598,9 +598,9 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
-    // 保证扫码登录的环境校验在两端默认配置下直接通过。
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
+    // 打包默认指向生产 SaaS API；dev 由 .env 的 NXCORE_SAAS_API_URL 覆盖连内网，
+    // 手机 App 扫码登录的环境校验只在 dev 内网场景关心 origin 一致性。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'https://api.everoffice.vyitec.com/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
   }
