@@ -2182,7 +2182,7 @@
   "settings.topupLoadFailed": "Failed to load credit packs, please retry later",
   "settings.planOverviewTotal": "Total credits left",
   "settings.planOverviewBuiltin": "Included in plan",
-  "settings.planOverviewPurchased": "Credit packs",
+  "settings.planOverviewPurchased": "Purchased credits",
   "plans.modalTitle": "Choose the plan that fits you",
   "plans.modalDescription": "Upgrade to Pro for more credits and capabilities, billed monthly",
   "plans.freeForever": "Free",
@@ -2201,5 +2201,6 @@
   "plans.featureRetention": "{days} days of cloud sync retention",
   "settings.navigationPlan": "Plan & Credits",
   "plans.perMonth": "mo",
-  "settings.planOverviewNoPurchase": "No purchased credits yet"
+  "settings.planOverviewNoPurchase": "No purchased credits yet",
+  "settings.planOverviewBonus": "Signup bonus"
 }

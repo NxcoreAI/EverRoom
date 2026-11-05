@@ -635,12 +635,15 @@ export function SettingsPage({
                 : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
                   ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
                   : []
-              // 额度包 = 购买 + 赠送(signup_bonus 等旁路 grant,同列展示)
+              // 额度包 = 购买 + 赠送(signup_bonus 等旁路 grant)
               const packsTotal = grantRows.reduce((sum, grant) => sum + grant.remainingCredits, 0)
               const totalRemaining = aiRelayStatus?.remainingCredits ?? periodRemaining + packsTotal
-              // 永不过期的额度包合成一行合计;有到期日的各自一行
-              const perpetualGrants = grantRows.filter((grant) => !grant.expiresAt)
-              const expiringGrants = grantRows.filter((grant) => grant.expiresAt)
+              // 注册赠送独立成行(用完不显示——后端只返回 remaining≠0 的 grant)
+              const signupGrant = grantRows.find((grant) => grant.source === 'signup_bonus') ?? null
+              const purchaseGrants = grantRows.filter((grant) => grant.source !== 'signup_bonus')
+              // 永不过期的充值包合成一行合计;有到期日的各自一行
+              const perpetualGrants = purchaseGrants.filter((grant) => !grant.expiresAt)
+              const expiringGrants = purchaseGrants.filter((grant) => grant.expiresAt)
               return (
               <div className="cloud-subscription">
                 <div className="plan-overview-card">
@@ -668,11 +671,11 @@ export function SettingsPage({
                     <span>{t('surface:settings.planOverviewTotal')}</span>
                   </div>
                   {aiRelayStatus?.configured ? (
-                  <div className="plan-overview-grid">
-                    <div className="plan-overview-cell">
-                      <div>
+                  <div className="plan-overview-rows">
+                    <div className="plan-overview-row">
+                      <div className="plan-overview-row-head">
                         <span>{t('surface:settings.planOverviewBuiltin')}</span>
-                        <strong>{formatCredits(periodRemaining, locale)}</strong>
+                        <strong>{formatCredits(periodRemaining, locale)} / {formatCredits(planPeriodQuota, locale)}</strong>
                       </div>
                       <progress
                         aria-label={t('surface:settings.planOverviewBuiltin')}
@@ -689,13 +692,36 @@ export function SettingsPage({
                         {' · '}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}
                       </small>
                     </div>
-                    <div className="plan-overview-cell">
-                      <div>
+                    {signupGrant ? (
+                    <div className="plan-overview-row">
+                      <div className="plan-overview-row-head">
+                        <span>{t('surface:settings.planOverviewBonus')}</span>
+                        <strong>{formatCredits(signupGrant.remainingCredits, locale)} / {formatCredits(signupGrant.amountCredits, locale)}</strong>
+                      </div>
+                      <progress
+                        aria-label={t('surface:settings.planOverviewBonus')}
+                        max={Math.max(1, signupGrant.amountCredits)}
+                        value={Math.min(Math.max(0, signupGrant.remainingCredits), Math.max(1, signupGrant.amountCredits))}
+                      />
+                      <small>
+                        {signupGrant.expiresAt
+                          ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(signupGrant.expiresAt, locale) })
+                          : t('surface:settings.topupBalanceNote')}
+                      </small>
+                    </div>
+                    ) : null}
+                    {purchaseGrants.length ? (
+                    <div className="plan-overview-row">
+                      <div className="plan-overview-row-head">
                         <span>{t('surface:settings.planOverviewPurchased')}</span>
-                        <strong>{formatCredits(packsTotal, locale)}</strong>
+                        <strong>{formatCredits(purchaseGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)}</strong>
                       </div>
                       {perpetualGrants.length ? (
                         <div className="plan-overview-grant">
+                          <div className="plan-overview-grant-head">
+                            <span>{t('surface:settings.topupCredits')}</span>
+                            <strong>{formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)} / {formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0), locale)}</strong>
+                          </div>
                           <progress
                             aria-label={t('surface:settings.topupCredits')}
                             max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
@@ -706,6 +732,10 @@ export function SettingsPage({
                       ) : null}
                       {expiringGrants.map((grant) => (
                         <div key={grant.id} className="plan-overview-grant">
+                          <div className="plan-overview-grant-head">
+                            <span>{t('surface:settings.topupCredits')}</span>
+                            <strong>{formatCredits(grant.remainingCredits, locale)} / {formatCredits(grant.amountCredits, locale)}</strong>
+                          </div>
                           <progress
                             aria-label={t('surface:settings.topupCredits')}
                             max={Math.max(1, grant.amountCredits)}
@@ -714,8 +744,8 @@ export function SettingsPage({
                           <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
                         </div>
                       ))}
-                      {!grantRows.length ? <small>{t('surface:settings.planOverviewNoPurchase')}</small> : null}
                     </div>
+                    ) : null}
                   </div>
                   ) : null}
                 </div>
