@@ -115,7 +115,6 @@ import {
 import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
 import { AgentAuthController } from './agent-auth/controller'
 import { createLarkCliRuntime, type LarkCliRuntime } from './runtime/lark-cli-runtime'
-import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
 import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-asset-bridge'
 import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
 import { createAgentAuthPersistence } from './agent-auth/persistence'
@@ -126,7 +125,6 @@ import type {
 } from '../shared/agent-auth'
 import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
 import { bundledAcpAdaptersRoot, bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
@@ -309,34 +307,8 @@ const AGENT_AUTH_CHANNELS = {
   disconnect: 'agent-auth:disconnect',
 } as const
 
-const EXTERNAL_DOCUMENT_CHANNELS = {
-  importSearch: 'external-documents:import-search',
-  importList: 'external-documents:import-list',
-  importBatch: 'external-documents:import-batch',
-  importBatchStatus: 'external-documents:import-batch-status',
-  activeImportBatch: 'external-documents:active-import-batch',
-  cancelImportBatch: 'external-documents:cancel-import-batch',
-  importPreview: 'external-documents:import-preview',
-  importCommit: 'external-documents:import-commit',
-  importRun: 'external-documents:import-run',
-  cancelImportRun: 'external-documents:cancel-import-run',
-  importHistory: 'external-documents:import-history',
-  checkExternalUpdate: 'external-documents:check-external-update',
-  applyCandidate: 'external-documents:apply-candidate',
-  createExport: 'external-documents:create-export',
-  getExport: 'external-documents:get-export',
-  confirmExport: 'external-documents:confirm-export',
-  retryExport: 'external-documents:retry-export',
-  cancelExport: 'external-documents:cancel-export',
-  listExports: 'external-documents:list-exports',
-  importDiff: 'external-documents:import-diff',
-  importStructuredDiff: 'external-documents:import-structured-diff',
-  searchExportTargets: 'external-documents:search-export-targets',
-} as const
-
 // 子代理调用（划词改写 + 调用树/事件轮询）：Context Room 删除后仅剩这些活通道。
 const SUBAGENT_CHANNELS = {
-  dispatchSelectionRewrite: 'subagents:dispatch-selection-rewrite',
   getInvocation: 'subagents:get-invocation',
   cancelInvocation: 'subagents:cancel-invocation',
   listRunInvocations: 'subagents:list-run-invocations',
@@ -449,42 +421,6 @@ const CURSOR_COMPLETION_AGENT_CHANNELS = {
   cancelRun: 'cursor-completion-agent:cancel-run',
   subscribe: 'cursor-completion-agent:subscribe',
   unsubscribe: 'cursor-completion-agent:unsubscribe',
-} as const
-
-const DOCUMENT_CHANNELS = {
-  list: 'documents:list',
-  listTrash: 'documents:list-trash',
-  get: 'documents:get',
-  listBlocks: 'documents:list-blocks',
-  listBlockBacklinks: 'documents:list-block-backlinks',
-  listVersions: 'documents:list-versions',
-  getVersionSnapshot: 'documents:get-version-snapshot',
-  getDiff: 'documents:get-diff',
-  versionChangeSummary: 'documents:version-change-summary',
-  listDocumentComments: 'documents:list-document-comments',
-  createDocumentComment: 'documents:create-document-comment',
-  resolveDocumentComment: 'documents:resolve-document-comment',
-  deleteDocumentComment: 'documents:delete-document-comment',
-  getOverview: 'documents:get-overview',
-  generateOverview: 'documents:generate-overview',
-  getSectionPreview: 'documents:get-section-preview',
-  restoreVersion: 'documents:restore-version',
-  resolveBlockReferences: 'documents:resolve-block-references',
-  listOperations: 'documents:list-operations',
-  startOperation: 'documents:start-operation',
-  getOperation: 'documents:get-operation',
-  executeOperationCommand: 'documents:execute-operation-command',
-  storeImage: 'documents:store-image',
-  import: 'documents:import',
-  save: 'documents:save',
-  delete: 'documents:delete',
-  move: 'documents:move',
-  moveMany: 'documents:move-many',
-  restore: 'documents:restore',
-  deletePermanently: 'documents:delete-permanently',
-  emptyTrash: 'documents:empty-trash',
-  subscribe: 'documents:subscribe',
-  unsubscribe: 'documents:unsubscribe',
 } as const
 
 // 系统隐私授权（本地 TCC 查询，不经网关）：只有麦克风 onboarding 还需要。
@@ -691,7 +627,6 @@ function installIpcRouters(): void {
     RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
     AGENT_AUTH_CHANNELS,
-    EXTERNAL_DOCUMENT_CHANNELS,
     SUBAGENT_CHANNELS,
     AGENT_CHANNELS,
     MEMORY_CHANNELS,
@@ -699,7 +634,6 @@ function installIpcRouters(): void {
     WORKSPACE_INSIGHT_CHANNELS,
     PLAN_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
-    DOCUMENT_CHANNELS,
     PERMISSION_CHANNELS,
     ACCOUNT_CHANNELS,
     NOTIFICATION_CHANNELS,
@@ -1993,95 +1927,8 @@ function registerAgentAuthHandlers(): void {
   })
 }
 
-function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge): void {
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importSearch, (_event, provider: unknown, query: unknown) => {
-    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
-    return bridge.importSearch(provider as 'feishu' | 'notion', query)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown, mode: unknown) => {
-    if (typeof provider !== 'string') throw new Error('无效的文档列举请求。')
-    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
-    if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
-    if (mode !== undefined && mode !== 'full' && mode !== 'delta') throw new Error('无效的列举模式。')
-    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly, mode as 'full' | 'delta' | undefined)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
-    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
-    return bridge.importBatchStatus(batchId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.activeImportBatch, (_event, provider: unknown, connectionName: unknown) => {
-    if (typeof provider !== 'string') throw new Error('无效的文档来源。')
-    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
-    return bridge.activeImportBatch(provider as 'feishu' | 'notion', connectionName)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
-    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
-    return bridge.cancelImportBatch(batchId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importPreview, (_event, provider: unknown, remoteDocumentId: unknown) => {
-    if (typeof provider !== 'string' || typeof remoteDocumentId !== 'string') throw new Error('无效的导入预览请求。')
-    return bridge.importPreview(provider as 'feishu' | 'notion', remoteDocumentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importCommit, (_event, input: unknown) => bridge.importCommit(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importRun, (_event, runId: unknown) => {
-    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
-    return bridge.importRun(runId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportRun, (_event, runId: unknown) => {
-    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
-    return bridge.cancelImportRun(runId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importHistory, (_event, documentId: unknown) => {
-    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.importHistory(documentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, documentId: unknown) => {
-    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.checkExternalUpdate(documentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importStructuredDiff, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.importStructuredDiff(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.applyCandidate, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.applyCandidate(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.createExport, (_event, input: unknown) => bridge.createExport(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.getExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.getExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.confirmExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.confirmExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.retryExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.retryExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.cancelExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importDiff, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.importDiff(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.searchExportTargets, (_event, provider: unknown, query: unknown) => {
-    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的目标搜索请求。')
-    return bridge.searchExportTargets(provider as 'feishu' | 'notion', query)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.listExports, (_event, documentId: unknown) => {
-    if (documentId !== undefined && typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.listExports(typeof documentId === 'string' ? documentId : undefined)
-  })
-}
 
 function registerSubagentHandlers(bridge: SubagentGatewayBridge): void {
-  handle(SUBAGENT_CHANNELS.dispatchSelectionRewrite, (_event, input: SubagentSelectionRewriteInput) =>
-    bridge.dispatchSelectionRewrite(input))
   handle(SUBAGENT_CHANNELS.getInvocation, (_event, invocationId: string) =>
     bridge.getSubagentInvocation(invocationId))
   handle(SUBAGENT_CHANNELS.cancelInvocation, (_event, invocationId: string) =>
@@ -2486,144 +2333,6 @@ function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void
   })
 }
 
-function registerDocumentHandlers(
-  bridge: DocumentGatewayBridge,
-  assets: DocumentAssetStore,
-  vaults?: ObsidianVaultService | null,
-): void {
-  // 挂载目录笔记的写回依赖（见 vault-document-sync）：序列化走网关、回滚走投影 PUT。
-  const vaultSyncDeps = vaults ? {
-    vaults,
-    documentMarkdown: (documentId: string) => bridge.documentMarkdown(documentId),
-    revertDocumentToDisk: async (input: {
-      documentId: string
-      vaultId: string
-      resourceId: string
-      relativePath: string
-      sourceHash: string
-      title: string
-      markdown: string
-    }) => {
-      const vault = vaults.list().find((item) => item.id === input.vaultId)
-      if (!vault) throw new Error(`Vault room not found for ${input.vaultId}`)
-      await bridge.syncExternalProjection({
-        sourceKind: vault.sourceType,
-        sourceId: input.vaultId,
-        resourceId: input.resourceId,
-        roomId: vault.roomId,
-        relativePath: input.relativePath,
-        sourceHash: input.sourceHash,
-        title: input.title,
-        markdown: input.markdown,
-      })
-    },
-  } : null
-  handleGroup(DOCUMENT_CHANNELS, {
-    list: (_event, roomId) => bridge.list(roomId),
-    listTrash: (_event, roomId) => bridge.listTrash(roomId),
-    get: (_event, documentId) => bridge.get(documentId),
-    listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
-    listBlockBacklinks: (_event, documentId, blockId) =>
-      bridge.listBlockBacklinks(documentId, blockId),
-    listVersions: (_event, documentId, options) => bridge.listVersions(documentId, options),
-    getVersionSnapshot: (_event, documentId, version) => bridge.getVersionSnapshot(documentId, version),
-    getDiff: (_event, documentId, fromVersion, toVersion) => bridge.getDiff(documentId, fromVersion, toVersion),
-    versionChangeSummary: (_event, documentId, version) => bridge.versionChangeSummary(documentId, version),
-    listDocumentComments: (_event, documentId) => bridge.listDocumentComments(documentId),
-    createDocumentComment: (_event, documentId, input) => bridge.createDocumentComment(documentId, input),
-    resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
-    deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
-    getOverview: (_event, documentId) => bridge.getDocumentOverview(documentId),
-    generateOverview: (_event, documentId) => bridge.generateDocumentOverview(documentId),
-    getSectionPreview: (_event, documentId, input) => bridge.getSectionPreview(documentId, input),
-    restoreVersion: (_event, documentId, version, baseVersion) =>
-      bridge.restoreVersion(documentId, version, baseVersion),
-    resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
-    listOperations: (_event, filters) => bridge.listOperations(filters),
-    startOperation: (_event, input: StartDocumentOperationInput) => {
-      assertNoEmbeddedDocumentImages(input)
-      return bridge.startOperation(input)
-    },
-    getOperation: (_event, operationId, context) => bridge.getOperation(operationId, context),
-    executeOperationCommand: async (_event, operationId: string, input: DocumentOperationCommandInput) => {
-      if (!vaults || (input.type !== 'review.apply' && input.type !== 'item.accept')) {
-        return bridge.executeOperationCommand(operationId, input)
-      }
-      const operation = await bridge.getOperation(operationId, input.context)
-      const note = operation.documentId ? vaults.noteForDocument(operation.documentId) : null
-      if (!note || !input.context) return bridge.executeOperationCommand(operationId, input)
-      const prepared = await bridge.prepareExternalPatch({ operationId, command: input })
-      const current = await vaults.readNote(note.vaultId, note.resourceId)
-      let resultingSourceHash = current.sourceHash
-      if (current.sourceHash === prepared.expectedSourceHash) {
-        const saved = await vaults.saveNoteForAgent(
-          note.vaultId,
-          note.resourceId,
-          prepared.markdown,
-          prepared.expectedSourceHash,
-        )
-        if (saved.status === 'conflict') {
-          throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
-        }
-        resultingSourceHash = saved.snapshot.sourceHash
-      } else if (current.markdown !== prepared.markdown) {
-        throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
-      }
-      const completed = await bridge.completeExternalPatch({
-        preparationId: prepared.preparationId,
-        resultingSourceHash,
-        context: input.context,
-      })
-      vaults.notifyChanged(note.vaultId)
-      return completed
-    },
-    storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
-    import: (_event, input: ImportRoomDocumentInput) => {
-      assertNoEmbeddedDocumentImages(input?.contentJson)
-      return bridge.import(input)
-    },
-    save: async (_event, documentId, input: SaveRoomDocumentInput) => {
-      assertNoEmbeddedDocumentImages(input?.contentJson)
-      // 挂载目录的笔记：网关保存成功后写回原文件（文件是事实源）。
-      // vault 未绑定/离线时跳过写回；文件被外部改过则回滚文档并报冲突（编辑器保留草稿）。
-      if (vaultSyncDeps && vaultSyncDeps.vaults.noteForDocument(documentId)) {
-        const previous = await bridge.get(documentId).catch(() => null)
-        const updated = await bridge.save(documentId, input)
-        await pushDocumentSaveToVault(vaultSyncDeps, {
-          documentId,
-          previousTitle: previous?.title,
-          nextTitle: updated.title,
-        })
-        return updated
-      }
-      return bridge.save(documentId, input)
-    },
-    delete: async (_event, documentId) => {
-      const deleted = await bridge.delete(documentId)
-      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
-      return deleted
-    },
-    move: (_event, documentId, fromRoomId, roomId) => bridge.move(documentId, fromRoomId, roomId),
-    moveMany: (_event, documentIds, fromRoomId, roomId) => bridge.moveMany(documentIds, fromRoomId, roomId),
-    restore: (_event, documentId) => bridge.restore(documentId),
-    deletePermanently: async (_event, documentId) => {
-      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
-      await bridge.deletePermanently(documentId)
-      await assets.deleteDocument(documentId).catch((error) => {
-        console.error('Failed to delete local document assets', { documentId, error })
-      })
-    },
-    emptyTrash: async (_event, roomId: string | null | undefined) => {
-      const trashed = await bridge.listTrash(roomId)
-      await bridge.emptyTrash(roomId)
-      await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
-        console.error('Failed to delete local document assets', { documentId: document.id, error })
-      })))
-    },
-    subscribe: (event, roomId: string | null | undefined) => bridge.subscribe(event.sender, roomId),
-    unsubscribe: (event, roomId: string | null | undefined) => bridge.unsubscribe(event.sender.id, roomId ?? undefined),
-  })
-}
 
 function registerMcpHandlers(bridge: McpGatewayBridge): void {
   handle(MCP_CHANNELS.listServers, () => bridge.list())
@@ -4102,8 +3811,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
-    registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
-    registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
     registerDocumentPdfExportHandler()
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
