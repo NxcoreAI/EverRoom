@@ -13,7 +13,7 @@ import type {
 } from '../office/office-preview-registry'
 import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
 import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
-import { createEverroomMaterialResolver } from '../office/office-material-resolver'
+import { createEverofficeMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
 
 // HTML 正文 / 页 spec / 表格 JSON 远大于通知，放宽到 2MB；超过视为模型输出异常。
@@ -46,6 +46,8 @@ export interface OfficeCompleteRequest {
   title: string
   originalName?: string
   roomId?: string | null
+  /** 产物归属工作区（done 广播带上，渲染层按空间定向自动展示）。 */
+  workspaceId?: string | null
   completed: boolean
   appliedPages: number
   totalPages: number
@@ -257,6 +259,7 @@ function validCompleteBody(value: unknown): value is OfficeCompleteRequest {
   if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
   if (input.originalName !== undefined && typeof input.originalName !== 'string') return false
   if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
+  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
   if (typeof input.completed !== 'boolean') return false
   const appliedPages = input.appliedPages
   if (typeof appliedPages !== 'number' || !Number.isInteger(appliedPages) || appliedPages < 0) return false
@@ -465,7 +468,7 @@ export class OfficeBridgeServer {
    */
   private async agentToolsRoute(req: OfficeAgentToolsRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const agentTools = this.agentTools()
-    if (!agentTools) return { status: 503, body: { message: 'EverRoom Office 宿主执行器尚未就绪' } }
+    if (!agentTools) return { status: 503, body: { message: 'EverOffice Office 宿主执行器尚未就绪' } }
     let outcome = await agentTools(req)
     // 旧运行时兜底（Word/Excel 都已经是 headless 优先）：仅当 registry 无法
     // 拉起隐藏会话、仍返回 not_open 时，才按旧路径请渲染端自动打开页签重试。
@@ -487,7 +490,7 @@ export class OfficeBridgeServer {
         outcome.reason === 'unsaved'
           ? `该${kindLabel}文件有未保存的修改，为避免覆盖用户输入已拒绝执行。请先让用户保存（或等自动保存完成）再重试。${openSummary}`
           : outcome.reason === 'not_editable'
-            ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
+            ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在产物页中重新以可编辑方式打开后再试。${openSummary}`
             : outcome.reason === 'not_found'
               ? `文件不在文件库中（可能仍在导入或已被删除）。${detail}`
               : outcome.reason === 'encrypted'
@@ -512,7 +515,7 @@ export class OfficeBridgeServer {
     req: OfficeExportPdfRequest,
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const exportPdf = this.exportPdfDoc()
-    if (!exportPdf) return { status: 503, body: { message: 'EverRoom Word→PDF 导出尚未就绪' } }
+    if (!exportPdf) return { status: 503, body: { message: 'EverOffice Word→PDF 导出尚未就绪' } }
     const outcome = await exportPdf({
       ...req,
       fileId: req.fileId.trim(),
@@ -526,7 +529,7 @@ export class OfficeBridgeServer {
 
   private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const apply = this.applyAgentBytes()
-    if (!apply) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
+    if (!apply) return { status: 503, body: { message: 'EverOffice Office 预览会话尚未就绪' } }
     const bytes = Buffer.from(req.bytesBase64, 'base64')
     if (bytes.length === 0) return { status: 422, body: { message: 'bytesBase64 required' } }
     const result = await apply(req.fileId.trim(), bytes, req.expectedContentHash)
@@ -559,7 +562,7 @@ export class OfficeBridgeServer {
       }
       if (req.action === 'build') {
         const files = this.filesBridge()
-        if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
+        if (!files) return { status: 503, body: { message: 'EverOffice 文件服务尚未就绪' } }
         if (!req.docxBase64 || !req.formatCard || !req.bindingSpec || !req.sourceFileName) {
           return { status: 422, body: { message: 'docxBase64/formatCard/bindingSpec/sourceFileName required' } }
         }
@@ -657,7 +660,7 @@ export class OfficeBridgeServer {
 
   private async edit(req: OfficeEditRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const slidesEdit = this.slidesEdit()
-    if (!slidesEdit) return { status: 503, body: { message: 'EverRoom Office 编辑会话尚未就绪' } }
+    if (!slidesEdit) return { status: 503, body: { message: 'EverOffice Office 编辑会话尚未就绪' } }
     const artifactReq: SlidesEditArtifactRequest =
       req.mode === 'read'
         ? { mode: 'read' }
@@ -702,7 +705,7 @@ export class OfficeBridgeServer {
       const openSummary = describeOpenInstances(outcome.open)
       const message =
         outcome.reason === 'not_editable'
-          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
+          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在产物页中重新以可编辑方式打开后再试。${openSummary}`
           : req.fileId === 'active'
             ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在产物库打开该文件。${openSummary}`
             : `fileId 对应的 PPT 未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在产物库打开该文件。${openSummary}`
@@ -788,7 +791,7 @@ export class OfficeBridgeServer {
   /** /v1/office-render-page：视觉复检——已打开 slides 产物的一页 → 1x PNG base64。 */
   private async renderPage(req: OfficeRenderPageRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const render = this.slidesRenderPage()
-    if (!render) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
+    if (!render) return { status: 503, body: { message: 'EverOffice Office 预览会话尚未就绪' } }
     const outcome = await render(req.fileId.trim(), req.slideIndex)
     if (!outcome.ok) return { status: 422, body: { message: outcome.error } }
     return { status: 200, body: { data: { pngBase64: outcome.pngBase64 } } }
@@ -796,7 +799,7 @@ export class OfficeBridgeServer {
 
   /** /v1/office-render：只走生成管线出 pptx 字节，不 file-imports、不广播——风格演示页自校专用。 */
   private async render(req: OfficeRenderRequest): Promise<{ status: number; body: Record<string, unknown> }> {    try {
-      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
+      const imageResolver = createEverofficeMaterialResolver(this.filesBridge)
       const generated = await generatePptxFromPageSpecs(
         { title: req.title.trim(), pages: req.pages },
         () => undefined,
@@ -819,6 +822,7 @@ export class OfficeBridgeServer {
       fileId: req.fileId,
       ...(req.originalName ? { originalName: req.originalName } : {}),
       roomId: req.roomId ?? null,
+      ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       partial: !req.completed,
       appliedPages: req.appliedPages,
       totalPages: req.totalPages,
@@ -829,7 +833,7 @@ export class OfficeBridgeServer {
 
   private async generate(parsed: OfficeGenerateRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const files = this.filesBridge()
-    if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
+    if (!files) return { status: 503, body: { message: 'EverOffice 文件服务尚未就绪' } }
 
     try {
       const format: OfficeGenerateFormat = parsed.format ?? 'docx'
@@ -839,7 +843,7 @@ export class OfficeBridgeServer {
         this.broadcast({ type: 'phase', title: parsed.title, phase, format })
       }
       // everroom-material:// 素材回源器：桥接本地网关素材库（无桥时引用按失败跳过）。
-      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
+      const imageResolver = createEverofficeMaterialResolver(this.filesBridge)
       const generated =
         format === 'docx'
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)
@@ -874,6 +878,7 @@ export class OfficeBridgeServer {
           fileId: accepted.fileEntryId,
           originalName,
           roomId: parsed.roomId,
+          ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
         })
       }
       return {

@@ -1,4 +1,4 @@
-import { FolderOpen, LayoutGrid, List, RotateCw, Upload } from 'lucide-react'
+import { FolderOpen, LayoutGrid, List, RotateCw, Search, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { type FileKind, type RealOfficeFile, kindMeta } from '@/office-proto/data'
@@ -8,7 +8,7 @@ import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
 import { cn } from '../ui/cn'
 import { ConfirmModal } from '../ui/modal'
-import { Button, EmptyState, PageHeader, Segmented } from '../ui/primitives'
+import { Button, EmptyState, PageHeader } from '../ui/primitives'
 import { FileTableHead, FileTableRow, type FileRowActions } from './fileTable'
 import { HomeSkeleton } from './parts'
 import { useFileLibrary } from './useFileLibrary'
@@ -34,13 +34,13 @@ const KIND_ORDER: readonly FileKind[] = ['docx', 'xlsx', 'pptx', 'pdf', 'md']
  * 所有文件页，布局照 everoffice 原型 `pages/AllFilesView.tsx` + `FileTable`：
  *
  * 页头（标题 + 「共 N 个文件」+ 导入）→ 工具行（类型标签 / 文件名搜索 / 列表·网格切换）
- * →（多来源时）来源筛选 → 表头 + 文件行（图标 / 文件名 / 修改时间 / 大小 / 操作）。
+ * → 无外框平铺表格（表头 + 文件行：图标 / 文件名 / 修改时间 / 大小 / 操作）。
  *
  * 原型里「网格视图暂未开放」和行尾「⋯」只弹 toast；这里两者都是真功能：
  * 网格是文件瓦片，行菜单能打开原应用、导出定位、删除。
  */
 export function FilesPage() {
-  const openFileTab = useWorkbenchStore((state) => state.openFileTab)
+  const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
   const files = useFileLibrary(LOAD_LIMIT)
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState<KindFilter>(ALL_KINDS)
@@ -64,20 +64,12 @@ export function FilesPage() {
     return [...byKind.values()].sort((left, right) => right.count - left.count)
   }, [files.items])
 
-  const kindTabs = useMemo(() => {
+  const kindCounts = useMemo(() => {
     const counts = new Map<FileKind, number>()
     for (const item of files.items) {
       counts.set(item.file.kind, (counts.get(item.file.kind) ?? 0) + 1)
     }
-    return [
-      { key: ALL_KINDS as KindFilter, label: '全部', count: files.items.length },
-      ...KIND_ORDER.map((item) => ({
-        key: item as KindFilter,
-        label: kindMeta[item].label,
-        // 计数为 0 的类型不挂徽标：类型标签本身留着（原型也是固定六个）。
-        count: counts.get(item) || undefined,
-      })),
-    ]
+    return counts
   }, [files.items])
 
   // 刷新后来源消失时回落「全部」，避免筛选到空集。
@@ -135,7 +127,7 @@ export function FilesPage() {
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      workbenchToast('已导出到「下载/EverRoom」并定位到文件管理器')
+      workbenchToast('已导出到「下载/EverOffice」并定位到文件管理器')
     } catch {
       workbenchToast('导出失败，请稍后重试')
     }
@@ -164,20 +156,26 @@ export function FilesPage() {
   }
 
   const rowActions: FileRowActions = {
-    onOpen: (item) => openFileTab(item.file),
+    onOpen: (item) => openFileInWorkspace(item.file),
     onOpenOriginal: (item) => { void openOriginal(item) },
     onExportReveal: (item) => { void exportReveal(item) },
     onDelete: (item) => setPendingDelete(item),
   }
 
-  // 文件库里有图片等打不开的条目：把「总量 / 可打开」的差值说清楚，用户不会以为少了文件。
+  // 页头副标题与原型同款句式：只说「共 N 个文件」（见 PageHead hint）。
   const subtitle = files.state === 'ready'
     ? files.total > files.items.length
       ? `共 ${files.total} 个文件，其中 ${files.items.length} 个可在此打开（按最近更新排序）。`
-      : `共 ${files.items.length} 个文件，按最近更新排序。`
+      : `共 ${files.items.length} 个文件`
     : files.state === 'loading'
-      ? '正在读取文件库…'
-      : '文件库暂不可用。'
+      ? '正在读取资料…'
+      : '资料暂不可用。'
+
+  /** 工具行左侧的类型标签（原型 `Seg`：胶囊裸标签，不带计数徽标）。 */
+  const kindTabs: Array<{ key: KindFilter; label: string }> = [
+    { key: ALL_KINDS, label: '全部' },
+    ...KIND_ORDER.map((item) => ({ key: item as KindFilter, label: kindMeta[item].label })),
+  ]
 
   return (
     <div className="wb-home-scroll">
@@ -202,8 +200,8 @@ export function FilesPage() {
       {files.state === 'unavailable' ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="文件库暂不可用"
-          description="桌面文件服务没有响应。重试一次；仍然失败请重启 EverRoom。"
+          title="资料暂不可用"
+          description="桌面文件服务没有响应。重试一次；仍然失败请重启 EverOffice。"
           action={<Button variant="secondary" size="sm" icon={<RotateCw size={13} />} onClick={files.reload}>重试</Button>}
         />
       ) : null}
@@ -211,7 +209,7 @@ export function FilesPage() {
       {files.state === 'ready' && files.items.length === 0 ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="文件库还没有文件"
+          title="资料还没有文件"
           description="导入本地文档，或从连接器同步资料，之后就能在这里打开。"
           action={canImport ? (
             <Button variant="primary" size="sm" icon={<Upload size={13} />} onClick={() => { void handleImport() }}>
@@ -224,32 +222,60 @@ export function FilesPage() {
       {files.state === 'ready' && files.items.length > 0 ? (
         <div className="wb-home-filetbl">
           <div className="wb-home-filetbl-bar">
-            <Segmented<KindFilter>
-              ariaLabel="按类型筛选"
-              value={kind}
-              onChange={setKind}
-              items={kindTabs}
-            />
-            <div className="wb-home-filetbl-bar-right">
-              <label className="wb-home-search">
-                <input
-                  className="ui-input"
-                  type="search"
-                  aria-label="搜索文件"
-                  placeholder="搜索文件名…"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                />
-              </label>
-              <Segmented<ViewMode>
-                ariaLabel="文件视图"
-                value={view}
-                onChange={setView}
-                items={[
-                  { key: 'list', label: '列表', icon: <List size={13} /> },
-                  { key: 'grid', label: '网格', icon: <LayoutGrid size={13} /> },
-                ]}
+            <div className="wb-home-ft-seg" role="tablist" aria-label="按类型筛选">
+              {kindTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={kind === tab.key}
+                  className={cn('wb-home-ft-seg-btn', kind === tab.key && 'active')}
+                  onClick={() => setKind(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="wb-home-ft-search">
+              <Search size={14} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="搜索文件"
+                placeholder="搜索文件名…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
               />
+              {query ? (
+                <button
+                  className="wb-home-ft-search-clear"
+                  type="button"
+                  title="清空"
+                  aria-label="清空搜索"
+                  onClick={() => setQuery('')}
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+            <div className="wb-home-ft-views" role="group" aria-label="文件视图">
+              <button
+                type="button"
+                className={cn(view === 'list' && 'active')}
+                title="列表视图"
+                aria-pressed={view === 'list'}
+                onClick={() => setView('list')}
+              >
+                <List size={15} />
+              </button>
+              <button
+                type="button"
+                className={cn(view === 'grid' && 'active')}
+                title="网格视图"
+                aria-pressed={view === 'grid'}
+                onClick={() => setView('grid')}
+              >
+                <LayoutGrid size={15} />
+              </button>
             </div>
           </div>
 
@@ -288,7 +314,7 @@ export function FilesPage() {
             <>
               <FileTableHead />
               {filtered.map((item) => (
-                <FileTableRow key={item.file.id} item={item} actions={rowActions} />
+                <FileTableRow key={item.file.id} item={item} actions={rowActions} iconSize={36} />
               ))}
             </>
           ) : (
@@ -300,7 +326,7 @@ export function FilesPage() {
                     type="button"
                     className="wb-home-file-tile"
                     title={item.file.name}
-                    onClick={() => openFileTab(item.file)}
+                    onClick={() => openFileInWorkspace(item.file)}
                   >
                     <FileTypeIcon kind={item.file.kind} size={38} />
                     <span className="wb-home-file-tile-name">{item.file.name}</span>
@@ -326,7 +352,7 @@ export function FilesPage() {
         onOpenChange={(next) => { if (!next) setPendingDelete(null) }}
         title="删除文件？"
         description={pendingDelete
-          ? `「${pendingDelete.file.name}」会从文件库移除，相关项目空间里也不再可见。`
+          ? `「${pendingDelete.file.name}」会从资料移除，相关项目空间里也不再可见。`
           : undefined}
         confirmLabel={deleting ? '删除中…' : '删除'}
         busy={deleting}

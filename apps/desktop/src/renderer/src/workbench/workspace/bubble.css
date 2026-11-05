@@ -2,6 +2,7 @@
  *
  * 状态：打开 / 收起（minimize）/ 关闭 都通过宽度动画完成，内容区同步让位；
  * 不渲染任何「长条把手」——收起后对话区右上角的同一个图标按钮负责再次打开。
+ * 最大化例外：绝对定位铺满整个工作区，完全覆盖对话区（见 is-maximized）。
  */
 
 .wb-bubble {
@@ -66,13 +67,38 @@
   to { width: 0; margin-right: 0; margin-left: 0; border-width: 0; opacity: 0; transform: translateX(10px) scale(0.985); }
 }
 
-/* ── 最大化：留在 flex 布局里占满除对话区最小宽之外的空间 ─────── */
+/* ── 最大化：绝对定位铺满整个工作区，完全覆盖对话区 ─────────── */
 
 .wb-bubble.is-maximized {
-  /* 不能用 !important：退场 keyframes 需要能把宽度动画收到 0；
-     也不能改 margin（左右 margin 变化会在退场结束时多跳 8px）。 */
-  width: clamp(320px, calc(100% - 336px), 1040px);
-  box-shadow: var(--ui-shadow-md);
+  /* 不能用 !important：退场 keyframes 需要能把宽度动画收到 0。 */
+  position: absolute;
+  inset: 0;
+  width: auto;
+  margin: 0;
+  z-index: 20;
+  border-radius: 0;
+  border-width: 0;
+  box-shadow: none;
+  /* absolute ↔ static 之间宽度无法插值，切换本身不做逐帧动画；
+     入场用覆盖层专属的淡入（两个类的特异性压过基类的 wb-bubble-in，
+     基类的 from{width:0} 与 width:auto 不可插值会闪半帧）。 */
+  transition: none;
+  animation: wb-bubble-max-in 160ms var(--ui-ease);
+}
+@keyframes wb-bubble-max-in {
+  from { opacity: 0; transform: scale(0.995); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* 最大化态的退场不走「宽度收到 0」（width:auto 不可插值），改为整体淡出；
+   下方对话区在退场开始时就恢复可见（has-max-bubble 摘掉），随淡出逐渐显现。 */
+.wb-bubble.is-maximized.is-closing,
+.wb-bubble.is-maximized.is-minimizing {
+  animation: wb-bubble-max-out 220ms cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+@keyframes wb-bubble-max-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.995); }
 }
 
 /* ── 左侧拖拽调宽 ───────────────────────────────────────────── */

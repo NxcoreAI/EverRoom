@@ -32,6 +32,8 @@ export interface OfficeCompleteInput {
   title: string;
   originalName?: string;
   roomId?: string | null;
+  /** 产物归属工作区（done 广播带上，桌面渲染层按空间定向自动展示成品）。 */
+  workspaceId?: string | null;
   completed: boolean;
   appliedPages: number;
   totalPages: number;
