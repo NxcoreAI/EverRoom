@@ -188,6 +188,7 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   context_room_create: { kind: 'action', zh: ['创建 Room', '已创建 Room'], keys: ['surface:agentExecutionTimeline.createRoom', 'surface:agentExecutionTimeline.roomCreated'] },
   // Office 与幻灯片
   context_room_office_create: { kind: 'document', zh: ['创建 Word 文档', '已创建 Word 文档'], keys: ['surface:agentExecutionTimeline.createWordDocument', 'surface:agentExecutionTimeline.wordDocumentCreated'] },
+  markdown_create: { kind: 'document', zh: ['创建 Markdown 文档', '已创建 Markdown 文档'], keys: ['surface:agentExecutionTimeline.createWordDocument', 'surface:agentExecutionTimeline.wordDocumentCreated'] },
   context_room_sheets_create: { kind: 'document', zh: ['创建电子表格', '已创建电子表格'], keys: ['surface:agentExecutionTimeline.createSpreadsheet', 'surface:agentExecutionTimeline.spreadsheetCreated'] },
   context_room_slides_create: { kind: 'slides', zh: ['创建演示文稿', '已创建演示文稿'], keys: ['surface:agentExecutionTimeline.createPresentation', 'surface:agentExecutionTimeline.presentationCreated'] },
   context_room_slides_set_page: { kind: 'slides', zh: ['生成幻灯片页面', '已生成幻灯片页面'], keys: ['surface:agentExecutionTimeline.generateSlidePage', 'surface:agentExecutionTimeline.slidePageGenerated'] },
@@ -291,6 +292,7 @@ const AGENT_TOOL_SUBJECTS: Record<string, AgentToolSubjectSpec> = {
   tool_search: { keys: ['query', 'name', 'tool'] },
   context_room_create: { keys: ['title', 'topic'] },
   context_room_office_create: { keys: ['title', 'fileName'] },
+  markdown_create: { keys: ['title', 'fileName'] },
   context_room_sheets_create: { keys: ['title', 'name'] },
   context_room_slides_create: { keys: ['title', 'topic'] },
   context_room_slides_set_page: { keys: ['title', 'page', 'pageNumber', 'slideIndex'] },

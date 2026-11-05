@@ -2,7 +2,7 @@ import type { DisplayAgentToolCall } from './agentRunActivity'
 
 /**
  * 「本轮产生的关键文件」解析：从 run 的工具调用结果里提取本轮生成的 Office 产物
- * （Word / Excel / PPT / PDF），按 DSH 的产物卡样式展示在 assistant 正文下方。
+ * （Word / Excel / PPT / PDF / Markdown），按 DSH 的产物卡样式展示在 assistant 正文下方。
  *
  * 数据来源是工具调用的结构化结果（fileEntryId + originalName/format），不依赖
  * office:agent-file 广播——广播是全局扇出的，无法归属到具体某轮对话；工具结果
@@ -19,7 +19,7 @@ export interface AgentTurnFile {
   /** 展示名（originalName；生成类工具有，导出 PDF 用 originalName）。 */
   name: string
   /** 文件格式（决定图标；缺省按扩展名推断）。 */
-  format: 'docx' | 'pptx' | 'xlsx' | 'pdf'
+  format: 'docx' | 'pptx' | 'xlsx' | 'pdf' | 'md'
   /** 产生方式（决定副文案）：created = 新生成，exported = 从已有文件导出。 */
   origin: 'created' | 'exported'
 }
@@ -64,11 +64,12 @@ function formatFromExtension(name: string): AgentTurnFile['format'] | null {
   if (/\.pptx?$/i.test(name)) return 'pptx'
   if (/\.xlsx?$/i.test(name)) return 'xlsx'
   if (/\.pdf$/i.test(name)) return 'pdf'
+  if (/\.md$/i.test(name)) return 'md'
   return null
 }
 
 function normalizeFormat(value: unknown, name: string): AgentTurnFile['format'] | null {
-  if (value === 'docx' || value === 'pptx' || value === 'xlsx' || value === 'pdf') return value
+  if (value === 'docx' || value === 'pptx' || value === 'xlsx' || value === 'pdf' || value === 'md') return value
   return formatFromExtension(name)
 }
 
@@ -95,6 +96,7 @@ function fileFromRecord(candidate: Record<string, unknown>, origin: AgentTurnFil
  */
 const CREATING_TOOLS = new Set([
   'office_create',
+  'markdown_create',
   'sheets_create',
   'slides_create',
   'context_room_office_create',

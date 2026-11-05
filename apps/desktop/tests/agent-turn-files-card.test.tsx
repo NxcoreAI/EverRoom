@@ -146,6 +146,21 @@ describe('AgentTurnFilesCard in AgentChatView', () => {
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('renders an md file card for markdown_create results', async () => {
+    const tool = completedTool({
+      id: 'tool-1b',
+      name: 'markdown_create',
+      result: JSON.stringify({ fileEntryId: 'fe-9', originalName: '会议纪要.md', format: 'md' }),
+    })
+    await renderView({
+      messages: [userMessage('run-1'), assistantMessage('run-1')],
+      toolCallsByRun: { 'run-1': [tool] },
+    })
+    const buttons = turnFileButtons()
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.textContent).toContain('会议纪要.md')
+  })
+
   it('opens the file editable via files.openOriginal on click', async () => {
     const tool = completedTool({
       id: 'tool-2',

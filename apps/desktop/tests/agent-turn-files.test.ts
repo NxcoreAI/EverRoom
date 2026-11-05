@@ -70,6 +70,26 @@ describe('toolTurnFiles', () => {
     ])
   })
 
+  it('extracts md artifact from markdown_create result (format field)', () => {
+    const call = tool({
+      id: 't4b',
+      name: 'markdown_create',
+      result: successResult({ fileEntryId: 'fe-9', originalName: '会议纪要.md', format: 'md' }),
+    })
+    expect(toolTurnFiles(call)).toEqual([
+      { fileEntryId: 'fe-9', name: '会议纪要.md', format: 'md', origin: 'created' },
+    ])
+  })
+
+  it('infers md format from .md extension when format field is missing', () => {
+    const call = tool({
+      id: 't4c',
+      name: 'markdown_create',
+      result: successResult({ fileEntryId: 'fe-10', originalName: '速记.md' }),
+    })
+    expect(toolTurnFiles(call)[0]?.format).toBe('md')
+  })
+
   it('excludes slides_draft artifacts (SlidesProgressCard owns that lane)', () => {
     const completed = tool({
       id: 't5',
