@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
+import { officeBashViolation } from "./office-bash-guard.js";
 import {
   createRepeatedCallState,
   DEFAULT_MAX_REPEATED_CALLS,
@@ -340,6 +341,10 @@ function createBashSandboxExtension(
       if (deniedPatterns.some((pattern) => pattern.test(command))) {
         throw new Error("shell_command_denied_by_policy");
       }
+      // Office 文件只读放行，写入/重打包直接拦：提示词劝不住模型时，这里能省掉上百次
+      // 无效调用（实测有 run 连发 120 条 python heredoc 改 pptx，直到撞上调用上限）。
+      const officeViolation = officeBashViolation(command);
+      if (officeViolation) throw new Error(officeViolation);
       const input = getInput();
       if (!input) throw new Error("shell_run_context_missing");
       const approved = await runtime.requestBashApproval({
