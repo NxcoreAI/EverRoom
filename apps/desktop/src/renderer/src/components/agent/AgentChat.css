@@ -1193,6 +1193,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-tool-error {
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: #b42318;
 }
 
@@ -1415,10 +1417,26 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   gap: 8px;
   flex-wrap: wrap;
   color: #b42318;
+  /* 报错里常带 request id / trace id 这种没有空格的长串：默认不换行会把条
+     撑破容器（flex 子项的 min-width:auto 也不允许收缩）。用 anywhere 让它在
+     任意位置断开，容器保持 max-width。 */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .agent-error > span {
   min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 错误里的代码/标识（`code`）同样允许在字符间断行，但保留原有空白语义。 */
+.agent-error code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .agent-error-retry {

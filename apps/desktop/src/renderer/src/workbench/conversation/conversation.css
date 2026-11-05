@@ -928,6 +928,16 @@
   color: var(--ui-danger);
   font-size: var(--ui-text-xs);
   line-height: 1.5;
+  /* 同 AgentChat.css：request id 这类无空格长串必须能在任意位置断行 */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.wb-conversation .agent-error > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .wb-conversation .agent-error-retry {
   padding: 2px 9px;
