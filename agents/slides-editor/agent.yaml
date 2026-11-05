@@ -3,7 +3,8 @@ id: slides-editor
 name: Slides Editor
 description: 语义内容指定页修复器——按 defects 修复 storyboard/v3 页面的来源、关系与完整性；不检索、不排版、不建文件
 mode: dispatch_only
-enabled: true
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 

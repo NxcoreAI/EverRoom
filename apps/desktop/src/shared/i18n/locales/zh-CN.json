@@ -11,6 +11,7 @@
   "dialog.knowledgeMarkdown.title": "选择要归类的 Markdown 文件",
   "dialog.importFiles.title": "选择要导入的文件或文件夹",
   "dialog.importFiles.documents": "文档",
+  "dialog.importFiles.all": "全部可导入",
   "dialog.memoryMarkdown.title": "选择要导入记忆的 Markdown 文件",
   "error.requestFailed": "请求失败，请稍后重试。",
   "error.network.title": "无法连接本地服务",

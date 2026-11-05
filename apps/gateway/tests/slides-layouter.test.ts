@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
+import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createSlidesPptxPageResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
 import { registerDeckLayoutContext, dropDeckLayoutContext, getDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
 import { contractFromStyleParams } from "../src/modules/slides-layout/tree/layout-contract.js";
 import type { SemanticPage } from "../src/modules/subagents/slides-semantic-contract.js";
@@ -178,7 +178,7 @@ describe("slides-layouter agent 包完整性", () => {
     const yaml = readFileSync(join(AGENT_DIR, "agent.yaml"), "utf8");
     expect(yaml).toMatch(/^id: slides-layouter$/m);
     expect(yaml).toMatch(/mode: dispatch_only/);
-    expect(yaml).toMatch(/^\s+- \.\/skills\/layout-tree-skill$/m);
+    expect(yaml).toMatch(/skills: \[\]/);
     expect(yaml).toMatch(/inputSchema: \.\/schemas\/input\.schema\.json/);
     expect(yaml).toMatch(/outputSchema: \.\/schemas\/output\.schema\.json/);
   });
@@ -201,89 +201,88 @@ describe("slides-layouter agent 包完整性", () => {
       .toEqual(expect.arrayContaining(["reason", "attempts", "requestedAction"]));
   });
 
-  it("SKILL.md 带 frontmatter（缺 --- 会被注册器整包拒绝）", () => {
-    const skill = readFileSync(join(AGENT_DIR, "skills/layout-tree-skill/SKILL.md"), "utf8");
+  it("pptx SKILL.md 带 frontmatter（缺 --- 会被注册器整包拒绝）", () => {
+    const skill = readFileSync(join(AGENT_DIR, "../main/skills/pptx/SKILL.md"), "utf8");
     expect(/^---\r?\n[\s\S]*?\r?\n---/.test(skill)).toBe(true);
-    expect(skill).toMatch(/^name: layout-tree-skill$/m);
+    expect(skill).toMatch(/^name: pptx$/m);
+  });
+
+  it("旧布局技能已删除", () => {
+    expect(existsSync(join(AGENT_DIR, "skills/layout-tree-skill"))).toBe(false);
   });
 });
 
-describe("布局技能按需加载", () => {
-  const skillDir = join(AGENT_DIR, "skills/layout-tree-skill");
-
-  /** SKILL.md「按展示用途选组件」索引行 → { doc, components }。 */
-  function categoryIndex(): Array<{ doc: string; components: string[] }> {
-    const skill = readFileSync(join(skillDir, "SKILL.md"), "utf8");
-    const at = skill.indexOf("## 按展示用途选组件");
-    const end = skill.indexOf("## Composition 硬约束");
-    expect(at).toBeGreaterThan(-1);
-    const section = skill.slice(at, end > at ? end : undefined);
-    const rows = section.split("\n").filter((line) => line.trim().startsWith("|"));
-    return rows.slice(2).map((line) => {
-      const cells = line.split("|").map((cell) => cell.trim());
-      return {
-        doc: (cells[2] ?? "").replace(/`/g, ""),
-        components: [...(cells[3] ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!),
-      };
-    }).filter((row) => row.components.length > 0);
-  }
-
-  it("旧模式契约与整册组件参考已删除；设计指引与类别文档存在", () => {
-    expect(existsSync(join(skillDir, "legacy.md"))).toBe(false);
-    expect(existsSync(join(skillDir, "components.md"))).toBe(false);
-    expect(existsSync(join(skillDir, "design-guide.md"))).toBe(true);
-    // SYSTEM.md 常驻提示保留「默认采用」规则，并给出按需读取路由。
+describe("pptx skill 提示词契约", () => {
+  it("SYSTEM.md 指向 pptx skill、产出 pptxgenjs 规格，且不再引用 v2 树与校验工具", () => {
     const system = readFileSync(join(AGENT_DIR, "SYSTEM.md"), "utf8");
-    expect(system).toMatch(/默认采用它承载主内容/);
-    expect(system).toMatch(/design-guide\.md/);
-    expect(system).not.toMatch(/legacy\.md|旧内容模式/);
+    expect(system).toMatch(/skills\/pptx\/SKILL\.md/);
+    expect(system).toMatch(/pptxgenjs-page/);
+    expect(system).toMatch(/addNotes/);
+    expect(system).toMatch(/mustShow/);
+    expect(system).not.toMatch(/slides_layout_validate\(/);
+    expect(system).not.toMatch(/layout-tree-skill/);
   });
 
-  it("组件索引覆盖全部 37 个组件，每个只归属一个类别且类别文档含其参数", () => {
-    const categories = categoryIndex();
-    expect(categories).toHaveLength(10);
-    const owner = new Map<string, string>();
-    for (const { doc, components } of categories) {
-      expect(doc).toMatch(/^[\w-]+\.md$/);
-      const docText = readFileSync(join(skillDir, "components", doc), "utf8");
-      for (const name of components) {
-        expect(owner.has(name), `${name} 重复出现在 ${owner.get(name)} 与 ${doc}`).toBe(false);
-        owner.set(name, doc);
-        // 参数行以 | `name` | 出现在该类别文档里。
-        expect(docText.includes(`| \`${name}\` |`), `${name} 缺参数行（${doc}）`).toBe(true);
-      }
+  it("pptx skill 已随主 Agent 包发布（脚本目录存在），生成 subagent 已禁用", () => {
+    expect(existsSync(join(AGENT_DIR, "../main/skills/pptx/scripts"))).toBe(true);
+    const mainYaml = readFileSync(join(AGENT_DIR, "../main/agent.yaml"), "utf8");
+    expect(mainYaml).toMatch(/^\s+- \.\/skills\/pptx$/m);
+    for (const agent of ["slides-layouter", "slides-planner", "slides-styler", "slides-editor"]) {
+      const yaml = readFileSync(join(AGENT_DIR, `../${agent}/agent.yaml`), "utf8");
+      expect(yaml, agent).toMatch(/^enabled: false$/m);
     }
-    // 37 = 27 核心 + 10 原子，与权威正文组件清单一致（生成器已做三方一致性校验）。
-    expect(owner.size).toBe(37);
-    // 类别目录里没有索引之外的孤儿文档。
-    const expectedDocs = new Set(categories.map((c) => c.doc));
-    expect(readdirSync(join(skillDir, "components")).sort())
-      .toEqual([...expectedDocs].sort());
-  });
-
-  it("SKILL.md 只留基础语法与索引：不内嵌整套组件参数", () => {
-    const skill = readFileSync(join(skillDir, "SKILL.md"), "utf8");
-    expect(skill).toMatch(/按展示用途选组件/);
-    expect(skill).toMatch(/design-guide\.md/);
-    // 组件参数明细（如 timeline 的形态描述）留在类别文档里按需读取。
-    expect(skill).not.toMatch(/轴线串节点/);
   });
 });
 
-describe("技能语法示例与网关归一一致", () => {
-  it("SKILL.md 的 hero-data 示例通过归一与校验", () => {
-    const skill = readFileSync(join(AGENT_DIR, "skills/layout-tree-skill/SKILL.md"), "utf8");
-    const section = skill.slice(skill.indexOf("## 示例（hero-data）"));
-    const block = section.slice(section.indexOf("```json") + "```json".length, section.indexOf("```", section.indexOf("```json") + 3));
-    const example = JSON.parse(block);
-    const token = "skill-grammar-token-003";
-    registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
-    const outcome = validateLayoutTree(token, example);
-    dropDeckLayoutContext(token);
-    expect(outcome.defects).toEqual([]);
-    expect(outcome.ok).toBe(true);
+describe("pptx 页面规格提交校验", () => {
+  const content: SemanticPage = {
+    id: "page-1",
+    sourceRefs: ["source-1"],
+    role: "content",
+    message: "规格测试页",
+    blocks: [
+      { id: "b1", sourceRefs: ["source-1"], priority: "primary", mustShow: true, type: "text", text: "规格测试页" },
+      { id: "b2", sourceRefs: ["source-1"], priority: "supporting", mustShow: true, type: "metric", label: "GDP", value: "3.87", unit: "万亿元" },
+    ],
+    relations: [],
+    focusRefs: ["source-1"],
+    constraints: { verbatimRefs: [] },
+    notes: "这是讲稿原文。",
+    omissions: [],
+  };
+  const goodPage = () => ({
+    kind: "pptxgenjs-page",
+    layout: "LAYOUT_WIDE",
+    operations: [
+      { op: "addText", text: "规格测试页", options: { x: 0.6, y: 0.5, w: 11, h: 0.9, fontSize: 32, bold: true, color: "1A1A2E", fontFace: "Microsoft YaHei", isTextBox: true, margin: 0 } },
+      { op: "addText", text: "GDP 3.87 万亿元", options: { x: 0.6, y: 1.8, w: 6, h: 0.6, fontSize: 18, color: "1A1A2E", fontFace: "Microsoft YaHei", isTextBox: true, margin: 0 } },
+      { op: "addNotes", notes: "这是讲稿原文。" },
+    ],
+  });
+  const done = (tree: unknown) => ({ status: "done", tree, designIntent: "单标题页" });
+
+  it("合格规格通过", () => {
+    expect(() => createSlidesPptxPageResultValidator()({ content }, done(goodPage()))).not.toThrow();
   });
 
+  it("带 # 与 8 位 hex 的色号被拒（损坏文件）", () => {
+    const page = goodPage() as Record<string, unknown>;
+    (page.operations as Array<Record<string, unknown>>)[0]!.options = { ...(page.operations as Array<Record<string, unknown>>)[0]!.options as object, color: "#1A1A2E" };
+    expect(() => createSlidesPptxPageResultValidator()({ content }, done(page))).toThrow(/# 前缀/);
+    const page8 = goodPage() as Record<string, unknown>;
+    (page8.operations as Array<Record<string, unknown>>)[1]!.options = { ...(page8.operations as Array<Record<string, unknown>>)[1]!.options as object, color: "1A1A2E80" };
+    expect(() => createSlidesPptxPageResultValidator()({ content }, done(page8))).toThrow(/8 位 hex/);
+  });
+
+  it("必留内容缺失与讲稿不一致被拒", () => {
+    const missing = goodPage() as Record<string, unknown>;
+    (missing.operations as Array<Record<string, unknown>>).splice(1, 1);
+    expect(() => createSlidesPptxPageResultValidator()({ content }, done(missing))).toThrow(/必留内容缺失/);
+    const badNotes = goodPage() as Record<string, unknown>;
+    ((badNotes.operations as Array<Record<string, unknown>>)[2] as { notes: string }).notes = "改写过的讲稿";
+    expect(() => createSlidesPptxPageResultValidator()({ content }, done(badNotes))).toThrow(/addNotes/);
+  });
+});
   it("v1 树在校验阶段就被拒（布局只有 v2 一种格式）", () => {
     const token = "v1-reject-token-004";
     registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });
@@ -351,7 +350,6 @@ describe("技能语法示例与网关归一一致", () => {
     expect(outcome.defects.filter((d) => d.type === "overlap")).toEqual([]);
     expect(outcome.ok).toBe(true);
   });
-});
 
 describe("slides-layouter 提交期内容契约", () => {
   const token = "validator-notes-token-006";

@@ -9,7 +9,7 @@ import { compileTree } from "../slides-layout/tree/compile.js";
 import { measureDefects, type LayoutDefect } from "../slides-layout/tree/measure.js";
 import { createSlidesImagePrewarmTools } from "./slides-page-images-prewarm.js";
 import { checkSemanticBindings, checkSemanticRendered } from "./slides-semantic-bindings.js";
-import type { SemanticPage } from "./slides-semantic-contract.js";
+import { payloadStrings, type SemanticPage } from "./slides-semantic-contract.js";
 
 /**
  * slides 两段式子代理的工具面：
@@ -544,6 +544,118 @@ export function createSlidesTreeResultValidator(): SubagentResultValidator {
       }
       if (counterKey) rejections.delete(counterKey);
     }
+  };
+}
+
+/** pptx skill 页面规格允许的指令集；与 SYSTEM.md「页面规格」一一对应。 */
+const PPTX_PAGE_OPS = new Set(["addText", "addShape", "addChart", "addTable", "addImage", "addNotes"]);
+const PPTX_PAGE_CANVAS = { w: 13.33, h: 7.5 };
+
+/** 递归收集 options 里所有字符串值，用于色号与越界检查。 */
+function collectPptxStrings(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const item of value) collectPptxStrings(item, out);
+  else if (value !== null && typeof value === "object") for (const item of Object.values(value)) collectPptxStrings(item, out);
+  return out;
+}
+
+/** 页内可见文本：addText 的 text/runs + addTable 单元格。 */
+function collectPptxVisibleText(operations: Array<Record<string, unknown>>): string {
+  const parts: string[] = [];
+  for (const op of operations) {
+    if (op.op === "addText") {
+      if (typeof op.text === "string") parts.push(op.text);
+      collectPptxStrings(op.runs).forEach((run) => parts.push(run));
+    } else if (op.op === "addTable" && Array.isArray(op.rows)) {
+      for (const row of op.rows) {
+        if (!Array.isArray(row)) continue;
+        for (const cell of row) {
+          if (typeof cell === "string") parts.push(cell);
+          else if (cell !== null && typeof cell === "object" && typeof (cell as Record<string, unknown>).text === "string") {
+            parts.push((cell as Record<string, unknown>).text as string);
+          }
+        }
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * slides-layouter 的提交期校验（pptx skill 版）：页面必须是 pptxgenjs 构建规格——
+ * 指令白名单、色号规范（禁 `#` 前缀与 8 位 hex，二者损坏文件）、画布越界、
+ * mustShow 逐字覆盖与 addNotes 讲稿逐字一致。几何与渲染由网关执行期兜底。
+ */
+export function createSlidesPptxPageResultValidator(): SubagentResultValidator {
+  const rejections = new WeakMap<object, number>();
+  return (invocationInput, result) => {
+    if (result.status === "blocked") return;
+    const input = invocationInput as { content?: SemanticPage } | null;
+    const counterKey = typeof invocationInput === "object" && invocationInput !== null ? invocationInput : null;
+    const tree = result !== null && typeof result === "object" && !Array.isArray(result)
+      ? (result as Record<string, unknown>).tree
+      : undefined;
+    if (tree === undefined || tree === null) {
+      if (input?.content) throw new Error("subagent_result_tree_invalid: 缺少页面规格（tree）");
+      return;
+    }
+    if (typeof tree !== "object" || Array.isArray(tree)) {
+      throw new Error("subagent_result_tree_invalid: tree 必须是对象");
+    }
+    const page = tree as Record<string, unknown>;
+    const errors: string[] = [];
+    if (page.kind !== "pptxgenjs-page") errors.push('tree.kind 必须是 "pptxgenjs-page"');
+    if (!Array.isArray(page.operations) || page.operations.length === 0) {
+      errors.push("tree.operations 必须是非空数组");
+    } else {
+      const operations = page.operations as Array<Record<string, unknown>>;
+      operations.forEach((op, index) => {
+        const name = typeof op.op === "string" ? op.op : String(op.op);
+        if (!PPTX_PAGE_OPS.has(name)) errors.push(`operations[${index}].op "${name}" 不在白名单 ${[...PPTX_PAGE_OPS].join("/")}`);
+        const opts = op.options;
+        if (opts !== undefined && (opts === null || typeof opts !== "object" || Array.isArray(opts))) {
+          errors.push(`operations[${index}].options 必须是对象`);
+        } else if (opts && typeof opts === "object") {
+          for (const str of collectPptxStrings(opts)) {
+            if (/^#[0-9A-Fa-f]{3,8}$/iu.test(str)) errors.push(`operations[${index}]: 色号 "${str}" 带 # 前缀——pptxgenjs 只接受 6 位裸 hex`);
+            else if (/^[0-9A-Fa-f]{8}$/iu.test(str)) errors.push(`operations[${index}]: 色号 "${str}" 是 8 位 hex——透明度请用 transparency/opacity`);
+          }
+          const o = opts as Record<string, number>;
+          if (typeof o.x === "number" && (o.x < -0.05 || o.x > PPTX_PAGE_CANVAS.w)) errors.push(`operations[${index}].options.x=${o.x} 超出画布宽 ${PPTX_PAGE_CANVAS.w}`);
+          if (typeof o.y === "number" && (o.y < -0.05 || o.y > PPTX_PAGE_CANVAS.h)) errors.push(`operations[${index}].options.y=${o.y} 超出画布高 ${PPTX_PAGE_CANVAS.h}`);
+        }
+      });
+      if (input?.content) {
+        const visible = collectPptxVisibleText(operations);
+        const mustShowImages = input.content.blocks.filter(b => b.mustShow && b.type === "image");
+        if (mustShowImages.length > 0 && !operations.some(op => op.op === "addImage")) {
+          errors.push(`必留图片缺失：${mustShowImages.map(b => b.id).join(", ")} 需要 addImage 承载`);
+        }
+        for (const block of input.content.blocks) {
+          if (!block.mustShow || block.type === "image") continue;
+          for (const payload of payloadStrings(block)) {
+            if (!visible.includes(payload.trim())) {
+              errors.push(`必留内容缺失：block ${block.id} 的 "${payload.slice(0, 40)}" 未逐字出现在 addText/addTable 可见文本中`);
+            }
+          }
+        }
+        const notes = (input.content.notes ?? "").trim();
+        if (notes) {
+          const noteOps = operations.filter(op => op.op === "addNotes") as Array<{ notes?: unknown }>;
+          const match = noteOps.some(op => typeof op.notes === "string" && op.notes.trim() === notes);
+          if (!match) errors.push("content.notes 必须由一个 addNotes 逐字承载（直接复制，不改写）");
+        }
+      }
+    }
+    if (errors.length) {
+      const attempts = counterKey ? (rejections.get(counterKey) ?? 0) + 1 : 1;
+      if (counterKey) rejections.set(counterKey, attempts);
+      if (attempts >= LAYOUT_SUBMIT_MAX_ATTEMPTS) {
+        throw new Error(`subagent_result_content_unrecoverable: 连续 ${attempts} 次提交未通过页面规格校验（${errors.slice(0, 3).join("; ")}）。不要再用 done 重交；如需上游补内容，改用 status:"blocked" 并给出 reason/attempts/requestedAction。`);
+      }
+      throw new Error(`subagent_result_content_invalid: ${errors.join("; ")}`);
+    }
+    if (counterKey) rejections.delete(counterKey);
   };
 }
 

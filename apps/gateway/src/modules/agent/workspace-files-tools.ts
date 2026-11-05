@@ -222,7 +222,7 @@ export function createWorkspaceFilesPiTools(
     promptSnippet: "工作区文件清单",
     promptGuidelines: [
       "需要工作区里的文件或图片（例如「用上传的图片做 PPT」「用资料里的照片」）时，先调用 workspace_files_list 获取清单与引用；不要用 shell、sqlite 或读应用数据目录去找文件。",
-      "把图片用于 PPT 时，把图片文件名或画面主题写进 slides_draft 的 instruction，由 slides 子代理按素材引用配图；不要把图片读进自己的上下文。",
+      "把图片用于 PPT 时，把返回的 materialRef（everroom-material://…）直接作为 slides_set_page pptxOps 中 addImage 的 url（或 spec 图片元素的 url）落页；封面/产品图优先用素材，不要把图片读进自己的上下文，也不要用 AI 生图替代用户素材。",
     ],
     executionMode: "sequential",
     execute: async (_input, params, signal): Promise<PiAgentRuntimeToolResult> => {

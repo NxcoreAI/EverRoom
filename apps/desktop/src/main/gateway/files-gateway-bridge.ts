@@ -393,6 +393,12 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
+          // 合并过滤器放第一：macOS 选择框默认激活第一项，拆「文档/图片」两项时
+          // 图片在默认档是灰的，用户不切下拉就"选不了"。
+          name: desktopText('dialog.importFiles.all'),
+          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
           name: desktopText('dialog.importFiles.documents'),
           extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
         },
@@ -416,6 +422,11 @@ export class FilesGatewayBridge {
       title: desktopText('dialog.importFiles.title'),
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
+        {
+          // 同 pickAndImport：合并过滤器放第一，图片不再被默认档灰掉。
+          name: desktopText('dialog.importFiles.all'),
+          extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
         {
           name: desktopText('dialog.importFiles.documents'),
           extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),

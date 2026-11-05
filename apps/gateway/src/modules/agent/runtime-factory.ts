@@ -8,7 +8,7 @@ import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runti
 import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
-import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
+
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "./workspace-files-tools.js";
@@ -158,12 +158,11 @@ function createUserFacingRuntime(
       ...(integrations?.workspaceFiles
         ? createWorkspaceFilesPiTools(integrations.workspaceFiles)
         : []),
-      // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
-      // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
-      // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
-      // document_list（文稿库清单）同样剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
+      // PPT 生成走主 Agent 直生：pptx skill（系统提示词内联）设计 + slides_create/
+      // slides_set_page(pptxOps) 逐页落页；四件套不再从用户档剔除。document_list
+      // （文稿库清单）仍剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
       ...createDocumentPiTools(mcpHost)
-        .filter((tool) => ![...(SLIDES_TOOL_NAMES as readonly string[]), ...USER_FACING_EXCLUDED_DOCUMENT_TOOLS].includes(tool.name)),
+        .filter((tool) => !(USER_FACING_EXCLUDED_DOCUMENT_TOOLS as readonly string[]).includes(tool.name)),
       ...(config.webSearch && integrations?.agentResolver
         ? createWebSearchPiTools(integrations.agentResolver, integrations.externalCalls)
         : []),

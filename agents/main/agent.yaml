@@ -7,6 +7,7 @@ runtime: pi
 systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/document-export
+  - ./skills/pptx
 
 capabilities:
   - conversation.respond
@@ -29,7 +30,6 @@ tools:
   - document_write_commit
   - document_write_abort
   - document_draft
-  - slides_draft
   - office_create
   - slides_create
   - slides_set_page

@@ -27,6 +27,7 @@ import {
   visualReviewToolPayload,
   type VisualReviewOutcome,
 } from "../../slides-visual-review/review.js";
+import { isPptxGenJsPage, pageSpecFromOperations } from "../../subagents/slides-pptx-exec.js";
 
 /**
  * Agent 写 Office：Word（受限 HTML）、PPT（两阶段：建文件 + 逐页生成）、Excel
@@ -495,6 +496,8 @@ export function officePlugin(
     description: "生成已打开 PPT 的一页（spec 形态：整页 PageSpec 直填）：slideIndex 小于当前页数时原地替换该页（旧内容整体丢弃）；"
       + "slideIndex 等于当前页数时在末尾追加新页（页数 +1）。"
       + "这是 PPT 生成的第二步：slides_create 建好文件（1 页骨架）后，用本工具一页一页生成——"
+      + "推荐按系统提示词内联 pptx skill（<skill name=\"pptx\">）的方法设计本页，把 pptxOps 传给本工具（{kind:\"pptxgenjs-page\", layout:\"LAYOUT_WIDE\", background:\"RRGGBB\", operations:[addText/addShape/addChart/addTable/addImage/addNotes 指令序列，坐标英寸、颜色 6 位裸 hex]}），网关确定性映射成 PageSpec 落页；"
+      + "addImage 的 url 支持 http(s) 公网图与 everroom-material://（workspace_files_list 返回的 materialRef）工作区素材图；"
       + "从 slideIndex=0 起按 0、1、2… 顺序推进，每页等成功结果（用户实时看到该页成形）再继续下一页；"
       + "某页失败只需重试该页，不影响已完成的页；生成到第几页，文件就有几页。"
       + `${PAGESPEC_GUIDE}`
@@ -507,9 +510,10 @@ export function officePlugin(
       properties: {
         fileId: { type: "string", minLength: 1, description: "PPT 文件 id（fileEntryId）；\"active\" = 当前打开的那个 PPT" },
         slideIndex: { type: "integer", minimum: 0, maximum: MAX_SLIDES_PAGES - 1, description: "页序号，从 0 开始（第 1 页 = 0）；等于当前页数时表示追加新页" },
-        spec: { type: "object", additionalProperties: true, description: "该页完整的 PageSpec 对象（整页替换；elements 按绘制顺序排列）" },
+        spec: { type: "object", additionalProperties: true, description: "该页完整的 PageSpec 对象（整页替换；elements 按绘制顺序排列）。与 pptxOps 二选一。" },
+        pptxOps: { type: "object", additionalProperties: true, description: "pptx skill 页面规格（推荐）：{kind:\"pptxgenjs-page\", layout:\"LAYOUT_WIDE\", background:\"RRGGBB\", operations:[…]}——operations 是 pptxgenjs 指令序列（addText/addShape/addChart/addTable/addImage/addNotes，坐标英寸、颜色 6 位裸 hex），由网关确定性映射成 PageSpec。与 spec 二选一。" },
       },
-      required: ["fileId", "slideIndex", "spec"],
+      required: ["fileId", "slideIndex"],
     },
     annotations: annotations(false, false),
     execute: async (args, context) => {
@@ -518,9 +522,19 @@ export function officePlugin(
       if (typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0) {
         throw new Error("INVALID_REQUEST: slideIndex 必须是非负整数（0 = 第 1 页）");
       }
-      const spec = args.spec;
-      if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
-        throw new Error("INVALID_REQUEST: spec 必须是该页完整的 PageSpec 对象");
+      let spec = args.spec;
+      const pptxOps = args.pptxOps;
+      const hasSpec = spec !== null && typeof spec === "object" && !Array.isArray(spec);
+      const hasOps = isPptxGenJsPage(pptxOps);
+      if (hasSpec === hasOps) {
+        throw new Error("INVALID_REQUEST: spec 与 pptxOps 必须恰好提供一个（pptx skill 生成走 pptxOps）");
+      }
+      if (hasOps) {
+        const exec = pageSpecFromOperations(pptxOps);
+        if (exec.spec.elements.length === 0) {
+          throw new Error(`INVALID_REQUEST: pptxOps 无可映射元素（${exec.warnings.slice(0, 3).join("; ")}）`);
+        }
+        spec = exec.spec;
       }
       const specJson = JSON.stringify(spec);
       if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
@@ -1697,7 +1711,7 @@ export function officePlugin(
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
-      + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"
+      + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，走 slides_create 建文件后按 skills/pptx 的设计逐页 slides_set_page(pptxOps) 生成，修改用 slides_edit 直改；"
       + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
