@@ -938,7 +938,7 @@ const api: NxcoreDesktopApi = {
       },
     ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
     reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
-    /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
+    /** 导出 PDF（内置渲染引擎；老运行时回退 LibreOffice，两者都不可用才返回 { unavailable: true }）。 */
     exportPdf: (workspaceId: string, fileEntryId: string) =>
       invoke('thesis-format:export:pdf', fileEntryId),
     removeCard: (workspaceId: string, cardId: string) =>

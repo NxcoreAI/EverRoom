@@ -101,6 +101,8 @@ type OfficeAgentToolsFailureReason =
   | 'open_failed'
   | 'save_failed'
   | 'error'
+  /** 运行时能力缺失（老 genoffice 构建），调用方走外部回退路径。 */
+  | 'unsupported'
 
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
@@ -124,7 +126,8 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
 
 /**
  * Agent 导出 Word 为 PDF（gateway word_export_pdf → /v1/office-export-pdf）。
- * 桌面端用 LibreOffice 把 catalog 里的 docx 转成 PDF，再作为新文件入库。
+ * 桌面端用内置渲染引擎（genoffice，老运行时回退 LibreOffice）把 catalog 里
+ * 的 docx 转成 PDF，再作为新文件入库。
  */
 export interface OfficeExportPdfRequest {
   fileId: string
@@ -509,7 +512,7 @@ export class OfficeBridgeServer {
 
   /**
    * /v1/office-export-pdf：任意 Word → PDF 并作为新文件入库。
-   * 桌面端做 LibreOffice 转换与文件库导入；网关只转发 fileId/归属。
+   * 桌面端做进程内渲染（或 LibreOffice 回退）与文件库导入；网关只转发 fileId/归属。
    */
   private async exportPdfRoute(
     req: OfficeExportPdfRequest,

@@ -938,6 +938,45 @@ export class OfficePreviewRegistry {
   }
 
   /** Agent 读 Word：已打开实例优先；未打开则拉起后台编辑器（不弹页签）。 */
+  /**
+   * Agent 导出 PDF（word_export_pdf）：进程内渲染，替代 LibreOffice。
+   * 已打开实例优先（导的是用户正看到的版式）；未打开则拉起后台隐藏
+   * 会话。运行时缺 exportDocsPdf（老 genoffice 构建）时返回
+   * reason='unsupported'，调用方回退 LibreOffice 路径。
+   */
+  async exportDocxPdf(
+    fileId: string,
+    outPath: string,
+    hints?: AgentDocFileHints,
+  ): Promise<
+    | { ok: true; path: string }
+    | {
+      ok: false
+      reason: 'unsupported' | AgentArtifactFailureReason
+      message?: string
+    }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'docx', { waitForOpen: false })
+    if (resolved.ok) {
+      const target = webContents.fromId(resolved.wcId)
+      const docs = this.runtime!.docs
+      if (!target || target.isDestroyed() || typeof docs.exportDocsPdf !== 'function') {
+        return { ok: false, reason: 'unsupported' }
+      }
+      const exported = await docs.exportDocsPdf(target, outPath)
+      if ('error' in exported) return { ok: false, reason: 'error', message: exported.error }
+      return { ok: true, path: exported.path }
+    }
+    if (resolved.reason === 'not_editable') {
+      // 可见但只读打开：仍可用后台会话装载导出（导出不要求可编辑）
+    }
+    const headless = fileId === 'active' ? null : this.ensureAgentDocs()
+    if (!headless) return { ok: false, reason: resolved.reason }
+    const outcome = await headless.exportPdf(fileId, outPath, hints)
+    if (outcome.ok) return { ok: true, path: outcome.path }
+    return { ok: false, reason: outcome.reason, ...(outcome.message ? { message: outcome.message } : {}) }
+  }
+
   async describeDocArtifact(
     fileId: string,
     hints?: AgentDocFileHints,

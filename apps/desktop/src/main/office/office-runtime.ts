@@ -156,6 +156,16 @@ export interface GenOfficeDocsRuntime {
     contents: WebContents,
     calls: GenOfficeAgentToolCall[],
   ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 进程内 PDF 导出（genoffice embed 后加导出）：把该视图打开的 docx 按
+   * 渲染层完整导出编排（分页预览 → 分组 printToPDF → 合并）写成 PDF，
+   * 无对话框、无外部依赖。老运行时缺此导出时返回 undefined，调用方回退
+   * LibreOffice。宿主只授权一次写入目标路径。
+   */
+  exportDocsPdf?(
+    contents: WebContents,
+    outPath: string,
+  ): Promise<{ path: string } | { error: string }>
   /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
   buildThesisDocx(
     sourceBytes: Uint8Array,

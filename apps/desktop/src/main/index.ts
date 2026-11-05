@@ -136,7 +136,7 @@ import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
 import { OfficePreviewRegistry, type AgentArtifactFailureReason } from './office/office-preview-registry'
 import { notifyPreviewRequested, previewRequestFromOpenResult } from './office/preview-request'
-import { convertOfficeFileToPdf } from './office/legacy-convert'
+import { exportDocxToPdf } from './office/docx-pdf-export'
 import { OfficeBridge as GenofficeProtoBridge } from './genoffice/bridge'
 
 // 品牌/数据目录名：决定 userData 路径（~/Library/Application Support/<APP_NAME>）、
@@ -2860,16 +2860,18 @@ function registerThesisFormatHandlers(
     }
   })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
-  /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverOffice/，并定位到文件。 */
+  /** 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/，并定位到文件。 */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
     const storagePath = await files.storagePath(fileEntryId)
     const entry = await files.catalogEntry(fileEntryId)
-    const outcome = await convertOfficeFileToPdf(
+    const outcome = await exportDocxToPdf({
+      registry: officePreviewRegistry,
+      fileId: fileEntryId,
       storagePath,
-      entry.originalName,
-      join(app.getPath('downloads'), 'EverOffice'),
-    )
-    if ('unavailable' in outcome) return { unavailable: true as const }
+      originalName: entry.originalName,
+      targetDir: join(app.getPath('downloads'), 'EverOffice'),
+    })
+    if (!outcome.ok) return { unavailable: true as const }
     shell.showItemInFolder(outcome.pdfPath)
     return { unavailable: false as const, path: outcome.pdfPath }
   })
@@ -3882,8 +3884,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : outcome
       },
-      // Word → PDF 导出并入库（word_export_pdf）：LibreOffice 转换 catalog 里的
-      // docx，再把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
+      // Word → PDF 导出并入库（word_export_pdf）：优先 genoffice 进程内渲染
+      // （无外部依赖），老运行时/渲染失败回退 LibreOffice；转换 catalog 里的
+      // docx 后把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
       () => async (req: OfficeExportPdfRequest): Promise<
         OfficeExportPdfResult | { ok: false; message: string }
       > => {
@@ -3899,9 +3902,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           const storagePath = await files.storagePath(req.fileId)
           const exportDirectory = join(app.getPath('userData'), 'office-exports')
-          const converted = await convertOfficeFileToPdf(storagePath, originalName, exportDirectory)
-          if ('unavailable' in converted) {
-            return { ok: false, message: '本机未安装 LibreOffice，无法导出 PDF。' }
+          const converted = await exportDocxToPdf({
+            registry: officePreviewRegistry,
+            fileId: req.fileId,
+            storagePath,
+            originalName,
+            targetDir: exportDirectory,
+            ...(req.roomId || req.workspaceId
+              ? {
+                hints: {
+                  ...(req.roomId ? { roomId: req.roomId } : {}),
+                  ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+                },
+              }
+              : {}),
+          })
+          if (!converted.ok) {
+            return { ok: false, message: converted.message }
           }
           const rawName = (req.fileName ?? '').trim()
             || `${basename(originalName, extname(originalName))}.pdf`
