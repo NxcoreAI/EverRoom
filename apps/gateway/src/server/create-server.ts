@@ -60,7 +60,6 @@ import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/ca
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import type { DocumentIllustrationPorts } from "../modules/documents/capabilities/office-plugin.js";
-import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import { DocumentImportService } from "../modules/documents/import/service.js";
@@ -92,7 +91,6 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
-import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
@@ -171,7 +169,6 @@ import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
-import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentSkillStateStore } from "../modules/skills/state-store.js";
@@ -511,10 +508,6 @@ export async function createServer(config: GatewayConfig) {
       isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
-  // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
-  // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
-  // 注入 host，避免 host 内部自建私有实例。
-  const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
@@ -601,20 +594,6 @@ export async function createServer(config: GatewayConfig) {
   });
   // 子 Agent 的技能读取工具按闸门过滤（被停用的技能不给读）。
   subagentRuntimeManager.setSkillGate(skillService);
-  // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
-  // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
-  // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
-  // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
-    documentTools: createDocumentPiTools(documentMcpHost),
-    analysisTools: subagentConfig.enabled
-      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator)
-      : [],
-    webSearchTools: config.webSearch
-      ? createWebSearchPiTools(agentResolver, externalCalls)
-      : [],
-  }));
   // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
   // 落页；edit：slides-builder 直改）——方案代理拿只读面（无 PPT 工具、不落页；
   // 素材检索也不在工具面，arrange 前由网关按页预取随输入下发），

@@ -85,11 +85,11 @@ describe("技能目录", () => {
       subagents: () => subagents,
       logger,
     });
-    const skill = withSubagents.list().find((entry) => entry.id === "subagent:doc-writer:rewrite");
+    const skill = withSubagents.list().find((entry) => entry.id === "subagent:content-analyst:analysis-method");
     expect(skill).toBeTruthy();
-    expect(skill!.ownerName).toBe("Document Writer");
-    expect(skill!.description).toContain("selectedText");
-    expect(withSubagents.get("subagent:doc-writer:rewrite")?.prompt).toContain("# Rewrite");
+    expect(skill!.ownerName).toBe("Content Analyst");
+    expect(skill!.description).toContain("analysis");
+    expect(withSubagents.get("subagent:content-analyst:analysis-method")?.prompt).toContain("# Analysis Method");
     expect(service.list().some((entry) => entry.ownerKind === "subagent")).toBe(false);
   });
 
@@ -132,13 +132,13 @@ describe("启停", () => {
       subagents: () => subagents,
       logger,
     });
-    const paths = ["./skills/draft-create", "./skills/rewrite"];
-    expect(service.subagentSkillPaths("doc-writer", paths)).toEqual(paths);
-
-    service.setEnabled("subagent:doc-writer:rewrite", false);
-    expect(service.subagentSkillPaths("doc-writer", paths)).toEqual(["./skills/draft-create"]);
-    // 同一技能换一个 owner 不受影响。
+    const paths = ["./skills/analysis-method", "./skills/other-method"];
     expect(service.subagentSkillPaths("content-analyst", paths)).toEqual(paths);
+
+    service.setEnabled("subagent:content-analyst:analysis-method", false);
+    expect(service.subagentSkillPaths("content-analyst", paths)).toEqual(["./skills/other-method"]);
+    // 同一技能换一个 owner 不受影响。
+    expect(service.subagentSkillPaths("thesis-formatter", paths)).toEqual(paths);
   });
 });
 

@@ -14,12 +14,6 @@ function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
 
-/**
- * 划词改写的派发器（由 create-server 注入 `doc-writer` 的 rewrite task）：
- * documents 模块不依赖 subagents，只约定「拿任务入参、立即返回 invocationId」。
- */
-export type SelectionRewriteDispatch = (taskInput: Record<string, unknown>) => Promise<string>;
-
 export function documentRoutes(
   service: DocumentService,
   summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,

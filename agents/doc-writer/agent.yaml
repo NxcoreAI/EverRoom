@@ -3,7 +3,7 @@ id: doc-writer
 name: Document Writer
 description: 承接 EverOffice 文档正文的内容生成，包括新建起草、修改建议、续写与选区改写，输出结构化写作产物
 mode: dispatch_only
-enabled: true
+enabled: false  # 2026-11 下线：document_draft/write_*/patch_* 落库链路已移除，目录中保留只会诱导主 Agent 委派无法落稿的写作任务
 
 systemPrompt: ./SYSTEM.md
 

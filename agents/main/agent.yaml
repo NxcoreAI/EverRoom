@@ -18,17 +18,6 @@ capabilities:
   - notification.send
 
 tools:
-  - document_list
-  - document_read
-  - document_patch_begin
-  - document_patch_hunk
-  - document_patch_commit
-  - document_patch_abort
-  - document_write_begin
-  - document_write_append
-  - document_write_commit
-  - document_write_abort
-  - document_draft
   - slides_draft
   - office_create
   - slides_create

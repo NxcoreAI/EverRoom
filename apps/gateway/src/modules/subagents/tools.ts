@@ -8,10 +8,15 @@ import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { roomScopeId } from "../documents/room-scope.js";
-import {
-  DOCUMENT_MARKDOWN_MAX_CHARS,
-  type DocumentDraftSnapshot,
-} from "./document-draft.js";
+/** documentMarkdown 组装预算（开放问题⑦的初值；随文稿工具链收缩保留 slides 取数语义）。 */
+const DOCUMENT_MARKDOWN_MAX_CHARS = 200_000;
+
+/** 幻灯片方案代理的文档取数快照（正文 + block 概览）。 */
+interface DocumentDraftSnapshot {
+  document: { id: string; title: string; version: number; roomId: string | null };
+  blocks: Array<{ blockId: string; type: string; ordinal: number; depth: number; textPreview: string }>;
+  markdown: string;
+}
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 import {

@@ -6,8 +6,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SubagentInvocation, TiptapJsonContent } from "@nxcore/agent-contract";
 import type { DocumentCapabilityPlugin } from "../src/modules/documents/capabilities/types.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../src/modules/documents/capabilities/builtins.js";
-import { DocumentReadAuthority } from "../src/modules/documents/capabilities/read-authority.js";
-import { createDocWriterDraftResolver } from "../src/modules/subagents/doc-writer-content.js";
 import {
   buildSelectionRewriteProposedContent,
   createSelectionRewriteContentResolver,
