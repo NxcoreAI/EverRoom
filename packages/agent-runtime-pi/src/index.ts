@@ -3,6 +3,7 @@ import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js
 import {
   createRepeatedCallState,
   DEFAULT_MAX_REPEATED_CALLS,
+  resolveStallAction,
   trackRepeatedCall,
   type RepeatedCallState,
 } from "./tool-loop-guard.js";
@@ -258,6 +259,9 @@ interface ActivePiRun {
   /** 连续相同调用的计数（原地打转守卫）。 */
   repeated: RepeatedCallState;
   repeatLimitExceeded: boolean;
+  /** 已就空转 / 打转向模型纠偏过一次（第二次命中才中止）。 */
+  noOpSteered: boolean;
+  repeatSteered: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -267,6 +271,17 @@ const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 export const DEFAULT_MAX_AUTO_CONTINUES = 2;
 /** 首轮请求遇到连接类错误的默认重试次数（仅在没有工具副作用时）。 */
 export const DEFAULT_MAX_CONNECTION_RETRIES = 2;
+/**
+ * 空转/打转的纠偏提示：用用户口吻说清楚"别打点、直接干活"，并点名可用工具。
+ * 只在第一次命中时注入一次；再犯才中止。
+ */
+const STALL_STEER_TEXT = [
+  "停一下：你刚才连续在用 echo、读取 /dev/null 这类没有任何作用的调用打点，任务没有推进。",
+  "不要再做这类调用，也不要重复同一条命令。",
+  "Office 文件（PPT/Excel/Word）的内容读写一律用对应工具：PPT 用 slides_read / slides_edit，",
+  "Excel 用 sheets_agent_read / sheets_agent_edit，Word 用 word_agent_read / word_agent_edit。",
+  "现在直接继续把用户要求的修改做完；如果缺少必要信息，就用一句话说明缺什么。",
+].join("");
 /** 续写提示词：只要求"接着写完"，避免模型重头再来或重新复述需求。 */
 const AUTO_CONTINUE_PROMPT = [
   "上一轮输出被长度上限截断了，没有写完。",
@@ -754,6 +769,8 @@ export class PiAgentRuntime implements AgentRuntime {
       continuing: false,
       repeated: createRepeatedCallState(),
       repeatLimitExceeded: false,
+      noOpSteered: false,
+      repeatSteered: false,
       terminal: false,
       finishPromise: null,
     };
@@ -1322,7 +1339,13 @@ export class PiAgentRuntime implements AgentRuntime {
       // 打转守卫：同一工具 + 完全相同的参数连续多次（实测有任务把同一条 python
       // heredoc 刷了约 170 次、跑 7 分钟而没有任何文件被改），直接中止。
       const repeatLimit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
-      if (trackRepeatedCall(active.repeated, event.toolName, event.args, repeatLimit)) {
+      const repeatHit = trackRepeatedCall(active.repeated, event.toolName, event.args, repeatLimit);
+      const repeatAction = resolveStallAction(repeatHit, active.repeatSteered);
+      if (repeatAction === "steer") {
+        active.repeatSteered = true;
+        active.repeated = createRepeatedCallState();
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (repeatAction === "abort") {
         active.repeatLimitExceeded = true;
         void this.abortForToolLimit(runId);
         return;
@@ -1331,7 +1354,13 @@ export class PiAgentRuntime implements AgentRuntime {
       // 继续跑只会刷满时间线而不推进任务，直接中止并如实报告。
       const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
       active.noOpStreak = isNoOpToolCall(event.toolName, event.args) ? active.noOpStreak + 1 : 0;
-      if (noOpLimit > 0 && active.noOpStreak >= noOpLimit) {
+      const noOpHit = noOpLimit > 0 && active.noOpStreak >= noOpLimit;
+      const noOpAction = resolveStallAction(noOpHit, active.noOpSteered);
+      if (noOpAction === "steer") {
+        active.noOpSteered = true;
+        active.noOpStreak = 0;
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (noOpAction === "abort") {
         active.noOpLimitExceeded = true;
         void this.abortForToolLimit(runId);
         return;
@@ -1418,6 +1447,21 @@ export class PiAgentRuntime implements AgentRuntime {
         await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
         if (active.terminal) throw error;
       }
+    }
+  }
+
+  /**
+   * 纠偏：命中空转/打转时先往会话里塞一句用户口吻的提醒，而不是立刻杀掉。
+   * 注入失败（会话已结束等）就直接按超限中止，避免白等。
+   */
+  private async steerStall(runId: string, text: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    try {
+      await active.handle.session.steer(text);
+    } catch {
+      active.noOpLimitExceeded = true;
+      await this.abortForToolLimit(runId);
     }
   }
 

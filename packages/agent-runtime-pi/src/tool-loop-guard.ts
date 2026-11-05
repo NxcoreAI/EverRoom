@@ -49,3 +49,17 @@ export function trackRepeatedCall(
   }
   return limit > 0 && state.count >= limit;
 }
+
+/**
+ * 命中打转/空转时的处置：先纠偏一次，再犯才中止。
+ *
+ * 直接杀掉会浪费「其实会干、只是起手用错工具」的情况（实测模型先连刷 8 个 echo，
+ * 给它一句"别用 bash 打点"就能拐回来）。所以第一次只注入纠偏提示并清零计数，
+ * 第二次命中才真正中止。
+ */
+export type StallAction = "none" | "steer" | "abort";
+
+export function resolveStallAction(hit: boolean, alreadySteered: boolean): StallAction {
+  if (!hit) return "none";
+  return alreadySteered ? "abort" : "steer";
+}

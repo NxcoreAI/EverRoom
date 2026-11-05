@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createRepeatedCallState,
   DEFAULT_MAX_REPEATED_CALLS,
+  resolveStallAction,
   trackRepeatedCall,
 } from '../src/tool-loop-guard.js'
 
@@ -53,5 +54,20 @@ describe('重复调用守卫', () => {
     for (let i = 0; i < 20; i += 1) {
       expect(trackRepeatedCall(state, 'bash', { command: 'x' }, 0)).toBe(false)
     }
+  })
+})
+
+describe('打转处置：先纠偏，再犯才中止', () => {
+  it('没命中什么都不做', () => {
+    expect(resolveStallAction(false, false)).toBe('none')
+    expect(resolveStallAction(false, true)).toBe('none')
+  })
+
+  it('第一次命中只纠偏', () => {
+    expect(resolveStallAction(true, false)).toBe('steer')
+  })
+
+  it('已经纠偏过还犯就中止', () => {
+    expect(resolveStallAction(true, true)).toBe('abort')
   })
 })
