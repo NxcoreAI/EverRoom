@@ -18,7 +18,7 @@ export interface SelectionRewriteContentResolverDependencies {
   /** 取 invocation 完成态（SubagentOrchestrator.getInvocation 的注入形态）。 */
   getInvocation(invocationId: string): SubagentInvocation | null;
   /** 授权判定（isSelectionRewriteInvocationAuthorized 的注入形态）。 */
-  isInvocationAuthorized(invocation: SubagentInvocation | null, roomId: string | null): boolean;
+  isInvocationAuthorized(invocation: SubagentInvocation | null): boolean;
   /** 取权威文档（DocumentService.get 的注入形态）。 */
   getDocument(documentId: string): RoomDocument | null;
 }
@@ -37,8 +37,6 @@ export interface SelectionRewriteResolvedContent {
 export type SelectionRewriteContentResolver = (input: {
   invocationId: string;
   documentId: string;
-  /** 工作区级文稿为 null。 */
-  roomId: string | null;
   /**
    * 用户在预览框编辑过替换文本时的覆盖文本（出路二）：
    * 重放选区替换时用它替代 invocation 输出，编辑内容不再被静默丢弃。
@@ -334,9 +332,9 @@ export function createSelectionRewriteContentResolver(
   dependencies: SelectionRewriteContentResolverDependencies,
 ): SelectionRewriteContentResolver {
   const { getInvocation, isInvocationAuthorized, getDocument } = dependencies;
-  return ({ invocationId, documentId, roomId, userEditedReplacementText }) => {
+  return ({ invocationId, documentId, userEditedReplacementText }) => {
     const invocation = getInvocation(invocationId);
-    if (!invocation || !isInvocationAuthorized(invocation, roomId)) return null;
+    if (!invocation || !isInvocationAuthorized(invocation)) return null;
     const rawInput = invocation.input;
     const input = rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
       ? rawInput as Record<string, unknown>

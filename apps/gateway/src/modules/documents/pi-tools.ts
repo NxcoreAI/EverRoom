@@ -28,11 +28,10 @@ function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
 }
 
 /**
- * 文档工具面（P0-4）：不再为每个 run 粘滞「已绑定 Room」。
+ * 文档工具面（P0-4 → Phase 2i）：文稿一律工作区级，无 Room 概念。
  *
- * 归属只来自 run 级 `input.roomId`——工具 schema 已不暴露 roomId 参数，
- * 模型传进来的同名参数不再影响归属；为 null 即工作区级文稿，
- * 不再强求从 available_rooms 里选房。
+ * 工具 schema 不暴露 roomId 参数，run 上下文也不再携带归属；
+ * 模型传进来的同名参数不影响任何行为。
  */
 export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool[] {
   return host.listTools().map((definition) => ({
@@ -55,9 +54,7 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
           {
             agentSessionId: input.sessionId,
             runId: input.runId,
-            roomId: input.roomId ?? null,
             workspaceId: input.workspaceId ?? null,
-            availableRooms: input.availableRooms ?? [],
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
             ...(input.activeFile ? { activeFile: input.activeFile } : {}),
           },

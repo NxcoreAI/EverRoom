@@ -694,6 +694,27 @@
       "when": 1793850000000,
       "tag": "0101_workspace_plan_items",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "6",
+      "when": 1793930000000,
+      "tag": "0102_journal_advice",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "6",
+      "when": 1793940000000,
+      "tag": "0103_agent_message_note_cards",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "6",
+      "when": 1793950000000,
+      "tag": "0104_agent_message_display_content",
+      "breakpoints": true
     }
   ]
 }

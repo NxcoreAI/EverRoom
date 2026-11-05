@@ -11,8 +11,6 @@ function runtimeInput(originalPrompt: string): StartRuntimeRunInput {
     originalPrompt,
     prompt: `外部服务路由规则\n\n用户请求：\n${originalPrompt}`,
     pageLabel: '首页',
-    roomId: null,
-    availableRooms: [{ id: 'room-a', title: '产品规划' }],
   }
 }
 
@@ -68,10 +66,10 @@ describe('Document Pi tool routing', () => {
     expect(callTool).toHaveBeenCalledOnce()
   })
 
-  it('takes document ownership from the run and ignores any roomId left in tool params', async () => {
-    const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: { roomId: string | null }): Promise<DocumentMcpToolResult> => ({
-      content: [{ type: 'text', text: JSON.stringify({ roomId: context.roomId, operationId: 'operation-1' }) }],
-      structuredContent: { roomId: context.roomId, operationId: 'operation-1' },
+  it('Phase 2i 去 Room：文档归属取 run 上下文（无 Room 字段），工具参数里遗留 roomId 不生效', async () => {
+    const callTool = vi.fn(async (_name: string, _params: Record<string, unknown>, context: Record<string, unknown>): Promise<DocumentMcpToolResult> => ({
+      content: [{ type: 'text', text: JSON.stringify({ operationId: 'operation-1' }) }],
+      structuredContent: { operationId: 'operation-1' },
     }))
     const host = {
       listTools: () => [
@@ -89,7 +87,7 @@ describe('Document Pi tool routing', () => {
     const [begin, append] = createDocumentPiTools(host)
 
     // Room 归属参数已从 write_begin 的 schema 摘除：参数里即便混入 roomId 也不生效，
-    // 归属一律取 run 级 input.roomId（本次为 null → 工作区级文稿）。
+    // Phase 2i 后 context 只携带 sessionId/runId/workspaceId（无 Room 维度）。
     await begin!.execute(runtimeInput('创建一份 Java 并发指南文档'), {
       title: 'Java 并发指南', roomId: 'room-ignored',
     })
@@ -98,11 +96,15 @@ describe('Document Pi tool routing', () => {
     })
 
     expect(callTool).toHaveBeenNthCalledWith(1, 'document_write_begin', expect.any(Object), expect.objectContaining({
-      roomId: null,
+      agentSessionId: 'session-notion-routing',
+      runId: 'run-notion-routing',
     }))
+    expect(callTool.mock.calls[0]![2]).not.toHaveProperty('roomId')
     expect(callTool).toHaveBeenNthCalledWith(2, 'document_write_append', expect.any(Object), expect.objectContaining({
-      roomId: null,
+      agentSessionId: 'session-notion-routing',
+      runId: 'run-notion-routing',
     }))
+    expect(callTool.mock.calls[1]![2]).not.toHaveProperty('roomId')
   })
 
   describe('document_list selectionRequired 意图闸门', () => {

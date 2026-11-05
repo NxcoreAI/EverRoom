@@ -1,5 +1,5 @@
 /** Agent 生成 Office 文件的主进程 → 渲染层事件（channel office:agent-file）。 */
-export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx'
+export type OfficeAgentFileFormat = 'docx' | 'pptx' | 'xlsx' | 'pdf'
 
 export interface OfficeAgentFileEvent {
   type: 'phase' | 'done' | 'error' | 'edited' | 'open-edit' | 'write-back-failed'
@@ -58,20 +58,42 @@ export interface OfficeAgentAskEvent {
   anchor?: OfficeAskAnchor
 }
 
-/** 选区锚点：Word 用顶层块索引区间，Excel 用 sheetId + A1 区域。 */
+/**
+ * 选区锚点：四种编辑器各自的定位字段并列在这里，宿主只做透传。
+ * - Word：顶层块索引区间
+ * - Excel：sheetId + A1 区域
+ * - PPT：页码（0 起）+ 选中元素的 durable id
+ * - PDF：原始页序（0 起，旋转稳定）+ PDF 坐标的选区 quads
+ */
 export interface OfficeAskAnchor {
+  // Word
   fromBlockIndex?: number
   toBlockIndex?: number
   kind?: string
+  // Excel
   sheetId?: string
   sheetName?: string
   range?: string
+  // PPT
+  slideIndex?: number
+  elementIds?: string[]
+  // PDF
+  pageIndex?: number
+  quads?: number[][]
 }
 
-/** 文档侧批注面板发起的动作（全部发送 / 移除一条）→ 渲染层处理。 */
+/**
+ * 文档侧批注面板发起的动作（全部发送 / 移除一条 / 改写一条）→ 渲染层处理。
+ * update：行内编辑保存后的新原话（渲染层改写对应草稿的 instruction 与已组包文案）。
+ */
+export type OfficeAskQueueAction =
+  | { kind: 'send-all' }
+  | { kind: 'remove'; draftId: string }
+  | { kind: 'update'; draftId: string; instruction: string }
+
 export interface OfficeAskQueueActionEvent {
   /** 动作来自哪个文件的文档视图。 */
   fileId: string | null
   workspaceId: string
-  action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
+  action: OfficeAskQueueAction
 }

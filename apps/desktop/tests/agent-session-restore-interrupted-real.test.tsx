@@ -87,7 +87,7 @@ describe('中断会话恢复（真实数据重放）', () => {
     const runId = fixture.snapshot.messages[0]!.runId
     let current: Hook | null = null
     function Probe() {
-      current = useAgentSession('Agent', null, [], {})
+      current = useAgentSession('Agent', {})
       return <div />
     }
     await act(async () => {

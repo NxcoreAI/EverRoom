@@ -49,7 +49,7 @@ import type {
 import { isAgentSocketFrame } from '@nxcore/agent-contract'
 import type {
   AgentPersonaDto, AgentSkillDetailDto, AgentSkillDto, AgentSkillsSnapshotDto,
-  CreateAgentSkillInput, JournalTodayDto, MemoryEntryDto, MemoryProfileDto,
+  CreateAgentSkillInput, JournalTodayDto, MemoryEntryDto, MemoryProfileDto, WorkspaceInsightDto,
 } from '../../shared/sources'
 import type { AxiosRequestConfig } from 'axios'
 import { isAxiosError } from 'axios'
@@ -248,6 +248,17 @@ export class AgentGatewayBridge {
   /** 手动重写当天日记（绕过最小间隔；去抖与单飞行仍在网关侧生效）。 */
   refreshJournal(): Promise<JournalTodayDto> {
     return this.request('/v1/journal/refresh', { method: 'POST' })
+  }
+
+  /**
+   * 工作空间洞察（概览 B 区）：LLM 总结 + 建议，模板兜底；不落库。
+   * force=true 跳过网关侧缓存（手动刷新用）。
+   */
+  getWorkspaceInsight(workspaceId: string, options: { force?: boolean } = {}): Promise<WorkspaceInsightDto> {
+    const query = new URLSearchParams()
+    if (options.force) query.set('force', 'true')
+    const suffix = query.size > 0 ? `?${query.toString()}` : ''
+    return this.request(`/v1/agent/workspaces/${encodeURIComponent(workspaceId)}/insight${suffix}`)
   }
 
   /** 计划看板：本空间的全部任务（服务端按 rank 排序，渲染层按列分组）。 */

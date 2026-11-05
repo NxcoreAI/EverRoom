@@ -25,7 +25,6 @@ function runInput(phase?: string): StartRuntimeRunInput {
     runtimeSessionRef: null,
     prompt: "prompt",
     pageLabel: "Subagent: Slides Planner",
-    roomId: "room-1",
     toolsEnabled: true,
     ...(phase ? { runtimeMetadata: { subagentInput: { phase } } } : {}),
   };

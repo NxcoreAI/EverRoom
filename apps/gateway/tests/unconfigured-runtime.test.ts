@@ -33,7 +33,6 @@ describe("UnconfiguredAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     const events: string[] = [];
     for await (const event of run.events) events.push(event.type);
@@ -48,7 +47,6 @@ describe("UnconfiguredAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     const payloads: unknown[] = [];
     for await (const event of run.events) payloads.push(event.payload);
@@ -65,7 +63,6 @@ describe("UnconfiguredAgentRuntime", () => {
       lastEventSeq: 3,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     expect(run.runtimeSessionRef).toBe("ref");
     const events: string[] = [];
@@ -81,7 +78,6 @@ describe("UnconfiguredAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     expect(run.runtimeSessionRef).toBe("");
   });

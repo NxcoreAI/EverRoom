@@ -1,10 +1,9 @@
-import type { AgentRoomReference, PendingAgentIntent } from '@nxcore/agent-contract'
+import type { PendingAgentIntent } from '@nxcore/agent-contract'
 
-export interface AgentRoomSelectionResult {
-  rooms: AgentRoomReference[]
-  selectionRequired: true
-  pendingIntent?: PendingAgentIntent
-}
+/**
+ * Phase 2i 去 Room：本文件不再解析「选择 Room」卡片（selectionRequired/rooms 已删），
+ * 仅保留 pending intent 决策卡的通用解析（allowedRoomIds 恒为空数组，不再要求非空）。
+ */
 
 function record(value: unknown): Record<string, unknown> | null {
   if (typeof value === 'string') {
@@ -17,20 +16,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null
-}
-
-function roomsFrom(value: unknown): AgentRoomReference[] | null {
-  if (!Array.isArray(value)) return null
-  const rooms: AgentRoomReference[] = []
-  for (const item of value) {
-    const candidate = record(item)
-    const id = typeof candidate?.id === 'string' ? candidate.id.trim() : ''
-    const title = typeof candidate?.title === 'string' ? candidate.title.trim() : ''
-    if (!id || !title) continue
-    const kind = typeof candidate?.kind === 'string' ? candidate.kind.trim() : ''
-    rooms.push({ id, title, ...(kind ? { kind } : {}) })
-  }
-  return rooms
 }
 
 export function parsePendingAgentIntent(value: unknown): PendingAgentIntent | null {
@@ -49,7 +34,6 @@ export function parsePendingAgentIntent(value: unknown): PendingAgentIntent | nu
     || typeof candidate.sourceRunId !== 'string'
     || typeof candidate.originalPrompt !== 'string'
     || !['document.create', 'document.edit', 'document.continue'].includes(String(targetCapability))
-    || allowedRoomIds.length === 0
     || typeof candidate.expiresAt !== 'string'
     || typeof candidate.createdAt !== 'string'
   ) return null
@@ -65,21 +49,4 @@ export function parsePendingAgentIntent(value: unknown): PendingAgentIntent | nu
     consumedAt: typeof candidate.consumedAt === 'string' ? candidate.consumedAt : null,
     createdAt: candidate.createdAt,
   }
-}
-
-export function parseAgentRoomSelectionResult(result: unknown): AgentRoomSelectionResult | null {
-  const root = record(result)
-  if (!root) return null
-  const contentResult = Array.isArray(root.content)
-    ? root.content.map((item) => record(item)).find((item) => typeof item?.text === 'string')?.text
-    : undefined
-  const candidates = [root.details, root.structuredContent, root, contentResult]
-  for (const value of candidates) {
-    const candidate = record(value)
-    if (candidate?.selectionRequired !== true) continue
-    const rooms = roomsFrom(candidate.rooms)
-    const pendingIntent = parsePendingAgentIntent(candidate.pendingIntent)
-    if (rooms) return { rooms, selectionRequired: true, ...(pendingIntent ? { pendingIntent } : {}) }
-  }
-  return null
 }

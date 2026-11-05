@@ -6,9 +6,9 @@ import type {
   AgentMountedDirectory,
   AgentMessage,
   AgentModelPreference,
+  AgentNoteCard,
   AgentPermissionMode,
   AgentPermissionModeState,
-  AgentRoomReference,
   AgentSession,
   AgentSessionLink,
   AgentSessionSnapshot,
@@ -59,7 +59,6 @@ export interface DisplayAgentMessage extends AgentMessage {
   /** 展示用：发送时 @ 的全部条目（含 Room/文件/对话记录），供消息区点击跳转；不落库。 */
   mentions?: MentionedItem[]
 }
-
 export function mergePendingAgentMessages(
   messages: DisplayAgentMessage[],
   pendingMessages: DisplayAgentMessage[],
@@ -86,8 +85,11 @@ export interface QueuedAgentSubmission {
   sessionId?: string | null
   /** 用户可见文案（技术指令排队时保留人话气泡）。 */
   displayPrompt?: string
+  /** 文档批注卡片：排队期间乐观气泡仍按卡片渲染。 */
+  noteCards?: AgentNoteCard[]
+  /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+  displayContent?: string
   selectedText?: string
-  selectedRoomId?: string
   activeDocument?: AgentActiveDocumentContext | null
   attachments?: AgentAttachmentReference[]
   mountedDirectories?: AgentMountedDirectory[]
@@ -146,7 +148,7 @@ function isUserSession(session: AgentSession): boolean {
     && !session.pageLabel.startsWith('AI ')
 }
 
-function sessionScope(_pageLabel?: string, _roomId?: string | null): string {
+function sessionScope(_pageLabel?: string): string {
   return 'global'
 }
 
@@ -220,10 +222,9 @@ export interface UseAgentSessionOptions {
   sessionKey?: string
 }
 
+/** Phase 2i 后无 Room 维度：hook 不再接收 roomId/rooms。 */
 export function useAgentSession(
   pageLabel: string,
-  roomId: string | null,
-  rooms: AgentRoomReference[],
   options: UseAgentSessionOptions = {},
 ) {
   const { locale, t } = useLocale()
@@ -286,7 +287,7 @@ export function useAgentSession(
   const terminalRunIdsRef = useRef(new Set<string>())
   const messageStartedRunIdsRef = useRef(new Set<string>())
   const sessionIdRef = useRef<string | null>(null)
-  const activeScopeRef = useRef(sessionScope(pageLabel, roomId))
+  const activeScopeRef = useRef(sessionScope(pageLabel))
   /** AI 标题生成素材：runId → 网关脱敏后的用户 prompt（与兜底标题同源）。 */
   const userPromptByRun = useRef(new Map<string, string>())
   const assistantContentByRun = useRef(new Map<string, string>())
@@ -703,7 +704,7 @@ export function useAgentSession(
       const isActiveRun = snapshot.activeRun?.id === runId
       // 历史中断/停止的 run 不再流式：占位消息静止展示（streaming=false），
       // 终态标记由 nextInterruptedRunIds / nextCancelledRunIds 提供。
-      nextMessages.push({
+      const placeholder: DisplayAgentMessage = {
         id: `stream-${runId}`,
         sessionId: snapshot.session.id,
         runId,
@@ -711,7 +712,15 @@ export function useAgentSession(
         content: reduced.streamingContent,
         createdAt: reduced.startedAt ?? snapshot.activeRun?.createdAt ?? snapshot.session.updatedAt,
         streaming: isActiveRun && !reduced.messageCompleted,
-      })
+      }
+      // 插到本 run 的 user 气泡后面，保持「我一问、agent 一答」的交替时序。
+      // 追加到末尾会把多个中断 run 的占位全堆在所有 user 消息之后，重进会话
+      // 时看到「连发 N 条消息、连跑 N 个任务」的错乱排版（#中断会话排版）。
+      const userIndex = nextMessages.findIndex((message) => (
+        message.runId === runId && message.role === 'user'
+      ))
+      if (userIndex >= 0) nextMessages.splice(userIndex + 1, 0, placeholder)
+      else nextMessages.push(placeholder)
     }
 
     setMessages(nextMessages)
@@ -750,7 +759,7 @@ export function useAgentSession(
     pendingMessages: DisplayAgentMessage[] = [],
   ): Promise<void> => {
     if (!api) return
-    const expectedScope = sessionScope(pageLabel, roomId)
+    const expectedScope = sessionScope(pageLabel)
     setLoading(true)
     setScopeReady(false)
     setError(null)
@@ -779,7 +788,7 @@ export function useAgentSession(
 
   useLayoutEffect(() => {
     let alive = true
-    activeScopeRef.current = sessionScope(pageLabel, roomId)
+    activeScopeRef.current = sessionScope(pageLabel)
     setScopeReady(false)
     setMessages([])
     setToolCallsByRun({})
@@ -1124,7 +1133,6 @@ export function useAgentSession(
   const sendPrompt = async (
     prompt: string,
     selectedText?: string,
-    selectedRoomId?: string,
     activeDocument?: AgentActiveDocumentContext | null,
     replaceRunId?: string,
     /** 输入区导入的文件（文件引擎引用）：作为本轮 run 的 attachments 下发。 */
@@ -1137,11 +1145,20 @@ export function useAgentSession(
     displayPrompt?: string,
     /** 输入区「挂载目录」：目录路径进本轮运行上下文，Agent 可直接读取。 */
     mountedDirectories?: AgentMountedDirectory[],
+    /** 文档批注卡片：存在时用户气泡按卡片渲染（原文摘录 + 注释）。 */
+    noteCards?: AgentNoteCard[],
+    /** 气泡正文：批注场景气泡只显示输入框正文；空串＝无气泡（只有卡片）。 */
+    displayContent?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
     // 技术指令只进运行时；落库/气泡/标题一律用 displayPrompt（缺省＝用户原话）。
     const displayMessage = displayPromptValue ?? message
+    const noteCardsValue = noteCards?.length ? noteCards : undefined
+    // 气泡正文只对批注消息有意义：没有卡片时忽略（普通消息气泡就是正文）。
+    const displayContentValue = noteCardsValue && typeof displayContent === 'string'
+      ? displayContent
+      : undefined
     if ((!message && !attachments?.length) || loading || sending) return null
     if (activeRunId) {
       // 重试（replaceRunId）不排队：replace 只对已终态 run 有意义，排队会丢失其语义。
@@ -1151,8 +1168,9 @@ export function useAgentSession(
         sessionId: sessionIdRef.current,
         prompt: message,
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         selectedText,
-        selectedRoomId,
         activeDocument,
         attachments,
         mountedDirectories,
@@ -1213,6 +1231,8 @@ export function useAgentSession(
       authorAgentId: null,
       content: displayMessage,
       createdAt: new Date().toISOString(),
+      ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+      ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
       ...(mentionedAgents?.length && !channelAgentRef.current
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
         : {}),
@@ -1236,6 +1256,10 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         // 技术指令照旧进运行时；displayPrompt 仅供落库/展示（网关不把它给 runtime）。
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        // 批注卡片只影响气泡渲染，runtime 不收。
+        ...(noteCardsValue ? { noteCards: noteCardsValue } : {}),
+        // 气泡正文（批注场景）：空串＝无气泡。runtime 不收。
+        ...(displayContentValue !== undefined ? { displayContent: displayContentValue } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
@@ -1248,9 +1272,7 @@ export function useAgentSession(
         // （referenced_*_requires_main_agent）；UI 已隐藏入口，这里兜底剥离，
         // 覆盖重试、外部注入等绕过输入框的路径。
         context: buildAgentRunContext(
-          rooms,
           selectedText,
-          selectedRoomId,
           activeDocument,
           pageLabel,
           mountedDirectories,
@@ -1324,7 +1346,6 @@ export function useAgentSession(
       undefined,
       undefined,
       undefined,
-      undefined,
       displayText,
     )
   )
@@ -1345,7 +1366,6 @@ export function useAgentSession(
         await sendPromptRef.current(
           next.prompt,
           next.selectedText,
-          next.selectedRoomId,
           next.activeDocument,
           undefined,
           next.attachments,
@@ -1355,6 +1375,8 @@ export function useAgentSession(
           next.mentions,
           next.displayPrompt,
           next.mountedDirectories,
+          next.noteCards,
+          next.displayContent,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。
@@ -1366,7 +1388,6 @@ export function useAgentSession(
 
   const submitPendingIntent = async (
     intentId: string,
-    selectedRoomId: string,
     documentId?: string,
   ): Promise<string | null> => {
     if (!api || loading || sending) return null
@@ -1381,7 +1402,7 @@ export function useAgentSession(
     setError(null)
     try {
       const { run } = await api.submitPendingIntent(intentId, {
-        roomId: selectedRoomId,
+        // Phase 2i 后无 Room 维度：pending intent 决策只按 documentId 提交。
         ...(documentId ? { documentId } : {}),
         idempotencyKey: crypto.randomUUID(),
         responseLanguage: locale,

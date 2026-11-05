@@ -67,7 +67,7 @@ async function createReviewHarness(name: string) {
 }
 
 describe("document capability registry", () => {
-  it("document_list 回显运行上下文 roomId（桌面选择卡片依赖该字段），Phase 2i 起可为 null", async () => {
+  it("document_list 列出全部文稿（Phase 2i 后无 Room 过滤，条目不再回显 roomId）", async () => {
     const { documents, registry } = await createReviewHarness("document-list-room-id")
     await documents.import({
       id: "doc-list-a",
@@ -87,23 +87,23 @@ describe("document capability registry", () => {
         content: [{ type: "paragraph", content: [{ type: "text", text: "Beta" }] }],
       },
     })
-    const context = { agentSessionId: "session-list", runId: "run-list", roomId: "room-1" }
+    const context = { agentSessionId: "session-list", runId: "run-list" }
 
     const result = await registry.execute("document_list", {}, context)
     const listed = (result.structuredContent as { documents: Array<{ id: string; roomId?: string }> })
       .documents
     expect(listed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
-    // 上下文携带 Room 时按原契约回显（Room 已无过滤语义，仅作元数据）。
-    expect(listed.every((document) => document.roomId === "room-1")).toBe(true)
+    // Phase 2i：Room 已无过滤语义；列表条目不再回显 roomId。
+    expect(listed.every((document) => document.roomId === undefined)).toBe(true)
 
     const workspaceResult = await registry.execute("document_list", {}, {
-      agentSessionId: "session-list-workspace", runId: "run-list-workspace", roomId: null,
+      agentSessionId: "session-list-workspace", runId: "run-list-workspace",
     })
     const workspaceListed = (workspaceResult.structuredContent as {
       documents: Array<{ id: string; roomId?: string | null }>
     }).documents
     expect(workspaceListed.map((document) => document.id).sort()).toEqual(["doc-list-a", "doc-list-b"])
-    expect(workspaceListed.every((document) => document.roomId === null)).toBe(true)
+    expect(workspaceListed.every((document) => document.roomId === undefined)).toBe(true)
   })
 
   it("blocks Agent reads, patches, and selection rewrites after a document enters trash", async () => {
@@ -138,7 +138,7 @@ describe("document capability registry", () => {
     )).rejects.toMatchObject({ code: "DOCUMENT_TRASHED", statusCode: 409 })
     await expect(registry.start({
       capabilityId: "document.selection-rewrite",
-      context: { roomId: "room-1", documentId: document.id, sessionId: "session-trash", runId: "run-trash" },
+      context: { roomId: null, documentId: document.id, sessionId: "session-trash", runId: "run-trash" },
       input: {
         baseVersion: document.version,
         proposedContentJson: document.contentJson,
@@ -214,7 +214,7 @@ describe("document capability registry", () => {
     };
     const deniedRegistry = new DocumentCapabilityRegistry().register(denied);
     await expect(deniedRegistry.execute("document_denied", {}, {
-      agentSessionId: "session-1", runId: "run-1", roomId: "room-1",
+      agentSessionId: "session-1", runId: "run-1",
     })).rejects.toMatchObject({ code: "CAPABILITY_PERMISSION_DENIED", statusCode: 403 });
 
     const create = vi.fn();
@@ -231,7 +231,7 @@ describe("document capability registry", () => {
         operation: {
           capabilityId: "document.forged", capabilityVersion: 1,
           interactionMode: "atomic_review", presenterKey: "atomic-diff",
-          roomId: request.context.roomId, documentId: request.context.documentId ?? null,
+          roomId: null, documentId: request.context.documentId ?? null,
           documentTitle: "Target", sessionId: request.context.sessionId,
           runId: request.context.runId, baseVersion: 1, summary: "Forged",
         },
@@ -240,7 +240,7 @@ describe("document capability registry", () => {
     const registry = new DocumentCapabilityRegistry({ create } as never).register(forged);
     await expect(registry.start({
       capabilityId: "document.safe-edit",
-      context: { roomId: "room-1", documentId: "doc-1", sessionId: "session-1", runId: "run-1" },
+      context: { roomId: null, documentId: "doc-1", sessionId: "session-1", runId: "run-1" },
       input: {},
     })).rejects.toMatchObject({ code: "OPERATION_PLAN_INVALID", statusCode: 500 });
     expect(create).not.toHaveBeenCalled();
@@ -277,7 +277,7 @@ describe("document capability registry", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-1",
+        roomId: null,
         documentId: "doc-1",
         sessionId: "session-1",
         runId: "run-1",
@@ -780,14 +780,14 @@ describe("document capability registry", () => {
     const operations = new DocumentOperationService(database.db, broker);
     const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
     disposables.push(() => database.sqlite.close());
-    // 工作区级：没有绑定任何 Room。
-    const context = { agentSessionId: "session-workspace", runId: "run-workspace", roomId: null };
+    // 工作区级：Phase 2i 后文稿一律无 Room 归属，上下文不再携带 roomId。
+    const context = { agentSessionId: "session-workspace", runId: "run-workspace" };
 
     const started = await registry.execute("document_write_begin", {
       mode: "create", title: "工作区文稿", format: "markdown",
     }, context);
     const operationId = String(started.structuredContent.operationId);
-    expect(started.structuredContent).toMatchObject({ roomId: null, state: "running" });
+    expect(started.structuredContent).toMatchObject({ state: "running" });
     expect(database.db.select().from(documentOperations).all()).toEqual([
       expect.objectContaining({ id: operationId, roomId: null }),
     ]);
@@ -807,21 +807,19 @@ describe("document capability registry", () => {
     });
     expect(database.db.select().from(documentOperations).all()[0]).toMatchObject({ roomId: null, status: "completed" });
 
-    // 读：无 Room 上下文可直接读
+    // 读：工作区文稿可直接读（结果不再回显 roomId）
     const read = await registry.execute("document_read", { documentId }, context);
     expect(read.structuredContent).toMatchObject({
-      roomId: null,
       documentId,
       title: "工作区文稿",
       version: 1,
       markdown: expect.stringContaining("工作区正文"),
     });
 
-    // 列：工作区列表包含该文稿，且回显 roomId = null
+    // 列：工作区列表包含该文稿（Phase 2i 后条目无 roomId 字段）
     const listed = await registry.execute("document_list", {}, context);
     expect(listed.structuredContent).toMatchObject({
-      roomId: null,
-      documents: [expect.objectContaining({ id: documentId, roomId: null, title: "工作区文稿" })],
+      documents: [expect.objectContaining({ id: documentId, title: "工作区文稿" })],
     });
 
     // 删：工作区文稿可进回收站
@@ -1049,14 +1047,13 @@ async function createInvocationRewriteHarness(name: string) {
   const operations = new DocumentOperationService(database.db, broker);
   const invocations = new Map<string, SubagentInvocation>();
   // 以假 invocation 表装配真 resolver：授权判定对齐 isSelectionRewriteInvocationAuthorized
-  // 的核心规则（M2 后内容生产者为 doc-writer）。
+  // 的核心规则（M2 后内容生产者为 doc-writer；Phase 2i 后无 Room 维度可比对）。
   documents.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => invocations.get(invocationId) ?? null,
-    isInvocationAuthorized: (invocation, roomId) => Boolean(invocation
+    isInvocationAuthorized: (invocation) => Boolean(invocation
       && invocation.agentDefinitionId === "doc-writer"
       && invocation.source === "internal_workflow"
-      && invocation.status === "completed"
-      && (invocation.input as { roomId?: unknown }).roomId === roomId),
+      && invocation.status === "completed"),
     getDocument: (documentId) => documents.get(documentId) ?? null,
   });
   const registry = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
@@ -1132,7 +1129,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocation.id,
         runId: invocation.id,
@@ -1218,7 +1215,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocation.id,
         runId: invocation.id,
@@ -1247,7 +1244,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocation.id,
         runId: invocation.id,
@@ -1302,7 +1299,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const document = await importRewriteTargetDocument(documents);
     await expect(registry.start({
       capabilityId: "document.selection-rewrite",
-      context: { roomId: "room-invocation", documentId: document.id, sessionId: "session-legacy", runId: "run-legacy" },
+      context: { roomId: null, documentId: document.id, sessionId: "session-legacy", runId: "run-legacy" },
       input: {
         baseVersion: document.version,
         proposedContentJson: { type: "doc", content: [] },
@@ -1320,7 +1317,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const start = (invocationId: string) => registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocationId,
         runId: invocationId,
@@ -1342,13 +1339,16 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
       code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
     });
 
+    // Phase 2i：授权只按 invocation 溯源复核（doc-writer + internal_workflow + completed），
+    // 无 Room 维度可比对——合法 invocation 不再因“Room 不一致”被拒。
     const otherRoom = seedSelectionRewriteInvocation(invocations, {
       roomId: "room-other",
       selectedText: "被选中的文本",
       text: "x",
     });
-    await expect(start(otherRoom.id)).rejects.toMatchObject({
-      code: "SELECTION_REWRITE_INVOCATION_UNAUTHORIZED",
+    await expect(start(otherRoom.id)).resolves.toMatchObject({
+      capabilityId: "document.selection-rewrite",
+      status: "awaiting_review",
     });
 
     const noOutput = seedSelectionRewriteInvocation(invocations, {
@@ -1373,7 +1373,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     await expect(registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocation.id,
         runId: invocation.id,
@@ -1393,7 +1393,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: "legacy-session",
         runId: "legacy-run",
@@ -1429,7 +1429,7 @@ describe("selection-rewrite invocation 绑定（改写信任收口）", () => {
     const operation = await registry.start({
       capabilityId: "document.selection-rewrite",
       context: {
-        roomId: "room-invocation",
+        roomId: null,
         documentId: document.id,
         sessionId: invocation.id,
         runId: invocation.id,

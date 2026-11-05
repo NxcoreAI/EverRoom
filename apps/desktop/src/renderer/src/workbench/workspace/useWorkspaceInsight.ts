@@ -11,6 +11,7 @@ import {
   sessionSignature,
   unavailableInsight,
   type WorkspaceInsight,
+  type WorkspaceInsightLlmReader,
   type WorkspaceInsightReader,
   type WorkspaceInsightStats,
 } from './insight'
@@ -91,6 +92,13 @@ function getInsightReader(): WorkspaceInsightReader | null {
 
 function hasBridge(): boolean {
   return typeof window !== 'undefined' && typeof window.nxcore?.agent?.getSession === 'function'
+}
+
+/** LLM 通道：网关 `workspaceInsight.get`；未暴露时为 null（回落确定性聚合）。 */
+function getLlmReader(): WorkspaceInsightLlmReader | null {
+  if (typeof window === 'undefined') return null
+  const insight = window.nxcore?.workspaceInsight
+  return typeof insight?.get === 'function' ? insight : null
 }
 
 /* ───────────────── 状态辅助 ───────────────── */
@@ -220,6 +228,7 @@ export function useWorkspaceInsight({
           sessions: ctx.scoped,
           ...(ctx.fileCount === undefined ? {} : { fileCount: ctx.fileCount }),
           reader,
+          llm: getLlmReader(),
           ...(retryDelaysOverride === null ? {} : { retryDelaysMs: retryDelaysOverride }),
         }).finally(() => {
           inflight.delete(workspaceId)

@@ -101,7 +101,7 @@ import type {
   WorkspaceActivityQuery,
 } from '@nxcore/agent-contract'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OsOpenedDocument } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -793,9 +793,28 @@ export interface JournalEntryDto {
   summary: string
   bullets: JournalBulletDto[]
   actions: JournalActionDto[]
+  /** 下一步建议（0–2 条，总结之外的可执行项）；旧条目没有该字段。 */
+  advice?: string[]
   /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪或调用失败）。 */
   model: string | null
   createdAt: string
+}
+
+/** 工作空间洞察（概览 B 区）：LLM 总结 + 建议；由网关派生，不落库。 */
+export interface WorkspaceInsightAdviceDto {
+  text: string
+  /** 建议指向的会话 id；null = 无指向。 */
+  sessionId: string | null
+}
+
+export interface WorkspaceInsightDto {
+  /** 2–3 句状态总结；空间无工作时为空串。 */
+  summary: string
+  advice: WorkspaceInsightAdviceDto[]
+  /** 产出模型名；null = 模板兜底（确定性聚合）。 */
+  model: string | null
+  /** true = 命中网关缓存（同证据指纹 5 分钟内）。 */
+  cached: boolean
 }
 
 export interface JournalTodayDto {
@@ -856,26 +875,19 @@ export interface NxcoreDesktopApi {
     onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
-    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的 docs 视图。 */
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
     syncAskQueue(input: {
       fileId: string
       items: Array<{
         id: string
         instruction: string
         excerpt?: string
-        fromBlockIndex: number
-        toBlockIndex: number
-        kind: string
+        /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+        anchor?: OfficeAskAnchor
       }>
     }): void
-    /** 文档内批注面板动作（全部发送 / 移除一条）→ 渲染层队列事实。 */
-    onAskQueueAction(
-      listener: (event: {
-        fileId: string | null
-        workspaceId: string
-        action: { kind: 'send-all' } | { kind: 'remove'; draftId: string }
-      }) => void,
-    ): () => void
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction(listener: (event: OfficeAskQueueActionEvent) => void): () => void
     /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
     /** Agent 改写落盘后实例被重开：渲染端需重新上报视口矩形（原生视图换了一个）。 */
@@ -1069,6 +1081,10 @@ export interface NxcoreDesktopApi {
     today(): Promise<JournalTodayDto>
     /** 手动重写当天（绕过最小间隔，仍受去抖与单飞行保护）。 */
     refresh(): Promise<JournalTodayDto>
+  }
+  workspaceInsight: {
+    /** 工作空间洞察（概览 B 区）：LLM 总结 + 建议；force 跳过网关缓存。 */
+    get(workspaceId: string, options?: { force?: boolean }): Promise<WorkspaceInsightDto>
   }
   /**
    * 工作空间「计划」（任务 / todo）。

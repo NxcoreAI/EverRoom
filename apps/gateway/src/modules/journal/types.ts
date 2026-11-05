@@ -42,12 +42,20 @@ export interface JournalAction {
   targetId: string;
 }
 
+/**
+ * 给用户的下一步建议（总结之外的可执行项）。
+ * 只能基于当天的证据（记忆条目）；每条 ≤48 字，最多 2 条。旧条目没有该字段。
+ */
+export type JournalAdvice = string[];
+
 /** 一份成稿（模型产出或模板兜底，同一形状）。 */
 export interface JournalComposition {
   headline: string;
   summary: string;
   bullets: JournalBullet[];
   actions: JournalAction[];
+  /** 下一步建议；缺省 = 该版本没有建议（旧数据 / 无从建议）。 */
+  advice?: JournalAdvice;
 }
 
 /** 落盘的一版条目。 */

@@ -104,6 +104,9 @@ import { SearchService } from "../modules/search/service.js";
 import { MemoryService } from "../modules/memory/service.js";
 import { MemoryDistiller, type CapturedSegment, type DistillCursor, type DistillSignals } from "../modules/memory/distill.js";
 import { MemoryModelUnavailableError, isMemoryModelUnavailable } from "../modules/memory/model-errors.js";
+import { composeWorkspaceInsight as composeWorkspaceInsightViaLlm } from "../modules/workspace-insight/composer.js";
+import { workspaceInsightRoutes } from "../modules/workspace-insight/routes.js";
+import { WorkspaceInsightService } from "../modules/workspace-insight/service.js";
 import {
   createUserProfilePromptCache,
   MemoryProfileAggregator,
@@ -677,9 +680,9 @@ export async function createServer(config: GatewayConfig) {
   // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
   documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
-    isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
+    isInvocationAuthorized: (invocation) => isSelectionRewriteInvocationAuthorized(
       invocation,
-      { capabilityId: "document.selection-rewrite", roomId },
+      { capabilityId: "document.selection-rewrite" },
     ),
     getDocument: (documentId) => documentService.get(documentId),
   });
@@ -854,7 +857,7 @@ export async function createServer(config: GatewayConfig) {
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
               documentService.setAgentModificationLease(documentId, value),
-            inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
+            inferMaterialSources: (runId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
               (documentId) => {
                 try {
@@ -864,7 +867,6 @@ export async function createServer(config: GatewayConfig) {
                 }
               },
               runId,
-              roomId,
               material,
             ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
@@ -972,7 +974,6 @@ export async function createServer(config: GatewayConfig) {
     agentRuntime,
     new AgentEventBroker(),
     app.log,
-    undefined,
     documentService,
     documentMcpHost,
     false,
@@ -1341,7 +1342,7 @@ export async function createServer(config: GatewayConfig) {
       if (context.invocationId) {
         if (!isSelectionRewriteInvocationAuthorized(
           subagentOrchestrator.getInvocation(context.invocationId),
-          { capabilityId: context.capabilityId, roomId: context.roomId },
+          { capabilityId: context.capabilityId },
         )) {
           throw new Error("agent_operation_context_invalid");
         }
@@ -1471,6 +1472,24 @@ export async function createServer(config: GatewayConfig) {
   });
   memoryProfile.start();
   journalScheduler.start();
+
+  // 工作空间洞察（概览 B 区卡片）：空间状态证据 → LLM 总结 + 建议（模板兜底）。
+  // 与 journal 同一条模型通道（generateMemoryText）；不落库，内存缓存按证据指纹复用。
+  const workspaceInsightService = new WorkspaceInsightService({
+    agent: agentService,
+    libraryCountSource: filesService,
+    workspaceName: (workspaceId) =>
+      db.select({ name: agentWorkspaces.name }).from(agentWorkspaces)
+        .where(eq(agentWorkspaces.id, workspaceId)).get()?.name ?? "项目空间",
+    compose: (evidence) => composeWorkspaceInsightViaLlm(evidence, {
+      generate: generateMemoryText,
+      isModelUnavailable: isMemoryModelUnavailable,
+      modelName: "memory-slot",
+      logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+    }),
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  await app.register(workspaceInsightRoutes(workspaceInsightService));
 
   // 会话结束的记忆蒸馏：run 正常完成后由 AgentService 回调，用轻量模型
   // （main-lite，零工具）把本轮对话提炼成 0–3 条长期事实写入记忆库。

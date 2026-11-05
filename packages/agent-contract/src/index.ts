@@ -366,6 +366,27 @@ export interface AgentMessage {
   authorAgentId?: string | null;
   content: string;
   createdAt: string;
+  /**
+   * 文档批注卡片（Office「AI 修改」队列发出）：存在时用户气泡渲染成
+   * 「原文摘录 + 我的注释」卡片而不是纯文本。content 仍是合并文案（搜索/复制用）。
+   */
+  noteCards?: AgentNoteCard[];
+  /**
+   * 气泡正文（只影响气泡展示）：有批注卡片的消息气泡只显示输入框正文——
+   * 空串＝不渲染气泡（只剩浮在上方、与气泡分离的批注卡片）；缺省回退 content。
+   * content 仍存合并文案（标题/检索/重试语义不变）。
+   */
+  displayContent?: string;
+}
+
+/** 一条文档批注的展示结构（气泡内卡片，只读）。 */
+export interface AgentNoteCard {
+  /** 被批注的原文摘录（选区文本快照）。 */
+  excerpt: string;
+  /** 用户敲的批注原话。 */
+  note: string;
+  /** 来源文件标题（缺省不展示来源行）。 */
+  title?: string;
 }
 
 export interface AgentSessionParticipant {
@@ -1138,6 +1159,17 @@ export interface StartAgentRunInput {
    * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
    */
   displayPrompt?: string;
+  /**
+   * 气泡正文（只影响气泡展示）：批注场景气泡只显示输入框正文——正文为空时传
+   * 空串，气泡不渲染（只有浮在上方、与气泡分离的批注卡片）；不传则回退
+   * displayPrompt。落库消息 content 仍用 displayPrompt（列表/检索语义不变）。
+   */
+  displayContent?: string;
+  /**
+   * 文档批注卡片（与 displayPrompt 同源的结构化展示）：存在时落库消息带
+   * noteCards，气泡渲染成卡片列表。runtime 不收本字段。
+   */
+  noteCards?: AgentNoteCard[];
   idempotencyKey: string;
   /** Stable local Agent installation id selected by an explicit composer mention. */
   targetAgentId?: string;
@@ -1160,10 +1192,10 @@ export interface StartAgentRunInput {
     /** UI surface where this run was started; never part of session identity. */
     pageLabel?: string;
     selectedText?: string;
-    /** Current, non-deleted Rooms visible to the desktop when this run starts. */
-    rooms?: AgentRoomReference[];
-    /** Explicit UI-confirmed target for a global Agent session. */
-    selectedRoomId?: string | null;
+    /**
+     * Room 维度已从 Agent/工具链路移除（Phase 2i 之后文稿一律工作区级）：
+     * run 不再携带 Room 清单，也不再接受 UI 选定的 Room。
+     */
     activeDocument?: AgentActiveDocumentContext;
     /**
      * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
@@ -1482,8 +1514,7 @@ export interface LocalAgentDelegationContext {
   }>;
   resources: {
     workspaceRoot: string;
-    roomIds: string[];
-    activeDocument?: Pick<AgentActiveDocumentContext, "roomId" | "documentId" | "title" | "version">;
+    activeDocument?: Pick<AgentActiveDocumentContext, "documentId" | "title" | "version">;
   };
   grant: {
     workspaceAccess: "read-only" | "workspace-write" | "full-access";
@@ -1528,7 +1559,6 @@ export interface PendingAgentIntent {
 }
 
 export interface SubmitPendingAgentIntentInput {
-  roomId: string;
   documentId?: string;
   idempotencyKey: string;
   /** Current UI locale to carry into the resumed Agent run. */
@@ -1551,9 +1581,8 @@ export interface AgentDocumentCursorAnchor {
   affinity: "after";
 }
 
+/** 用户当前正在浏览的文稿（只按 documentId 寻址；文稿一律工作区级，无 Room 归属）。 */
 export interface AgentActiveDocumentContext {
-  /** null = 工作区级文稿（无 Room 归属）。 */
-  roomId: string | null;
   documentId: string;
   title: string;
   version: number;

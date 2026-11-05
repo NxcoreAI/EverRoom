@@ -225,11 +225,22 @@
 }
 
 /* 大输入框：白底 + 1px 细线，聚焦青绿 ring（与 AgentComposer 同一语言）。 */
+/* 输入框正上方的附加行（待发送批注徽章）：与输入框同宽、左对齐，不撑开 hero 布局。
+   空队列时 NoteQueueChip 返回 null，这行渲染成空 <div>——margin-top 由
+   .wb-hero-input 承担（两者共享 34px），:empty 判定把徽章在时的间距收紧。 */
+.wb-hero-above-input {
+  width: 100%;
+  margin-top: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.wb-hero-above-input:not(:empty) + .wb-hero-input { margin-top: 8px; }
+
 .wb-hero-input {
   position: relative;
   display: flex;
   width: 100%;
-  margin-top: 34px;
   flex-direction: column;
   gap: 8px;
   padding: 16px 16px 12px;
@@ -397,22 +408,6 @@
 }
 .wb-conversation .agent-message[data-role='user'] p + p { margin-top: 6px; }
 .wb-conversation .agent-message[data-role='user'] p strong { font-weight: 600; }
-
-/* 复制按钮：悬停气泡才明显。 */
-.wb-conversation .agent-user-copy {
-  right: calc(100% + 6px);
-  bottom: 6px;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-text-3);
-  transition:
-    opacity var(--ui-duration-fast) var(--ui-ease),
-    background var(--ui-duration-fast) var(--ui-ease),
-    color var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-conversation .agent-user-copy:hover { background: var(--ui-hover); color: var(--ui-text); }
-.wb-conversation .agent-user-copy:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
 
 .wb-conversation .agent-user-mention {
   align-self: flex-end;
@@ -621,14 +616,18 @@
   font-weight: 500;
 }
 
+/* 操作行（复制 / 重新生成 / 重新发送）：默认完全隐藏，悬浮所在消息
+   才浮现。键盘可达性用 :has(:focus-visible)——鼠标点击不触发 focus-visible，
+   点击复制后移开鼠标，操作行会照常隐藏，不会卡在显示态。 */
 .wb-conversation .agent-message-actions {
   gap: 2px;
   margin-top: 2px;
-  opacity: 0.42;
+  opacity: 0;
   transition: opacity var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-conversation .agent-assistant-turn:hover .agent-message-actions,
-.wb-conversation .agent-assistant-turn:focus-within .agent-message-actions {
+.wb-conversation .agent-user-turn:hover .agent-message-actions,
+.wb-conversation .agent-message-actions:has(:focus-visible) {
   opacity: 1;
 }
 .wb-conversation .agent-message-actions button {
@@ -655,7 +654,7 @@
   background: var(--ui-selected);
   box-shadow: 0 0 0 6px var(--ui-accent-softer);
 }
-.wb-conversation .agent-message[data-role='user'][data-notification-target='true'] {
+.wb-conversation .agent-user-turn[data-notification-target='true'] .agent-message[data-role='user'] {
   box-shadow: 0 0 0 4px var(--ui-accent-soft);
 }
 
@@ -1015,6 +1014,23 @@
   background: linear-gradient(to bottom, transparent 0, var(--ui-bg) 24px);
   box-shadow: 0 16px 0 var(--ui-bg);
 }
+
+/* 批注徽章（会话态）：与 AgentComposer 平级（同 fragment，不能包 wrapper——
+   AgentComposer 把 --agent-composer-height 写在 shell.parentElement 上，包了
+   wrapper 就写到 wrapper、frame 级消费者拿不到）。absolute 吸在输入框正上方，
+   用 frame 上的 --agent-composer-height 定位：出现/消失都不推动输入框。 */
+.wb-conversation .wb-note-chip {
+  position: absolute;
+  z-index: 3; /* composer shell 是 z-2：徽章要浮在它（及其渐变层）之上 */
+  bottom: calc(var(--agent-composer-bottom, 0px) + var(--agent-composer-height, 150px) + 8px);
+  left: var(--wb-gutter);
+  margin: 0;
+}
+/* 徽章占掉消息区底部的一点呼吸位：有徽章时底部留白加一档，最后一条消息
+   不被盖住（--agent-composer-height 不含徽章，这里手动补）。 */
+.wb-conversation[data-has-note-queue='true'] .agent-conversation {
+  padding-bottom: calc(var(--agent-composer-height, 150px) + 54px);
+}
 /* 空态布局下 composer 是浮起的；工作台里空态由 hero 接管，这里只做兜底。 */
 .wb-conversation .agent-composer-shell::before { display: none; }
 
@@ -1251,112 +1267,182 @@
   .wb-conversation .agent-chat-quick-prompts button:hover { transform: none; }
 }
 
-/* ── 待发送批注（Office「AI 修改」攒批注）────────────────────────────────
- * 位置：输入框上方的一条窄卡，宽度跟消息列一致；只做「看得见 + 一次全发 + 单条移除」。
+/* ── 待发送注释小徽章（Office「AI 修改」攒批注）──────────────────────────
+ * 输入框上方一行的小 pill（宽度由内容决定，不占整行）；hover/点击展开
+ * 卡片列表浮层（改写/删除/全部发送）。默认形态必须足够小——它常驻在
+ * 输入框上方，占整行会把 composer 顶得忽高忽低。
  */
-/* 待发送批注条：对话列里的一行（flow），在输入框上方、对话面板之外。
- * 早前把它塞进 AgentChatView 的 composer 插槽会被 absolute 定位的输入框层盖住，
- * 所以这里改成独立的一行，从结构上保证可见。 */
-.wb-ask-drafts {
+.wb-note-chip {
+  position: relative;
   flex: none;
-  margin: 0 8px 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--ui-border-subtle);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface-alt);
-  color: var(--ui-text);
+  align-self: flex-start;
+  margin: 0; /* hero 态跟随 .wb-hero-above-input 列左缘；会话态的 margin 由上面的覆盖规则归零即可 */
 }
 
-.wb-ask-drafts-head {
-  display: flex;
+.wb-note-chip-pill {
+  display: inline-flex;
+  height: 24px;
   align-items: center;
-  gap: 8px;
-  font-size: var(--ui-text-xs);
-}
-
-.wb-ask-drafts-count {
-  flex: 1;
-  font-weight: 600;
-}
-
-.wb-ask-drafts-send,
-.wb-ask-drafts-clear {
-  border: 1px solid var(--ui-border);
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border-subtle);
   border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-note-chip-pill svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: var(--ui-text-3);
+  transition: color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-note-chip-pill:hover,
+.wb-note-chip[data-open='true'] .wb-note-chip-pill {
+  border-color: var(--ui-border-strong);
   background: var(--ui-surface);
   color: var(--ui-text);
-  font-size: var(--ui-text-xs);
-  padding: 2px 10px;
-  cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-note-chip-pill:hover svg,
+.wb-note-chip[data-open='true'] .wb-note-chip-pill svg { color: var(--ui-accent); }
+.wb-note-chip-pill:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+
+/* 浮层卡片：输入框在徽章正下方——浮层向上翻（bottom 锚定），不盖输入框。 */
+.wb-note-chip-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30; /* 高于消息流与 composer 覆盖层（jump-latest 等在 10 档以内） */
+  width: 300px;
+  max-width: calc(100vw - 48px);
+  padding: 6px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
 }
 
-.wb-ask-drafts-send {
-  border-color: var(--ui-accent-line);
-  color: var(--ui-accent-strong);
-}
-
-.wb-ask-drafts-send:hover:not(:disabled),
-.wb-ask-drafts-clear:hover {
-  background: var(--ui-hover);
-}
-
-.wb-ask-drafts-send:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.wb-ask-drafts-list {
-  margin: 6px 0 0;
+.wb-note-chip-list {
+  margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 132px;
+  gap: 2px;
+  /* 最多同时露出 4 张卡片：单卡 ≈ 摘录行(10.5×1.45≈15) + 注释两行(11.5×1.5×2≈35)
+     + 卡内行距 2 + 上下内边距 10 ≈ 62px，外加卡片间 3×2px 间隙；更多滚动。 */
+  max-height: calc(62px * 4 + 6px);
   overflow-y: auto;
 }
 
-.wb-ask-drafts-item {
+.wb-note-chip-item {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  font-size: var(--ui-text-xs);
-  line-height: 1.45;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: var(--ui-radius-sm);
+  transition: background var(--ui-duration-fast) var(--ui-ease);
 }
+.wb-note-chip-item:hover { background: var(--ui-hover); }
 
-.wb-ask-drafts-text {
+.wb-note-chip-copy {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px;
+  flex-direction: column;
+  gap: 2px;
 }
 
-/* 原文摘录：灰色引号，视觉上先于批注 */
-.wb-ask-drafts-excerpt {
-  color: var(--ui-text-muted, var(--ui-text));
-  opacity: 0.75;
+/* 原文摘录：灰色小字（截断到一行），先于注释出现 */
+.wb-note-chip-excerpt {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* 我的批注：正文色，跟在原文后面 */
-.wb-ask-drafts-note {
+/* 我的注释：正文色；限两行封顶（长注释截断），保证卡片行高稳定——
+   列表的 4 行可视上限（max-height）依赖它。 */
+.wb-note-chip-note {
   color: var(--ui-text);
+  font-size: var(--ui-text-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
-.wb-ask-drafts-remove {
+/* 行尾动作：hover 才出现（铅笔改写 / 垃圾桶删除） */
+.wb-note-chip-actions {
+  display: inline-flex;
   flex: none;
-  border: 0;
-  background: transparent;
-  color: var(--ui-text);
-  opacity: 0.55;
-  cursor: pointer;
-  padding: 0 2px;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
 }
+.wb-note-chip-item:hover .wb-note-chip-actions,
+.wb-note-chip-item:focus-within .wb-note-chip-actions { opacity: 1; }
 
-.wb-ask-drafts-remove:hover {
-  opacity: 1;
-  color: var(--ui-danger);
+.wb-note-chip-iconbtn {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-3);
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-note-chip-iconbtn svg {
+  width: 12px;
+  height: 12px;
+}
+.wb-note-chip-iconbtn:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-note-chip-iconbtn.is-danger:hover { background: var(--ui-danger-soft); color: var(--ui-danger); }
+.wb-note-chip-iconbtn:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 1px; }
+
+/* 行内改写：小输入框 + 操作提示 */
+.wb-note-chip-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wb-note-chip-edit input {
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--ui-accent-line);
+  border-radius: var(--ui-radius-xs);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-size: var(--ui-text-xs);
+  font-family: var(--ui-font-sans);
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--ui-accent-soft);
+}
+.wb-note-chip-edit input:focus {
+  border-color: var(--ui-accent-line);
+}
+.wb-note-chip-edit-hint {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
 }

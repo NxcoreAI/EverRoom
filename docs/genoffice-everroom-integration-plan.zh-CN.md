@@ -745,13 +745,20 @@ office-pptx-diff
 
 ### 10.5 P4：PDF
 
-第一阶段只做查看和 Agent inspect，不承诺原地内容编辑：
+现状（2026-11）：查看与 Agent 编辑链路已落地——
 
-- PDF.js/PDFium 查看；
-- 文本选区和页码上下文；
-- 与现有解析 artifact 的证据引用对齐；
-- 批注或表单修改作为独立 operation 类型；
-- PDF 转 DOCX 是派生新 artifact，不覆盖原 PDF。
+- PDF.js/PDFium 查看（可见视图保持宿主只读预览 `readonly=1`）；
+- Agent 读改走后台隐藏会话：`pdf_agent_read` / `pdf_agent_edit` 网关工具 →
+  `/v1/office-agent-tools`（kind=pdf）→ desktop `AgentPdfSessionManager`
+  （隐藏 `WebContentsView`，1100×1400、不可见、空闲 3 分钟回收、上限 2 份）→
+  pdf embed 的 describe/apply agent 面（read_pages / edit_text / edit_block /
+  insert_text / markup_text / 批注 / 表单 / 图片 / rotate_page / delete_page 等，
+  一次 1-50 条）；编辑后静默保存，`pdf:agent-ready` 路径闸门 +
+  `setPdfFileSavedHook` 接既有 fileSaved → 版本链回填（sourceKey
+  `agent:pdf:edit:*`，广播 format=pdf）；
+- 工作副本：CAS blob → `userData/office-pdfs/{fileId}/{hash}/name.pdf`（blob 永不改写）；
+- 加密 PDF 在建会话前被头部 `/Encrypt` 启发式挡下（pdf-lib 不能写回加密文件）；
+- PDF 转 DOCX 仍是派生新 artifact，不覆盖原 PDF。
 
 ## 11. 构建、Electron 版本和发布
 

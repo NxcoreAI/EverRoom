@@ -24,8 +24,7 @@ import { createDatabase } from "../src/infrastructure/database/client.js";
  * 1. 草稿阶段确实把风格跑掉了（否则省不下时间）；
  * 2. 用户紧接着调 style 时**不重跑生图**（否则白烧一套配额，比不预热更糟）。
  */
-const run = { runId: "run-1", sessionId: "session-1", availableRooms: [{ id: "room-1" }] };
-const roomId = "room-1";
+const run = { runId: "run-1", sessionId: "session-1" };
 
 const planFixture = {
   phase: "draft",
@@ -139,7 +138,7 @@ describe("风格预热：styler 在用户阅读草稿的窗口里先跑完", () 
     // ① 草稿阶段：planner 出稿 → 落文档 → 顺手把风格跑掉。
     const draftResult = await slidesDraft.execute(
       { ...run } as never,
-      { task: "draft", instruction: "做一份商务科技风的季度汇报", title: "季度汇报", roomId } as never,
+      { task: "draft", instruction: "做一份商务科技风的季度汇报", title: "季度汇报" } as never,
       undefined,
       vi.fn(),
     );
@@ -155,7 +154,7 @@ describe("风格预热：styler 在用户阅读草稿的窗口里先跑完", () 
     // ② 用户确认草稿 → 走 style：应该直接拿到 images_ready，不再派 styler、不再生图。
     const styleResult = await slidesDraft.execute(
       { ...run } as never,
-      { task: "style", instruction: "做一份商务科技风的季度汇报", draftDocumentId: "doc-draft-1", roomId } as never,
+      { task: "style", instruction: "做一份商务科技风的季度汇报", draftDocumentId: "doc-draft-1" } as never,
       undefined,
       vi.fn(),
     );

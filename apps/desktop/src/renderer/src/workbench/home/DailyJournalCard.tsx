@@ -79,7 +79,7 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
   return (
     <section className="wb-journal-card" aria-labelledby={titleId}>
       <header className="wb-journal-head">
-        <span className="wb-journal-icon" aria-hidden="true"><Sparkles size={14} /></span>
+        <span className="wb-journal-icon" aria-hidden="true"><Sparkles size={15} /></span>
         {/* 用 div 而不是 span 包 h2：h2 是流内容，塞进 span 里是非法嵌套。 */}
         <div className="wb-journal-title">
           <h2 className="wb-journal-name" id={titleId}>今日洞察</h2>
@@ -137,6 +137,16 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
                 <li key={`${index}:${bullet.text}`} title={bullet.text}>
                   <span className="wb-journal-bullet-dot" aria-hidden="true" />
                   {bullet.text}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {entry.advice && entry.advice.length > 0 ? (
+            <ul className="wb-journal-advice" aria-label="下一步建议">
+              {entry.advice.map((line, index) => (
+                <li key={`${index}:${line}`}>
+                  <span className="wb-journal-advice-tag" aria-hidden="true">建议</span>
+                  {line}
                 </li>
               ))}
             </ul>

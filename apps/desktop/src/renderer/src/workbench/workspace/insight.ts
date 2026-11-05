@@ -5,14 +5,22 @@ import {
   INSIGHT_MAX_LINES,
   extractInsightDetail,
   insightTextFromEvents,
+  normalizeInsightText,
 } from './activity'
 
 /**
  * 工作空间「概览 · 洞察」的模型与派生规则。
  *
- * 产品没有洞察实体（见 `docs/design/product-data-map.zh-CN.md` §9）：洞察 = 本空间
- * 最近更新会话的最后一条 assistant 正文，消息快照优先、run 事件兜底，客户端规整成
- * 2–4 行的一段话（`activity.ts` 的 `normalizeInsightText`）。
+ * 洞察不是复述最近一条消息（鹦鹉学舌），而是对**整个空间的状态与变化**做总结与建议：
+ * - 总结 = 本空间工作分布（在跑 / 待续 / 已完成）+ 资料库规模，全部真实计数；
+ * - 建议 = 由真实状态触发的下一步（1–2 条，每条对应一个可核实的条件）；
+ * - 最近一条 assistant 正文只作为「最近进展」线索，在状态信号不足时引用一行。
+ *
+ * 正文优先由 **LLM 生成**（网关 `/v1/agent/workspaces/:id/insight`：同证据集上写
+ * 总结 + 建议，防编造校验在网关侧完成），模型不可用/调用失败/产物为空时回落到
+ * `composeWorkspaceInsight` 的确定性聚合（分布 + 条件建议）——两层产物同口径规整。
+ *
+ * 产品没有洞察实体（见 `docs/design/product-data-map.zh-CN.md` §9）：不落库。
  *
  * 本文件是纯逻辑（无 React、无 window 依赖），页面与单测共用：
  * - `deriveWorkspaceInsight` 负责「选会话 → 取正文 → 兜底 → 组装 ViewModel」；
@@ -60,6 +68,8 @@ export interface WorkspaceInsightOrigin {
   capturedAt: string
   /** 来源会话的 updatedAt（ISO）：判断新鲜度、展示「更新于」。 */
   sourceUpdatedAt: string
+  /** 正文产自哪个模型；null = 确定性聚合（LLM 不可用时的兜底）。 */
+  model: string | null
 }
 
 /** 来源统计：只允许真实数据；缺数据的字段必须缺省，禁止编造。 */
@@ -173,6 +183,16 @@ export interface WorkspaceInsightReader {
   getEvents?(sessionId: string, runId: string, afterSeq: number): Promise<AgentEvent[]>
 }
 
+/** LLM 通道的最小读取面（页面传 `window.nxcore.workspaceInsight`，单测传假实现）。 */
+export interface WorkspaceInsightLlmReader {
+  get(workspaceId: string, options?: { force?: boolean }): Promise<{
+    summary: string
+    advice: Array<{ text: string; sessionId: string | null }>
+    model: string | null
+    cached: boolean
+  }>
+}
+
 export interface DeriveWorkspaceInsightInput {
   workspaceId: string
   /** 上层传入的会话清单（可为全量，内部按 workspaceId 过滤）。 */
@@ -180,11 +200,109 @@ export interface DeriveWorkspaceInsightInput {
   /** 本空间文件数；文件库未就绪时省略。 */
   fileCount?: number
   reader: WorkspaceInsightReader | null
+  /**
+   * LLM 洞察通道（网关 `workspaceInsight.get`）：优先用它生成总结 + 建议。
+   * 缺省 / 抛错 / 产物为空 → 回落确定性聚合，正文永远有产出。
+   */
+  llm?: WorkspaceInsightLlmReader | null
   timeoutMs?: number
   /** 重试间隔；空数组 = 不重试（单测用）。 */
   retryDelaysMs?: readonly number[]
   /** 注入时钟，方便单测断言 capturedAt。 */
   now?: () => number
+}
+
+/* ───────────────── 聚合总结 + 建议（确定性兜底） ───────────────── */
+
+/** 聚合输入：全部来自真实快照（会话状态分布 / 文件数 / 最近会话与正文）。 */
+export interface ComposeWorkspaceInsightInput {
+  sessions: readonly InsightSessionLike[]
+  /** 最近更新会话（`pickLatestSession` 的结果）。 */
+  latest: InsightSessionLike
+  /** 最近会话的最后一条 assistant 正文（可为 null：没有就不引用）。 */
+  latestText: string | null
+  /** 本空间文件数；未就绪时省略（总结里不提文件）。 */
+  fileCount?: number
+}
+
+/** 聚合输出：总结一句 + 建议若干（已按优先级截到 2 条）。 */
+export interface ComposedWorkspaceInsight {
+  summary: string
+  suggestions: string[]
+  /** 正文 = 总结 + 建议（已过 normalizeInsightText，2–4 行、≤240 字）。 */
+  text: string
+}
+
+/** 标题截断：建议行里的工作名保持可读。 */
+function shortTitle(title: string): string {
+  return title.length > 16 ? `${title.slice(0, 15)}…` : title
+}
+
+/** 与 `types.ts` 的 `sessionDisplayTitle` 同口径（这里只拿得到 Pick 字段）。 */
+function displayTitleOf(session: InsightSessionLike): string {
+  const title = session.title?.trim()
+  return title ? title : '新工作'
+}
+
+/** 工作分布描述：「1 项在跑，2 项已完成」。 */
+function workStateLine(sessions: readonly InsightSessionLike[]): string {
+  const running = sessions.filter((session) => session.status === 'running').length
+  const interrupted = sessions.filter((session) => session.status === 'interrupted').length
+  const closed = sessions.filter((session) => session.status === 'closed').length
+  const idle = sessions.filter((session) => session.status === 'idle').length
+  const parts: string[] = []
+  if (running > 0) parts.push(`${running} 项在跑`)
+  if (interrupted > 0) parts.push(`${interrupted} 项待续`)
+  if (idle > 0) parts.push(`${idle} 项有新结果`)
+  if (closed > 0) parts.push(`${closed} 项已完成`)
+  if (parts.length === 0) return `${sessions.length} 项工作`
+  return parts.join('，')
+}
+
+/**
+ * 对整个空间做总结与建议（确定性，不依赖模型；每条建议都由真实状态触发）。
+ *
+ * 规则（优先级从高到低，最多 2 条）：
+ * 1. 最近会话在跑 → 告知进行中 + 完成后会更新；
+ * 2. 有会话被中断 → 建议续跑；
+ * 3. 有 idle 且最近会话带正文 → 建议查看结果（idle = 有结果未继续）；
+ * 4. 全部收尾 → 建议开新工作 / 归档；
+ * 5. 状态信号不足（单项且无上述条件）→ 引用最近正文一行作「最近进展」。
+ */
+export function composeWorkspaceInsight(input: ComposeWorkspaceInsightInput): ComposedWorkspaceInsight {
+  const { sessions, latest, latestText, fileCount } = input
+  const interrupted = sessions.filter((session) => session.status === 'interrupted')
+  const idleWithText = sessions.filter((session) => session.status === 'idle')
+  const closed = sessions.filter((session) => session.status === 'closed')
+  const latestTitle = shortTitle(displayTitleOf(latest))
+
+  const summaryParts = [
+    `${sessions.length} 项工作：${workStateLine(sessions)}。`,
+    fileCount === undefined ? null : `资料库 ${fileCount} 个文件。`,
+  ].filter(Boolean) as string[]
+  const summary = summaryParts.join('')
+
+  const suggestions: string[] = []
+  if (latest.status === 'running') {
+    suggestions.push(`「${latestTitle}」正在跑，完成后我会把结果汇总在这里。`)
+  }
+  if (interrupted.length > 0) {
+    suggestions.push(`「${shortTitle(displayTitleOf(interrupted[0]!))}」被中断过，要不要让它接着跑？`)
+  }
+  if (suggestions.length === 0 && idleWithText.length > 0 && latestText) {
+    suggestions.push(`「${latestTitle}」有你没细看的结果，值得花一分钟过一眼。`)
+  }
+  if (suggestions.length === 0 && sessions.length >= 2 && sessions.length === closed.length) {
+    suggestions.push('这一轮工作都收尾了，适合开下一项或整理归档。')
+  }
+  if (suggestions.length === 0 && latestText) {
+    // 状态信号不足：引用最近正文的第一句，作为「最近进展」而不是全文复述。
+    const firstSentence = latestText.split(/(?<=[。？！?])/)[0]?.trim() ?? latestText
+    suggestions.push(`最近进展：${firstSentence.length > 60 ? `${firstSentence.slice(0, 59)}…` : firstSentence}`)
+  }
+
+  const text = normalizeInsightText([summary, ...suggestions.slice(0, 2)].join('\n')) ?? summary
+  return { summary, suggestions: suggestions.slice(0, 2), text }
 }
 
 function statsOf(
@@ -283,6 +401,15 @@ async function readInsightText(
   return null
 }
 
+/** LLM 产物 → 卡片正文：总结 + 建议行，同口径 normalize（2–4 行、≤240 字）。 */
+function textFromLlmInsight(
+  summary: string,
+  advice: ReadonlyArray<{ text: string }>,
+): string | null {
+  const lines = [summary.trim(), ...advice.map((item) => item.text.trim()).filter(Boolean)]
+  return normalizeInsightText(lines.join('\n')) ?? null
+}
+
 function errorCodeOf(error: unknown): WorkspaceInsightErrorCode {
   return error instanceof InsightTimeoutError ? 'timeout' : 'session-fetch-failed'
 }
@@ -292,11 +419,12 @@ function errorMessageOf(error: unknown): string {
 }
 
 /**
- * 派生一次洞察：选最近会话 → 取最后一条 assistant 正文 → 规整 → 组装 ViewModel。
+ * 派生一次洞察：聚合本空间状态 → LLM 总结 + 建议（失败回落确定性聚合）→ 组装 ViewModel。
  *
+ * - LLM 通道（`llm.get`）不参与重试：失败/为空只是降级，不是错误；
+ * - 取数（`readInsightText`）失败会重试；「无正文」不算失败——总结不依赖正文存在；
  * - 不抛异常：失败折叠成 `status: 'error'`，由调用方决定保留缓存还是展示错误；
- * - 重试只覆盖 `getSession` / `getEvents` 的瞬时失败，不重试「无正文」；
- * - 运行中的会话也返回文本，状态标 `updating`（视觉上保留正文 + 角标）。
+ * - 运行中的会话状态标 `updating`（视觉上保留正文 + 角标）。
  */
 export async function deriveWorkspaceInsight(
   input: DeriveWorkspaceInsightInput,
@@ -332,23 +460,50 @@ export async function deriveWorkspaceInsight(
   const timeoutMs = input.timeoutMs ?? INSIGHT_TIMEOUT_MS
   const retryDelays = input.retryDelaysMs ?? INSIGHT_RETRY_DELAYS_MS
 
+  // LLM 通道不参与重试循环：它自身失败/为空只是「降级到确定性聚合」，不是错误。
+  // 缓存命中（cached）也一样取：网关按证据指纹复用，正文仍然与当前空间一致。
+  let llmText: string | null = null
+  let llmModel: string | null = null
+  if (input.llm) {
+    try {
+      const insight = await withTimeout(input.llm.get(input.workspaceId), timeoutMs)
+      const text = textFromLlmInsight(insight?.summary ?? '', insight?.advice ?? [])
+      if (text) {
+        llmText = text
+        llmModel = insight?.model ?? null
+      }
+    } catch {
+      llmText = null
+    }
+  }
+
   let lastError: unknown = null
   for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
     if (attempt > 0) await sleep(retryDelays[attempt - 1] ?? 0)
     try {
       const hit = await withTimeout(readInsightText(input.reader, latest.id), timeoutMs)
       const capturedAt = new Date(now()).toISOString()
+      // LLM 正文优先；不可用时回落确定性聚合（状态分布 + 条件建议）。
+      const composed = composeWorkspaceInsight({
+        sessions: scoped,
+        latest,
+        latestText: hit?.text ?? null,
+        ...(input.fileCount === undefined ? {} : { fileCount: input.fileCount }),
+      })
+      const text = llmText ?? composed.text
       if (!hit) {
         return {
           workspaceId: input.workspaceId,
           status: 'no-content',
-          text: null,
+          // 聚合总结仍然成立：展示状态分布与建议，只是没有消息级证据可回溯。
+          text,
           origin: {
             sessionId: latest.id,
             messageId: null,
             runId: null,
             capturedAt,
             sourceUpdatedAt: latest.updatedAt,
+            model: llmModel,
           },
           stats,
           updatedAt: latest.updatedAt,
@@ -358,13 +513,14 @@ export async function deriveWorkspaceInsight(
       return {
         workspaceId: input.workspaceId,
         status: latest.status === 'running' ? 'updating' : 'ready',
-        text: hit.text,
+        text,
         origin: {
           sessionId: latest.id,
           messageId: hit.messageId,
           runId: hit.runId,
           capturedAt,
           sourceUpdatedAt: latest.updatedAt,
+          model: llmModel,
         },
         stats,
         updatedAt: latest.updatedAt,

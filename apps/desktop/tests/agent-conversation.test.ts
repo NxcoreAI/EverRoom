@@ -1,7 +1,7 @@
 import type { AgentMessage } from '@nxcore/agent-contract'
 import { describe, expect, it } from 'vitest'
 
-import { parseAgentRoomSelectionResult } from '../src/renderer/src/components/agent/agentRoomSelection'
+import { parsePendingAgentIntent } from '../src/renderer/src/components/agent/agentRoomSelection'
 import { parseAgentDocumentIntentResult } from '../src/renderer/src/components/agent/agentDocumentIntent'
 import {
   mergePendingAgentMessages,
@@ -33,41 +33,31 @@ describe('Agent conversation display', () => {
     expect(mergePendingAgentMessages([pending], [pending])).toEqual([pending])
   })
 
-  it('includes the latest Room snapshot and explicit selection in every run context', () => {
-    expect(buildAgentRunContext(
-      [{ id: 'room-1', title: '项目 A', kind: '项目' }],
-      '  选中文本  ',
-      ' room-1 ',
-    )).toEqual({
-      rooms: [{ id: 'room-1', title: '项目 A', kind: '项目' }],
+  it('Phase 2i 去 Room：run context 不再携带 rooms/selectedRoomId', () => {
+    expect(buildAgentRunContext('  选中文本  ', undefined, ' Agent ')).toEqual({
+      pageLabel: 'Agent',
       selectedText: '选中文本',
-      selectedRoomId: 'room-1',
     })
   })
 
-  it('reads a Room selection request from completed tool details', () => {
-    expect(parseAgentRoomSelectionResult({
-      content: [{ type: 'text', text: '{"rooms":[]}' }],
-      details: {
-        rooms: [
-          { id: 'room-1', title: '项目 A', kind: '项目' },
-          { id: '', title: '无效 Room' },
-        ],
-        selectionRequired: true,
-      },
-    })).toEqual({
-      rooms: [{ id: 'room-1', title: '项目 A', kind: '项目' }],
-      selectionRequired: true,
-    })
+  it('Phase 2i 去 Room：pending intent 允许空 allowedRoomIds（网关恒发空数组）', () => {
+    expect(parsePendingAgentIntent({
+      id: 'intent-1',
+      sessionId: 'session-1',
+      sourceRunId: 'run-1',
+      originalPrompt: '创建一份原型设计文档',
+      targetCapability: 'document.create',
+      allowedRoomIds: [],
+      allowedDocumentIds: [],
+      expiresAt: '2026-08-19T12:00:00.000Z',
+      consumedAt: null,
+      createdAt: '2026-08-19T11:00:00.000Z',
+    })).toMatchObject({ id: 'intent-1', allowedRoomIds: [] })
   })
 
-  it('does not show a selector when the tool says selection is unnecessary', () => {
-    expect(parseAgentRoomSelectionResult({
-      structuredContent: {
-        rooms: [{ id: 'room-1', title: '项目 A' }],
-        selectionRequired: false,
-      },
-    })).toBeNull()
+  it('rejects malformed pending intent payloads', () => {
+    expect(parsePendingAgentIntent({ selectionRequired: true })).toBeNull()
+    expect(parsePendingAgentIntent('not-an-intent')).toBeNull()
   })
 
   it('reads a document-intent clarification from a completed preflight tool', () => {

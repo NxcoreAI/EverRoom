@@ -130,18 +130,35 @@ jobs:
             echo "::warning::macOS signing certificate is not configured; producing an unsigned build."
             exit 0
           fi
-          test -n "$CSC_KEY_PASSWORD"
+          : "${CSC_KEY_PASSWORD:?secret MACOS_CERTIFICATE_PASSWORD is not set}"
+          # notarize 只要签名就必走，API Key 装配与 profile 无关，必须在 profile 提前退出之前。
+          : "${APPLE_API_KEY_BASE64:?secret APPLE_API_KEY_BASE64 is not set}"
+          : "${APPLE_API_KEY_ID:?secret APPLE_API_KEY_ID is not set}"
+          : "${APPLE_API_ISSUER:?secret APPLE_API_ISSUER is not set}"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          # Apple API key 三重校验：BSD base64 对非法输入不报错（静默丢字符），
+          # 坏 secret 若不在此处拦截，会在 20 分钟构建后的 notarize 阶段才以
+          # "invalidPrivateKeyContents" 死掉（notarytool 本地解析 .p8 失败，
+          # 错误非 JSON，被 @electron/notarize 包装成 unexpected result）。
+          # 1) strict base64 roundtrip；2) PEM 结构；3) openssl pkey 可解析。
+          # 常见错误形态：secret 里存了 PEM 原文或双重 base64。
+          fail_fast() { echo "::error::$1" >&2; exit 1; }
+          base64 -i "$RUNNER_TEMP/AuthKey.p8" | tr -d '\n' > "$RUNNER_TEMP/rt.b64"
+          printf '%s' "$APPLE_API_KEY_BASE64" | tr -d '\n' > "$RUNNER_TEMP/given.b64"
+          cmp -s "$RUNNER_TEMP/rt.b64" "$RUNNER_TEMP/given.b64" ||
+            fail_fast "APPLE_API_KEY_BASE64 is not valid strict base64 (decode silently dropped characters). Store base64 of the .p8 file, not the PEM text or double-encoded base64."
+          grep -q '^-----BEGIN PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a PEM private key document."
+          grep -q '^-----END PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 has no PEM END line."
+          openssl pkey -in "$RUNNER_TEMP/AuthKey.p8" -noout 2>/dev/null ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a parseable PKCS#8 private key (App Store Connect API keys are EC P-256 PKCS#8)."
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           if [[ -z "$MACOS_PROVISIONING_PROFILE_BASE64" ]]; then
             echo "::warning::APNs provisioning profile is not configured; push entitlements will not be verified."
             exit 0
           fi
-          test -n "$APPLE_API_KEY_BASE64"
-          test -n "$APPLE_API_KEY_ID"
-          test -n "$APPLE_API_ISSUER"
           printf '%s' "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > apps/desktop/build/embedded.provisionprofile
-          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
-          security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everoffice$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
 
@@ -172,7 +189,8 @@ jobs:
             else
               # Without a profile, aps-environment is an unauthorized restricted
               # entitlement and AMFI kills the app at launch. Ship without push.
-              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist
+              # plist 里该键当前本就不存在（App Store 分发时才补回），Delete 需容忍缺席。
+              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist 2>/dev/null || true
             fi
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
@@ -222,11 +240,17 @@ jobs:
           unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
-          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
-          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
-          test -f "$resources/open-connector/src/server/index.ts"
-          test -f "$resources/open-connector/dist/web/index.html"
-          test -x "$resources/oo/darwin-arm64/oo"
+          # 全部 test 均带失败输出：静默退出会让日志看不出挂的是哪一项。
+          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild" \
+            || { echo "missing asar-unpacked @esbuild/darwin-arm64 (desktop optionalDependencies 未入包?)" >&2; exit 1; }
+          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing asar-unpacked better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
+          test -f "$resources/open-connector/src/server/index.ts" \
+            || { echo "missing open-connector TS entry" >&2; exit 1; }
+          test -f "$resources/open-connector/dist/web/index.html" \
+            || { echo "missing open-connector web dist" >&2; exit 1; }
+          test -x "$resources/oo/darwin-arm64/oo" \
+            || { echo "missing oo darwin-arm64 binary" >&2; exit 1; }
           "$resources/oo/darwin-arm64/oo" --version
 
       - name: Verify artifacts
@@ -237,8 +261,10 @@ jobs:
           zips=(release/*.zip)
           test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
           test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
-          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64"
-          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64" \
+            || { echo "unexpected archs in EverRoom binary" >&2; exit 1; }
+          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing gateway better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
           hdiutil verify "${dmgs[0]}"
           unzip -t "${zips[0]}"
 

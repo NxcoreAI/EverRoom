@@ -40,8 +40,8 @@ const HIT_CONTENT_LIMIT = 600;
 /**
  * 记忆工具：给 agent 主动检索/写入跨会话长期记忆。
  *
- * 与 knowledge 工具的区别：knowledge 面向"工作区沉淀的领域知识"，
- * memory 面向"用户偏好、既往决策、踩过的坑"——即使换了 Room 也成立的事实。
+ * memory 面向"用户偏好、既往决策、踩过的坑"——即使换了工作区也成立的事实；
+ * 工作区资料/产物的检索走 files 域的 file_search / library_browse / file_read。
  * 写入是显式的：只有 agent 判断值得记时才写，不做全量会话蒸馏。
  */
 export function createMemoryPiTools(service: MemoryService): PiAgentRuntimeTool[] {

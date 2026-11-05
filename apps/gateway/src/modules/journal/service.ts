@@ -169,6 +169,7 @@ export class JournalService {
         summary: composed.composition.summary,
         bullets: composed.composition.bullets,
         actions: composed.composition.actions,
+        advice: composed.composition.advice ?? null,
         evidence: snapshot.signals,
         model: composed.model,
         sourceFingerprint: snapshot.fingerprint,
@@ -248,6 +249,7 @@ export class JournalService {
       summary: row.summary,
       bullets: row.bullets ?? [],
       actions: (row.actions ?? []) as JournalEntryRecord["actions"],
+      ...(row.advice && row.advice.length > 0 ? { advice: row.advice } : {}),
       model: row.model ?? null,
       createdAt: row.createdAt.toISOString(),
     };

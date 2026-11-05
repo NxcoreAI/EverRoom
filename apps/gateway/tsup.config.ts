@@ -34,6 +34,11 @@ export default defineConfig({
   },
   // @node-rs/jieba 是原生模块（.node 二进制随平台包分发），必须外置：
   // 内联后运行时 require('@node-rs/jieba-darwin-arm64') 会解析失败。
-  noExternal: [/^(?!(better-sqlite3|@napi-rs\/canvas|@node-rs\/jieba)$).*/, /^@nxcore\/connectors-module/],
+  // 注意子路径（@node-rs/jieba/dict.js）也要豁免：dict.js 用 __dirname 定位
+  // dict.txt/idf.txt，内联后 __dirname 指向产物目录，打包后启动即 ENOENT。
+  noExternal: [
+    /^(?!(better-sqlite3|@napi-rs\/canvas|@node-rs\/jieba(?:\/.*)?)$).*/,
+    /^@nxcore\/connectors-module/,
+  ],
   external: ["better-sqlite3", "@napi-rs/canvas", "@node-rs/jieba"],
 });

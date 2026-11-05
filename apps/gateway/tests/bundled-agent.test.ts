@@ -56,7 +56,6 @@ describe("bundled project Agent", () => {
       runtimeSessionRef: null,
       prompt: "catalog",
       pageLabel: "Main Agent",
-      roomId: null,
     }, {});
     expect(JSON.parse(catalogResult.content)).toMatchObject({
       agents: expect.arrayContaining([
@@ -78,7 +77,6 @@ describe("bundled project Agent", () => {
       runtimeSessionRef: null,
       prompt: "分析材料",
       pageLabel: "Main Agent",
-      roomId: null,
     }, {
       task: "分析这段材料并提炼事实与风险",
       content: "项目已经上线，但缺少回滚方案。",
@@ -97,7 +95,6 @@ describe("bundled project Agent", () => {
       runtimeSessionRef: null,
       prompt: "分析文件",
       pageLabel: "Main Agent",
-      roomId: null,
     }, {
       task: "提取文件中的待办事项",
       fileId: "file-1",
@@ -133,7 +130,6 @@ describe("bundled project Agent", () => {
       runtimeSessionRef: null,
       prompt: "这个文档写了什么？",
       pageLabel: "Main Agent",
-      roomId: null,
     }, {
       fileEntryId: "file-report",
       fileVersionId: "fver-report-v1",
@@ -175,7 +171,6 @@ describe("bundled project Agent", () => {
       runtimeSessionRef: null,
       prompt: "这份文档写了什么？",
       pageLabel: "Main Agent",
-      roomId: null,
     }, {
       fileEntryId: "file-student",
       fileVersionId: "fver-student-v1",

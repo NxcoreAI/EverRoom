@@ -71,21 +71,21 @@ export interface OfficeApplyBytesRequest {
   expectedContentHash: string
 }
 
-/** Agent 驱动活 Word/Excel 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
+/** Agent 驱动活 Word/Excel/PDF 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
 export interface OfficeAgentToolsRequest {
-  /** docx = Word 活文档；spreadsheet = Excel 活工作簿。 */
-  kind: 'docx' | 'spreadsheet'
+  /** docx = Word 活文档；spreadsheet = Excel 活工作簿；pdf = PDF 文档。 */
+  kind: 'docx' | 'spreadsheet' | 'pdf'
   /** read = describe（上下文+词汇表+指南）；apply = 执行工具调用。 */
   mode: 'read' | 'apply'
   fileId: string
-  /** apply：docs/sheets AI 工具调用（id/name/input）。 */
+  /** apply：docs/sheets/pdf AI 工具调用（id/name/input）。 */
   calls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
-  /** 后台 Word 会话回填版本链时的归属（跟当前 Run 的 Room/工作区走）。 */
+  /** 后台 Word/Excel/PDF 会话回填版本链时的归属（跟当前 Run 的 Room/工作区走）。 */
   roomId?: string | null
   workspaceId?: string | null
 }
 
-/** 后台 Word/Excel 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
+/** 后台 Word/Excel/PDF 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
 type OfficeAgentToolsFailureReason =
   | 'not_open'
   | 'not_editable'
@@ -93,6 +93,7 @@ type OfficeAgentToolsFailureReason =
   | 'not_found'
   | 'not_docx'
   | 'not_xlsx'
+  | 'not_pdf'
   | 'too_large'
   | 'encrypted'
   | 'open_failed'
@@ -102,7 +103,7 @@ type OfficeAgentToolsFailureReason =
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
   const input = value as Partial<OfficeAgentToolsRequest>
-  if (input.kind !== 'docx' && input.kind !== 'spreadsheet') return false
+  if (input.kind !== 'docx' && input.kind !== 'spreadsheet' && input.kind !== 'pdf') return false
   if (input.mode !== 'read' && input.mode !== 'apply') return false
   if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
   if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false

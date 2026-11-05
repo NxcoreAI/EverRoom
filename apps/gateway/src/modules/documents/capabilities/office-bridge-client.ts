@@ -269,10 +269,10 @@ export class OfficeBridgeClient {
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
-  /** 活 Word/Excel describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
+  /** 活 Word/Excel/PDF describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
   async describeAgentArtifact(
     input: {
-      kind: "docx" | "spreadsheet";
+      kind: "docx" | "spreadsheet" | "pdf";
       fileId: string;
       /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
       roomId?: string | null;
@@ -309,10 +309,10 @@ export class OfficeBridgeClient {
     return result;
   }
 
-  /** 活 Word/Excel apply：渲染层执行 docs/sheets AI 工具调用（编辑实时重绘，随后静默保存）。 */
+  /** 活 Word/Excel/PDF apply：渲染层执行 AI 工具调用（编辑实时重绘，随后静默保存）。 */
   async applyAgentArtifactTools(
     input: {
-      kind: "docx" | "spreadsheet";
+      kind: "docx" | "spreadsheet" | "pdf";
       fileId: string;
       calls: OfficeAgentToolCall[];
       /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */

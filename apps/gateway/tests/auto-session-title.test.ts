@@ -256,7 +256,7 @@ describe("AutoSessionTitles · 与 AgentService 接线", () => {
     await settle(80);
 
     expect(generate).toHaveBeenCalledTimes(1);
-    const updated = service.listSessions(undefined, undefined, "ws-1").find((item) => item.id === session.id);
+    const updated = service.listSessions(undefined, "ws-1").find((item) => item.id === session.id);
     expect(updated?.title).toBe("季度成本核对");
   });
 });

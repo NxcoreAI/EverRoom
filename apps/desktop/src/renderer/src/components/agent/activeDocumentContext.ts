@@ -103,15 +103,14 @@ export function buildActiveDocumentRunContext(
   options: BuildActiveDocumentContextOptions = {},
 ): AgentActiveDocumentContext | null {
   if (!descriptor) return null
-  const roomId = cleanString(descriptor.roomId)
   const documentId = cleanString(descriptor.documentId)
   const title = cleanString(descriptor.title)
-  if (!roomId || !documentId || !title || !Number.isInteger(descriptor.version) || descriptor.version < 0) {
+  // Phase 2i 后无 Room 维度：工作区文稿不再校验/携带 roomId。
+  if (!documentId || !title || !Number.isInteger(descriptor.version) || descriptor.version < 0) {
     return null
   }
 
   const context: AgentActiveDocumentContext = {
-    roomId,
     documentId,
     title,
     version: descriptor.version,

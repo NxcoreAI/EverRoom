@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parseAgentDocumentIntentResult } from './agentDocumentIntent'
-import { parseAgentRoomSelectionResult } from './agentRoomSelection'
+import { parsePendingAgentIntent } from './agentRoomSelection'
 
 const pendingIntent = {
   id: 'intent-1',
@@ -16,27 +15,22 @@ const pendingIntent = {
   createdAt: '2026-08-19T11:00:00.000Z',
 }
 
-describe('Agent pending intent selections', () => {
-  it('keeps the original intent with Room and clarification controls', () => {
-    expect(parseAgentRoomSelectionResult({
-      rooms: [{ id: 'room-1', title: 'PC 原型评审' }],
-      selectionRequired: true,
-      pendingIntent,
-    })).toMatchObject({ pendingIntent, rooms: [{ id: 'room-1' }] })
-
-    expect(parseAgentDocumentIntentResult({
-      clarificationRequired: true,
-      originalPrompt: pendingIntent.originalPrompt,
-      topic: '原型设计',
-      pendingIntent,
-    })).toMatchObject({ pendingIntent, topic: '原型设计' })
-
-    expect(parseAgentRoomSelectionResult({
-      rooms: [{ id: 'room-1', title: 'PC 原型评审' }],
-      selectionRequired: true,
-    })).toEqual({
-      rooms: [{ id: 'room-1', title: 'PC 原型评审' }],
-      selectionRequired: true,
+describe('Agent pending intent parsing', () => {
+  it('Phase 2i 去 Room：不再要求 allowedRoomIds 非空也能解析 pending intent', () => {
+    expect(parsePendingAgentIntent(pendingIntent)).toMatchObject({
+      id: 'intent-1',
+      targetCapability: 'document.create',
     })
+    // 网关在 Phase 2i 后恒发空 allowedRoomIds；决策卡仍应能解析。
+    expect(parsePendingAgentIntent({ ...pendingIntent, allowedRoomIds: [] })).toMatchObject({
+      id: 'intent-1',
+      allowedRoomIds: [],
+    })
+  })
+
+  it('rejects malformed pending intent payloads', () => {
+    expect(parsePendingAgentIntent(null)).toBeNull()
+    expect(parsePendingAgentIntent({ ...pendingIntent, expiresAt: 123 })).toBeNull()
+    expect(parsePendingAgentIntent({ ...pendingIntent, targetCapability: 'room.create' })).toBeNull()
   })
 })

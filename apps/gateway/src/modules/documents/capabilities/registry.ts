@@ -105,7 +105,7 @@ export class DocumentCapabilityRegistry {
     const normalized: NormalizedStartDocumentOperationInput = {
       capabilityId: request.capabilityId,
       context: {
-        roomId: request.context.roomId,
+        // Phase 2i 后无 Room 维度：归一化上下文不再携带 roomId（legacy 请求字段被忽略）。
         ...(request.context.documentId ? { documentId: request.context.documentId } : {}),
         sessionId,
         runId,
@@ -115,9 +115,7 @@ export class DocumentCapabilityRegistry {
     this.assertContext(plugin.manifest, {
       agentSessionId: sessionId,
       runId,
-      roomId: request.context.roomId,
       ...(request.context.documentId ? { activeDocument: {
-        roomId: request.context.roomId,
         documentId: request.context.documentId,
         title: "",
         version: 0,
@@ -129,7 +127,9 @@ export class DocumentCapabilityRegistry {
       || plan.operation.capabilityVersion !== plugin.manifest.version
       || plan.operation.interactionMode !== plugin.manifest.interactionMode
       || plan.operation.presenterKey !== plugin.manifest.presenterKey
-      || plan.operation.roomId !== request.context.roomId
+      // Phase 2i 后无 Room 维度：操作一律工作区级（roomId 恒 null），
+      // 不再与（可能携带 legacy roomId 的）原始请求比对。
+      || plan.operation.roomId !== null
       || plan.operation.sessionId !== sessionId
       || plan.operation.runId !== runId
       || (plan.operation.documentId ?? undefined) !== request.context.documentId) {

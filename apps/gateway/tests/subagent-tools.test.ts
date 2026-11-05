@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
-import type { SubagentInvocation } from '@nxcore/agent-contract'
+import { WORKSPACE_DOCUMENT_CHANNEL, type SubagentInvocation } from '@nxcore/agent-contract'
 import { Ajv } from 'ajv'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -304,7 +304,7 @@ describe('createSubagentPiTools slides_draft', () => {
 
   /** generate 阶段读回草稿的文档快照夹具（与 readDocumentForAgent 同构）。 */
   const draftSnapshot = {
-    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：Q1: 1.2 亿；Q2: 1.5 亿\n\n## 计划\n- 三线扩张\n',
   }
@@ -328,7 +328,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const orchestrator = orchestratorByAgent({
       'slides-planner': { result: { text: '', structuredOutput: planFixture } },
     })
-    const createSlidesDraftDocument = vi.fn(async (_input: { roomId: string; title: string; markdown: string }) => ({
+    const createSlidesDraftDocument = vi.fn(async (_input: { roomId: string | null; title: string; markdown: string }) => ({
       documentId: 'doc-draft-1',
       title: '季度汇报',
     }))
@@ -338,7 +338,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       {
         task: 'draft',
         instruction: '做一份 3 页的季度汇报',
@@ -357,21 +357,21 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(plannerInput).toMatchObject({
       phase: 'draft',
       instruction: '做一份 3 页的季度汇报',
-      roomId: 'room-1',
+      roomId: WORKSPACE_DOCUMENT_CHANNEL,
       title: '季度汇报',
     })
     expect(plannerInput.outline).toEqual(['封面', '业绩', '计划'])
 
     expect(createSlidesDraftDocument).toHaveBeenCalledTimes(1)
     const draftInput = createSlidesDraftDocument.mock.calls[0]![0] as Record<string, unknown>
-    expect(draftInput).toMatchObject({ roomId: 'room-1', title: '季度汇报' })
+    expect(draftInput).toMatchObject({ roomId: null, title: '季度汇报' })
     expect(String(draftInput.markdown)).toContain('## 业绩')
     expect(String(draftInput.markdown)).toContain('数据：Q1: 1.2 亿；Q2: 1.5 亿')
 
     // 草稿实时可见：planner 前先发 drafting，draft_ready 带全量页清单与文档定位。
     expect(onUpdate).toHaveBeenCalledTimes(2)
     const draftingUpdate = onUpdate.mock.calls[0]![0] as { details: Record<string, unknown> }
-    expect(draftingUpdate.details).toMatchObject({ stage: 'drafting', roomId: 'room-1', title: '季度汇报' })
+    expect(draftingUpdate.details).toMatchObject({ stage: 'drafting', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报' })
     expect(typeof draftingUpdate.details.updatedAt).toBe('number')
     const update = onUpdate.mock.calls[1]![0] as { details: Record<string, unknown> }
     expect(update.details).toMatchObject({
@@ -380,7 +380,7 @@ describe('createSubagentPiTools slides_draft', () => {
       totalPages: 3,
       doneCount: 0,
       documentId: 'doc-draft-1',
-      roomId: 'room-1',
+      roomId: WORKSPACE_DOCUMENT_CHANNEL,
     })
     expect(typeof update.details.updatedAt).toBe('number')
 
@@ -402,7 +402,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const resolveDocumentForDraft = vi.fn((id: string) => {
       if (id !== documentId) throw new Error('document_not_found')
       return {
-        document: { id: documentId, roomId: 'room-1', title: '27 页大纲', version: 5 },
+        document: { id: documentId, roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '27 页大纲', version: 5 },
         blocks: [],
         markdown,
       }
@@ -413,7 +413,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       {
         task: 'draft',
         instruction: `根据 Room 文档（文档 ID ${documentId}）生成 3 页草稿`,
@@ -467,7 +467,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       {
         task: 'generate',
         instruction: '受众是领导，15 分钟，内容均衡',
@@ -481,7 +481,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const plannerDispatch = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
     expect(plannerDispatch.task).toBe('演示文稿编排')
     const plannerInput = plannerDispatch.input as Record<string, unknown>
-    expect(plannerInput).toMatchObject({ phase: 'arrange', roomId: 'room-1', title: '季度汇报' })
+    expect(plannerInput).toMatchObject({ phase: 'arrange', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报' })
     expect((plannerInput.draftPages as Array<Record<string, unknown>>)[1]).toMatchObject({
       title: '业绩',
       data: 'Q1: 1.2 亿；Q2: 1.5 亿',
@@ -583,7 +583,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '做一份十页汇报', draftDocumentId: 'doc-draft-10' } as never,
       undefined,
       onUpdate,
@@ -660,7 +660,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const pending = slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '做一份十页汇报', draftDocumentId: 'doc-draft-10' } as never,
       undefined,
       vi.fn(),
@@ -702,14 +702,14 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const tool = tools.find(tool => tool.name === 'slides_draft')!
     const params = { task: 'generate', instruction: '做一份汇报', draftDocumentId: 'doc-draft-1' }
-    const first = JSON.parse((await tool.execute({ ...run, roomId: 'room-1' } as never, params as never)).content)
+    const first = JSON.parse((await tool.execute({ ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never, params as never)).content)
     expect(first).toMatchObject({ status: 'failed', errorCode: 'slides_generation_token_budget_exceeded' })
     const calls = base.dispatch.mock.calls.length
-    const retry = JSON.parse((await tool.execute({ ...run, roomId: 'room-1' } as never, params as never)).content)
+    const retry = JSON.parse((await tool.execute({ ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never, params as never)).content)
     expect(retry.errorCode).toBe('slides_generation_token_budget_exceeded')
     expect(base.dispatch).toHaveBeenCalledTimes(calls)
     reportUsage = false
-    const reset = JSON.parse((await tool.execute({ ...run, roomId: 'room-1' } as never,
+    const reset = JSON.parse((await tool.execute({ ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { ...params, resetGenerationBudget: true } as never)).content)
     expect(reset.status).toBe('completed')
     expect(office.generate).toHaveBeenCalledTimes(1)
@@ -775,7 +775,7 @@ describe('createSubagentPiTools slides_draft', () => {
       draftDocumentId: 'doc-draft-9',
     } as never
 
-    const first = await slidesDraft.execute({ ...run, roomId: 'room-1' } as never, params, undefined)
+    const first = await slidesDraft.execute({ ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never, params, undefined)
     const firstPayload = JSON.parse((first as { content: string }).content)
     expect(firstPayload.status).toBe('failed')
     expect(firstPayload.errorCode).toBe('slides_arrange_batch_failed')
@@ -790,7 +790,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const resumed = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
       ...options, slidesCheckpoints: new SlidesGenerationCheckpointStore(database.db),
     }).find(tool => tool.name === 'slides_draft')!
-    const second = await resumed.execute({ ...run, roomId: 'room-1' } as never, params, undefined)
+    const second = await resumed.execute({ ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never, params, undefined)
     const secondPayload = JSON.parse((second as { content: string }).content)
     expect(secondPayload.status).toBe('completed')
     // 批 1 命中 checkpoint 不再派发；只补批 0。
@@ -823,7 +823,7 @@ describe('createSubagentPiTools slides_draft', () => {
     )
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -878,7 +878,7 @@ describe('createSubagentPiTools slides_draft', () => {
     )
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -925,7 +925,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const onUpdate = vi.fn()
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
       onUpdate,
@@ -974,7 +974,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -1008,7 +1008,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -1028,13 +1028,13 @@ describe('createSubagentPiTools slides_draft', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     await expect(slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成' } as never,
       undefined,
     )).rejects.toThrow('slides_draft_document_required')
 
     const emptyDraft = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -1057,7 +1057,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '做一份季度汇报', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -1075,7 +1075,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '做一份季度汇报', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -1085,28 +1085,25 @@ describe('createSubagentPiTools slides_draft', () => {
     expect(payload).toMatchObject({ status: 'failed', errorCode: 'slides_planner_not_registered' })
   })
 
-  it('edit：不经方案阶段直落 slides-builder；fileId 缺省不进 input；roomId 冲突与缺失直接拒绝', async () => {
+  it('edit：不经方案阶段直落 slides-builder；fileId 缺省不进 input；已无 Room 参数', async () => {
     const orchestrator = orchestratorReturning({})
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator)
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     await expect(
-      slidesDraft.execute({ ...run, roomId: 'room-1' } as never, { task: 'edit', instruction: '字号调大', roomId: 'room-2' } as never, undefined),
-    ).rejects.toThrow('ROOM_SELECTION_MISMATCH')
-
-    await expect(
-      slidesDraft.execute(run as never, { task: 'edit', instruction: '字号调大' } as never, undefined),
-    ).rejects.toThrow('ROOM_SELECTION_REQUIRED')
+      slidesDraft.execute(run as never, { task: 'edit', instruction: '字号调大', roomId: 'room-2' } as never, undefined),
+    ).rejects.toThrow('slides_draft_parameter_not_allowed:edit:roomId')
 
     await expect(slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: undefined } as never,
       { task: 'edit', instruction: '字号调大', style: 'boardroom' } as never,
       undefined,
     )).rejects.toThrow('slides_draft_parameter_not_allowed:edit:style')
     expect(orchestrator.dispatch).not.toHaveBeenCalled()
 
+    // run 无任何房间信息也直接可编辑（工作区级，无 Room 门槛）。
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: undefined } as never,
       { task: 'edit', instruction: '字号调大' } as never,
       undefined,
     )
@@ -1114,7 +1111,9 @@ describe('createSubagentPiTools slides_draft', () => {
     const dispatched = orchestrator.dispatch.mock.calls[0]![0] as Record<string, unknown>
     expect(dispatched).toMatchObject({ agentId: 'slides-builder', source: 'primary_agent' })
     const input = dispatched.input as Record<string, unknown>
-    expect(input).toMatchObject({ task: 'edit', instruction: '字号调大', roomId: 'room-1' })
+    expect(input).toMatchObject({ task: 'edit', instruction: '字号调大' })
+    // 子 Agent 契约仍带 roomId，但只作为网关内部管线的 scope 常量注入，模型侧不再感知。
+    expect(input.roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
     expect(input.fileId).toBeUndefined()
     expect(input.style).toBeUndefined()
 
@@ -1256,7 +1255,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const onUpdate = vi.fn()
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
       onUpdate,
@@ -1295,7 +1294,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: 'AI 创业项目融资 BP', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1315,12 +1314,12 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const referenceStyle = { palette: { background: '#111111', primary: '#008877' }, darkCover: true }
     const first = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '深色商务风，不要蓝色', draftDocumentId: 'doc-draft-1', referenceStyle } as never,
       undefined, undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '允许少量蓝色，其他保持', regenerate: true, referenceStyle } as never,
       undefined, undefined,
     )
@@ -1333,7 +1332,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     }
     const { styleSessionId } = JSON.parse(first.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 1, referenceStyle } as never,
       undefined, undefined,
     )
@@ -1359,7 +1358,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1389,7 +1388,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const first = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1398,7 +1397,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     // 重入不带 regenerate：不生图、轮次不变，只重新广播候选。
     const reShow = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '继续' } as never,
       undefined, undefined,
     )
@@ -1410,7 +1409,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     // 明确不满意：regenerate=true → 反馈累积、轮次 +1、重出候选。
     const second = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '不要太蓝，要更商务', regenerate: true } as never,
       undefined, undefined,
     )
@@ -1438,7 +1437,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const first = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1446,7 +1445,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     // 同 Room 的新草稿：不得把旧候选重新亮出来，须按新草稿新建会话并重新生成。
     const second = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '新一版', draftDocumentId: 'doc-draft-2' } as never,
       undefined, undefined,
     )
@@ -1462,7 +1461,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const style = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1470,7 +1469,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     const badUpdate = vi.fn()
     const bad = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 9 } as never,
       undefined, badUpdate,
     )
@@ -1486,7 +1485,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     const onUpdate = vi.fn()
     const selected = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 2 } as never,
       undefined, onUpdate,
     )
@@ -1519,7 +1518,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '做一份商务科技风的汇报', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1548,13 +1547,13 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const style = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     const selected = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 2 } as never,
       undefined, undefined,
     )
@@ -1656,7 +1655,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       slidesLayoutOffice: makeLayouterOffice().office,
       slidesEditor: { active: true },
       resolveDocumentForDraft: () => ({
-        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
         blocks: [],
         markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
       }),
@@ -1666,13 +1665,13 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     // 会话还在 images_ready → 拒绝。
     const style = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     const early = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', styleSessionId } as never,
       undefined, undefined,
     )
@@ -1680,12 +1679,12 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
     // 走到 card_ready → generate 注入 styleParams 给 builder。
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
     const generated = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
@@ -1770,7 +1769,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
       resolveDocumentForDraft: () => ({
-        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
         blocks: [],
         markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
       }),
@@ -1778,18 +1777,18 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const style = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
     const generated = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', styleSessionId } as never,
       undefined, undefined,
     )
@@ -1888,7 +1887,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
       resolveDocumentForDraft: () => ({
-        document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+        document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
         blocks: [],
         markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：bar | categories: Q1, Q2 | 营收: 1, 2\n',
       }),
@@ -1897,13 +1896,13 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const style = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style', instruction: '商务科技风', draftDocumentId: 'doc-draft-1' } as never,
       undefined, undefined,
     )
     const { styleSessionId } = JSON.parse(style.content as string) as { styleSessionId: string }
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'style_select', styleSessionId, candidateIndex: 1 } as never,
       undefined, undefined,
     )
@@ -1916,7 +1915,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       undefined, undefined,
     )
     expect((JSON.parse(generated.content as string) as { status: string }).status).toBe('completed')
-    expect(office.generate.mock.calls[0]![0]).toMatchObject({ roomId: 'room-1' })
+    expect(office.generate.mock.calls[0]![0]).toMatchObject({ roomId: WORKSPACE_DOCUMENT_CHANNEL })
   })
 })
 
@@ -1945,7 +1944,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
   }
 
   const draftSnapshot = {
-    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 业绩\n数据：Q1: 1.2 亿\n\n## 计划\n- 三线扩张\n',
   }
@@ -2096,7 +2095,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const onUpdate = vi.fn()
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
       onUpdate,
@@ -2106,7 +2105,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('page_images_confirm')
     expect(payload.pages).toBe(2)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.stage).toBe('confirm')
     expect(session?.pages).toHaveLength(2)
     expect(session?.pages[0]).toMatchObject({ pageIndex: 0, title: '封面', contentHash: null })
@@ -2121,14 +2120,14 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const setup = await setupPageImages()
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
 
     const again = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '再看下配图', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -2145,14 +2144,14 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
 
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
       onUpdate,
@@ -2162,7 +2161,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('page_images_review')
     expect(payload.generated).toBe(2)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.stage).toBe('review')
     expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
     expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
@@ -2182,19 +2181,19 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
 
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '第二张重来', draftDocumentId: 'doc-draft-1', regeneratePageImage: 2, regenerateFeedback: '要更明亮' } as never,
       undefined,
       onUpdate,
@@ -2208,7 +2207,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     expect(payload.status).toBe('page_images_review')
     expect(payload.regenerated).toBe(2)
     expect(payload.generation).toBe(2)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[1]?.contentHash).toBe('c'.repeat(64))
     expect(session?.generation).toBe(2)
     const reviewPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> }
@@ -2224,19 +2223,19 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
 
     const onUpdate = vi.fn()
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       {
         task: 'generate',
         instruction: '批量处置',
@@ -2258,7 +2257,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
       .filter((details) => details.stage === 'page_images_review')
     expect(reviewBroadcasts.length).toBe(3)
     // 重生成撤销了同批打回：第 2 张最终恢复使用。
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[0]?.contentHash).toBe('c'.repeat(64))
     expect(session?.pages[1]?.rejected).toBe(false)
     expect(session?.pages[1]?.contentHash).toBeTruthy()
@@ -2271,18 +2270,18 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -2296,7 +2295,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ])
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('completed')
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('resolved')
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.stage).toBe('resolved')
   })
 
   it('decision=accept 不带 styleSessionId：靠配图会话回查仍注入风格卡（回归：桌面罐头消息不带 styleSessionId）', async () => {
@@ -2304,7 +2303,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
       { ok: true, hash: 'a'.repeat(64) },
     ] })
     // 预置 card_ready 风格会话（绑定同一草稿），初始 generate 带 styleSessionId——与真实流程一致。
-    const styleSession = setup.deps.sessions.create({ roomId: 'room-1', draftDocumentId: 'doc-draft-1', instruction: '商务科技风' })
+    const styleSession = setup.deps.sessions.create({ roomId: WORKSPACE_DOCUMENT_CHANNEL, draftDocumentId: 'doc-draft-1', instruction: '商务科技风' })
     setup.deps.sessions.patch(styleSession.id, {
       overviewImages: [{ contentHash: 'c'.repeat(64), composition: 'poster', generation: 1 }],
       selectedImageHash: 'c'.repeat(64),
@@ -2313,19 +2312,19 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1', styleSessionId: styleSession.id } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
 
     // 确认落页只带 draftDocumentId（桌面罐头消息形态）——风格卡仍必须注入 builder。
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -2342,13 +2341,13 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const setup = await setupPageImages()
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '跳过', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'skip' } as never,
       undefined,
     )
@@ -2370,13 +2369,13 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     ] })
     const slidesDraft = buildTools(setup)
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
@@ -2385,7 +2384,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     expect(payload.status).toBe('failed')
     expect(payload.errorCode).toBe('slides_page_images_generation_failed')
     expect(payload.message).toContain('skip')
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('confirm')
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.stage).toBe('confirm')
     expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
   })
 
@@ -2394,7 +2393,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     const slidesDraft = buildTools(setup)
 
     const noSession = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -2404,12 +2403,12 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
     })
 
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     const conflict = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '确认', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -2443,7 +2442,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
   }
 
   const draftSnapshot = {
-    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 计划\n- 三线扩张\n',
   }
@@ -2565,12 +2564,12 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
@@ -2594,7 +2593,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const globalPages = withSemanticContent(markdown, 'doc-draft-10').map((page, index) =>
       index === 5 ? { ...page, imagePrompt: '深蓝科技感城市天际线，横幅构图，冷色光' } : page)
     const draftSnapshot10 = {
-      document: { id: 'doc-draft-10', roomId: 'room-1', title: '十页汇报', version: 1 },
+      document: { id: 'doc-draft-10', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '十页汇报', version: 1 },
       blocks: [],
       markdown,
     }
@@ -2652,7 +2651,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const first = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '做十页汇报', draftDocumentId: 'doc-draft-10' } as never,
       undefined,
       vi.fn(),
@@ -2663,14 +2662,14 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const landedFirst = office.fillPage.mock.calls.map((call) => (call[0] as { slideIndex: number }).slideIndex).sort((a, b) => a - b)
     expect(landedFirst).toEqual([0, 1, 2, 3, 4, 6, 7, 8, 9])
     expect(office.generate).toHaveBeenCalledTimes(1)
-    const session = deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-10')!
+    const session = deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-10')!
     expect(session.stage).toBe('confirm')
     const deck = (session.plan as Record<string, unknown>).__deck as { fileEntryId: string; appliedPages: number[]; totalPages: number }
     expect(deck).toMatchObject({ fileEntryId: 'file-1', totalPages: 10 })
     expect([...deck.appliedPages].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 6, 7, 8, 9])
 
     const second = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '跳过配图', draftDocumentId: 'doc-draft-10', pageImagesDecision: 'skip' } as never,
       undefined,
     )
@@ -2681,7 +2680,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     expect(office.generate).toHaveBeenCalledTimes(1)
     const landedAll = office.fillPage.mock.calls.map((call) => (call[0] as { slideIndex: number }).slideIndex).sort((a, b) => a - b)
     expect(landedAll).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-    expect(deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-10')?.stage).toBe('resolved')
+    expect(deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-10')?.stage).toBe('resolved')
     database.sqlite.close()
   })
 
@@ -2690,7 +2689,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const onUpdate = vi.fn()
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回第一张', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
       undefined,
       onUpdate,
@@ -2699,7 +2698,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('page_images_review')
     expect(payload.rejected).toBe(1)
-    const session = deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[0]?.rejected).toBe(true)
     expect(session?.pages[1]?.rejected).toBeFalsy()
     const reviewPayload = onUpdate.mock.calls.at(-1)?.[0] as { details: { pages: Array<{ rejected?: boolean }> } }
@@ -2710,13 +2709,13 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
   it('打回后 accept：打回页 materials 被剥、其余页保留', async () => {
     const { orchestrator, generateImage, slidesDraft } = await setupToReview()
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
       undefined,
     )
 
     const result = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -2737,29 +2736,29 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
   it('恢复撤销打回；重生成该张也撤销打回', async () => {
     const { generateImage, deps, slidesDraft } = await setupToReview()
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 1 } as never,
       undefined,
     )
 
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '恢复', draftDocumentId: 'doc-draft-1', restorePageImage: 1 } as never,
       undefined,
     )
-    expect(deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.pages[0]?.rejected).toBeFalsy()
+    expect(deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.pages[0]?.rejected).toBeFalsy()
 
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 2 } as never,
       undefined,
     )
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '重做', draftDocumentId: 'doc-draft-1', regeneratePageImage: 2 } as never,
       undefined,
     )
-    const session = deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[1]?.rejected).toBeFalsy()
     expect(session?.pages[1]?.contentHash).toBe('c'.repeat(64))
     expect(generateImage).toHaveBeenCalledTimes(3)
@@ -2768,7 +2767,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
   it('打回越界或阶段不符返回 failed', async () => {
     const { slidesDraft } = await setupToReview()
     const outOfRange = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-1', rejectPageImage: 5 } as never,
       undefined,
     )
@@ -2778,7 +2777,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     })
 
     const noSession = await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '打回', draftDocumentId: 'doc-draft-other', rejectPageImage: 1 } as never,
       undefined,
     )
@@ -2812,7 +2811,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
   }
 
   const draftSnapshot = {
-    document: { id: 'doc-draft-1', roomId: 'room-1', title: '季度汇报', version: 1 },
+    document: { id: 'doc-draft-1', roomId: WORKSPACE_DOCUMENT_CHANNEL, title: '季度汇报', version: 1 },
     blocks: [],
     markdown: '## 封面\n- 季度汇报\n\n## 计划\n- 三线扩张\n',
   }
@@ -2947,12 +2946,12 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
   async function reachReviewBackground(setup: Awaited<ReturnType<typeof setupBackground>>) {
     const { slidesDraft } = setup
     await slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
     return slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成配图', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'generate' } as never,
       undefined,
     )
@@ -2969,7 +2968,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     const setup = await setupBackground({ generateImage })
 
     const result = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
     )
@@ -2977,16 +2976,16 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     // 有 runner：过目卡直接亮出（生成中占位），后台并发开跑，无需用户先决策。
     const payload = JSON.parse((result as { content: string }).content)
     expect(payload.status).toBe('page_images_review')
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('review')
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.stage).toBe('review')
     expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1) // 只编排未落页
     // 生图能力可用：编排输入带预热 token（planner 编排中即可入池生图）。
     const plannerCall = setup.orchestrator.dispatch.mock.calls
       .find((call) => (call[0] as { agentId: string }).agentId === 'slides-planner')
     expect((plannerCall![0] as { input?: { prewarmToken?: string } }).input?.prewarmToken).toMatch(/^prewarm:/)
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
     expect(generateImage).toHaveBeenCalledTimes(2)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
     expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
   })
@@ -3008,11 +3007,11 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     expect(payload.message).toContain('后台')
     // 立即返回时可能已在生成第一张，但会话已转 review、builder 未调度。
     expect(setup.orchestrator.dispatch).toHaveBeenCalledTimes(1)
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('review')
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.stage).toBe('review')
 
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
     expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))
     expect(generateImage).toHaveBeenCalledTimes(2)
@@ -3026,7 +3025,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
 
     // 后台在途不阻塞：accept 立即返回真完成（旧行为会转 settling 静默等最多 16 分钟）。
     const result = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '确认落页', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'accept' } as never,
       undefined,
     )
@@ -3043,7 +3042,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     expect(layouterInputs.length).toBe(2)
     // 语义链路：无图页 materials 为空数组（不再有 undefined 约定）。
     expect(layouterInputs.every((input) => Array.isArray(input?.materials) && input!.materials!.length === 0)).toBe(true)
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.stage).toBe('resolved')
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.stage).toBe('resolved')
   })
 
   it('accept 不等在途：未完成页立即标 failed 且不落图；迟到结果被丢弃', async () => {
@@ -3054,7 +3053,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
 
     const startedAt = Date.now();
     const outcome = await decidePageImages(
-      { roomId: 'room-1', draftDocumentId: 'doc-draft-1', decision: 'accept' },
+      { roomId: WORKSPACE_DOCUMENT_CHANNEL, draftDocumentId: 'doc-draft-1', decision: 'accept' },
       {
         sessions: setup.deps.pageImageSessions!,
         images: { generateImage } as never,
@@ -3065,7 +3064,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     expect(Date.now() - startedAt).toBeLessThan(2_000)
 
     expect(outcome.kind).toBe('build')
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages.every((page) => !page.contentHash)).toBe(true)
     expect(session?.pages.every((page) => page.failed === true)).toBe(true)
     const planPages = (outcome as unknown as { plan: { pages: Array<Record<string, unknown>> } }).plan.pages
@@ -3074,7 +3073,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     // 迟到的后台生成结果：已 abort，写入被丢弃。
     gate.resolve({ contentHash: 'c'.repeat(64) })
     await new Promise((resolve) => setTimeout(resolve, 20))
-    const after = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const after = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(after?.pages.every((page) => !page.contentHash)).toBe(true)
   })
 
@@ -3089,20 +3088,20 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     const setup = await setupBackground({ generateImage })
     await reachReviewBackground(setup)
 
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages[0]?.failed).toBe(true)
     expect(session?.pages[0]?.contentHash).toBeNull()
     expect(session?.pages[1]?.contentHash).toBe('a'.repeat(64))
 
     const result = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '补第一张', draftDocumentId: 'doc-draft-1', regeneratePageImage: 1 } as never,
       undefined,
     )
     expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'page_images_review' })
-    expect(setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')?.pages[0]?.failed).toBeFalsy()
+    expect(setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')?.pages[0]?.failed).toBeFalsy()
   })
 
   it('后台生成中断（中转会话不可用）：未完成页标 failed 并广播 review，不再永远「生成中…」', async () => {
@@ -3112,16 +3111,16 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     const setup = await setupBackground({ generateImage })
     const onUpdate = vi.fn()
     const result = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '生成', draftDocumentId: 'doc-draft-1' } as never,
       undefined,
       onUpdate,
     )
     expect(JSON.parse((result as { content: string }).content)).toMatchObject({ status: 'page_images_review' })
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
 
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     expect(session?.pages.every((page) => page.failed === true)).toBe(true)
     const lastReview = onUpdate.mock.calls
       .map((call) => (call[0] as { details: Record<string, unknown> }).details)
@@ -3141,11 +3140,11 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     })
     const setup = await setupBackground({ generateImage })
     await reachReviewBackground(setup)
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
 
     const result = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '不要配图了', draftDocumentId: 'doc-draft-1', pageImagesDecision: 'skip' } as never,
       undefined,
     )
@@ -3174,7 +3173,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     // 第一张（封面）后台即出；第二张（白板）卡在慢门上。
 
     const regen = await setup.slidesDraft.execute(
-      { ...run, roomId: 'room-1' } as never,
+      { ...run, roomId: WORKSPACE_DOCUMENT_CHANNEL } as never,
       { task: 'generate', instruction: '封面重做', draftDocumentId: 'doc-draft-1', regeneratePageImage: 1, regenerateFeedback: '更亮' } as never,
       undefined,
     )
@@ -3184,9 +3183,9 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
     })
 
     slowGate.resolve({ contentHash: 'b'.repeat(64) })
-    const sessionId = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')!.id
+    const sessionId = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')!.id
     await setup.runner.settle(sessionId)
-    const session = setup.deps.pageImageSessions!.byDraftId('room-1', 'doc-draft-1')
+    const session = setup.deps.pageImageSessions!.byDraftId(WORKSPACE_DOCUMENT_CHANNEL, 'doc-draft-1')
     // 重生成的新封面哈希（a）未被后台循环覆盖；慢门页拿到自己的哈希（b）。
     expect(session?.pages[0]?.contentHash).toBe('a'.repeat(64))
     expect(session?.pages[1]?.contentHash).toBe('b'.repeat(64))

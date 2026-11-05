@@ -37,6 +37,7 @@
   "agentChat.referencedFromSourceTitle": "引用自 {source} · {title}",
   "agentChat.referencedTaskProgress": "引用任务进度",
   "agentChat.regenerate": "重新生成",
+  "agentChat.resend": "重新发送",
   "agentChat.startANewConversation": "开始一段新对话",
   "agentChat.suggestedPrompts": "快捷提示",
   "agentChat.syncingProgress": "正在同步工作进度...",

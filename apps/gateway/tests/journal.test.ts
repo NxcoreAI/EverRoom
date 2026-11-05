@@ -185,6 +185,44 @@ describe("composer", () => {
     expect(composition.bullets).toHaveLength(2);
     expect(composition.actions).toEqual([]);
   });
+
+  it("prompt 要求总结+建议（advice 字段与口吻约束）", () => {
+    const prompt = buildJournalPrompt("2026-11-03", signals);
+    expect(prompt).toContain("advice");
+    expect(prompt).toContain("可执行建议");
+    expect(prompt).toContain("总结今天工作状态与内容的变化");
+  });
+
+  it("advice：清洗为最多 2 条、超长截断、空值丢弃", () => {
+    const composition = parseJournalComposition(JSON.stringify({
+      headline: "记下两条偏好",
+      summary: "你今天交代了表格偏好，还提到项目主线。",
+      bullets: [{ text: "表格偏好", sourceIds: ["memory:m1"] }],
+      advice: ["下次起草直接用结构化表格", "", null, "这条会超长".repeat(20), "第三条会被条数上限丢掉"],
+      actions: [],
+    }), signals);
+    expect(composition!.advice).toHaveLength(2);
+    expect(composition!.advice![0]).toBe("下次起草直接用结构化表格");
+    expect(composition!.advice![1]!.endsWith("…")).toBe(true);
+    expect(composition!.advice![1]!.length).toBeLessThanOrEqual(48);
+  });
+
+  it("模板兜底给出确定性建议：有经验 → 起草时用上；全是事实 → 固化偏好", () => {
+    const withLesson = templateComposition("2026-11-03", signals); // m1 是 lesson
+    expect(withLesson.advice?.[0]).toContain("起草");
+
+    // hit 默认 category=fact：3 条事实 → 建议固化偏好。
+    const factsComposition = templateComposition("2026-11-03", collectJournalSignals({
+      list: () => [
+        hit({ id: "f1", content: "项目主线是锥光", createdAt: "2026-11-03T01:00:00.000Z" }),
+        hit({ id: "f2", content: "deadline 在周五", createdAt: "2026-11-03T01:30:00.000Z" }),
+        hit({ id: "f3", content: "评审人有两位", createdAt: "2026-11-03T02:00:00.000Z" }),
+      ],
+      timezone: () => TIMEZONE,
+      now: () => new Date("2026-11-03T03:00:00.000Z"),
+    }).signals);
+    expect(factsComposition.advice?.[0]).toContain("偏好");
+  });
 });
 
 describe("JournalService", () => {

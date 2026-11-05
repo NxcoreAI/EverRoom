@@ -329,6 +329,10 @@ export const agentMessages = sqliteTable("agent_messages", {
   role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
   authorAgentId: text("author_agent_id"),
   content: text("content").notNull(),
+  /** 文档批注卡片（JSON 序列化的 AgentNoteCard[]；普通消息为 null）。 */
+  noteCards: text("note_cards"),
+  /** 批注消息的气泡正文（空＝只有卡片没有气泡）；null 回退 content。 */
+  displayContent: text("display_content"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -1818,6 +1822,8 @@ export const journalEntries = sqliteTable(
     summary: text("summary").notNull(),
     bullets: text("bullets", { mode: "json" }).$type<Array<{ text: string; sourceIds: string[] }>>().notNull(),
     actions: text("actions", { mode: "json" }).$type<Array<{ label: string; kind: string; targetId: string }>>().notNull(),
+    /** 给用户的下一步建议（0–2 条，每条 ≤48 字）；旧条目为 null。 */
+    advice: text("advice", { mode: "json" }).$type<string[] | null>(),
     /** 进 prompt 的证据快照：可追溯来源，也便于排查"卡片为什么这么说"。 */
     evidence: text("evidence", { mode: "json" }).$type<unknown[]>().notNull(),
     /** 产出该版本的模型名；null = 模板兜底（模型档位未就绪/调用失败）。 */

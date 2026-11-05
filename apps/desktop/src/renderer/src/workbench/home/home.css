@@ -243,14 +243,18 @@
   box-shadow: var(--ui-shadow-sm);
 }
 .wb-home-new-tile:active { transform: translateY(0); box-shadow: var(--ui-shadow-sm); }
+/* 新建瓦片内图标浮起投影（原型 op-create-tile .op-ft-icon 同款） */
+.wb-home-new-tile .op-ft-icon { filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.18)); }
 .wb-home-new-glyph {
   display: grid;
   place-items: center;
+  flex: none;
   width: 46px;
   height: 46px;
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-strong);
+  border-radius: 12px;
+  /* 原型 op-space-glyph：主题 accent → 紫的 135° 渐变 + 白色图标 */
+  background: linear-gradient(135deg, var(--ui-accent-fill), #7a4dff);
+  color: #fff;
 }
 .wb-home-new-name { font-size: var(--ui-text-xs); font-weight: 600; }
 
@@ -710,15 +714,16 @@
 /* 头部：✨ +「今日洞察」/ 副标题 + 右侧刷新 */
 .wb-journal-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .wb-journal-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-strong);
+  width: 36px;
+  height: 36px;
+  border-radius: 26%;
+  /* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
+  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
 }
 .wb-journal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wb-journal-name {
@@ -763,6 +768,34 @@
   animation: wb-journal-caret 1s steps(1, end) infinite;
 }
 @keyframes wb-journal-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* 建议列表：总结之外的可执行项，前缀「建议」小签以区分要点 */
+.wb-journal-advice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-journal-advice li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-advice-tag {
+  flex: none;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+}
 
 /* 要点列表：每条前一个小圆点（不用 list-style，避免主题下的 marker 颜色失控） */
 .wb-journal-bullets {

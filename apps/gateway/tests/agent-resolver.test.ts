@@ -160,7 +160,6 @@ describe("Agent runtime isolation", () => {
       prompt: "User-authored request",
       responseLanguage: "de-DE",
       pageLabel: "Agent",
-      roomId: null,
     });
     for await (const _event of run.events) {
       // Drain the runtime so the mocked request completes.

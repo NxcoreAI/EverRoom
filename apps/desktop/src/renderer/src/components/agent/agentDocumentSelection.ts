@@ -167,8 +167,8 @@ export function buildAgentDocumentSelectionRunRequest(
 ): AgentDocumentSelectionRunRequest {
   return {
     prompt: originalPrompt.trim(),
+    // Phase 2i 后无 Room 维度：activeDocument 只按 documentId 定位工作区文稿。
     activeDocument: {
-      roomId: document.roomId,
       documentId: document.id,
       title: document.title,
       version: document.version,

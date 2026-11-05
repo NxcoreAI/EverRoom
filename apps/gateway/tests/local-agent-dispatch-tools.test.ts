@@ -188,7 +188,6 @@ function runInput(): StartRuntimeRunInput {
     runtimeSessionRef: null,
     prompt: "用户请求",
     pageLabel: "Home",
-    roomId: null,
     referencedLocalAgents: [codexTarget],
   };
 }
@@ -302,7 +301,7 @@ describe("createLocalAgentDispatchTools", () => {
       {
         ...runInput(),
         attachments: [{ filename: "spec.md", mimeType: "text/markdown", kind: "document", text: "规格内容" }],
-        activeDocument: { roomId: "room-1", documentId: "doc-1", title: "实现说明", version: 3, defaultAnchor: "end" },
+        activeDocument: { documentId: "doc-1", title: "实现说明", version: 3, defaultAnchor: "end" },
       },
       { agentId: codexTarget.id, assignment: "任务" },
     );

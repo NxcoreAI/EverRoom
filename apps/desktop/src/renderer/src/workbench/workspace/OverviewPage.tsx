@@ -37,7 +37,6 @@ import {
   type WorkspaceInsight,
 } from './insight'
 import type { WorkspacePageProps } from './contracts'
-import { SpaceDirectoryCard } from './SpaceDirectoryCard'
 import { useFileLibrary } from './useFileLibrary'
 import { useWorkspaceActivities } from './useWorkspaceActivities'
 import { useWorkspaceInsight } from './useWorkspaceInsight'
@@ -439,8 +438,6 @@ export function OverviewPage({
         <p className="wb-ov-meta">{startedLabel} 开始</p>
       </header>
 
-      <SpaceDirectoryCard workspace={workspace} onToast={onToast} />
-
       <InsightCard
         insight={insight.insight}
         sessions={sessions}
@@ -667,8 +664,10 @@ function InsightCard({
 
   if (insight.status === 'unavailable') return null
 
+  // no-content 也可能有正文（聚合总结成立，只是没有消息级证据）：有 text 就渲染。
   const hasText = Boolean(insight.text)
-    && (insight.status === 'ready' || insight.status === 'updating' || insight.status === 'refreshing')
+    && (insight.status === 'ready' || insight.status === 'updating'
+      || insight.status === 'refreshing' || insight.status === 'no-content')
   const updatedLabel = formatInsightUpdatedLabel(relativeTimeLabel(insight.updatedAt))
   const canRefresh = insight.status !== 'loading' && insight.status !== 'empty'
 
@@ -676,7 +675,7 @@ function InsightCard({
     <section className="wb-ov-card wb-ov-insight" aria-labelledby="wb-ov-insight-heading">
       <header className="wb-ov-card-head">
         <span className="wb-ov-insight-badge">
-          <Sparkles size={13} aria-hidden="true" />
+          <span className="wb-ov-insight-ai" aria-hidden="true"><Sparkles size={15} /></span>
           <span id="wb-ov-insight-heading">{INSIGHT_COPY.title}</span>
         </span>
         {insight.status === 'updating' ? (
@@ -711,7 +710,7 @@ function InsightCard({
         </div>
       ) : null}
 
-      {insight.status === 'no-content' ? (
+      {insight.status === 'no-content' && !insight.text ? (
         <p className="wb-ov-insight-state">{INSIGHT_COPY.noContent}</p>
       ) : null}
 
