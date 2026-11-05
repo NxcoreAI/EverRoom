@@ -136,13 +136,29 @@ jobs:
           : "${APPLE_API_KEY_ID:?secret APPLE_API_KEY_ID is not set}"
           : "${APPLE_API_ISSUER:?secret APPLE_API_ISSUER is not set}"
           printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          # Apple API key 三重校验：BSD base64 对非法输入不报错（静默丢字符），
+          # 坏 secret 若不在此处拦截，会在 20 分钟构建后的 notarize 阶段才以
+          # "invalidPrivateKeyContents" 死掉（notarytool 本地解析 .p8 失败，
+          # 错误非 JSON，被 @electron/notarize 包装成 unexpected result）。
+          # 1) strict base64 roundtrip；2) PEM 结构；3) openssl pkey 可解析。
+          # 常见错误形态：secret 里存了 PEM 原文或双重 base64。
+          fail_fast() { echo "::error::$1" >&2; exit 1; }
+          base64 -i "$RUNNER_TEMP/AuthKey.p8" | tr -d '\n' > "$RUNNER_TEMP/rt.b64"
+          printf '%s' "$APPLE_API_KEY_BASE64" | tr -d '\n' > "$RUNNER_TEMP/given.b64"
+          cmp -s "$RUNNER_TEMP/rt.b64" "$RUNNER_TEMP/given.b64" ||
+            fail_fast "APPLE_API_KEY_BASE64 is not valid strict base64 (decode silently dropped characters). Store base64 of the .p8 file, not the PEM text or double-encoded base64."
+          grep -q '^-----BEGIN PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a PEM private key document."
+          grep -q '^-----END PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 has no PEM END line."
+          openssl pkey -in "$RUNNER_TEMP/AuthKey.p8" -noout 2>/dev/null ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a parseable PKCS#8 private key (App Store Connect API keys are EC P-256 PKCS#8)."
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           if [[ -z "$MACOS_PROVISIONING_PROFILE_BASE64" ]]; then
             echo "::warning::APNs provisioning profile is not configured; push entitlements will not be verified."
             exit 0
           fi
           printf '%s' "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > apps/desktop/build/embedded.provisionprofile
-          security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everoffice$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
 
