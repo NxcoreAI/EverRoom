@@ -1,6 +1,6 @@
-// Agent 调试台专用 Vite 配置（独立 dev 页面，不参与 Electron/生产打包）。
+// Agent 调试台 / 链路剖析看板专用 Vite 配置（独立 dev 页面，不参与 Electron/生产打包）。
 //
-// - root = apps/desktop，入口 debug/agent-debug.html；
+// - root = apps/desktop，入口 debug/agent-debug.html（调试台）、debug/agent-dashboard.html（剖析看板）；
 // - 自定义插件 agent-debug-gateway 在 Vite 内部中间件之前挂载：
 //   · GET /@agent-debug/sources           → 列出网关来源 + 本机历史归档来源（不含 token）
 //   · GET /@agent-debug/gateway/:id/*     → live 来源同源代理到 Gateway（Node 侧注入 Bearer token）；
@@ -522,7 +522,10 @@ export default defineConfig({
     outDir: resolve(here, 'out/agent-debug'),
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(here, 'debug/agent-debug.html'),
+      input: {
+        'agent-debug': resolve(here, 'debug/agent-debug.html'),
+        'agent-dashboard': resolve(here, 'debug/agent-dashboard.html'),
+      },
     },
   },
 })

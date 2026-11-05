@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { Type, type TSchema } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { roomScopeId } from "../documents/room-scope.js";
 import {
@@ -79,19 +80,19 @@ type SlidesDraftTask = "draft" | "style" | "style_select" | "generate" | "edit";
 const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> = {
   draft: new Set([
     "task", "instruction", "title", "outline", "referencePath", "referencePaths", "referenceStyle",
-    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId",
+    "referenceOutline", "targetPages", "sourceDocumentIds",
   ]),
   style: new Set([
-    "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle", "roomId",
+    "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle",
   ]),
-  style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle", "roomId"]),
+  style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle"]),
   generate: new Set([
     "task", "resetGenerationBudget", "instruction", "draftDocumentId", "styleSessionId",
     "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "regeneratePageImage",
     "regeneratePageImages", "regenerateFeedback", "rejectPageImage", "rejectPageImages", "restorePageImage",
-    "restorePageImages", "roomId",
+    "restorePageImages",
   ]),
-  edit: new Set(["task", "instruction", "fileId", "roomId"]),
+  edit: new Set(["task", "instruction", "fileId"]),
 };
 
 function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
@@ -127,7 +128,6 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
 function slidesDraftTaskSchema(task: SlidesDraftTask, fields: Record<string, TSchema>) {
   return Type.Object({
     task: Type.Literal(task),
-    roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     ...fields,
   }, { additionalProperties: false });
 }
@@ -600,7 +600,6 @@ function normalizeDocumentSummary(result: { text: string; structuredOutput?: unk
 }
 
 interface MaterialSourceEntry {
-  roomId: string;
   documentId: string;
   blockId: string;
   label?: string;
@@ -608,29 +607,26 @@ interface MaterialSourceEntry {
 }
 
 /**
- * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档时，
+ * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用工作区文稿时，
  * 用本 run 的 document_read 台账定位素材文档，取其顶层块中确实出现在 material 里的
  * 部分（去空白后前 80 字符包含匹配），作为 materialSources 候选注入 doc-writer。
  * 匹配不上就不注入——宁缺毋滥，避免误挂。
  */
 export function inferMaterialSourcesFromReads(
-  reads: { documentsReadByRun(runId: string): Array<{ roomId: string | null; documentId: string; version: number }> },
+  reads: { documentsReadByRun(runId: string): Array<{ documentId: string; version: number }> },
   readDocument: (documentId: string) => {
     document: { title: string };
     blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
   } | null,
   runId: string,
-  roomId: string | undefined,
   material: string,
 ): MaterialSourceEntry[] {
   const normalizedMaterial = normalizeIndexText(material);
   if (!runId || normalizedMaterial.length < 20) return [];
   const entries: MaterialSourceEntry[] = [];
   for (const read of reads.documentsReadByRun(runId)) {
-    // 工作区级文稿没有归属 Room：块索引 URI（everroom://room/{roomId}/...）无法表达，
-    // 暂不参与素材来源推断（Phase 2 随 Room 删除一并去掉 roomId 维度）。
-    if (!read.roomId) continue;
-    if (roomId && read.roomId !== roomId) continue;
+    // Phase 2i 后文稿一律工作区级（roomId 恒 null）：素材来源不再按 Room 过滤，
+    // 块索引 URI 的 scope 段由调用方统一注入（roomScopeId → 工作区频道）。
     let snapshot;
     try {
       snapshot = readDocument(read.documentId);
@@ -643,7 +639,6 @@ export function inferMaterialSourcesFromReads(
       const probe = buildIndexProbe(block.textPreview);
       if (!probe || !normalizedMaterial.includes(probe)) continue;
       entries.push({
-        roomId: read.roomId,
         documentId: read.documentId,
         blockId: block.blockId,
         label: snapshot.document.title.slice(0, 200),
@@ -755,17 +750,16 @@ export function createSubagentPiTools(
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
     /**
-     * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用 Room 文档、
+     * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用工作区文稿、
      * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
      */
     inferMaterialSources?: (
       runId: string,
-      roomId: string | undefined,
       material: string,
-    ) => Array<{ roomId: string; documentId: string; blockId: string; label?: string; textPreview?: string }>;
+    ) => Array<{ documentId: string; blockId: string; label?: string; textPreview?: string }>;
     /** 代发读凭证（§5.3）：与 document_read 同构地以主 run 名义签发 receipt。 */
     issueDraftReadReceipt?: (
-      context: { agentSessionId: string; runId: string; roomId: string },
+      context: { agentSessionId: string; runId: string; roomId: string | null },
       documentId: string,
       version: number,
       blockIds: string[],
@@ -777,11 +771,11 @@ export function createSubagentPiTools(
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
     slidesGenerationBudget?: Partial<GenerationBudgetLimits>;
     /**
-     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
-     * 返回 documentId 供用户编辑与 generate 阶段读回。
+     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建工作区文稿
+     * （Phase 2i 后无 Room 归属，roomId 恒 null），返回 documentId 供用户编辑与 generate 阶段读回。
      */
     createSlidesDraftDocument?: (input: {
-      roomId: string;
+      roomId: string | null;
       title: string;
       markdown: string;
     }) => Promise<{ documentId: string; title: string }>;
@@ -1017,7 +1011,7 @@ export function createSubagentPiTools(
         + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
         + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
         + "doc-writer 会基于上一稿增量修改而非从头重写。"
-        + "materialSources（draft-create / draft-edit 可选）：引用了 Room 文档块的素材来源列表（roomId/documentId/blockId 取自 document_read 的 blocks），"
+        + "materialSources（draft-create / draft-edit 可选）：引用了工作区文稿块的素材来源列表（documentId/blockId 取自 document_read 的 blocks），"
         + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
         + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
         + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
@@ -1034,10 +1028,8 @@ export function createSubagentPiTools(
         ]),
         instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
         documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         material: Type.Optional(Type.String({ maxLength: 100_000 })),
         materialSources: Type.Optional(Type.Array(Type.Object({
-          roomId: Type.String({ minLength: 1, maxLength: 128 }),
           documentId: Type.String({ minLength: 1, maxLength: 128 }),
           blockId: Type.String({ minLength: 1, maxLength: 128 }),
           label: Type.Optional(Type.String({ maxLength: 200 })),
@@ -1057,23 +1049,11 @@ export function createSubagentPiTools(
         const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
           ? params.responseLanguage.trim()
           : null;
-        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The document target differs from the Room already bound to this run");
-        }
-        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
-        // 子 run 将按该 roomId 绑定文档工具（orchestrator 透传）；显式传入的房间若在开跑快照里，
-        // 必须是快照中真实存在的 Room。
-        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
 
         let snapshot: DocumentDraftSnapshot | null = null;
         if (task === "draft-edit" || task === "draft-continue") {
           const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
           if (!documentId) throw new Error("document_draft_document_id_required");
-          if (!roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
           if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
           try {
             snapshot = options.resolveDocumentForDraft(documentId);
@@ -1088,15 +1068,10 @@ export function createSubagentPiTools(
         // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
         const materialSources = Array.isArray(params.materialSources)
           ? params.materialSources.flatMap((item) => {
-            const entryRoomId = String(item.roomId ?? "").trim();
             const documentId = String(item.documentId ?? "").trim();
             const blockId = String(item.blockId ?? "").trim();
-            if (!entryRoomId || !documentId || !blockId) return [];
-            if (roomId && entryRoomId !== roomId) {
-              throw new Error("ROOM_SELECTION_MISMATCH: materialSources must reference blocks in the target Room");
-            }
+            if (!documentId || !blockId) return [];
             return [{
-              roomId: entryRoomId,
               documentId,
               blockId,
               ...(typeof item.label === "string" && item.label.trim()
@@ -1112,12 +1087,11 @@ export function createSubagentPiTools(
         // 从本 run 的读取台账确定性推断；显式传入的来源优先，不做覆盖。
         const materialText = typeof params.material === "string" ? params.material : "";
         const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
-          ? options.inferMaterialSources(run.runId, roomId, materialText)
+          ? options.inferMaterialSources(run.runId, materialText)
           : [];
         const resolvedMaterialSources = [
           ...materialSources,
           ...inferredSources.flatMap((item) => [{
-            roomId: item.roomId,
             documentId: item.documentId,
             blockId: item.blockId,
             ...(item.label ? { label: item.label.slice(0, 200) } : {}),
@@ -1125,7 +1099,6 @@ export function createSubagentPiTools(
           }]),
         ].slice(0, 50);
 
-        const roomTitle = roomId ? run.availableRooms?.find((room) => room.id === roomId) : undefined;
         const topLevelBlocks = snapshot
           ? snapshot.blocks.filter((block) => block.depth === 0)
           : [];
@@ -1163,12 +1136,11 @@ export function createSubagentPiTools(
         const input = {
           task,
           instruction,
-          // Room 透传：orchestrator 用它绑定子 run 的文档工具（pi-tools input.roomId），
-          // doc-writer 素材自取的 document_read 依赖该绑定，缺失即 409。
-          ...(roomId ? { roomId } : {}),
+          // 块索引 URI 的 scope 段（冻结语法 everroom://room/{scope}/...）：
+          // Phase 2i 后文稿一律工作区级，scope 统一由网关注入为工作区频道常量。
+          blockIndexScope: roomScopeId(snapshot?.document.roomId ?? null),
           ...(material ? { material } : {}),
           ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
-          ...(roomTitle?.title?.trim() ? { roomTitle: roomTitle.title.trim().slice(0, 120) } : {}),
           ...(snapshot
             ? {
               documentId: snapshot.document.id,
@@ -1320,7 +1292,9 @@ export function createSubagentPiTools(
           }
           if (options.issueDraftReadReceipt) {
             const receipt = options.issueDraftReadReceipt(
-              { agentSessionId: run.sessionId, runId: run.runId, roomId: roomScopeId(snapshot.document.roomId) },
+              // 与主 run 文档工具同 scope（Phase 2i 后无 Room 维度，一律 null），
+              // document_patch_begin 的 requireLatest 才能直接复用本凭证。
+              { agentSessionId: run.sessionId, runId: run.runId, roomId: null },
               snapshot.document.id,
               snapshot.document.version,
               fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),
@@ -1364,7 +1338,6 @@ export function createSubagentPiTools(
               ? {
                 baseVersion: snapshot.document.version,
                 documentId: snapshot.document.id,
-                roomId: snapshot.document.roomId,
               }
               : {}),
             ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
@@ -1463,25 +1436,11 @@ export function createSubagentPiTools(
           }
         }
         const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
-        const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        if (explicitRoomId && run.roomId && explicitRoomId !== run.roomId) {
-          throw new Error("ROOM_SELECTION_MISMATCH: The slides target differs from the Room already bound to this run");
-        }
         const styleSessionIdParam = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
-        // 退出 Room 后 run 无房间绑定（渲染层 selectedRoomId 已空）：styleSessionId
-        // 本身是权威寻址，从风格会话反查 roomId，避免模型猜 Room 引发连环失败。
-        const styleSessionRoomId = !explicitRoomId && !run.roomId && !run.activeDocument?.roomId?.trim() && styleSessionIdParam
-          ? (typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle)?.sessions.byId(styleSessionIdParam)?.roomId ?? ""
-          : "";
-        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || styleSessionRoomId || "";
-        if (!roomId) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
-        // 显式传入的房间必须存在于开跑快照。
-        if (explicitRoomId && !run.roomId && Array.isArray(run.availableRooms) && run.availableRooms.length > 0
-          && !run.availableRooms.some((room) => room.id === explicitRoomId)) {
-          throw new Error("ROOM_SELECTION_REQUIRED: Choose one valid Room from available_rooms");
-        }
+        // Phase 2i 后无 Room 维度：风格会话 / 页面图会话 / storyboard 等内部管线
+        // 仍需要一个非空 scope 字符串作分区键，统一固定为工作区频道常量
+        // （与 documents 模块的 roomScopeId 归一结果一致），模型侧不再感知。
+        const roomId = WORKSPACE_DOCUMENT_CHANNEL;
 
         // ── style / style_select：无模版风格阶段（纵览候选 → 提取定参 → 风格卡）。 ──
         if (task === "style" || task === "style_select") {
@@ -1691,7 +1650,8 @@ export function createSubagentPiTools(
           let draftDocument: { documentId: string; title: string };
           try {
             draftDocument = await options.createSlidesDraftDocument({
-              roomId,
+              // Phase 2i 后文稿一律工作区级：草稿文档无 Room 归属。
+              roomId: null,
               title: gatePlan.title,
               markdown: renderDraftMarkdown(gatePlan),
             });

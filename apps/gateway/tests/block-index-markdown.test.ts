@@ -7,7 +7,7 @@ const MARKDOWN = [
   "## 调研结论",
   "",
   "第一阶段完成了用户访谈^[访谈记录](everroom://room/room-1/doc-2/block-7)。",
-  "用户偏好静默更新^[用户偏好](everroom://memory/room-1/room-1-memory-3?preview=%E5%81%8F%E5%A5%BD%E9%9D%99%E9%BB%98%E6%9B%B4%E6%96%B0)。",
+  "用户偏好静默更新^[用户偏好](everroom://room/room-1/doc-9/block-8)。",
 ].join("\n");
 
 describe("block index mark markdown (gateway headless)", () => {
@@ -15,7 +15,7 @@ describe("block index mark markdown (gateway headless)", () => {
     const parsed = agentDocumentMarkdown.parse(MARKDOWN);
     const paragraph = parsed.content?.find((node) => node.type === "paragraph"
       && node.content?.some((child) => child.type === "blockIndexMark"
-        && child.attrs?.targetMemoryId === "room-1-memory-3"));
+        && child.attrs?.targetBlockId === "block-8"));
     expect(paragraph).toBeDefined()
 
     const documentMark = parsed.content
@@ -42,7 +42,7 @@ describe("block index mark markdown (gateway headless)", () => {
   });
 
   it("treats a lone mark line as inline content, not a block reference card", () => {
-    const parsed = agentDocumentMarkdown.parse("^[孤立标记](everroom://memory/room-1/room-1-memory-1)\n");
+    const parsed = agentDocumentMarkdown.parse("^[孤立标记](everroom://room/room-1/doc-3/block-1)\n");
     expect(parsed.content?.[0]?.type).toBe("paragraph");
     expect(parsed.content?.[0]?.content?.[0]?.type).toBe("blockIndexMark");
   });

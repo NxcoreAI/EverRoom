@@ -704,7 +704,7 @@ describe("document operation kernel", () => {
       complete: true,
       afterCommit: () => {
         callbacks += 1;
-        throw new Error("memory unavailable");
+        throw new Error("hook unavailable");
       },
     });
 
@@ -726,7 +726,7 @@ describe("document operation kernel", () => {
       sessionId: "session-1", runId: "run-1", status: "running", summary: "Create",
       input: { draftDocumentId: "00000000-0000-4000-8000-000000000010" },
     });
-    let memoryHooks = 0;
+    let commitHooks = 0;
     const command = { commandId: "create-commit", expectedRevision: 1, type: "stream.commit" };
     const handler = () => ({
       status: "completed" as const,
@@ -744,7 +744,7 @@ describe("document operation kernel", () => {
       complete: true,
       afterCommit: (document?: { version: number }) => {
         expect(document?.version).toBe(1);
-        memoryHooks += 1;
+        commitHooks += 1;
       },
     });
 
@@ -762,7 +762,7 @@ describe("document operation kernel", () => {
       },
     });
     expect(duplicate).toMatchObject({ duplicate: true, document: { version: 1 } });
-    expect(memoryHooks).toBe(1);
+    expect(commitHooks).toBe(1);
     expect(db.select().from(documents).all()).toHaveLength(1);
     expect(db.select().from(documentVersions).all()).toHaveLength(1);
     expect(db.select().from(documentBlocks).all()).toEqual([

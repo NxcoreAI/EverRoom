@@ -248,6 +248,13 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(happy-dom@20.11.2)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(sass-embedded@1.102.0)(sass@1.102.0)(tsx@4.23.12)(yaml@2.9.0))
+    optionalDependencies:
+      '@esbuild/darwin-arm64':
+        specifier: 0.28.1
+        version: 0.28.1
+      '@esbuild/win32-x64':
+        specifier: 0.28.1
+        version: 0.28.1
 
   apps/gateway:
     dependencies:
@@ -272,6 +279,9 @@ importers:
       '@napi-rs/canvas':
         specifier: ^0.1.100
         version: 0.1.100
+      '@node-rs/jieba':
+        specifier: ^2.0.4
+        version: 2.0.4
       '@nxcore/agent-contract':
         specifier: workspace:*
         version: link:../../packages/agent-contract
@@ -359,6 +369,9 @@ importers:
       happy-dom:
         specifier: ^20.11.2
         version: 20.11.2
+      hippo-memory:
+        specifier: 2.2.0
+        version: 2.2.0
       html-to-text:
         specifier: ^10.0.0
         version: 10.0.0
@@ -1018,11 +1031,11 @@ packages:
 
   '@esbuild-kit/core-utils@3.3.2':
     resolution: {integrity: sha512-sPRAnw9CdSsRmEtnsl2WXWdyquogVpB3yZ3dgwJfe8zrOzTsV7cJvmwrKVa+0ma5BoiGJ+BoqkMvawbayKUsqQ==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild-kit/esm-loader@2.6.5':
     resolution: {integrity: sha512-FxEMIkJKnodyA1OaCUoEvbYRkoZlLZ4d/eXFu9Fh8CbBBgP5EmZxrfTRyN0qpXZ4vOvqnE5YdRdcrmUUXuU+dA==}
-    deprecated: 'Merged into tsx: https://tsx.is'
+    deprecated: 'Merged into tsx: https://tsx.hirok.io'
 
   '@esbuild/aix-ppc64@0.25.5':
     resolution: {integrity: sha512-9o3TMmpmftaCMepOdA5k/yDw8SfInyzWWTjYTFCX3kPSDJMROQTb8jg+h9Cnwnmm1vOzvxN7gIfB5V2ewpjtGA==}
@@ -1128,6 +1141,12 @@ packages:
 
   '@esbuild/darwin-arm64@0.27.7':
     resolution: {integrity: sha512-5lckdqeuBPlKUwvoCXIgI2D9/ABmPq3Rdp7IfL70393YgaASt7tbju3Ac+ePVi3KDH6N2RqePfHnXkaDtY9fkw==}
+    engines: {node: '>=18'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@esbuild/darwin-arm64@0.28.1':
+    resolution: {integrity: sha512-TZbWkQY7kvTAXbXUT7uVACR5cMHsDiSz9z7ZKAX/RTq/WJEk3QyRr0wZpNhBDX+/0CtdqUIJlOiodQcta6tY3Q==}
     engines: {node: '>=18'}
     cpu: [arm64]
     os: [darwin]
@@ -1608,6 +1627,12 @@ packages:
 
   '@esbuild/win32-x64@0.27.7':
     resolution: {integrity: sha512-56hiAJPhwQ1R4i+21FVF7V8kSD5zZTdHcVuRFMW0hn753vVfQN8xlx4uOPT4xoGH0Z/oVATuR82AiqSTDIpaHg==}
+    engines: {node: '>=18'}
+    cpu: [x64]
+    os: [win32]
+
+  '@esbuild/win32-x64@0.28.1':
+    resolution: {integrity: sha512-bm4Mowrv+GXMlpWX++EcXw/iLyd1o3+bJkC2DkWXYVvgZCqD/bSj9ctZeAMC3cIxgjRVR2Dufaiu4YPxr5gW1A==}
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
@@ -2141,6 +2166,92 @@ packages:
   '@nodable/flexible-xml-parser@1.11.3':
     resolution: {integrity: sha512-fNX6VI3qlgTogvjnE80OWoGrFJ05oeq3lTr13mCtl64zbOEW+cqAKnxTxE+n6S4dGXcBzDVuCK9K7UvcWZPniA==}
 
+  '@node-rs/jieba-android-arm-eabi@2.0.4':
+    resolution: {integrity: sha512-cQkLpMGJQ3utAfmdUSHgto+zErR10qQglCd08zF1ZGBQfAcOP3lK+L53vpozxWpGngA2MsgMfb3uaXfBUrjLYw==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [android]
+
+  '@node-rs/jieba-android-arm64@2.0.4':
+    resolution: {integrity: sha512-qC1flCXhOuFMWKaiyyaLBI7FsGDCk8Gix85nG2RkEqj22jiQWSxvzIOJNIK/4FH0HSd7yrMgaw4nOyYNKGs55A==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@node-rs/jieba-darwin-arm64@2.0.4':
+    resolution: {integrity: sha512-/cGLKHB8dhcgTR7FRMvisXgPtt4Yiq9ygAQjHqskKKEOxrek60dJJzpgFPo5MY8EJyNInqxlRdN8H2a/vIFG7A==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@node-rs/jieba-darwin-x64@2.0.4':
+    resolution: {integrity: sha512-+sAHLzJF4XNrZUIwZBi1bBiwZDDSUVldW17cA94GBUb6F5UPB0OLq0ldOw8XtdA0MaotNnLlJQkm5ARuI1xheQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@node-rs/jieba-freebsd-x64@2.0.4':
+    resolution: {integrity: sha512-v6MTAPnVhq2HnKH4ASWGfaFv7FEQZUEWve0/UtJx3ViiwYbG2pgZ3XZPRumXRIst0xdFfIoukrYqnMjj89HTVA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@node-rs/jieba-linux-arm-gnueabihf@2.0.4':
+    resolution: {integrity: sha512-Y7Wm7nhV9UNfq4ojCN6HSbjO1p1pyqDZyGlwAT1NsruGRvowC0luhXEFTo6VSDMIQ7PTP+IQXZfuc5d7fgTDFA==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@node-rs/jieba-linux-arm64-gnu@2.0.4':
+    resolution: {integrity: sha512-+x5FP4PDoRAagSvxyXeK3GdWjzZwigTD9GGyTWEKGViGcSUrY3/IsuPmVmOax3jHeQZkcX8aazybRiEwy2vIbQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-rs/jieba-linux-arm64-musl@2.0.4':
+    resolution: {integrity: sha512-PyIXG7eyScZ1jN7ZqMS7XE2qei1PVQd3AnvdYwgTaUawkQxNQGeCOGARuzXYxqpYV+ipg5zju+VJ23j3ucE0RQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-rs/jieba-linux-x64-gnu@2.0.4':
+    resolution: {integrity: sha512-VjetEm7IoerpyhIaASJg2HcADFZ+mTEBc18ciKqCt15Wdu1Tmv44vF0XUHKYBH0Q7U3LhoXXswTgjb/pcH3K+Q==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-rs/jieba-linux-x64-musl@2.0.4':
+    resolution: {integrity: sha512-WK9gU+lMq0wAuaDcFaqbr03Rv4/tNb9hFwfG3mYI96uG5TdVK2DBuRKzoPHP7XVz6iEmOu98lfhmL2/1Y0/DAw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-rs/jieba-win32-arm64-msvc@2.0.4':
+    resolution: {integrity: sha512-tcRW2cMHjYFfDPqG/St59ZoaR34CyLQJ5I4NGhZIfVhbYftJWnjvGPZBFdbudjgRCJ1in6rOZalDNGDex9+DHA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@node-rs/jieba-win32-ia32-msvc@2.0.4':
+    resolution: {integrity: sha512-I8+WnUD1FKIIC2NdunUE9EpoQRUM0iAeKvAxpOzpO1xDhw1D2Ya/9qY1K/xibnh8jGEGZnE4Bsc27zt9M/ZQow==}
+    engines: {node: '>= 10'}
+    cpu: [ia32]
+    os: [win32]
+
+  '@node-rs/jieba-win32-x64-msvc@2.0.4':
+    resolution: {integrity: sha512-aR6tFs1Lk7lZW/gy1q+F1GFdMqJVpLvAT5zpRCE+QbZSj9KRfKNooa5Y7c9v5yrxx4EH3vB31J3SWRR+OmVpog==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@node-rs/jieba@2.0.4':
+    resolution: {integrity: sha512-/dTk3vV/v8+RIEUP7XOCkqRCVU0tqL3Ia9VTzHt38IDysGQmX7T56tM2IpwCLAWXubH7TyrcY54Stjsvcrbjqw==}
+    engines: {node: '>= 10'}
+
   '@oomol-lab/oo-cli-darwin-arm64@1.7.5':
     resolution: {integrity: sha512-zYjkp+Off/98sKMThJlzOit013lV4aFCKlEIerEf+ktWlcM5kZDc+NfJEi189cHIo2wQ2RSSvxXt2VXTAo7MnA==}
     cpu: [arm64]
@@ -2321,6 +2432,7 @@ packages:
     engines: {node: '>= 10.0.0'}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@parcel/watcher-linux-arm-musl@2.6.0':
     resolution: {integrity: sha512-9c6AUHgHoG+IY88MRIHupztQiQnrbqHYQjkM2btA+Bf/wQnQMuiD0Wfk1EVv3TlNT3x41uU71rn6E4xh/+zvkw==}
@@ -5313,6 +5425,19 @@ packages:
   highlight.js@10.7.3:
     resolution: {integrity: sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A==}
 
+  hippo-memory@2.2.0:
+    resolution: {integrity: sha512-Qn3jejL+mVGadevpHdwULYOLNtiQiUoFs8eTh93IkNIBgbHpXsfFPJFOveeqSUcMdgJr7TtmpTBvdU71tXL4fQ==}
+    engines: {node: '>=22.16.0'}
+    hasBin: true
+    peerDependencies:
+      '@huggingface/transformers': '*'
+      '@xenova/transformers': '*'
+    peerDependenciesMeta:
+      '@huggingface/transformers':
+        optional: true
+      '@xenova/transformers':
+        optional: true
+
   hono@4.13.8:
     resolution: {integrity: sha512-/Gng7NfoykZl2pjukW5Z6+8Yxm3BPRf86GTbQnt0SbySkvax4fyL4H3HhY1cCpBGmiW9XDRFzRV+CXK2W8QudQ==}
     engines: {node: '>=16.9.0'}
@@ -5345,8 +5470,8 @@ packages:
   htmlparser2@10.1.0:
     resolution: {integrity: sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==}
 
-  http-cache-semantics@4.2.0:
-    resolution: {integrity: sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ==}
+  http-cache-semantics@4.3.0:
+    resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
   http-errors@2.0.1:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
@@ -7180,8 +7305,8 @@ packages:
   sonic-boom@5.0.2:
     resolution: {integrity: sha512-/JEruzo6yhNVhsLblTRchgTQHIt7SsdJP0YyrfWaNKjIOQDfrdZv9gwYraYCAsmKV39/LAdV31FLL5NCDpoL/A==}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   source-map-support@0.5.21:
@@ -7426,6 +7551,9 @@ packages:
 
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
+
+  tslib@2.9.1:
+    resolution: {integrity: sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA==}
 
   tsup@8.5.1:
     resolution: {integrity: sha512-xtgkqwdhpKWr3tKPmCkvYmS9xnQK3m3XgxZHwSUjvfTjp7YfXe5tT3GgWi0F2N+ZSMsOeWeZFh7ZZFg5iPhing==}
@@ -8000,23 +8128,23 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@aws-sdk/util-locate-window': 3.965.9
       '@smithy/util-utf8': 2.3.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/sha256-js@5.2.0':
     dependencies:
       '@aws-crypto/util': 5.2.0
       '@aws-sdk/types': 3.974.5
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/supports-web-crypto@5.2.0':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-crypto/util@5.2.0':
     dependencies:
       '@aws-sdk/types': 3.974.5
       '@smithy/util-utf8': 2.3.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/checksums@3.1001.0':
     dependencies:
@@ -8041,7 +8169,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.8.0
       '@smithy/node-http-handler': 4.12.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/client-s3@3.1134.0':
     dependencies:
@@ -8157,14 +8285,14 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.34.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/middleware-eventstream@3.972.27':
     dependencies:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.34.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/middleware-sdk-s3@3.972.76':
     dependencies:
@@ -8183,7 +8311,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.8.0
       '@smithy/signature-v4': 5.7.0
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/nested-clients@3.997.45':
     dependencies:
@@ -8194,7 +8322,7 @@ snapshots:
       '@smithy/fetch-http-handler': 5.8.0
       '@smithy/node-http-handler': 4.12.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/signature-v4-multi-region@3.996.46':
     dependencies:
@@ -8210,7 +8338,7 @@ snapshots:
       '@aws-sdk/types': 3.974.5
       '@smithy/core': 3.34.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/token-providers@3.1129.0':
     dependencies:
@@ -8228,7 +8356,7 @@ snapshots:
 
   '@aws-sdk/util-locate-window@3.965.9':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@aws-sdk/xml-builder@3.972.40':
     dependencies:
@@ -8701,6 +8829,9 @@ snapshots:
   '@esbuild/darwin-arm64@0.27.7':
     optional: true
 
+  '@esbuild/darwin-arm64@0.28.1':
+    optional: true
+
   '@esbuild/darwin-arm64@0.28.2':
     optional: true
 
@@ -8939,6 +9070,9 @@ snapshots:
     optional: true
 
   '@esbuild/win32-x64@0.27.7':
+    optional: true
+
+  '@esbuild/win32-x64@0.28.1':
     optional: true
 
   '@esbuild/win32-x64@0.28.2':
@@ -9436,6 +9570,61 @@ snapshots:
       path-expression-matcher: 1.6.2
       xml-naming: 0.3.0
 
+  '@node-rs/jieba-android-arm-eabi@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-android-arm64@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-darwin-arm64@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-darwin-x64@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-freebsd-x64@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-linux-arm-gnueabihf@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-linux-arm64-gnu@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-linux-arm64-musl@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-linux-x64-gnu@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-linux-x64-musl@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-win32-arm64-msvc@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-win32-ia32-msvc@2.0.4':
+    optional: true
+
+  '@node-rs/jieba-win32-x64-msvc@2.0.4':
+    optional: true
+
+  '@node-rs/jieba@2.0.4':
+    optionalDependencies:
+      '@node-rs/jieba-android-arm-eabi': 2.0.4
+      '@node-rs/jieba-android-arm64': 2.0.4
+      '@node-rs/jieba-darwin-arm64': 2.0.4
+      '@node-rs/jieba-darwin-x64': 2.0.4
+      '@node-rs/jieba-freebsd-x64': 2.0.4
+      '@node-rs/jieba-linux-arm-gnueabihf': 2.0.4
+      '@node-rs/jieba-linux-arm64-gnu': 2.0.4
+      '@node-rs/jieba-linux-arm64-musl': 2.0.4
+      '@node-rs/jieba-linux-x64-gnu': 2.0.4
+      '@node-rs/jieba-linux-x64-musl': 2.0.4
+      '@node-rs/jieba-win32-arm64-msvc': 2.0.4
+      '@node-rs/jieba-win32-ia32-msvc': 2.0.4
+      '@node-rs/jieba-win32-x64-msvc': 2.0.4
+
   '@oomol-lab/oo-cli-darwin-arm64@1.7.5':
     optional: true
 
@@ -9683,22 +9872,22 @@ snapshots:
     dependencies:
       '@peculiar/utils': 2.0.3
       asn1js: 3.0.10
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/json-schema@1.1.12':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/utils@2.0.3':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@peculiar/webcrypto@1.7.1':
     dependencies:
       '@peculiar/asn1-schema': 2.8.0
       '@peculiar/json-schema': 1.1.12
       '@peculiar/utils': 2.0.3
-      tslib: 2.8.1
+      tslib: 2.9.1
       webcrypto-core: 1.9.2
 
   '@pinojs/redact@0.4.0': {}
@@ -10581,7 +10770,7 @@ snapshots:
 
   '@smithy/is-array-buffer@2.2.0':
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/node-http-handler@4.12.1':
     dependencies:
@@ -10593,7 +10782,7 @@ snapshots:
     dependencies:
       '@smithy/core': 3.34.1
       '@smithy/types': 4.18.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/signature-v4@5.7.0':
     dependencies:
@@ -10608,12 +10797,12 @@ snapshots:
   '@smithy/util-buffer-from@2.2.0':
     dependencies:
       '@smithy/is-array-buffer': 2.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@smithy/util-utf8@2.3.0':
     dependencies:
       '@smithy/util-buffer-from': 2.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -11335,7 +11524,7 @@ snapshots:
     dependencies:
       pvtsutils: 1.3.6
       pvutils: 1.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   assertion-error@2.0.1: {}
 
@@ -11569,7 +11758,7 @@ snapshots:
     dependencies:
       clone-response: 1.0.3
       get-stream: 5.2.0
-      http-cache-semantics: 4.2.0
+      http-cache-semantics: 4.3.0
       keyv: 4.0.0
       lowercase-keys: 2.0.0
       normalize-url: 6.0.1
@@ -12836,6 +13025,8 @@ snapshots:
 
   highlight.js@10.7.3: {}
 
+  hippo-memory@2.2.0: {}
+
   hono@4.13.8: {}
 
   hosted-git-info@4.1.0:
@@ -12875,7 +13066,7 @@ snapshots:
       domutils: 3.2.2
       entities: 7.0.1
 
-  http-cache-semantics@4.2.0: {}
+  http-cache-semantics@4.3.0: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -14127,7 +14318,7 @@ snapshots:
       bytestreamjs: 2.0.1
       pvtsutils: 1.3.6
       pvutils: 1.2.0
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   platform@1.3.6: {}
 
@@ -14158,7 +14349,7 @@ snapshots:
     dependencies:
       nanoid: 3.3.18
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   postgres-array@2.0.0: {}
 
@@ -14322,7 +14513,7 @@ snapshots:
 
   pvtsutils@1.3.6:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   pvutils@1.2.0: {}
 
@@ -14672,7 +14863,7 @@ snapshots:
 
   rxjs@7.8.2:
     dependencies:
-      tslib: 2.8.1
+      tslib: 2.9.1
     optional: true
 
   safe-buffer@5.1.2: {}
@@ -14783,7 +14974,7 @@ snapshots:
     dependencies:
       chokidar: 5.0.0
       immutable: 5.1.9
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
     optionalDependencies:
       '@parcel/watcher': 2.6.0
     optional: true
@@ -14930,16 +15121,17 @@ snapshots:
     dependencies:
       atomic-sleep: 1.0.0
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   source-map-support@0.5.21:
     dependencies:
       buffer-from: 1.1.2
-      source-map: 0.6.1
+      source-map: 0.6.0
 
   source-map@0.6.0: {}
 
-  source-map@0.6.1: {}
+  source-map@0.6.1:
+    optional: true
 
   source-map@0.7.6: {}
 
@@ -15182,6 +15374,8 @@ snapshots:
   ts-interface-checker@0.1.13: {}
 
   tslib@2.8.1: {}
+
+  tslib@2.9.1: {}
 
   tsup@8.5.1(jiti@2.7.0)(postcss@8.5.26)(supports-color@8.1.1)(tsx@4.23.12)(typescript@7.0.2)(yaml@2.9.0):
     dependencies:
@@ -15547,7 +15741,7 @@ snapshots:
       '@peculiar/json-schema': 1.1.12
       '@peculiar/utils': 2.0.3
       asn1js: 3.0.10
-      tslib: 2.8.1
+      tslib: 2.9.1
 
   webidl-conversions@3.0.0: {}
 

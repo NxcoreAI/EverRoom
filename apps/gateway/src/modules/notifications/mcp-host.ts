@@ -48,7 +48,7 @@ export class NotificationMcpHost{
     // 来源桌面端不接收自己的远程推送（SaaS 扇出时排除来源设备）；当请求包含
     // macos 时，由本机直接弹出内容相同的通知，点击可定位到对应会话。
     const local=platforms.includes("macos");
-    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,roomId:context.roomId,idempotencyKey,local});
+    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,idempotencyKey,local});
     return{content:[{type:"text" as const,text:JSON.stringify(result)}],structuredContent:result};
   }
   async exchangeTrusted(sessionId:string,message:Record<string,unknown>){const context=resolveTrustedMcpSession(sessionId);if(!context)throw new Error("MCP_SESSION_INVALID: Trusted MCP session is missing or expired");return this.exchange(sessionId,message,context);}

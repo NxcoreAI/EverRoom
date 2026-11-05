@@ -49,9 +49,6 @@ export async function invokeRuntime(
       runtimeSessionRef: null,
       prompt,
       pageLabel: options.pageLabel,
-      roomId: null,
-      captureMemory: false,
-      recallMemory: false,
     });
     runtimeSessionRef = run.runtimeSessionRef;
     let content = "";

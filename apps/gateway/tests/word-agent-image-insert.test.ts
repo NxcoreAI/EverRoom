@@ -79,7 +79,6 @@ function context(): DocumentExecutionContext {
   return {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: null,
     activeFile: { fileId: "fe-1", title: "智能家居调研报告.docx", kind: "docx" },
   };
 }

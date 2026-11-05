@@ -2,6 +2,7 @@
 // 全套交互框架（多会话切换 / 工具时间线 / 流式回答 / 写入审阅 / 排队发送 /
 // 模型档位 / 权限模式 / @提及），数据源是主窗口 preload 暴露的真实网关桥
 // （window.nxcore.agent → 主进程 IPC → AgentGatewayBridge → gateway）。
+import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { LocaleProvider } from '@/i18n/LocaleContext'
@@ -43,15 +44,28 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   // 会话按文件稳定 id 隔离（不能用文件名：改名/同名/超长会把历史落进另一个分区，
   // 离开标签再回来就「找不到对话记录」）；文件名只作为运行上下文的「当前页面」。
-  const session = useAgentSession(file.name, null, [], { sessionKey: file.id })
+  const session = useAgentSession(file.name, { sessionKey: file.id })
   const prompts = starterPrompts[file.kind]
 
-  const submit = () => {
+  /** 发送一轮：文件附件与挂载目录一并进本轮运行上下文（sendPrompt 末位参数）。 */
+  const submit = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
     setDraft('')
     setComposerResetKey((key) => key + 1)
-    void session.sendPrompt(text)
+    void session.sendPrompt(
+      text,
+      undefined,
+      undefined,
+      undefined,
+      attachments.length ? attachments : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      mountedDirectories.length ? mountedDirectories : undefined,
+    )
   }
 
   const composer = (
@@ -86,7 +100,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
       onClearContext={() => {}}
       onRemoveContext={() => {}}
       onStop={() => void session.stop()}
-      onSubmit={() => submit()}
+      onSubmit={(payload) => submit(payload.attachments, payload.mountedDirectories)}
     />
   )
 
@@ -115,7 +129,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         agentIdByRun={session.agentIdByRun}
         agentNamesById={{}}
         activityByRun={session.activityByRun}
-        availableRooms={[]}
         composer={composer}
         currentSessionId={session.sessionId}
         scopeReady={session.scopeReady}
@@ -125,8 +138,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         loading={session.loading}
         messages={session.messages}
         pendingApprovals={session.pendingApprovals}
-        onRejectDocumentIntent={() => composerRef.current?.focus()}
-        onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, undefined, null, runId)}
+        onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, null, runId)}
         onOpenSessionLink={() => {}}
         onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}
         onSelectDocument={() => {}}
@@ -134,7 +146,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
           setDraft(prompt)
           composerRef.current?.focus()
         }}
-        onSelectRoom={async () => {}}
         pendingNavigationByRun={{}}
         reasoningByRun={session.reasoningByRun}
         runCompletedAtByRun={session.runCompletedAtByRun}

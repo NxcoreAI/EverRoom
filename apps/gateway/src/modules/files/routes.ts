@@ -176,7 +176,7 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
         },
       },
       async (request, reply) => {
-        const entry = service.renameCatalogEntry(request.params.id, request.body.displayName);
+        const entry = await service.renameCatalogEntry(request.params.id, request.body.displayName);
         return entry ?? reply.code(404).send(errorOf("file_not_found"));
       },
     );
@@ -210,6 +210,8 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
         },
       },
       async (request, reply) => {
+        // 存量懒回填（P1）：老条目第一次被打开时落到空间 Library，之后就是真文件。
+        await service.backfillLibraryFile(request.params.id).catch(() => undefined);
         const item = service.catalogEntry(request.params.id);
         if (!item) return reply.code(404).send(errorOf("file_not_found"));
         return item;
@@ -329,7 +331,7 @@ export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
         const sourceModifiedAt = text(metadata.sourceModifiedAt);
         const parsedModifiedAt = sourceModifiedAt ? new Date(sourceModifiedAt) : undefined;
         const pipelines = metadata.pipelines && typeof metadata.pipelines === "object"
-          ? metadata.pipelines as { room: boolean; wiki: boolean; memory: boolean }
+          ? metadata.pipelines as { room: boolean; wiki: boolean }
           : undefined;
         try {
           const result = await service.importFileStream({

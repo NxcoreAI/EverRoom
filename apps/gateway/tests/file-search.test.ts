@@ -30,11 +30,11 @@ let sourceSeq = 0;
 async function addFile(
   service: FilesService,
   originalName: string,
-  options: { workspaceId?: string; content?: string } = {},
+  options: { workspaceId?: string; content?: string; sourceKind?: "manual-upload" | "agent-generated" } = {},
 ): Promise<string> {
   sourceSeq += 1;
   const imported = await service.importFile({
-    sourceKind: "manual-upload",
+    sourceKind: options.sourceKind ?? "manual-upload",
     sourceKey: `manual:search:${sourceSeq}`,
     originalName,
     buffer: Buffer.from(options.content ?? `# ${originalName}\n\nbody ${sourceSeq}\n`, "utf8"),
@@ -50,7 +50,6 @@ function runInput(overrides: Partial<StartRuntimeRunInput> = {}): StartRuntimeRu
     runtimeSessionRef: null,
     prompt: "找一下那份报告",
     pageLabel: "chat",
-    roomId: null,
     workspaceId: "ws-run",
     ...overrides,
   };
@@ -106,6 +105,26 @@ describe("FilesService.searchCatalog", () => {
     expect(test.service.searchCatalog("报告", { workspaceId: "  " }).total).toBe(1);
   });
 
+  it("scope：产物库只出 agent-generated/artifact-imported，资料库是其余来源", async () => {
+    const test = await catalogForTest();
+    const material = await addFile(test.service, "客户给的报告.md");
+    const generated = await addFile(test.service, "你生成的分析报告.docx", { sourceKind: "agent-generated" });
+
+    // 默认 all：两栏都出，AI 才知道库里到底有什么。
+    expect(test.service.searchCatalog("报告").items.map((item) => item.id).sort())
+      .toEqual([material, generated].sort());
+
+    const artifacts = test.service.searchCatalog("报告", { scope: "artifacts" });
+    expect(artifacts.items.map((item) => item.id)).toEqual([generated]);
+    expect(artifacts.total).toBe(1);
+
+    const library = test.service.searchCatalog("报告", { scope: "library" });
+    expect(library.items.map((item) => item.id)).toEqual([material]);
+
+    // scope 与扩展名/工作区叠加时按 AND 生效。
+    expect(test.service.searchCatalog("报告", { scope: "library", extensions: ["docx"] }).total).toBe(0);
+  });
+
   it("排除已删除条目", async () => {
     const test = await catalogForTest();
     const id = await addFile(test.service, "待删除报告.md");
@@ -144,6 +163,7 @@ describe("FilesService.searchCatalog", () => {
 interface SearchOptions {
   extensions?: readonly string[];
   workspaceId?: string;
+  scope?: "all" | "library" | "artifacts";
   limit?: number;
   offset?: number;
 }
@@ -155,6 +175,7 @@ interface SearchHit {
   workspaceId: string;
   updatedAt: string;
   dataType: string | null;
+  sourceKind: string;
 }
 
 type SearchCatalogStub = Mock<(
@@ -177,6 +198,7 @@ describe("file_search pi 工具", () => {
         workspaceId: "ws-run",
         updatedAt: "2026-10-30T10:00:00.000Z",
         dataType: "office-doc",
+        sourceKind: "manual-upload",
       }],
     }));
     const result = await toolWith(searchCatalog).execute(
@@ -234,6 +256,73 @@ describe("file_search pi 工具", () => {
     // 运行会话没有工作区时不做工作区过滤（全库搜索）。
     await tool.execute(runInput({ workspaceId: null }), { query: "x" });
     expect(searchCatalog.mock.calls[2]![1]).not.toHaveProperty("workspaceId");
+  });
+
+  it("scope=artifacts 透传给服务，并在每条结果与提示里标出产物/资料", async () => {
+    const searchCatalog: SearchCatalogStub = vi.fn(() => ({
+      total: 2,
+      items: [
+        {
+          id: "fe-art",
+          originalName: "季度复盘.pptx",
+          displayName: null,
+          workspaceId: "ws-run",
+          updatedAt: "2026-10-30T10:00:00.000Z",
+          dataType: "office-slides",
+          sourceKind: "agent-generated",
+        },
+        {
+          id: "fe-src",
+          originalName: "客户原始数据.xlsx",
+          displayName: null,
+          workspaceId: "ws-run",
+          updatedAt: "2026-10-29T10:00:00.000Z",
+          dataType: "office-sheet",
+          sourceKind: "manual-upload",
+        },
+      ],
+    }));
+    const result = await toolWith(searchCatalog).execute(runInput(), { query: "复盘", scope: "artifacts" });
+    expect(searchCatalog.mock.calls[0]![1]).toMatchObject({ scope: "artifacts" });
+
+    const payload = JSON.parse(result.content) as {
+      scope: string;
+      items: Array<Record<string, unknown>>;
+      hint: string;
+    };
+    expect(payload.scope).toBe("artifacts");
+    expect(payload.items[0]).toMatchObject({ scope: "产物", scopeKey: "artifacts", sourceKind: "agent-generated" });
+    expect(payload.items[1]).toMatchObject({ scope: "资料", scopeKey: "library" });
+
+    // 不传 scope（整库搜）且两栏都有命中时，提示要把「按 scope 字段挑」说出来。
+    const mixed = JSON.parse((await toolWith(searchCatalog).execute(runInput(), { query: "复盘" })).content) as {
+      scope: string;
+      hint: string;
+    };
+    expect(mixed.scope).toBe("all");
+    expect(mixed.hint).toContain("按 scope 字段");
+  });
+
+  it("scope 省略或传不认识的值都按整库搜；空结果提示标出查的是哪一栏", async () => {
+    const searchCatalog: SearchCatalogStub = vi.fn(() => ({ total: 0, items: [] }));
+    const tool = toolWith(searchCatalog);
+
+    // 省略 = 整库，不向服务层传 scope，提示里说的是「文件库」。
+    const omitted = JSON.parse((await tool.execute(runInput(), { query: "报告" })).content) as { hint: string };
+    expect(searchCatalog.mock.calls[0]![1]).not.toHaveProperty("scope");
+    expect(omitted.hint).toContain("文件库");
+
+    // 限定产物库时，空结果要明确告诉模型「查的是产物库」并允许再搜整库。
+    const artifacts = JSON.parse(
+      (await tool.execute(runInput(), { query: "报告", scope: "artifacts" })).content,
+    ) as { hint: string };
+    expect(artifacts.hint).toContain("产物库");
+    expect(artifacts.hint).toContain("scope=all");
+    expect(artifacts.hint).toContain("换个关键词");
+
+    // 模型偶尔会瞎编枚举值：按整库兜底，不报错。
+    await tool.execute(runInput(), { query: "报告", scope: "乱写" });
+    expect(searchCatalog.mock.calls[2]![1]).not.toHaveProperty("scope");
   });
 
   it("空查询 + 空结果给可执行提示，而不是报错", async () => {

@@ -119,6 +119,7 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
                 </span>
               </div>
             </header>
+            {/* 待发送批注徽章由 ConversationPane 渲染（紧贴输入框上方的浮层行）。 */}
             {view.kind === 'session' ? (
               <ConversationPane
                 key={`session:${view.sessionId}`}

@@ -469,7 +469,7 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
-  it("透传 dispatch input 的 roomId 到 runtime.start（子 run 文档工具绑定）", async () => {
+  it("dispatch input 以 runtimeMetadata 透传给 runtime.start（Phase 2i 后无 roomId 字段）", async () => {
     const fixture = await createFixture();
     await fixture.registry.initialize();
 
@@ -505,8 +505,8 @@ describe("filesystem subagent framework", () => {
       source: "primary_agent",
       parentRunId: "run-room",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBe("room-9");
-    // 结构化输入同时以 runtimeMetadata 交给工具（planner 据此区分 draft/arrange）。
+    // Phase 2i：runtime.start 不再携带 roomId；结构化输入（含 legacy roomId 字段）
+    // 只作为不透明数据经 runtimeMetadata 交给工具。
     expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
       subagentAgentId: "researcher",
       subagentInput: { topic: "EverRoom", roomId: "room-9" },
@@ -520,7 +520,10 @@ describe("filesystem subagent framework", () => {
       source: "primary_agent",
       parentRunId: "run-noroom",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
+    expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
+      subagentAgentId: "researcher",
+      subagentInput: { topic: "EverRoom" },
+    });
 
     await orchestrator.dispose();
     fixture.database.sqlite.close();

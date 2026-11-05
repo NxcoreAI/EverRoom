@@ -1,0 +1,61 @@
+.json-block {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.json-pre {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label);
+  line-height: 1.65;
+  color: var(--ink-2);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.json-pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.json-tok-key { color: var(--accent); }
+.json-tok-string { color: var(--ink); }
+.json-tok-number { color: var(--cost); }
+.json-tok-literal { color: var(--tool); }
+.json-tok-punct { color: var(--ink-4); }
+.json-tok-plain { color: var(--ink-2); }
+
+.json-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  border-top: 1px solid var(--line-soft);
+  padding: 4px var(--sp-2);
+}
+
+.json-note {
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+}
+
+.json-toggle {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--accent);
+}
+
+.json-toggle:hover {
+  text-decoration: underline;
+}
+
+.json-empty {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+}

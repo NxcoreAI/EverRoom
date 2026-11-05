@@ -101,6 +101,8 @@ export class ThesisFormatService {
     files: FilesService;
     orchestrator: SubagentOrchestrator;
     officeBridge: OfficeBridgeClient | null;
+    /** 空间 scratch 提供者（P3）：给 LibreOffice 转换这类中间产物一个随空间清理的落点。 */
+    spaceScratch?: { scratchPathSync(workspaceId: string | null | undefined, purpose: string): string | null };
     /** 结构化日志（create-server 注入 app.log）；缺省不记，测试无需桩。 */
     logger?: { info: (obj: Record<string, unknown>, msg: string) => void; warn: (obj: Record<string, unknown>, msg: string) => void };
   }) {
@@ -137,7 +139,7 @@ export class ThesisFormatService {
       const linked = this.deps.files.catalogEntry(fileEntryId);
       if (linked && linked.workspaceId !== workspaceId) throw new Error("thesis_template_not_in_workspace");
     }
-    const result = await this.parseBytes(bytes, name);
+    const result = await this.parseBytes(bytes, name, workspaceId);
     // fileEntryId：桌面端上传前已把模版导入资料区，卡片直接关联该文件。
     // 关联后：预览能打开真实原文件、删除能级联清文件、也能重新从资料区解析。
     const row = this.store.upsert({ workspaceId, card: result.card, sourceFileEntryId: fileEntryId ?? null, sourceName: name });
@@ -152,7 +154,7 @@ export class ThesisFormatService {
     return removed;
   }
 
-  private async parseBytes(bytes: Buffer, name: string): Promise<{
+  private async parseBytes(bytes: Buffer, name: string, workspaceId?: string): Promise<{
     sourceName: string;
     card: ThesisFormatCard;
     factGaps: string[];
@@ -161,10 +163,11 @@ export class ThesisFormatService {
   }> {
     // 全链路显性失败：解包/归一化/事实抽取任一步失败都直接抛错（带阶段名），
     // 由 routes 层回 400 与 UI toast——绝不静默降级用默认样式出卡。
-    const members = await unpackTemplateInput(bytes, name).catch((error: unknown) => {
+    const scratchRoot = this.deps.spaceScratch?.scratchPathSync(workspaceId, "thesis") ?? null;
+    const members = await unpackTemplateInput(bytes, name, scratchRoot).catch((error: unknown) => {
       throw new Error(`thesis_template_unpack_failed:${error instanceof Error ? error.message : String(error)}`);
     });
-    const normalized = await normalizeMembersToDocx(members).catch((error: unknown) => {
+    const normalized = await normalizeMembersToDocx(members, scratchRoot).catch((error: unknown) => {
       throw new Error(`thesis_template_normalize_failed:${error instanceof Error ? error.message : String(error)}`);
     });
     // 装订骨架要的是「和用户看到的模版一模一样」的那份 docx：输入本来就是 docx 时

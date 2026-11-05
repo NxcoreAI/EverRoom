@@ -7,6 +7,8 @@ import type {
 import { useMemo } from 'react'
 import { create } from 'zustand'
 
+import type { PendingAskDraft } from '@/components/agent/askDrafts'
+
 import type { OfficeFile } from '@/office-proto/data'
 
 import { workbenchApi } from '../api'
@@ -144,6 +146,23 @@ interface WorkbenchStore {
   sidebarCollapsed: boolean
   /** 刚创建、还没走完三步引导的工作空间 id（引导弹窗由工作空间标签渲染）。 */
   pendingSetupWorkspaceId: string | null
+  /** 设置页默认打开的分区 id（`settings-account` 等）：账号菜单等入口可直达某个分区。 */
+  settingsSection: string | null
+  /**
+   * Office「AI 修改」浮层转发来的待注入消息：工作台先激活目标工作空间标签，
+   * 会话面板挂载后再由它消费（消费即置空）。key = workspaceId。
+   */
+  pendingAgentAsk: PendingOfficeAgentAsk | null
+  /**
+   * Office「AI 修改」攒下来的批注草稿（每个工作空间各自一份清单）：浮层里选
+   * 「加入批注」时追加，用户在对话上方一次全发。
+   */
+  askDrafts: PendingAskDraft[]
+  /**
+   * 「全部发送」请求序号：文档内批注面板点了发送，但对话面板不在同一处时，
+   * 由这里通知对话面板消费（每次 +1）。
+   */
+  askQueueSendNonce: number
 
   boot(): Promise<void>
   refresh(): Promise<void>
@@ -152,6 +171,8 @@ interface WorkbenchStore {
 
   openHome(page?: HomePageKey): void
   setHomePage(page: HomePageKey): void
+  /** 打开设置页（主页「设置」页），可指定要落到哪个分区。 */
+  openSettings(section?: string | null): void
   openWorkspaceTab(workspaceId: string, view?: WorkspaceTabView): void
   openFileTab(file: OfficeFile): void
   activateTab(tabId: string): void
@@ -159,6 +180,21 @@ interface WorkbenchStore {
   /** 关标签：先跑注册的脏关闭守卫；守卫取消则保留标签。返回是否真的关掉。 */
   requestCloseTab(tabId: string): Promise<boolean>
   setActiveWorkspacePage(workspaceId: string, page: WorkspacePageKey): void
+  /** Office「AI 修改」：写入待注入消息（由对话面板消费后清空）。 */
+  setPendingAgentAsk(ask: PendingOfficeAgentAsk | null): void
+  /** 追加一条批注草稿（超过上限时丢掉最旧的）。 */
+  addAskDraft(draft: PendingAskDraft): void
+  removeAskDraft(id: string): void
+  /**
+   * 改写一条批注草稿的原话（文档内面板/徽章列表的行内编辑）。
+   * message/displayMessage 是主进程按旧原话组好的包，这里同步重写：
+   * displayMessage = 新原话；message 里旧原话原样出现，直接子串替换。
+   */
+  updateAskDraft(id: string, instruction: string): void
+  /** 清空某个工作空间的批注草稿（发送成功/用户主动清空）。 */
+  clearAskDrafts(workspaceId: string): void
+  /** 请求对话面板把当前批注一次性发出。 */
+  requestAskQueueSend(): void
 
   createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace | null>
   /** 关闭三步引导（完成/全部跳过）。 */
@@ -175,6 +211,14 @@ interface WorkbenchStore {
   toggleSidebar(): void
 }
 
+/** Office「AI 修改」浮层转发的一条待注入消息（技术指令进 runtime，人话进气泡）。 */
+export interface PendingOfficeAgentAsk {
+  id: string
+  workspaceId: string
+  message: string
+  displayMessage?: string
+}
+
 let sessionsRefreshInFlight = false
 
 export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
@@ -187,6 +231,10 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   activeTabId: HOME_TAB_ID,
   sidebarCollapsed: false,
   pendingSetupWorkspaceId: null,
+  settingsSection: null,
+  pendingAgentAsk: null,
+  askDrafts: [],
+  askQueueSendNonce: 0,
 
   setError(error) {
     set({ error })
@@ -276,6 +324,11 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
 
   setHomePage(page) {
     get().openHome(page)
+  },
+
+  openSettings(section) {
+    set({ settingsSection: section ?? null })
+    get().openHome('settings')
   },
 
   openWorkspaceTab(workspaceId, view) {
@@ -510,6 +563,46 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       set({ error: errorMessage(error, '删除工作失败') })
       return false
     }
+  },
+
+  setPendingAgentAsk(ask) {
+    set({ pendingAgentAsk: ask })
+  },
+
+  addAskDraft(draft) {
+    set((state) => ({
+      // 上限 20：攒批注是临时动作，堆太多既读不清也超出一次调度的合理规模。
+      askDrafts: [...state.askDrafts, draft].slice(-20),
+    }))
+  },
+
+  removeAskDraft(id) {
+    set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.id !== id) }))
+  },
+
+  updateAskDraft(id, instruction) {
+    const text = instruction.trim()
+    set((state) => ({
+      askDrafts: state.askDrafts.map((draft) => {
+        if (draft.id !== id) return draft
+        // message 是主进程组好的「定位前缀 + 原话」技术指令；原话在其中原样出现，
+        // 替换第一个匹配即可保住定位信息。旧草稿可能没存 instruction（只有组好的
+        // 包）：此时找不到子串，退化为只更新 instruction/displayMessage。
+        const oldText = draft.instruction?.trim()
+        const message = oldText && draft.message.includes(oldText)
+          ? draft.message.replace(oldText, text)
+          : draft.message
+        return { ...draft, instruction: text, displayMessage: text, message }
+      }),
+    }))
+  },
+
+  clearAskDrafts(workspaceId) {
+    set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.workspaceId !== workspaceId) }))
+  },
+
+  requestAskQueueSend() {
+    set((state) => ({ askQueueSendNonce: state.askQueueSendNonce + 1 }))
   },
 
   toggleSidebar() {

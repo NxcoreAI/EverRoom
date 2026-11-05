@@ -1,20 +1,26 @@
 import { randomUUID } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
 import type {
   AgentActiveDocumentContext,
   AgentActiveFileContext,
+  AgentLibraryInventory,
+  AgentMountedDirectory,
   AgentOpenFileContext,
   AgentEvent,
   AgentEventType,
   AgentModelPreference,
   AgentNavigationTarget,
   AgentMessage,
+  AgentNoteCard,
   AgentWorkspace,
   CreateAgentWorkspaceInput,
   LocalAgentDelegationContext,
   AgentRun,
   AgentRunStatus,
-  AgentRoomReference,
+  AgentSpaceCandidate,
+  AgentSpaceLayout,
+  AgentSpaceRepairReport,
   AgentSession,
   AgentSessionParticipant,
   AgentSessionLink,
@@ -74,6 +80,14 @@ import {
   sealDelegationPayload,
 } from "../local-agents/delegation.js";
 import type { FilesService } from "../files/service.js";
+import { collectLibraryInventory } from "../files/library-inventory.js";
+import type { WorkspaceLayoutService } from "../workspace-layout/service.js";
+
+/**
+ * 默认工作区的目录名：固定 `<dataDir>/Workspace/inbox`（方案 §7）。
+ * 不按名称生成 slug——默认空间的名字会随语言/用户改名变化，目录名必须稳定。
+ */
+const DEFAULT_SPACE_SLUG = "inbox";
 import { enqueueSearchIndex } from "../search/jobs.js";
 import { clearRedactionDelta, flushRedactionDelta, redactDelta, redactSecrets, redactText } from "../../security/secret-redaction.js";
 
@@ -100,17 +114,9 @@ const PENDING_INTENT_TTL_MS = 10 * 60 * 1000;
 /** 划词改写运行结束后仍允许登记 document operation 的宽限期（会话与子 Agent 调用溯源共用）。 */
 export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
-export interface AgentRoomRegistry {
-  listReferences(): AgentRoomReference[];
-  isActive(roomId: string): boolean;
-  resolveRoomId?(roomId: string): string | null;
-}
-
 export interface AgentDocumentRegistry {
-  validateActiveDocumentContext(
-    context: AgentActiveDocumentContext,
-    roomId: string | null,
-  ): AgentActiveDocumentContext;
+  /** Phase 2i 后无 Room 维度：只校验工作区文稿存在性与形状。 */
+  validateActiveDocumentContext(context: AgentActiveDocumentContext): AgentActiveDocumentContext;
 }
 
 export interface AgentExternalConversationResolver {
@@ -119,6 +125,7 @@ export interface AgentExternalConversationResolver {
   resolveNativeContinuation?(threadId: string, targetAgentId: string): string | null;
 }
 
+/** Legacy 列归一：Phase 2i 后 Room 维度已删除，仅用于读写旧库行的 null 归一。 */
 function normalizeRoomId(roomId: string | null | undefined): string | null {
   const normalized = roomId?.trim();
   return normalized ? normalized : null;
@@ -181,24 +188,6 @@ function normalizeWorkspaceGoals(goals: string[] | null | undefined): string[] |
   return normalized;
 }
 
-function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string | null | undefined): string | null {
-  const normalized = normalizeRoomId(roomId);
-  if (!normalized) return null;
-  if (!registry) return normalized;
-  return registry.resolveRoomId?.(normalized) ?? (registry.isActive(normalized) ? normalized : null);
-}
-
-const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|会话|对话|仓库|分支|数据库|接口)/iu;
-
-function ambiguousDocumentTopic(prompt: string): string | null {
-  const text = prompt.trim().replace(/[。！？!?，,]+$/gu, "");
-  if (!text || requestsWorkspaceDocument(text)) return null;
-  const match = /^(?:(?:请|麻烦|能否|能不能|可以)\s*)?(?:(?:帮我|给我)\s*)?(?:创建|新建|生成|建立|做)(?:\s*(?:一个|一份|一篇))?\s*(.{1,40})$/iu.exec(text);
-  const topic = match?.[1]?.trim();
-  if (!topic || NON_DOCUMENT_CREATION_TARGET.test(topic)) return null;
-  return topic;
-}
-
 function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
@@ -248,6 +237,11 @@ function toWorkspace(row: typeof agentWorkspaces.$inferSelect): AgentWorkspace {
     // 兼容迁移前/直插留空的旧行：NULL 与空数组都暴露为 []。
     goals: Array.isArray(row.goals) ? row.goals : [],
     path: row.path,
+    slug: row.slug ?? null,
+    // 未绑目录时统一暴露 unbound（迁移前老行 root_mode 有默认值但 path 为空）。
+    rootMode: row.path ? row.rootMode : "unbound",
+    layoutVersion: row.layoutVersion ?? 0,
+    rootMissingAt: row.rootMissingAt ? row.rootMissingAt.toISOString() : null,
     kind: row.kind,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -261,7 +255,8 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
     sessionId: row.sessionId,
     agentId: row.agentId,
     invocationMode: row.invocationMode,
-    roomId: normalizeRoomId(row.roomId),
+    // Phase 2i 后无 Room 维度：legacy 列保留但恒 null（不再按 Room 归属发起 run）。
+    roomId: row.roomId?.trim() || null,
     status: row.status,
     prompt: row.prompt,
     lastEventSeq: row.lastEventSeq,
@@ -272,7 +267,41 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
   };
 }
 
+/** note_cards 列（JSON 文本）→ AgentNoteCard[]；空/坏数据静默降级为普通消息。 */
+function parseNoteCards(raw: string | null): AgentNoteCard[] | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    const cards = parsed.filter((item): item is AgentNoteCard =>
+      typeof item === "object" && item !== null
+      && typeof (item as AgentNoteCard).excerpt === "string"
+      && typeof (item as AgentNoteCard).note === "string")
+    return cards.length > 0 ? cards : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** 入库前的批注卡片收敛：最多 20 条，单字段 2k，来源标题 300。 */
+function sanitizeNoteCards(cards: StartAgentRunInput["noteCards"]): AgentNoteCard[] | undefined {
+  if (!Array.isArray(cards) || cards.length === 0) return undefined
+  const cleaned = cards
+    .filter((card): card is AgentNoteCard =>
+      typeof card === "object" && card !== null
+      && typeof card.excerpt === "string" && card.excerpt.trim().length > 0
+      && typeof card.note === "string" && card.note.trim().length > 0)
+    .slice(0, 20)
+    .map((card) => ({
+      excerpt: card.excerpt.slice(0, 2_000),
+      note: card.note.slice(0, 2_000),
+      ...(typeof card.title === "string" && card.title.trim() ? { title: card.title.slice(0, 300) } : {}),
+    }))
+  return cleaned.length > 0 ? cleaned : undefined
+}
+
 function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
+  const noteCards = parseNoteCards(row.noteCards)
   return {
     id: row.id,
     sessionId: row.sessionId,
@@ -281,6 +310,9 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     authorAgentId: row.authorAgentId,
     content: row.content,
     createdAt: row.createdAt.toISOString(),
+    ...(noteCards ? { noteCards } : {}),
+    // 空串＝无气泡（只有批注卡片）；旧数据/普通消息为 null → 气泡回退 content。
+    ...(typeof row.displayContent === "string" ? { displayContent: row.displayContent } : {}),
   };
 }
 
@@ -406,10 +438,9 @@ function localAgentDelegationContext(input: {
   pageLabel: string;
   priorMessages: AgentMessage[];
   attachments: RuntimeAttachment[];
-  rooms: AgentRoomReference[];
   activeDocument?: AgentActiveDocumentContext;
 }): LocalAgentDelegationContext {
-  const { request, pageLabel, priorMessages, attachments, rooms, activeDocument } = input;
+  const { request, pageLabel, priorMessages, attachments, activeDocument } = input;
   if (!request.localAgent) throw new Error("local_agent_target_missing");
   return sealDelegationPayload(buildLocalAgentDelegationPayload({
     targetAgentId: request.localAgent.id,
@@ -419,7 +450,7 @@ function localAgentDelegationContext(input: {
     attachments,
     promptAttachments: request.context?.attachments ?? [],
     ...(request.context?.selectedText?.trim() ? { selectedText: request.context.selectedText } : {}),
-    rooms,
+    // Phase 2i 后无 Room 维度：delegation 载荷不再携带 rooms。
     ...(activeDocument ? { activeDocument } : {}),
     workingDirectory: request.localAgent.workingDirectory,
     permissionProfile: request.localAgent.permissionProfile,
@@ -439,6 +470,45 @@ function participantHandoffPrompt(messages: AgentMessage[]): string | null {
       createdAt: message.createdAt,
     }))),
     "</everroom_agent_handoff>",
+  ].join("\n");
+}
+
+/** 输入区挂载目录上限：与 startRun 请求体 schema 的 maxItems 保持一致。 */
+const MOUNTED_DIRECTORIES_LIMIT = 8;
+
+/**
+ * 输入区「+ → 挂载目录」的一组目录：去空、按 path 去重并限量。
+ * 目录当前是否可读交给 read / ls / grep 判断——刚选中的目录可能已移动或不可访问，
+ * 在这里拒绝整轮 run 只会让用户看到莫名其妙的失败。
+ */
+function normalizeMountedDirectories(
+  values: readonly AgentMountedDirectory[] | undefined,
+): AgentMountedDirectory[] | undefined {
+  if (!Array.isArray(values) || values.length === 0) return undefined;
+  const seen = new Set<string>();
+  const directories: AgentMountedDirectory[] = [];
+  for (const value of values) {
+    const path = typeof value?.path === "string" ? value.path.trim() : "";
+    const name = typeof value?.name === "string" ? value.name.trim() : "";
+    if (!path || !name || seen.has(path)) continue;
+    seen.add(path);
+    directories.push({ path, name });
+    if (directories.length >= MOUNTED_DIRECTORIES_LIMIT) break;
+  }
+  return directories.length ? directories : undefined;
+}
+
+/** 把挂载目录渲染成运行提示的一段；没有挂载目录时返回 null（提示保持原样）。 */
+function mountedDirectoriesContext(
+  values: readonly AgentMountedDirectory[] | undefined,
+): string | null {
+  const directories = normalizeMountedDirectories(values);
+  if (!directories) return null;
+  return [
+    "用户为本轮对话挂载了以下本地目录（桌面端已由用户显式授权）。读取、列目录、检索这些目录下的文件直接用 read / ls / grep（传绝对路径）；修改其中文件仍按当前权限模式确认：",
+    "<mounted_directories>",
+    JSON.stringify(directories.map((directory) => ({ name: directory.name, path: directory.path }))),
+    "</mounted_directories>",
   ].join("\n");
 }
 
@@ -468,8 +538,9 @@ function runtimePrompt(
         "当用户询问已上传 Office/PDF 文件的内容、摘要、数据或结论时，必须调用 document_analysis，并传入上方精确的 fileEntryId 和 fileVersionId；等待子 Agent 返回后再回答。不要根据文件名、处理状态或未读取的内容猜测。只有用户问题与附件内容无关时才可不调用。",
       ].join("\n")
     : null;
+  const mountedDirectories = mountedDirectoriesContext(input.context?.mountedDirectories);
   if (!selectedText) {
-    return [externalContext, handoff, connectorRouting, attachmentContext, input.prompt]
+    return [externalContext, handoff, connectorRouting, attachmentContext, mountedDirectories, input.prompt]
       .filter(Boolean).join("\n\n");
   }
   return [
@@ -483,26 +554,9 @@ function runtimePrompt(
     "用户请求：",
     connectorRouting ?? '',
     attachmentContext ?? '',
+    mountedDirectories ?? '',
     input.prompt,
   ].join("\n");
-}
-
-function availableRooms(input: StartAgentRunInput, registry?: AgentRoomRegistry) {
-  return (registry?.listReferences() ?? input.context?.rooms ?? []).map((room) => {
-    const background = room.background?.trim();
-    const goal = room.goal?.trim();
-    const status = room.status?.trim();
-    const contextSummary = room.contextSummary;
-    return {
-      id: room.id.trim(),
-      title: room.title.trim(),
-      ...(room.kind?.trim() ? { kind: room.kind.trim() } : {}),
-      ...(background ? { background: background.slice(0, 2_000) } : {}),
-      ...(goal ? { goal: goal.slice(0, 2_000) } : {}),
-      ...(status ? { status: status.slice(0, 500) } : {}),
-      ...(contextSummary ? { contextSummary } : {}),
-    };
-  });
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -518,25 +572,6 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function selectedRunRoomId(
-  input: StartAgentRunInput,
-  registry?: AgentRoomRegistry,
-): string | null {
-  const selectedRoomId = input.context?.selectedRoomId?.trim()
-    || input.context?.activeDocument?.roomId?.trim();
-  if (!selectedRoomId) return null;
-  const resolved = registry
-    ? resolveRoomId(registry, selectedRoomId)
-    : availableRooms(input).some((room) => room.id === selectedRoomId) ? selectedRoomId : null;
-  if (!resolved) {
-    // 附带未解析的 roomId：排查"合并后 409"类问题时定位脏引用来源。
-    const error = new Error("agent_room_not_available") as Error & { roomId?: string };
-    error.roomId = selectedRoomId;
-    throw error;
-  }
-  return resolved;
-}
-
 export interface LocalAgentDispatchRunSource {
   priorMessages: Array<Pick<AgentMessage, "role" | "authorAgentId" | "content" | "createdAt">>;
   promptAttachments: Array<{ fileName: string; content?: string }>;
@@ -545,20 +580,26 @@ export interface LocalAgentDispatchRunSource {
 
 export class AgentService {
   private filesService: FilesService | null = null;
-  private externalConversationResolver: AgentExternalConversationResolver | null = null;
-  /** 记忆引擎暂停闸（由 create-server 注入 ingest.getPause().paused）；null = 无闸。 */
-  private memoryCaptureGate: (() => boolean) | null = null;
+  /** 项目空间目录服务（单写者）；未注入时退化为不落盘的旧行为。 */
+  private workspaceLayout: WorkspaceLayoutService | null = null;
+  /** 会话结束的记忆蒸馏回调（见 setMemoryDistiller）。 */
+  private memoryDistill: ((sessionId: string, workspaceId: string | null, runId: string) => void) | null = null;
+  /** 删除会话前的记忆抢救回调（见 setMemorySessionCloser）。 */
+  private memorySessionClose: ((sessionId: string) => void) | null = null;
 
-  setMemoryCaptureGate(gate: (() => boolean) | null): void {
-    this.memoryCaptureGate = gate;
-  }
+  /**
+   * 工作会话标题生成回调：一次 run 正常结束（`run.completed`）时触发。
+   * 实现方负责「只做一次 / 已有明确标题不覆盖 / 失败静默」，这里只保证完成即通知。
+   */
+  private sessionTitle: ((sessionId: string, runId: string) => void) | null = null;
+  /** 用户画像文本提供方（见 setUserProfileProvider）：每轮 run 注入 system prompt。 */
+  private userProfilePrompt: (() => string | null) | null = null;
+  private externalConversationResolver: AgentExternalConversationResolver | null = null;
   private readonly sequences = new Map<string, number>();
   private readonly executionContexts = new Map<string, {
     sessionId: string;
-    roomId: string | null;
     /** 会话所属工作区：Agent 产物入库带 workspaceId（资料库/产物库按空间隔离）。 */
     workspaceId: string | null;
-    availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
     /** 用户当前浏览的 Office 文件：工具（file_read）按它兜底 fileId。 */
     activeFile?: AgentActiveFileContext;
@@ -589,7 +630,6 @@ export class AgentService {
     private runtime: AgentRuntime,
     readonly broker: AgentEventBroker,
     private readonly logger: AgentServiceLogger = silentLogger,
-    private readonly roomRegistry?: AgentRoomRegistry,
     private readonly documentRegistry?: AgentDocumentRegistry,
     private readonly completedMessageResolver?: AgentCompletedMessageResolver,
     private readonly disposeRuntime = true,
@@ -794,6 +834,53 @@ export class AgentService {
     this.filesService = files;
   }
 
+  /**
+   * 项目空间目录服务（`modules/workspace-layout`）。
+   *
+   * 不注入时退化为旧行为：`path` 可为空、不落盘（测试与无桌面环境下的直连用法）。
+   * 注入后：`createWorkspace` 不传 path 也会建 `<dataDir>/Workspace/<slug>`，
+   * 默认空间首次访问时补 `Workspace/inbox`。
+   */
+  setWorkspaceLayout(layout: WorkspaceLayoutService): void {
+    this.workspaceLayout = layout;
+  }
+
+  /**
+   * 会话级记忆蒸馏回调：一次 run 正常结束后触发（`run.completed`）。
+   * 实现方负责节流与去重，这里只保证「完成即通知、失败不影响对话」。
+   */
+  setMemoryDistiller(distill: (sessionId: string, workspaceId: string | null, runId: string) => void): void {
+    this.memoryDistill = distill;
+  }
+
+  /**
+   * 删除会话前的抢救回调：消息对 session 是级联删除，删之前必须让记忆侧
+   * 有机会把「还没提炼的那一段」读走（见 MemoryDistiller.captureBeforeDelete）。
+   * 回调本身必须同步、快速、不抛错；真正的模型调用由实现方异步接续。
+   */
+  setMemorySessionCloser(capture: (sessionId: string) => void): void {
+    this.memorySessionClose = capture;
+  }
+
+  /**
+   * 会话标题生成回调（见 `AutoSessionTitles`）：会话第一次成功跑完后，
+   * 用一次 LLM 总结替换「首条 prompt 截断」的占位标题。
+   */
+  setSessionTitleGenerator(generate: (sessionId: string, runId: string) => void): void {
+    this.sessionTitle = generate;
+  }
+
+  /**
+   * 用户画像提供方：每轮 run 现取，注入到 runtime 的 system prompt。
+   *
+   * 为什么不挂在 session 上一次性固化：画像每日/阈值触发更新，而 system prompt
+   * 是每轮现拼的——挂在 provider 上就能「更新即生效」，不用重开会话。
+   * provider 必须便宜（内部实现带缓存）且不抛错；返回 null 表示本轮不注入。
+   */
+  setUserProfileProvider(provider: (() => string | null) | null): void {
+    this.userProfilePrompt = provider;
+  }
+
   setExternalConversationResolver(resolver: AgentExternalConversationResolver): void {
     this.externalConversationResolver = resolver;
   }
@@ -882,15 +969,21 @@ export class AgentService {
       if (run.agentId === MAIN_AGENT_ID
         && recoveryRuntimeId === this.runtime.id
         && recoverySessionRef) {
-        try {
-          await this.runtime.deleteSession(recoverySessionRef);
-        } catch (error) {
-          this.logger.info({
-            event: "agent.recovery.remote_stop_failed",
-            sessionId: run.sessionId,
-            runId: run.id,
-            error: error instanceof Error ? error.message : String(error),
-          }, "failed to stop stale remote Agent session");
+        // 仅终止运行中的远端会话活动（ACP 渠道侧仍需远程停止）；对 pi 档
+        // deleteSession 会把整个会话文件删掉，连带历史一起销毁——中断的
+        // run 只需停止，用户「请继续工作」时还要用这份历史续聊，绝不能删。
+        if (!this.runtime.id.startsWith("pi") && !recoverySessionRef.includes("/pi-sessions/")
+          && !recoverySessionRef.endsWith(".jsonl")) {
+          try {
+            await this.runtime.deleteSession(recoverySessionRef);
+          } catch (error) {
+            this.logger.info({
+              event: "agent.recovery.remote_stop_failed",
+              sessionId: run.sessionId,
+              runId: run.id,
+              error: error instanceof Error ? error.message : String(error),
+            }, "failed to stop stale remote Agent session");
+          }
         }
       }
       await this.appendEvent(run.sessionId, run.id, {
@@ -898,17 +991,15 @@ export class AgentService {
         payload: { reason: "gateway-restarted" },
       });
       if (MODEL_TIER_AGENT_IDS.includes(run.agentId)) {
-        const recoveredAt = new Date();
-        this.db.update(agentSessionParticipants)
-          .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
-          .where(and(
-            eq(agentSessionParticipants.sessionId, run.sessionId),
-            eq(agentSessionParticipants.agentId, run.agentId),
-          )).run();
-        this.db.update(agentSessions)
-          .set({ runtimeSessionRef: null, updatedAt: recoveredAt })
-          .where(eq(agentSessions.id, run.sessionId))
-          .run();
+        // 只中断 run，不置空 runtimeSessionRef：指针指向的 pi 会话文件保留
+        // 全部历史（含被打断那轮的工具调用与推理），下一轮 start 时
+        // SessionManager.open 用它续聊，「请继续工作」才能顺着原思路继续。
+        this.logger.info({
+          event: "agent.recovery.context_preserved",
+          sessionId: run.sessionId,
+          runId: run.id,
+          runtimeSessionRef: recoverySessionRef,
+        }, "stale Agent run interrupted; runtime session context preserved for continuation");
       }
       this.logger.info({
         event: "agent.recovery.interrupted",
@@ -949,7 +1040,7 @@ export class AgentService {
   ensureDefaultWorkspace(): AgentWorkspace {
     const existing = this.db.select().from(agentWorkspaces)
       .where(eq(agentWorkspaces.id, DEFAULT_AGENT_WORKSPACE_ID)).get();
-    if (existing) return toWorkspace(existing);
+    if (existing) return toWorkspace(this.ensureWorkspaceDirectory(existing));
     const now = new Date();
     const inserted = this.db.insert(agentWorkspaces).values({
       id: DEFAULT_AGENT_WORKSPACE_ID,
@@ -962,12 +1053,65 @@ export class AgentService {
       updatedAt: now,
       lastOpenedAt: now,
     }).onConflictDoNothing().returning().get();
-    if (inserted) return toWorkspace(inserted);
+    if (inserted) return toWorkspace(this.ensureWorkspaceDirectory(inserted));
     // 并发初始化：另一路已建好（或 id 被占用），复读兜底。
     const concurrent = this.db.select().from(agentWorkspaces)
       .where(eq(agentWorkspaces.id, DEFAULT_AGENT_WORKSPACE_ID)).get();
     if (!concurrent) throw new Error("agent_default_workspace_unavailable");
-    return toWorkspace(concurrent);
+    return toWorkspace(this.ensureWorkspaceDirectory(concurrent));
+  }
+
+  /**
+   * 存量/默认空间的目录补建：只在注入目录服务且「还没初始化」时动手。
+   *
+   * - 默认空间固定落 `<dataDir>/Workspace/inbox`（方案 §7），不按名称生成 slug；
+   * - 任何磁盘错误都不抛给调用方：列表/发送消息不能因为磁盘问题整体失败，
+   *   失败只记日志，下次访问再试（UI 侧另有 layout 健康检查可暴露问题）。
+   */
+  private ensureWorkspaceDirectory(
+    row: typeof agentWorkspaces.$inferSelect,
+  ): typeof agentWorkspaces.$inferSelect {
+    const layout = this.workspaceLayout;
+    if (!layout) return row;
+    // 目录被外部删/搬：只标「离线」，绝不静默重建（重建会盖掉用户的辨识感，
+    // 而且可能正好落在用户搬走前的路径上）。修复/重定位是显式动作。
+    if (row.path && !existsSync(row.path)) {
+      if (!row.rootMissingAt) {
+        this.db.update(agentWorkspaces).set({ rootMissingAt: new Date(), updatedAt: new Date() })
+          .where(eq(agentWorkspaces.id, row.id)).run();
+      }
+      return { ...row, rootMissingAt: row.rootMissingAt ?? new Date() };
+    }
+    if (row.path && (row.layoutVersion ?? 0) >= layout.layoutVersion && !row.rootMissingAt) {
+      return row;
+    }
+    // 目录回来了（或还是 v1 布局）：走一遍 provision——它幂等，且会把 v1 布局就地迁到 v2。
+    const isDefault = row.id === DEFAULT_AGENT_WORKSPACE_ID;
+    const requestedRoot = row.path ?? (isDefault ? join(layout.container(), DEFAULT_SPACE_SLUG) : null);
+    try {
+      const provisioned = layout.provision({
+        spaceId: row.id,
+        name: row.name,
+        root: requestedRoot,
+        rootMode: row.path ? "external" : "managed",
+      });
+      const updated = this.db.update(agentWorkspaces).set({
+        path: provisioned.paths.root,
+        slug: provisioned.marker.slug || (isDefault ? DEFAULT_SPACE_SLUG : row.slug),
+        rootMode: row.path ? "external" : "managed",
+        layoutVersion: provisioned.marker.layoutVersion,
+        rootMissingAt: null,
+        updatedAt: new Date(),
+      }).where(eq(agentWorkspaces.id, row.id)).returning().get();
+      return updated ?? row;
+    } catch (error) {
+      this.logger.info({
+        event: "agent.workspace.layout_failed",
+        workspaceId: row.id,
+        error: error instanceof Error ? error.message : String(error),
+      }, "failed to provision project space directory");
+      return row;
+    }
   }
 
   /** 工作区清单：默认工作区保证存在，按最近打开时间倒序。 */
@@ -976,22 +1120,41 @@ export class AgentService {
     return this.db.select().from(agentWorkspaces)
       .orderBy(desc(agentWorkspaces.lastOpenedAt), desc(agentWorkspaces.createdAt))
       .all()
-      .map(toWorkspace);
+      // 每行过一遍目录健康：离线只打标、缺目录只补建，不碰用户内容。
+      // 已就绪的行只多一次 existsSync，3.5s 轮询下可忽略。
+      .map((row) => toWorkspace(this.ensureWorkspaceDirectory(row)));
   }
 
+  /**
+   * 新建项目空间。
+   *
+   * 关键变化（方案 §8.1）：不传 `path` 也会在 `<dataDir>/Workspace/<slug>` 落一个
+   * 完整的空间目录（含 `.everoffice/space.json`）；传 `path` 则就地接管该目录（external）。
+   * 目录创建先于落库，失败不留下数据库孤儿行。
+   */
   createWorkspace(input: CreateAgentWorkspaceInput): AgentWorkspace {
     const name = input.name?.trim();
     if (!name) throw new Error("agent_workspace_name_required");
-    const path = normalizeWorkspacePath(input.path);
+    const requestedPath = normalizeWorkspacePath(input.path);
     const description = normalizeWorkspaceDescription(input.description);
     const goals = normalizeWorkspaceGoals(input.goals) ?? [];
+    const spaceId = randomUUID();
+    const scope = this.provisionSpaceDirectory({
+      spaceId,
+      name,
+      path: requestedPath,
+      ...(input.rootMode ? { rootMode: input.rootMode } : {}),
+    });
     const now = new Date();
     const created = this.db.insert(agentWorkspaces).values({
-      id: randomUUID(),
+      id: spaceId,
       name,
       description,
       goals,
-      path,
+      path: scope.path,
+      slug: scope.slug,
+      rootMode: scope.rootMode,
+      layoutVersion: scope.layoutVersion,
       kind: "custom",
       createdAt: now,
       updatedAt: now,
@@ -1000,15 +1163,54 @@ export class AgentService {
     return toWorkspace(created);
   }
 
+  /**
+   * 目录落盘（单写者入口）：返回要写进 DB 的 path/slug/root_mode/layout_version。
+   *
+   * 没注入目录服务时保持旧语义（只登记 path、不落盘），保证测试与直连用法不变。
+   */
+  private provisionSpaceDirectory(input: {
+    spaceId: string;
+    name: string;
+    path: string | null;
+    rootMode?: "managed" | "external" | "unbound";
+  }): { path: string | null; slug: string | null; rootMode: "managed" | "external"; layoutVersion: number } {
+    const layout = this.workspaceLayout;
+    if (!layout) {
+      return { path: input.path, slug: null, rootMode: input.path ? "external" : "managed", layoutVersion: 0 };
+    }
+    const rootMode: "managed" | "external" = input.rootMode === "external" || input.path
+      ? "external"
+      : "managed";
+    const provisioned = layout.provision({
+      spaceId: input.spaceId,
+      name: input.name,
+      root: input.path,
+      rootMode,
+    });
+    return {
+      path: provisioned.paths.root,
+      slug: provisioned.marker.slug || null,
+      rootMode,
+      layoutVersion: provisioned.marker.layoutVersion,
+    };
+  }
+
   /** 更新工作区；不存在返回 null。lastOpenedAt 接受 ISO 字符串并落库为 Date。 */
   updateWorkspace(workspaceId: string, input: UpdateAgentWorkspaceInput): AgentWorkspace | null {
     const id = workspaceId.trim();
     if (!id) return null;
+    const existing = this.db.select().from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, id)).get();
+    if (!existing) return null;
     const patch: {
       name?: string;
       description?: string | null;
       goals?: string[];
       path?: string | null;
+      slug?: string | null;
+      rootMode?: "managed" | "external";
+      layoutVersion?: number;
+      rootMissingAt?: Date | null;
       lastOpenedAt?: Date;
       updatedAt: Date;
     } = { updatedAt: new Date() };
@@ -1025,7 +1227,20 @@ export class AgentService {
       patch.goals = normalizeWorkspaceGoals(input.goals) ?? [];
     }
     if (input.path !== undefined) {
-      patch.path = normalizeWorkspacePath(input.path);
+      const nextPath = normalizeWorkspacePath(input.path);
+      if (nextPath !== existing.path) {
+        // 换目录 = 接管新目录（写标记 + 建骨架）；旧目录保持原样，不做破坏性操作。
+        const scope = this.provisionSpaceDirectory({
+          spaceId: id,
+          name: patch.name ?? existing.name,
+          path: nextPath,
+        });
+        patch.path = scope.path;
+        patch.slug = scope.slug;
+        patch.rootMode = scope.rootMode;
+        patch.layoutVersion = scope.layoutVersion;
+        patch.rootMissingAt = null;
+      }
     }
     if (input.lastOpenedAt !== undefined) {
       const parsed = new Date(input.lastOpenedAt);
@@ -1056,6 +1271,166 @@ export class AgentService {
       tx.delete(agentWorkspaces).where(eq(agentWorkspaces.id, id)).run();
     });
     return true;
+  }
+
+  /** 单个工作区；不存在返回 null（供空间目录接口解析 path/root_mode）。 */
+  getWorkspace(workspaceId: string): AgentWorkspace | null {
+    const id = workspaceId.trim();
+    if (!id) return null;
+    const row = this.db.select().from(agentWorkspaces).where(eq(agentWorkspaces.id, id)).get();
+    return row ? toWorkspace(row) : null;
+  }
+
+  /**
+   * 空间目录快照（`GET /v1/agent/workspaces/:id/layout`）。
+   * 未注入目录服务或未绑定目录时返回 null，路由层按「未初始化」处理。
+   */
+  workspaceLayoutOf(workspaceId: string): AgentSpaceLayout | null {
+    const layout = this.workspaceLayout;
+    const workspace = this.getWorkspace(workspaceId);
+    if (!layout || !workspace?.path) return null;
+    return layout.layoutOf(workspace.id, workspace.path, workspace.rootMode ?? "managed");
+  }
+
+  /** 幂等修复：补缺失目录、补缺失/损坏的标记。 */
+  repairWorkspace(workspaceId: string): AgentSpaceRepairReport | null {
+    const layout = this.workspaceLayout;
+    const workspace = this.getWorkspace(workspaceId);
+    if (!layout || !workspace) return null;
+    const root = workspace.path;
+    if (!root) {
+      // 未绑定目录：按默认根 provision 一份（默认空间落 Workspace/inbox）。
+      const updated = this.ensureWorkspaceDirectory(
+        this.db.select().from(agentWorkspaces).where(eq(agentWorkspaces.id, workspace.id)).get()!,
+      );
+      if (!updated.path) return null;
+      return { spaceId: workspace.id, createdDirectories: [], createdMarker: false, readonly: false };
+    }
+    const report = layout.repair({
+      spaceId: workspace.id,
+      name: workspace.name,
+      root,
+      rootMode: workspace.rootMode === "external" ? "external" : "managed",
+      ...(workspace.slug ? { slug: workspace.slug } : {}),
+    });
+    this.db.update(agentWorkspaces)
+      .set({ rootMissingAt: null, layoutVersion: report.layoutVersion, updatedAt: new Date() })
+      .where(eq(agentWorkspaces.id, workspace.id)).run();
+    return {
+      spaceId: report.spaceId,
+      createdDirectories: report.createdDirectories,
+      createdMarker: report.createdMarker,
+      readonly: report.readonly,
+    };
+  }
+
+  /**
+   * 接管一个已有目录为项目空间（P4）。
+   *
+   * - 目录里有标记：沿用标记里的 spaceId（身份不丢），除非显式 `reassignSpaceId`
+   *   （复制品场景：两份目录带同一个 id，只能一份绑定）；
+   * - 目录是空的/普通文件夹：写入新标记后接管（external 模式）；
+   * - 已注册过（同 id 或同路径）→ 抛 `space_already_registered` / `space_path_taken`。
+   */
+  adoptWorkspace(input: { dir: string; name?: string; reassignSpaceId?: boolean }): AgentWorkspace {
+    const layout = this.workspaceLayout;
+    if (!layout) throw new Error("space_layout_unavailable");
+    const dir = input.dir?.trim();
+    if (!dir) throw new Error("agent_workspace_name_required");
+    const detected = layout.detect(dir);
+    if (detected.status === "unsupported") throw new Error("space_marker_unsupported");
+    if (detected.status === "invalid") throw new Error("space_marker_invalid");
+    if (!existsSync(dir)) throw new Error("space_root_missing");
+
+    const spaceId = detected.status === "ok" && !input.reassignSpaceId
+      ? detected.marker.spaceId
+      : randomUUID();
+    const name = input.name?.trim()
+      || (detected.status === "ok" ? detected.marker.name : basename(dir));
+
+    if (this.db.select({ id: agentWorkspaces.id }).from(agentWorkspaces)
+      .where(eq(agentWorkspaces.id, spaceId)).get()) {
+      throw new Error("space_already_registered");
+    }
+    if (this.db.select({ id: agentWorkspaces.id }).from(agentWorkspaces)
+      .where(eq(agentWorkspaces.path, dir)).get()) {
+      throw new Error("space_path_taken");
+    }
+
+    if (detected.status === "ok" && detected.marker.spaceId !== spaceId) {
+      layout.reassignIdentity(dir, { spaceId, name, slug: basename(dir) });
+    }
+    const scope = this.provisionSpaceDirectory({ spaceId, name, path: dir, rootMode: "external" });
+    const now = new Date();
+    const created = this.db.insert(agentWorkspaces).values({
+      id: spaceId,
+      name,
+      description: null,
+      goals: [],
+      path: scope.path,
+      slug: scope.slug,
+      rootMode: scope.rootMode,
+      layoutVersion: scope.layoutVersion,
+      kind: "custom",
+      createdAt: now,
+      updatedAt: now,
+      lastOpenedAt: now,
+    }).returning().get();
+    return toWorkspace(created);
+  }
+
+  /**
+   * 搬移空间目录（P4）：整个目录搬过去（同卷 rename / 跨卷 copy+删），
+   * 再更新 DB 与标记里的目录名。旧目录不再保留副本。
+   */
+  async relocateWorkspace(workspaceId: string, nextDir: string): Promise<AgentWorkspace> {
+    const layout = this.workspaceLayout;
+    if (!layout) throw new Error("space_layout_unavailable");
+    const id = workspaceId.trim();
+    const row = this.db.select().from(agentWorkspaces).where(eq(agentWorkspaces.id, id)).get();
+    if (!row) throw new Error("agent_workspace_not_found");
+    const target = nextDir?.trim();
+    if (!target) throw new Error("agent_workspace_path_invalid");
+
+    const detected = layout.detect(target);
+    if (detected.status === "ok" && detected.marker.spaceId !== id) throw new Error("space_marker_conflict");
+    if (detected.status === "unsupported") throw new Error("space_marker_unsupported");
+
+    if (row.path) {
+      await layout.relocateDirectory(row.path, target);
+    }
+    layout.reassignIdentity(target, { spaceId: id, name: row.name, slug: basename(target) });
+    // 搬移顺手完成了 v1→v2 迁移，DB 的 layout_version 跟着标记走。
+    const moved = layout.detect(target);
+    const updated = this.db.update(agentWorkspaces).set({
+      path: target,
+      slug: basename(target),
+      rootMode: row.path ? row.rootMode : "external",
+      layoutVersion: moved.status === "ok" ? moved.marker.layoutVersion : (row.layoutVersion ?? 0),
+      rootMissingAt: null,
+      updatedAt: new Date(),
+    }).where(eq(agentWorkspaces.id, id)).returning().get();
+    return toWorkspace(updated!);
+  }
+
+  /** 扫容器根，返回磁盘上发现的项目空间（按 DB 路径回填是否已注册）。 */
+  discoverSpaces(): AgentSpaceCandidate[] {
+    const layout = this.workspaceLayout;
+    if (!layout) return [];
+    const registered = new Map(
+      this.db.select({ id: agentWorkspaces.id, path: agentWorkspaces.path }).from(agentWorkspaces).all()
+        .filter((row) => Boolean(row.path))
+        .map((row) => [row.path as string, row.id] as const),
+    );
+    return layout.discover().map((candidate) => {
+      const workspaceId = registered.get(candidate.root) ?? null;
+      return { ...candidate, registered: Boolean(workspaceId), workspaceId };
+    });
+  }
+
+  /** 默认空间根预览：`<dataDir>/Workspace/<slug>`（桌面新建弹窗用）。 */
+  previewDefaultRoot(name: string): { root: string; slug: string; exists: boolean } | null {
+    return this.workspaceLayout?.defaultRoot(name) ?? null;
   }
 
   /** 会话归属解析：传入且存在则用之，否则回落默认工作区（非法 id 不报错）。 */
@@ -1152,8 +1527,6 @@ export class AgentService {
     return this.startRun(sessionId, {
       prompt: input.prompt,
       idempotencyKey: input.idempotencyKey,
-      captureMemory: false,
-      recallMemory: false,
       toolsEnabled: false,
     });
   }
@@ -1170,8 +1543,7 @@ export class AgentService {
     return run;
   }
 
-  listSessions(pageLabel?: string, roomId?: string | null, workspaceId?: string | null): AgentSession[] {
-    const normalizedRoomId = roomId === undefined ? undefined : normalizeRoomId(roomId);
+  listSessions(pageLabel?: string, workspaceId?: string | null): AgentSession[] {
     const normalizedWorkspaceId = workspaceId === undefined || workspaceId === null
       ? undefined
       : normalizeWorkspaceId(workspaceId);
@@ -1179,7 +1551,6 @@ export class AgentService {
       .orderBy(desc(agentSessions.updatedAt), desc(agentSessions.createdAt)).all();
     return rows
       .filter((row) => pageLabel === undefined || row.pageLabel === pageLabel)
-      .filter((row) => normalizedRoomId === undefined || normalizeRoomId(row.roomId) === normalizedRoomId)
       .filter((row) => normalizedWorkspaceId === undefined
         || (normalizeWorkspaceId(row.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID) === normalizedWorkspaceId)
       .map(toSession);
@@ -1253,6 +1624,12 @@ export class AgentService {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
     if (!session) return false;
     if (session.status === "running") throw new Error("agent_session_busy");
+    // 消息对 session 是级联删除：先把还没提炼的那一段交给记忆侧落盘，再删。
+    try {
+      this.memorySessionClose?.(sessionId);
+    } catch {
+      /* 记忆是增强能力，不能阻断删除 */
+    }
     if (session.runtimeId === this.runtime.id && session.runtimeSessionRef) {
       await this.runtime.deleteSession(session.runtimeSessionRef);
     }
@@ -1468,11 +1845,9 @@ export class AgentService {
         idempotencyKey: input.idempotencyKey,
         ...(input.responseLanguage ? { responseLanguage: input.responseLanguage } : {}),
         context: {
-          // Phase 2i：工作区级文稿没有 Room 归属，续跑不再回填 selectedRoomId / rooms
-          // （合成出的空 rooms 会让 selectedRunRoomId 判为 agent_room_not_available）。
+          // Phase 2i：工作区级文稿没有 Room 归属，续跑不再回填 selectedRoomId / rooms。
           ...(documentId && selectedDocument ? {
             activeDocument: {
-              roomId: null,
               documentId,
               title: selectedDocument.title,
               version: selectedDocument.version,
@@ -1502,30 +1877,24 @@ export class AgentService {
   createTrustedMcpSession(
     agentSessionId: string,
     runId: string,
-    roomId?: string | null,
   ): TrustedMcpSession {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, agentSessionId)).get();
     const run = this.db.select().from(agentRuns).where(and(
       eq(agentRuns.id, runId),
       eq(agentRuns.sessionId, agentSessionId),
     )).get();
-    const requestedRoom = roomId?.trim() || null;
-    const room = requestedRoom ? resolveRoomId(this.roomRegistry, requestedRoom) : null;
     if (!session || !run) throw new Error("mcp_agent_context_not_found");
     if (run.status !== "accepted" && run.status !== "running") {
       throw new Error("mcp_agent_context_not_active");
     }
-    if (requestedRoom && !room) throw new Error("mcp_agent_room_not_available");
     const execution = this.executionContexts.get(runId);
-    if (!execution || execution.sessionId !== agentSessionId || execution.roomId !== room) {
+    if (!execution || execution.sessionId !== agentSessionId) {
       throw new Error("mcp_agent_context_mismatch");
     }
     const issued = issueTrustedMcpSession({
       agentSessionId,
       runId,
-      roomId: room,
       workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
-      ...(execution?.availableRooms ? { availableRooms: execution.availableRooms } : {}),
       ...(execution?.activeDocument ? { activeDocument: execution.activeDocument } : {}),
     });
     const runSessions = this.trustedMcpSessions.get(runId) ?? new Set<string>();
@@ -1539,7 +1908,6 @@ export class AgentService {
     capabilityId: string;
     agentSessionId: string;
     runId: string;
-    roomId: string;
   }): void {
     const session = this.db.select().from(agentSessions).where(eq(agentSessions.id, input.agentSessionId)).get();
     const run = this.db.select().from(agentRuns).where(and(
@@ -1547,22 +1915,18 @@ export class AgentService {
       eq(agentRuns.sessionId, input.agentSessionId),
     )).get();
     const execution = this.executionContexts.get(input.runId);
-    const roomId = resolveRoomId(this.roomRegistry, input.roomId);
     const activeContextMatches = Boolean(run
       && (run.status === "accepted" || run.status === "running")
       && execution
-      && execution.sessionId === input.agentSessionId
-      && execution.roomId === roomId);
+      && execution.sessionId === input.agentSessionId);
     const completedSelectionRewriteMatches = Boolean(session
       && run?.status === "completed"
       && input.capabilityId === "document.selection-rewrite"
       && execution?.sessionId === input.agentSessionId
-      && execution.roomId === roomId
       && run.completedAt
       && Date.now() - run.completedAt.getTime() <= SELECTION_REWRITE_OPERATION_GRACE_MS);
     if (!session || !run
-      || (!activeContextMatches && !completedSelectionRewriteMatches)
-      || !roomId) {
+      || (!activeContextMatches && !completedSelectionRewriteMatches)) {
       throw new Error("agent_operation_context_invalid");
     }
   }
@@ -1597,12 +1961,6 @@ export class AgentService {
     input: StartAgentRunInput,
     options: { persistUserMessage?: boolean } = {},
   ): Promise<AgentRun> {
-    // 记忆引擎暂停闸：暂停期间对话不写 L0（内部工具链路本就 captureMemory=false）。
-    // 暂停语义是「新产生的内容不再进入记忆库」——ingest 闸只拦了文档链路，
-    // 对话捕获在这里补齐，否则暂停后每轮聊天仍进记忆、侧栏指示器仍跳动。
-    if (this.memoryCaptureGate?.() && input.captureMemory !== false) {
-      input = { ...input, captureMemory: false };
-    }
     const existing = this.db
       .select()
       .from(agentRuns)
@@ -1623,10 +1981,8 @@ export class AgentService {
     if (replacedRun && (replacedRun.status === "accepted" || replacedRun.status === "running")) {
       throw new Error("agent_replace_run_active");
     }
-    const rooms = availableRooms(input, this.roomRegistry);
-    const runRoomId = selectedRunRoomId(input, this.roomRegistry);
     const activeDocument = input.context?.activeDocument
-      ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
+      ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument)
         ?? input.context.activeDocument
       : undefined;
     const openFiles = normalizeOpenFiles(input.context?.openFiles);
@@ -1734,7 +2090,8 @@ export class AgentService {
       agentId: selectedAgentId,
       invocationMode,
       idempotencyKey: input.idempotencyKey,
-      roomId: runRoomId,
+      // Phase 2i 后无 Room 维度：run 一律工作区级（legacy 列保留，恒 null）。
+      roomId: null,
       status: "accepted",
       prompt: safePrompt,
       lastEventSeq: 0,
@@ -1775,12 +2132,21 @@ export class AgentService {
       tx.insert(agentRuns).values(runRow).run();
       if (options.persistUserMessage !== false) {
         const userMessageId = randomUUID();
+        // 批注卡片随消息入库（JSON 文本）：气泡按卡片渲染，重载会话后还原。
+        // 条目先做体积/数量收敛，坏数据在这里就被丢弃。
+        const noteCards = sanitizeNoteCards(input.noteCards);
+        // 气泡正文只在传了 displayContent 时落库（批注场景）；空串＝只有卡片无气泡。
+        const displayContent = typeof input.displayContent === "string"
+          ? input.displayContent.slice(0, 20_000)
+          : undefined;
         tx.insert(agentMessages).values({
           id: userMessageId,
           sessionId,
           runId,
           role: "user",
           content: displayPrompt,
+          ...(noteCards ? { noteCards: JSON.stringify(noteCards) } : {}),
+          ...(noteCards && displayContent !== undefined ? { displayContent } : {}),
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });
@@ -1806,62 +2172,34 @@ export class AgentService {
     );
     await this.appendEvent(sessionId, runId, { type: "run.accepted", payload: { prompt: safePrompt } });
 
-    // Clarification controls are driven by a deterministic preflight for requests
-    // that do not yet identify a document. Room routing itself is delegated to
-    // the Agent: it receives the Room metadata and can pass an exact Room id to
-    // the document-create tool when the match is clear.
-    // toolsEnabled=false 的运行是内部纯文本调用（选区重写/续写），不触发 UI 预检。
-    const interactiveRun = input.toolsEnabled !== false && isBuiltinTier;
-    const documentTopic = interactiveRun && !runRoomId
-      ? ambiguousDocumentTopic(input.prompt)
-      : null;
-    const preflightTool = documentTopic
-        ? {
-            name: "context_room_document_intent",
-            result: {
-              clarificationRequired: true,
-              originalPrompt: safePrompt.trim(),
-              topic: documentTopic,
-            },
-          }
-        : null;
-    if (preflightTool) {
-      const intent = this.createPendingIntent({
-        sessionId,
-        sourceRunId: runId,
-        originalPrompt: safePrompt,
-        targetCapability: "document.create",
-        allowedRoomIds: rooms.map((room) => room.id),
-        allowedDocumentIds: [],
-        now,
-      });
-      const toolCallId = randomUUID();
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.requested",
-        payload: { toolCallId, name: preflightTool.name, args: {} },
-      });
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.started",
-        payload: { toolCallId, name: preflightTool.name, args: {} },
-      });
-      await this.appendEvent(sessionId, runId, {
-        type: "tool.completed",
-        payload: {
-          toolCallId,
-          name: preflightTool.name,
-          args: {},
-          result: { ...preflightTool.result, pendingIntent: intent },
-        },
-      });
-      await this.appendEvent(sessionId, runId, { type: "run.completed", payload: {} });
-      return this.getRun(runId)!;
+    // Phase 2i：context_room_document_intent 预检整块删除。Room 维度已不存在，
+    // 旧条件 `!runRoomId` 恒真，会把「新建文档」类请求错误拦成选 Room 澄清卡；
+    // 现在 run 直接进入执行，文档创建由模型经 document 工具完成。
+
+    const runWorkspaceId = normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID;
+    // 库内规模：新会话没有页签也没有附件时，这是模型唯一能知道「工作区库里有材料」的信号。
+    // 只报数量，不报条目——资料库可能上千份，任何「最近 N 条」都是抽样，会被模型当成全库；
+    // 条目一律由模型自己用 library_browse（分页）/ file_search（关键词）取。
+    // 取不到就当没有，绝不影响本轮对话。
+    let libraryInventory: AgentLibraryInventory | null = null;
+    if (this.filesService && input.toolsEnabled !== false) {
+      try {
+        libraryInventory = collectLibraryInventory(this.filesService, { workspaceId: runWorkspaceId });
+      } catch (error) {
+        libraryInventory = null;
+        this.logger.info(
+          {
+            event: "agent_library_overview_failed",
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "library overview unavailable for this run",
+        );
+      }
     }
 
     this.executionContexts.set(runId, {
       sessionId,
-      roomId: runRoomId,
-      workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
-      availableRooms: rooms,
+      workspaceId: runWorkspaceId,
       ...(activeDocument ? { activeDocument } : {}),
       ...(activeFile ? { activeFile } : {}),
       ...(openFiles ? { openFiles } : {}),
@@ -1910,13 +2248,19 @@ export class AgentService {
       const connectorContext = await this.resolveConnectorContext?.().catch(() => null) ?? null;
       const externalContext = [connectorContext, baseExternalContext].filter(Boolean).join("\n\n") || null;
       const responseLanguage = normalizeAgentLocale(input.responseLanguage);
+      // 画像注入：失败一律当作「没有画像」，绝不能因为它让对话起不来。
+      let userProfilePrompt: string | null = null;
+      try {
+        userProfilePrompt = this.userProfilePrompt?.() ?? null;
+      } catch {
+        userProfilePrompt = null;
+      }
       const attachments = await this.resolveAttachments(input.attachments);
       const delegationContext = targetRuntime ? localAgentDelegationContext({
         request: input,
         pageLabel: runPageLabel,
         priorMessages,
         attachments,
-        rooms,
         ...(activeDocument ? { activeDocument } : {}),
       }) : undefined;
       runtimeRun = await selectedRuntime.start({
@@ -1932,19 +2276,16 @@ export class AgentService {
         ),
         ...(attachments.length ? { attachments } : {}),
         ...(responseLanguage ? { responseLanguage } : {}),
+        ...(userProfilePrompt ? { userProfilePrompt } : {}),
         pageLabel: runPageLabel,
-        roomId: runRoomId,
-        workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
-        availableRooms: rooms,
-        roomSelectionRequired: runRoomId === null,
-        captureMemory: input.captureMemory !== false,
-        recallMemory: input.recallMemory !== false,
+        workspaceId: runWorkspaceId,
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
         ...(activeFile ? { activeFile } : {}),
         ...(openFiles ? { openFiles } : {}),
+        ...(libraryInventory ? { libraryInventory } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
     } catch (error) {
@@ -2199,6 +2540,19 @@ export class AgentService {
       if (nextStatus === "completed") {
         const cleanup = setTimeout(() => this.executionContexts.delete(runId), SELECTION_REWRITE_OPERATION_GRACE_MS);
         cleanup.unref?.();
+        // 记忆蒸馏：完成即通知（带上本次 run 的工作空间）；内部自带节流/去重/超时。
+        try {
+          const workspaceId = this.executionContexts.get(runId)?.workspaceId ?? null;
+          this.memoryDistill?.(sessionId, workspaceId, runId);
+        } catch {
+          /* 记忆是增强能力，不能影响对话主流程 */
+        }
+        // 会话标题：首次成功完成后用一次 LLM 总结（实现方自己保证去重与静默失败）。
+        try {
+          this.sessionTitle?.(sessionId, runId);
+        } catch {
+          /* 标题是增强能力，不能影响对话主流程 */
+        }
       } else {
         this.executionContexts.delete(runId);
       }

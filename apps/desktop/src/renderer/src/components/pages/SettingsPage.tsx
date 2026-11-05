@@ -10,6 +10,7 @@ import {
   Palette,
   Plug,
   RefreshCw,
+  Rocket,
   ShieldCheck,
   ShieldAlert,
   Sparkles,
@@ -49,16 +50,17 @@ import './SettingsPage.css'
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
 
+/** 分区顺序：先「你是谁」，再「界面长什么样」，然后是能力（连接 / 模型 / 用量），最后是维护动作。 */
 const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
+  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', icon: Plug },
   { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
-  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
-  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
-  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
-  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Rocket },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
@@ -100,7 +102,17 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
+export function SettingsPage({
+  onStartFullOnboarding,
+  hideHeader = false,
+  section = null,
+}: {
+  onStartFullOnboarding?: () => void
+  /** 嵌进工作台主页时由外壳提供导航，隐藏组件自带的页头（避免与侧栏/分区导航重复）。 */
+  hideHeader?: boolean
+  /** 外部指定要打开的分区（如账号菜单直达「账号与同步」）。 */
+  section?: string | null
+}) {
   const { locale, preference, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [pending, setPending] = useState<PendingAction>(null)
@@ -113,10 +125,14 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingError, setPairingError] = useState<string | null>(null)
-  const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
+  const [activeSetting, setActiveSetting] = useState<string>(section ?? SETTINGS_NAV[0].id)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
+
+  useEffect(() => {
+    if (section) setActiveSetting(section)
+  }, [section])
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -250,7 +266,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         redeemCode.reset()
       }
       try {
-        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
       } catch {
         // Session storage is optional; mounted gates still receive the event.
@@ -336,8 +351,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     .find(value => value !== accountName) ?? null
 
   return (
-    <div className="page settings-page">
-      <PageHeader title={t('surface:settings.settings')} />
+    <div className={hideHeader ? 'page settings-page is-embedded' : 'page settings-page'}>
+      {hideHeader ? null : <PageHeader title={t('surface:settings.settings')} />}
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>

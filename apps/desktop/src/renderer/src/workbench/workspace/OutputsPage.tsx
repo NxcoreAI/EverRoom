@@ -6,19 +6,17 @@ import type { RealOfficeFile } from '@/office-proto/data'
 import { Button, EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import {
-  FileGrid,
   FileLibraryLoading,
   FileLibraryUnavailable,
-  FileList,
   FileNoMatches,
   FileToolbar,
   fileSearchText,
   isArtifactFile,
   sortFilesByUpdatedDesc,
-  type FileItemActions,
   type FileViewMode,
   type FileFilterOption,
 } from './fileBrowser'
+import { FileGrid, FileList, type FileItemActions } from './fileItemViews'
 import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 

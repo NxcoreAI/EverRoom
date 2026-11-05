@@ -67,3 +67,32 @@ await cp(`${canvasSource}/${platformPackage}`, `${canvasTarget}/${platformPackag
   force: true,
   dereference: true,
 });
+
+// @node-rs/jieba（长期记忆的中文分词）：tsup 外置后运行时按平台包解析 .node，
+// 因此 JS 包与当前平台二进制都必须以真实文件随包分发（同 @napi-rs/canvas 的处理）。
+const jiebaTarget = "dist/node_modules/@node-rs";
+const jiebaPackageSource = await realpath("node_modules/@node-rs/jieba");
+const jiebaSource = dirname(jiebaPackageSource);
+await cp(jiebaPackageSource, `${jiebaTarget}/jieba`, {
+  recursive: true,
+  force: true,
+  dereference: true,
+});
+const jiebaPlatformPackage = {
+  "darwin-arm64": "jieba-darwin-arm64",
+  "darwin-x64": "jieba-darwin-x64",
+  "win32-x64": "jieba-win32-x64-msvc",
+  "win32-arm64": "jieba-win32-arm64-msvc",
+  "linux-x64": process.report.getReport().header.glibcVersionRuntime
+    ? "jieba-linux-x64-gnu"
+    : "jieba-linux-x64-musl",
+  "linux-arm64": process.report.getReport().header.glibcVersionRuntime
+    ? "jieba-linux-arm64-gnu"
+    : "jieba-linux-arm64-musl",
+}[platformKey];
+if (!jiebaPlatformPackage) throw new Error(`Unsupported @node-rs/jieba platform: ${platformKey}`);
+await cp(`${jiebaSource}/${jiebaPlatformPackage}`, `${jiebaTarget}/${jiebaPlatformPackage}`, {
+  recursive: true,
+  force: true,
+  dereference: true,
+});

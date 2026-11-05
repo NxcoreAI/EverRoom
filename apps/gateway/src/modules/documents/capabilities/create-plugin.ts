@@ -27,7 +27,7 @@ export function createPlugin(
   };
   const requireOperation = (
     operationId: string,
-    context: { agentSessionId: string; runId: string; roomId: string | null },
+    context: { agentSessionId: string; runId: string },
   ): DocumentOperation => {
     const operation = operationService().get(operationId);
     if (!operation || operation.capabilityId !== "document.create") {
@@ -36,7 +36,6 @@ export function createPlugin(
     if (
       operation.sessionId !== context.agentSessionId
       || operation.runId !== context.runId
-      || operation.roomId !== context.roomId
     ) {
       throw new DocumentServiceError("OPERATION_FORBIDDEN", "Operation belongs to another Agent run", 403);
     }
@@ -48,14 +47,13 @@ export function createPlugin(
   const begin: DocumentCapabilityTool = {
     name: "document_write_begin",
     title: "开始创建文档",
-    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。用户只要求创建文档而没有要求立即产出内容时（如「建个空文档」「新建一份 XX 文档」），title 直接使用用户的表述，begin 后立即 commit（finalSequence=0），不调用 document_draft——空文档会进入写作路线选择流程，由用户在思路板块选路后再拍板写正文。其余情形正文内容与标题必须来自 document_draft 的返回值（title 与 appendChunks 逐字转发），不得自行撰写。文档写入工作区文稿库（docs 页）：当前视口已绑定 Room 且用户要求归入该 Room 时才传 roomId，未绑定时省略即可，文档作为工作区级文稿保存，不需要先让用户选择 Room。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。",
+    description: "仅当用户已经明确要求在工作区创建、保存或写入文档时调用。用户只要求创建文档而没有要求立即产出内容时（如「建个空文档」「新建一份 XX 文档」），title 直接使用用户的表述，begin 后立即 commit（finalSequence=0），不调用 document_draft——空文档会进入写作路线选择流程，由用户在思路板块选路后再拍板写正文。其余情形正文内容与标题必须来自 document_draft 的返回值（title 与 appendChunks 逐字转发），不得自行撰写。文档一律写入工作区文稿库（docs 页），按工作区级文稿保存：本工具不接收 Room 归属参数，不需要先让用户选择 Room。工具可用、当前位于文档页面，或用户只要求分析、总结、整理、写方案、起草、润色，都不代表要创建文档。",
     inputSchema: {
       type: "object", additionalProperties: false,
       properties: {
         mode: { type: "string", enum: ["create"] },
         title: { type: "string", minLength: 1, maxLength: 120 },
         format: { type: "string", enum: ["markdown"] },
-        roomId: { type: "string", minLength: 1, maxLength: 128 },
       },
       required: ["mode", "title", "format"],
     },
@@ -74,7 +72,8 @@ export function createPlugin(
         capabilityVersion: 1,
         interactionMode: "streaming_commit",
         presenterKey: "streaming-document",
-        roomId: context.roomId,
+        // Phase 2i 后无 Room 维度：operation 一律工作区级（legacy 列恒 null）。
+        roomId: null,
         // The draft id is persisted in operation.input until Commit Core creates
         // the real document; document_operations.document_id is a foreign key.
         documentId: null,
@@ -99,19 +98,19 @@ export function createPlugin(
         status: "running",
         draftCreate: backend.prepareAgentDocumentDraft({
           documentId,
-          roomId: context.roomId,
+          roomId: null,
           title,
           markdown: "",
         }),
       }));
       return success({
         operationId,
-        roomId: context.roomId, docId: documentId,
+        docId: documentId,
         state: "running", nextSequence: 1, nextAction: "document_write_append",
         expiresAt: expiresAt.toISOString(),
         navigation: {
           pageId: "rooms", title, action: "created",
-          roomId: context.roomId, objectId: documentId, objectType: "document",
+          objectId: documentId, objectType: "document",
         },
       });
     },
@@ -346,7 +345,7 @@ export function createPlugin(
     manifest: manifest("document.create", "mutation", "streaming_commit", "streaming-document", false),
     promptGuidelines: [
       "只在用户明确要求创建、保存或写入工作区文档时使用创建工具。",
-      "文档写入工作区文稿库（docs 页）：当前视口未绑定 Room 时直接创建，文档作为工作区级文稿保存，不需要先让用户选择 Room；只有用户明确要求归入某个已有 Room 时，才在 document_write_begin.roomId 中填写其 ID。不得仅凭列表顺序、最近使用或宽泛词语猜测 Room。",
+      "文档写入工作区文稿库（docs 页）：一律按工作区级文稿保存，不需要先让用户选择 Room，也不要追问 Room 归属（write_begin 没有 roomId 参数）。",
       "用户只要求创建文档而没有要求立即产出内容时：write_begin 直接用用户表述的标题，随后立即 write_commit（finalSequence=0），不调用 document_draft；空文档会进入写作路线选择流程，不要代用户选路或起草。",
       "正文内容与标题必须来自 document_draft：write_begin 使用其返回的 title，write_append 凭返回的 invocationId 与 chunkIndex（0 起，按顺序逐块）引用转交，正文由服务端从 doc-writer 结果取用，不得在工具参数中复写正文。",
     ],

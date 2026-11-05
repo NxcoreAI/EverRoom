@@ -86,7 +86,7 @@ describe("document_comment_add", () => {
       body: "这段缺少数据支撑，建议补充对比数据",
       blockId,
       quotedText: "Alpha 参考正文段落",
-    }, { agentSessionId: "s1", runId: "run-happy", roomId: "room-1" });
+    }, { agentSessionId: "s1", runId: "run-happy" });
 
     const comment = result.structuredContent.comment as { authorName: string; quotedText: string };
     expect(comment.authorName).toBe("AI 审阅");
@@ -106,7 +106,7 @@ describe("document_comment_add", () => {
       documentId: document.id,
       body: "建议",
       quotedText: "**Alpha 参考正文段落**",
-    }, { agentSessionId: "s2", runId: "run-md", roomId: "room-1" }), "COMMENT_QUOTE_NOT_FOUND", {
+    }, { agentSessionId: "s2", runId: "run-md" }), "COMMENT_QUOTE_NOT_FOUND", {
       retryable: true,
       nextAction: "document_read",
     });
@@ -120,7 +120,7 @@ describe("document_comment_add", () => {
       documentId: document.id,
       body: "建议",
       blockId: "blk-missing",
-    }, { agentSessionId: "s3", runId: "run-block", roomId: "room-1" }), "BLOCK_NOT_FOUND");
+    }, { agentSessionId: "s3", runId: "run-block" }), "BLOCK_NOT_FOUND");
   });
 
   it("回收站文档被拒；Phase 2i 起 context.roomId 不再构成归属校验", async () => {
@@ -130,14 +130,15 @@ describe("document_comment_add", () => {
     await expectServiceError(registry.execute(TOOL, {
       documentId: document.id,
       body: "建议",
-    }, { agentSessionId: "s4", runId: "run-trash", roomId: "room-1" }), "DOCUMENT_TRASHED");
+    }, { agentSessionId: "s4", runId: "run-trash" }), "DOCUMENT_TRASHED");
 
+    // Phase 2i 去 Room：不同 run 的调用（原跨 Room 场景）不再有归属校验，照常成功。
     const other = await seedDocument(documents, "doc-tool-5");
-    const crossRoom = await registry.execute(TOOL, {
+    const otherRun = await registry.execute(TOOL, {
       documentId: other.id,
       body: "建议",
-    }, { agentSessionId: "s5", runId: "run-room", roomId: "room-other" });
-    expect(crossRoom.structuredContent).toMatchObject({ documentId: other.id });
+    }, { agentSessionId: "s5", runId: "run-room" });
+    expect(otherRun.structuredContent).toMatchObject({ documentId: other.id });
   });
 
   it("单 run 评论数超限后拒绝；新 run 重新计数", async () => {
@@ -147,19 +148,19 @@ describe("document_comment_add", () => {
       await registry.execute(TOOL, {
         documentId: document.id,
         body: `第 ${index} 条建议`,
-      }, { agentSessionId: "s6", runId: "run-cap", roomId: "room-1" });
+      }, { agentSessionId: "s6", runId: "run-cap" });
     }
     await expectServiceError(registry.execute(TOOL, {
       documentId: document.id,
       body: "第九条",
-    }, { agentSessionId: "s6", runId: "run-cap", roomId: "room-1" }), "COMMENT_RUN_LIMIT", {
+    }, { agentSessionId: "s6", runId: "run-cap" }), "COMMENT_RUN_LIMIT", {
       retryable: false,
     });
     expect(comments.list(document.id)).toHaveLength(8);
     await registry.execute(TOOL, {
       documentId: document.id,
       body: "新 run 的建议",
-    }, { agentSessionId: "s6", runId: "run-cap-next", roomId: "room-1" });
+    }, { agentSessionId: "s6", runId: "run-cap-next" });
     expect(comments.list(document.id)).toHaveLength(9);
   });
 
@@ -169,6 +170,6 @@ describe("document_comment_add", () => {
     await expectServiceError(registry.execute(TOOL, {
       documentId: document.id,
       body: "建议",
-    }, { agentSessionId: "s7", runId: "run-nosvc", roomId: "room-1" }), "COMMENT_SERVICE_UNAVAILABLE");
+    }, { agentSessionId: "s7", runId: "run-nosvc" }), "COMMENT_SERVICE_UNAVAILABLE");
   });
 });

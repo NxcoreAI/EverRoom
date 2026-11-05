@@ -86,7 +86,7 @@ store 增删（`workbench/state/store.ts`）：
 
 | 区域 | 内容 | 行为 |
 | --- | --- | --- |
-| 全局侧栏（240px） | 品牌区（app 图标 + EverRoom / 副标题）；一级入口：最近 / 项目空间 / 所有文件 / Agent / 连接器；底部账户行（头像/名称/套餐，齿轮进设置） | 点入口 = 激活主页标签并切页；选中态用白卡浮起；账户行打开设置页 |
+| 全局侧栏（240px） | 品牌区（app 图标 + EverRoom / 副标题）；一级入口：最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置；底部账户行（头像/名称/套餐） | 点入口 = 激活主页标签并切页；选中态用白卡浮起；账户行点开是账号菜单（账号与同步 / 退出登录），不再承担页面跳转 |
 | 工作空间侧栏（248px） | 空间名（可点开重命名）；菜单：概览 / 新建工作 / 资料库 / 产物 / 计划；「工作 N」列表（= 该空间 sessions，运行中状态点 + 标题 + 相对时间，行悬停菜单：重命名/删除）；底部「在 <空间> 新建工作」按钮 | 点菜单切 `view`；点工作切到该 session；新建工作进草稿会话；列表 hover 出操作菜单 |
 | 文件标签 | 无侧栏 | — |
 
@@ -102,10 +102,33 @@ store 增删（`workbench/state/store.ts`）：
 | 所有文件 | `files.list`（分页/搜索） | 列表/网格切换、按来源筛选、搜索、点开文件进文件标签 |
 | Agent | `agent.discoverLocalAgents` / `agent.getStatus` / `agent.getUsage` / `mcp.listServers` | 本机 Agent 卡片（状态/渠道）、用量、MCP 工具、打开 Agent 调试窗口 |
 | 连接器 | 复用现有 `ConnectorsView`（已接真实 nango/agentAuth） | 包一层页面头，行为不变 |
-| 设置 | 复用 `SettingsPage` | 从账户行进入 |
+| 设置 | 复用 `SettingsPage`（`hideHeader` + `section`） | 侧栏一级入口（连接器下面）；账号菜单可直达「账号与同步」 |
 
 > 注：产品侧已无 knowledge 后端（Room/Wiki 模块删除），原型里的「知识库」入口不迁移；
 > 主页一级入口收敛为真实能力。
+
+### 4.1「最近」/「所有文件」对齐原型（2026-11-02）
+
+布局照 everoffice 原型 `pages/{RecentView,AllFilesView}.tsx` + `FileTable`，视觉仍用本项目的
+token/组件（不复制原型配色）；数据全部来自真实桥。
+
+| 原型结构 | 本项目落点 | 说明 |
+| --- | --- | --- |
+| 问候头（问候语 + 副文案） | `PageHeader`：真实账号名 + 「N 个项目空间 · N 个文件」 | 原型写死的「3 封新邮件」不迁移 |
+| 每日洞察卡 / 起草遮罩 | **不迁移** | 文案与步骤都是 mock，没有真实数据源 |
+| 新建分栏：左「项目空间」空白空间瓦片 + 右四类文件瓦片 | `RecentPage` 「新建」节，`.wb-home-split`（两列等宽） | 空白空间 = 创建弹窗（`requestNewSpace`）；文件瓦片 = `blankFile(kind)` 开文件标签 |
+| 最近分栏：3 个项目空间行（时间 · 工作数）+ 4 个文件行 | `RecentPage` 「最近」节 | 空间行多带一行真实摘要（描述/目标/目录） |
+| 最近工作 | 本端多出的一节（会话 = 一项工作） | 原型没有会话概念 |
+| 页头「共 N 个文件」 | `PageHeader` 副标题（区分「全量 / 可打开」） | 文件库含图片等不可打开条目 |
+| 类型 Seg（全部/文档/表格/演示/PDF/Markdown）+ 文件名搜索 + 视图切换 | `FilesPage` 工具行（`Segmented` + `search` + 列表/网格） | 网格视图是真功能（原型点了只 toast） |
+| 按来源筛选 | 工具行下一行来源 chips（多来源时出现） | 本端多出的能力，原型没有 |
+| 表头（文件名 / 修改时间 / 大小）+ 行（图标/名/时间/大小/⋯） | `home/fileTable.tsx` 的 `FileTableHead` / `FileTableRow` | 两页共用；行尾「⋯」是真菜单：打开 / 用原应用打开 / 导出定位 / 删除（带二次确认） |
+
+要点：
+- 表头与行共用同一份 grid 模板（`.wb-home-filetbl-head, .wb-home-filerow`），改列宽两处一起改。
+- 行是「覆盖整行的透明按钮 + 浮在上面的 ⋯ 菜单」，避免把按钮嵌进按钮；键盘 focus 走 `:focus-within`。
+- 「最近」分栏取数用 `RECENT_FILE_FETCH=40` 再切片 4 条：文件库按目录条目分页，先取 4 条时
+  前面若是图片，最近文件会莫名变少。
 
 ## 5. 工作空间标签内容
 
@@ -113,7 +136,7 @@ store 增删（`workbench/state/store.ts`）：
 | --- | --- | --- |
 | 概览 | workspace（名称/描述/目标/创建时间）+ sessions + 文件库 | A 项目头（名称行内编辑、描述、目标药丸、`MM/DD 开始 · N 项工作`、新建工作按钮）；B 洞察（取最近一次会话的最后一条 assistant 文本作一段话，空态文案）；C 动态（sessions + 文件按时间合并的倒序时间线，≤8 条） |
 | 工作会话 | 会话（`useAgentSession` + AgentChatView/Composer） | 沿用 `conversation/ConversationPane`，放在工作空间标签内容区 |
-| 资料库 | 文件库全量（**无法按空间过滤**：`file_entries` 没有 workspace 归属列、catalog 也不带 sourcePath，见 product-data-map；页面文案如实标「全局文件库」） | 文件管理器：搜索、来源筛选、上传、按相对目录分组/路径列、行操作（气泡窗打开/系统应用打开/导出定位）、点开进气泡窗 |
+| 资料库 | `files.list(..., { workspaceId })`（按空间隔离，见 product-data-map） | 文件管理器（布局照 everoffice 原型「资料库」）：返回上一级 + 面包屑（目录层级由 `relativePath` 派生）、全库搜索（搜索中强制列表）、网格/列表切换、导入与刷新；网格是 Finder 式图标瓦片（文件夹在前 + `n 项`，文件在后 + 更新时间），列表是「名称 / 本地位置 / 修改时间 / 大小 / 操作」六列；行操作菜单：气泡窗打开 / 系统应用打开 / 导出定位 / 设为排版模版 / 删除 |
 | 产物 | `sourceKind ∈ {agent-generated, artifact-imported}` 的文件（同上，全局范围） | 卡片/列表、按时间倒序、预览、导出定位 |
 | 计划 | sessions（按 status 分列：进行中 running / 待开始 idle / 已结束 closed·interrupted） | 看板三列，卡片点开对应工作会话；新建工作入口 |
 | 新建工作 | `agent.createSession` | 打开草稿会话；首条消息建会话并落进工作列表 |
@@ -215,7 +238,7 @@ store 增删（`workbench/state/store.ts`）：
 - **后端**（backend-workspace-meta）：`AgentWorkspace.description/goals` + gateway 迁移
   `0090_agent_workspace_meta.sql` + 校验/单测；桌面端经 bridge 透传，无主进程改动。
 - **主页**（home-owner）：最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置六页真实数据实现，
-  设置与连接器复用现有组件（只包几何宿主）。
+  设置与连接器复用现有组件（设置只透传 `hideHeader` / `section`，连接器只包几何宿主）。
 - **工作空间**（overview/files/tools owner）：概览（项目头行内编辑、真实洞察、动态时间线）、
   资料库/产物（真实文件库、筛选/搜索/导入、行操作）、智能体（主 Agent/本机 Agent/MCP/本空间偏好）、
   计划看板（按会话状态三列只读）、新建空间三步引导（修复原型「跳过丢结果」bug）。

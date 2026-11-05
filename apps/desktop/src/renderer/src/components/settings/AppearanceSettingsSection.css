@@ -125,12 +125,12 @@
 }
 
 [data-theme-sample='plain'] {
-  --sample-canvas: #f7f8fa;
-  --sample-chrome: #eaeef4;
-  --sample-chrome-line: #d7dde6;
-  --sample-border: #e2e7ee;
-  --sample-text: #1b2430;
-  --sample-accent: #2563eb;
+  --sample-canvas: #ffffff;
+  --sample-chrome: #f6f6f8;
+  --sample-chrome-line: #e6e6ea;
+  --sample-border: #e4e4e9;
+  --sample-text: #1d1d1f;
+  --sample-accent: #007aff;
 }
 
 [data-theme-sample='moss'] {

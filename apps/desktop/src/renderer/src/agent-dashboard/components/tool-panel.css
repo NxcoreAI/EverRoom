@@ -1,0 +1,289 @@
+/* 工具调用面板：首屏 = 一句结论 + 耗时 Top5 细条 + 4 个指标；明细全部收进「展开」。
+   颜色只用令牌：工具 var(--tool)、慢 var(--warn)、失败 var(--err)，其余灰阶。
+   层级靠留白与 1px 分隔线，无阴影 / 渐变 / 多重描边。 */
+
+/* ── 首屏 ─────────────────────────────────────────────────────────────────── */
+.tool-hero {
+  display: grid;
+  gap: var(--sp-3);
+}
+
+.tool-bars {
+  display: grid;
+  gap: 1px;
+}
+
+.tool-bar {
+  display: grid;
+  grid-template-columns: minmax(110px, 200px) minmax(0, 1fr) 58px 42px;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 3px var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.tool-bar:hover {
+  background: var(--surface-2);
+}
+
+.tool-bar[data-selected] {
+  background: var(--accent-soft);
+}
+
+.tool-bar[data-future] {
+  opacity: 0.45;
+}
+
+.tool-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-body);
+  color: var(--ink);
+}
+
+.tool-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-flag {
+  flex: 0 0 auto;
+  font-size: var(--fs-label);
+  color: var(--err);
+}
+
+.tool-bar-track {
+  height: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.tool-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius);
+  background: var(--tool);
+}
+
+.tool-bar[data-slow] .tool-bar-fill {
+  background: var(--warn);
+}
+
+.tool-col-num {
+  text-align: right;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+.tool-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+/* ── 折叠明细 ─────────────────────────────────────────────────────────────── */
+.tool-sec {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: start;
+  width: 100%;
+}
+
+.tool-sec + .tool-sec {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.tool-sec-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--fs-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.tool-sec-note {
+  font-size: var(--fs-label);
+  font-weight: 400;
+  color: var(--ink-4);
+}
+
+/* 聚合表：工具 / 调用 / 平均 / 占比 */
+.tool-table {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+}
+
+.tool-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 58px 42px;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: 3px var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.tool-row:hover {
+  background: var(--surface-2);
+}
+
+.tool-row[data-selected] {
+  background: var(--accent-soft);
+}
+
+.tool-row[data-future] {
+  opacity: 0.45;
+}
+
+.tool-row-head {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.tool-row-head:hover {
+  background: none;
+}
+
+.tool-row-head .tool-col-num {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.tool-more {
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius);
+}
+
+.tool-more:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+/* 并发泳道：一行一条，条高 4px */
+.tool-lanes-head {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: end;
+  width: 100%;
+}
+
+.tool-lanes {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+}
+
+.tool-lane {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.tool-lane-id {
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+}
+
+.tool-lane-track {
+  position: relative;
+  height: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+}
+
+.tool-lane-bar {
+  position: absolute;
+  top: 0;
+  height: 4px;
+  min-width: 2px;
+  border-radius: var(--radius);
+  background: var(--tool);
+}
+
+.tool-lane-bar[data-tone='warn'] {
+  background: var(--warn);
+}
+
+.tool-lane-bar[data-tone='err'] {
+  background: var(--err);
+}
+
+.tool-lane-bar[data-future] {
+  opacity: 0.45;
+}
+
+.tool-lane-bar[data-selected] {
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
+}
+
+/* 错误归类：每类一行（标签 · 次数 · 落在哪些工具） */
+.tool-errors {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+}
+
+.tool-err-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 3px var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+  font-size: var(--fs-body);
+}
+
+.tool-err-row:hover {
+  background: var(--surface-2);
+}
+
+.tool-err-label {
+  flex: 0 0 auto;
+  color: var(--err);
+}
+
+.tool-err-count {
+  flex: 0 0 auto;
+  font-size: var(--fs-small);
+  color: var(--ink);
+}
+
+.tool-err-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-note {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+}

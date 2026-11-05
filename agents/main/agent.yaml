@@ -45,6 +45,8 @@ tools:
   - sheets_agent_read
   - sheets_agent_edit
   - file_search
+  - library_browse
+  - file_read
   - document_export
   - connector_query
   - connector_read

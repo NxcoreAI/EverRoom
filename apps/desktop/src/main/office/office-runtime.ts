@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
+import type { OfficeAskQueueAction } from '../../shared/office'
+
 export interface GenOfficeAgentToolCall {
   id: string
   name: string
@@ -73,6 +75,45 @@ export interface GenOfficeDocsRuntime {
    * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
    */
   setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
+  /** 批注队列快照下发到某个 docs 视图（空数组 = 清空文档内锚点）。 */
+  pushDocsAskQueue(wcId: number, items: Array<{
+    id: string
+    instruction: string
+    excerpt?: string
+    fromBlockIndex: number
+    toBlockIndex: number
+    kind: string
+  }>): void
+  /**
+   * 文档内批注面板的动作（全部发送 / 移除 / 改写一条）→ 宿主。
+   * update 分支由 docs 侧补充；宿主只透传（跨进程形状见 shared/office.ts）。
+   */
+  setDocsAskQueueActionHook(
+    hook:
+      | ((wcId: number, action: OfficeAskQueueAction) => void)
+      | null,
+  ): void
+  /**
+   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引区间 + 类型 + 文本摘要），不带任何 id。
+   */
+  setDocsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            fromBlockIndex: number
+            toBlockIndex: number
+            kind: 'text' | 'image' | 'chart' | 'table'
+            excerpt?: string
+            blockType?: string
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
@@ -227,6 +268,32 @@ export interface GenOfficeSheetsRuntime {
   setActiveSheetsWebContents(contents: WebContents | null): void
   /** 未保存编辑条数（>0 = 脏）：Agent 写回工作副本前的闸门。 */
   sheetsPendingEditCount(webContentsId: number): number
+  /**
+   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带工作表 id（sheets 工具按 sheetId 定位）+ A1 区域 + 指令。
+   */
+  setSheetsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            sheetId?: string
+            sheetName?: string
+            range?: string
+            /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
+            excerpt?: string
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 sheets 视图（空数组 = 清空单元格区域锚点）。 */
+  pushSheetsAskQueue?(wcId: number, items: SheetsAskQueueItem[]): void
+  /** sheets 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSheetsAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
   setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void
@@ -239,6 +306,35 @@ export interface GenOfficeSheetsRuntime {
     contents: WebContents,
     calls: GenOfficeAgentToolCall[],
   ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+}
+
+/** 宿主批注队列快照条目：各格式只有定位字段不同，id/instruction/excerpt 共用。 */
+export interface SheetsAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  sheetId?: string
+  sheetName?: string
+  range?: string
+}
+
+export interface SlidesAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  slideIndex?: number
+  /** 被批注元素的 durable id（滑页重排后按 id 反查）。 */
+  elementIds?: string[]
+}
+
+export interface PdfAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  /** 原始页序（0 起，旋转稳定）。 */
+  pageIndex?: number
+  /** PDF 坐标的选区 quads（格式同 PDF 原生 markup）。 */
+  quads?: number[][]
 }
 
 export interface GenOfficeAgentDeckResult {
@@ -286,7 +382,7 @@ export interface GenOfficeSlidesRuntime {
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
   setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
-  /** 「AI 修改」弹层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
+  /** 「AI 修改」浮层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
   setSlidesAgentAskHook(
     hook:
       | ((
@@ -298,9 +394,18 @@ export interface GenOfficeSlidesRuntime {
               id: string
               desc: { type: string; text?: string; rows?: number; cols?: number }
             }>
+            /** 选区纯文本摘要（≤200 字）。 */
+            excerpt?: string
+            mode?: 'now' | 'queue'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
+  ): void
+  /** 批注队列快照下发到某个 slides 视图（空数组 = 清空元素锚点）。 */
+  pushSlidesAskQueue?(wcId: number, items: SlidesAskQueueItem[]): void
+  /** slides 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSlidesAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
   ): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
@@ -338,6 +443,51 @@ export interface GenOfficePdfRuntime {
   ): WebContentsView
   requestPdfClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   pdfIsDirty(webContentsId: number): boolean
+  /** 后加的 agent 面（genoffice cba38b8 起）：老运行时缺这些导出时返回 undefined，调用方降级。 */
+  describeAgentPdf?(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentPdfDescription | { error: string }>
+  applyAgentPdfTools?(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 就绪信号：渲染层装载完目标工作副本后上报 filePath；true = 目标文件
+   * 已在视图里打开（身份一致），false = 超时/视图销毁/身份不符。
+   */
+  waitForAgentReady?(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
+  setPdfFileSavedHook?(hook: ((wc: WebContents, filePath: string) => void) | null): void
+  /**
+   * 选区「注释」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带原始页序 + PDF 坐标 quads + 选区摘要。
+   */
+  setPdfAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            pageIndex: number
+            quads: number[][]
+            excerpt?: string
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 pdf 视图（空数组 = 清空页面锚点）。 */
+  pushPdfAskQueue?(wcId: number, items: PdfAskQueueItem[]): void
+  /** pdf 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setPdfAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
+}
+
+/** pdf describe 结果：上下文 + embed 安全的工具词汇表。 */
+export interface GenOfficeAgentPdfDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }[]
 }
 
 export interface PreparedGenOfficeRuntime {

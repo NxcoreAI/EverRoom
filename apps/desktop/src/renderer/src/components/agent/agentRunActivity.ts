@@ -149,7 +149,6 @@ function userText(value: unknown, limit = 600): string | undefined {
 /** 时间线工具行的图标分类：由显式映射表决定，未知工具才归入 other。 */
 export type AgentToolKind =
   | 'search'
-  | 'memory'
   | 'file'
   | 'document'
   | 'slides'
@@ -248,9 +247,7 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   document_validate_artifact: { kind: 'document', zh: ['校验文档产物', '已校验文档产物'], keys: ['surface:agentExecutionTimeline.validateDocumentArtifact', 'surface:agentExecutionTimeline.documentArtifactValidated'] },
   route_mindmap_finalize: { kind: 'analysis', zh: ['确定写作路线', '已确定写作路线'], keys: ['surface:agentExecutionTimeline.finalizeWritingRoute', 'surface:agentExecutionTimeline.writingRouteFinalized'] },
   diary_source_read: { kind: 'document', zh: ['读取日记来源', '已读取日记来源'], keys: ['surface:agentExecutionTimeline.readDiarySource', 'surface:agentExecutionTimeline.diarySourceRead'] },
-  // 知识库、记忆与联网
-  memory_search: { kind: 'memory', zh: ['查询个人记忆', '已查询个人记忆'], keys: ['surface:agentExecutionTimeline.queryMemory', 'surface:agentExecutionTimeline.memoryQueried'] },
-  screen_memory_search: { kind: 'memory', zh: ['检索屏幕记忆', '已检索屏幕记忆'], keys: ['surface:agentExecutionTimeline.searchScreenMemory', 'surface:agentExecutionTimeline.screenMemorySearched'] },
+  // 知识库与联网
   conversation_search: { kind: 'search', zh: ['检索历史对话', '已检索历史对话'], keys: ['surface:agentExecutionTimeline.searchConversations', 'surface:agentExecutionTimeline.conversationsSearched'] },
   wiki_search: { kind: 'search', zh: ['搜索知识库', '已搜索知识库'], keys: ['surface:agentExecutionTimeline.searchWiki', 'surface:agentExecutionTimeline.wikiSearched'] },
   wiki_read: { kind: 'document', zh: ['读取知识库页面', '已读取知识库页面'], keys: ['surface:agentExecutionTimeline.readWikiPage', 'surface:agentExecutionTimeline.wikiPageRead'] },
@@ -364,8 +361,6 @@ const AGENT_TOOL_SUBJECTS: Record<string, AgentToolSubjectSpec> = {
   document_validate_artifact: { keys: ['fileVersionId', 'artifactId', 'title'] },
   route_mindmap_finalize: { keys: ['title', 'documentId'] },
   diary_source_read: { keys: ['sourceId', 'title'] },
-  memory_search: { keys: ['query'] },
-  screen_memory_search: { keys: ['query'] },
   conversation_search: { keys: ['query'] },
   wiki_search: { keys: ['query'] },
   wiki_read: { keys: ['title', 'path'] },
@@ -415,16 +410,15 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
   if (presentation) {
     return t ? t(presentation.keys[completed ? 1 : 0]) : presentation.zh[completed ? 1 : 0]
   }
-  // 安全家族兜底：只保留 photo/image/calendar/memory/email/bash 这类无歧义词根。
-  // document/read/write/search/web 会误伤 document_draft、screen_memory_search、
-  // everroom_search 这类业务工具，因此不再按这些词根猜语义。
+  // 安全家族兜底：只保留 photo/image/calendar/email/bash 这类无歧义词根。
+  // document/read/write/search/web 会误伤 document_draft、everroom_search
+  // 这类业务工具，因此不再按这些词根猜语义。
   if (/photo|image/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.imageViewed' : 'surface:agentExecutionTimeline.viewImage') : completed ? '已查看图像' : '查看图像'
   if (/calendar/.test(name)) {
     if (/create|add/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.calendarEventCreated' : 'surface:agentExecutionTimeline.createCalendarEvent') : completed ? '已创建日程' : '创建日程'
     return t ? t(completed ? 'surface:agentExecutionTimeline.calendarQueried' : 'surface:agentExecutionTimeline.queryCalendar') : completed ? '已查询日历' : '查询日历'
   }
   if (/scheduler/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.scheduledTaskHandled' : 'surface:agentExecutionTimeline.handleScheduledTask') : completed ? '已处理定时任务' : '处理定时任务'
-  if (/memory/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.memoryQueried' : 'surface:agentExecutionTimeline.queryMemory') : completed ? '已查询个人记忆' : '查询个人记忆'
   if (/email|mail/.test(name)) {
     if (/sync/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.emailSynced' : 'surface:agentExecutionTimeline.syncEmail') : completed ? '已同步邮件' : '同步邮件'
     return t ? t(completed ? 'surface:agentExecutionTimeline.emailQueried' : 'surface:agentExecutionTimeline.queryEmail') : completed ? '已查询邮件' : '查询邮件'

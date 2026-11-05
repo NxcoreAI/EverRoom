@@ -18,12 +18,18 @@ import {
   type GatewayConfig,
 } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
-import { agentSessions } from "../infrastructure/database/schema.js";
-import { eq, inArray } from "drizzle-orm";
+import { agentEvents, agentMessages, agentSessions, agentWorkspaces, gatewayMetadata } from "../infrastructure/database/schema.js";
+import { asc, eq, inArray } from "drizzle-orm";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
+import { SpaceCacheManager } from "../modules/workspace-layout/cache.js";
+import { SpaceAgentRoots } from "../modules/workspace-layout/agent-root.js";
+import { SpaceMemoryRoots } from "../modules/workspace-layout/memory-root.js";
+import { SpaceLibraryWriter } from "../modules/workspace-layout/library.js";
+import { workspaceLayoutRoutes } from "../modules/workspace-layout/routes.js";
+import { WorkspaceLayoutService } from "../modules/workspace-layout/service.js";
 import { McpConfigManager, mcpRoutes } from "../modules/agent/mcp-routes.js";
 import {
   ChannelMcpHost,
@@ -71,6 +77,7 @@ import {
   createDocumentOverviewRuntime,
   createConversationSuggestionRuntime,
   createIndexBackfillRuntime,
+  createMemoryRuntimeResolver,
   createSessionTitleRuntime,
   createVersionSummaryRuntime,
   isPiRuntimeConfigured,
@@ -94,6 +101,36 @@ import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-bac
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { SearchService } from "../modules/search/service.js";
+import { MemoryService } from "../modules/memory/service.js";
+import { MemoryDistiller, type CapturedSegment, type DistillCursor, type DistillSignals } from "../modules/memory/distill.js";
+import { MemoryModelUnavailableError, isMemoryModelUnavailable } from "../modules/memory/model-errors.js";
+import { composeWorkspaceInsight as composeWorkspaceInsightViaLlm } from "../modules/workspace-insight/composer.js";
+import { workspaceInsightRoutes } from "../modules/workspace-insight/routes.js";
+import { WorkspaceInsightService } from "../modules/workspace-insight/service.js";
+import {
+  createUserProfilePromptCache,
+  MemoryProfileAggregator,
+} from "../modules/memory/profile.js";
+import { invokeRuntime } from "../modules/agent/invoke.js";
+import { memoryRoutes } from "../modules/memory/routes.js";
+import {
+  composeJournal,
+  JournalScheduler,
+  JournalService,
+  journalRoutes,
+  MEMORY_LIST_LIMIT as JOURNAL_MEMORY_LIST_LIMIT,
+} from "../modules/journal/index.js";
+import {
+  createPlanPiTools,
+  PlanError,
+  PlanLeaseReaper,
+  PlanService,
+  planMcpRoutes,
+  planRoutes,
+  PlanStreamHub,
+} from "../modules/plan/index.js";
+import type { PlanDispatchInput, PlanDispatchResult } from "../modules/plan/index.js";
+import { workspaceActivityRoutes, WorkspaceActivityService } from "../modules/workspace-activity/index.js";
 import { SearchBackfill } from "../modules/search/backfill.js";
 import { searchRoutes } from "../modules/search/routes.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
@@ -102,6 +139,7 @@ import { SlideImageStore } from "../modules/slides-style/image-store.js";
 import { slideImageRoutes } from "../modules/slides-style/image-routes.js";
 import { FilesService } from "../modules/files/service.js";
 import { createFileReadPiTool, createFileSearchPiTool } from "../modules/files/pi-tools.js";
+import { createLibraryBrowsePiTool } from "../modules/files/library-browse.js";
 import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-worker.js";
 import { DocumentHistoryBackfillWorker } from "../modules/documents/index-backfill/history-worker.js";
 import { connectorRoutes } from "@nxcore/connectors-module/routes.js";
@@ -114,6 +152,7 @@ import { createConnectorTombstoneStore } from "../modules/connectors/tombstone-s
 import { cleanupLegacyConnectorData } from "../modules/connectors/cleanup.js";
 import { ConversationSuggestionService } from "../modules/processing/conversation-suggestion.js";
 import { processingRoutes } from "../modules/processing/routes.js";
+import { AutoSessionTitles } from "../modules/processing/auto-session-title.js";
 import { SessionTitleService } from "../modules/processing/session-title.js";
 import { DocumentUnderstandingService } from "../modules/document-understanding/service.js";
 import { documentUnderstandingRoutes } from "../modules/document-understanding/routes.js";
@@ -138,6 +177,10 @@ import { createDocWriterResultValidator } from "../modules/subagents/document-dr
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
+import { AgentSkillStateStore } from "../modules/skills/state-store.js";
+import { UserSkillStore } from "../modules/skills/user-skills.js";
+import { SkillService } from "../modules/skills/service.js";
+import { skillRoutes } from "../modules/skills/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { AgentDebugService } from "../modules/agent-debug/service.js";
 import { agentDebugRoutes } from "../modules/agent-debug/routes.js";
@@ -555,6 +598,18 @@ export async function createServer(config: GatewayConfig) {
   );
   await subagentRegistry.initialize();
   const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
+  // 「技能」页：清单来自 bundle 与子 Agent 清单，启停状态落 agent_skill_states。
+  // 注册表是晚绑定的（上面刚建好），用惰性取值避免把它的初始化顺序搬到这里。
+  const skillService = new SkillService({
+    store: new AgentSkillStateStore(db),
+    definitionsDir: bundledAgentDefinitionsDir(),
+    subagents: () => subagentRegistry.listAvailable(),
+    // 用户技能写在数据目录（应用包内的 agents/ 是只读发布物），可新增/删除。
+    userSkills: new UserSkillStore(join(config.dataDir, "agent", "skills")),
+    logger: { warn: (fields, message) => app.log.warn(fields, message) },
+  });
+  // 子 Agent 的技能读取工具按闸门过滤（被停用的技能不给读）。
+  subagentRuntimeManager.setSkillGate(skillService);
   // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
   // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
@@ -625,9 +680,9 @@ export async function createServer(config: GatewayConfig) {
   // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
   documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
     getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
-    isInvocationAuthorized: (invocation, roomId) => isSelectionRewriteInvocationAuthorized(
+    isInvocationAuthorized: (invocation) => isSelectionRewriteInvocationAuthorized(
       invocation,
-      { capabilityId: "document.selection-rewrite", roomId },
+      { capabilityId: "document.selection-rewrite" },
     ),
     getDocument: (documentId) => documentService.get(documentId),
   });
@@ -682,9 +737,101 @@ export async function createServer(config: GatewayConfig) {
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
+  // 项目空间目录（单写者）：创建空间时落 `<dataDir>/Workspace/<slug>`，默认空间补 `Workspace/inbox`。
+  const workspaceLayoutService = new WorkspaceLayoutService({
+    dataDir: config.dataDir,
+    appVersion: process.env.EVERROOM_APP_VERSION?.trim() || "0.0.0",
+    logger: gatewayLogger.logger,
+  });
+  const spaceLibraryWriter = new SpaceLibraryWriter(db, config.dataDir, workspaceLayoutService);
+  // 空间缓存（P3）：tmp/derived/objects 的统计与回收；启动 60s 后清一遍 tmp（不阻塞启动）。
+  const spaceCacheManager = new SpaceCacheManager(db, workspaceLayoutService);
+  // 空间记忆库（P2）：绑了目录的工作区，记忆落 `<space>/.everoffice/memory`；否则仍是全局库。
+  const spaceMemoryRoots = new SpaceMemoryRoots(db, workspaceLayoutService);
+  // Agent 工作目录（P2）：绑了目录的空间，pi 会话 cwd / 沙箱根 / AGENTS.md 都指向空间根。
+  const spaceAgentRoots = new SpaceAgentRoots(db, workspaceLayoutService);
+  // 计划（任务 / todo）：数据面 + 认领。工具要早于 AgentService 构建，
+  // 「指派即开会话」用晚绑定引用接线（同 localAgentDispatchSourceRef 的做法）。
+  const planStream = new PlanStreamHub();
+  const planDispatchRef: { current: ((input: PlanDispatchInput) => Promise<PlanDispatchResult>) | null } = {
+    current: null,
+  };
+  const planService = new PlanService({
+    db,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+    spaceOf: (workspaceId) => {
+      const row = db
+        .select({ name: agentWorkspaces.name, path: agentWorkspaces.path })
+        .from(agentWorkspaces)
+        .where(eq(agentWorkspaces.id, workspaceId))
+        .get();
+      if (!row) return null;
+      if (!row.path) return { name: row.name, root: null, libraryPath: null, artifactsPath: null };
+      const read = workspaceLayoutService.detect(row.path);
+      const paths = workspaceLayoutService.pathsOf(
+        row.path,
+        read.status === "ok" ? read.marker.layout : undefined,
+      );
+      return {
+        name: row.name,
+        root: paths.root,
+        libraryPath: paths.library,
+        // v2：资料库根＝空间根，产物平铺在根上，不再单设 outputs/。
+        artifactsPath: paths.library,
+      };
+    },
+    dispatch: (input) => {
+      if (!planDispatchRef.current) {
+        throw new PlanError("plan_dispatch_unavailable", "plan_dispatch_unavailable");
+      }
+      return planDispatchRef.current(input);
+    },
+    onChange: (workspaceId, item, event) => planStream.publish({ workspaceId, item, event }),
+    // 任务完成写一条记忆：今日洞察/回忆里能引用"今天推进了什么"（P3 联动）。
+    onCompleted: (item) => {
+      memoryService.remember({
+        content: `完成任务「${item.title}」${item.resultSummary ? `：${item.resultSummary}` : ""}`,
+        tags: ["plan", "task", "completed"],
+        workspaceId: item.workspaceId,
+        category: "fact",
+        confidence: "inferred",
+      });
+    },
+  });
+  // 概览「动态」：runs + 文件库 + 计划事件流的派生读模型（不建 feed 表）。
+  const workspaceActivityService = new WorkspaceActivityService({ db });
+  const planLeaseReaper = new PlanLeaseReaper({
+    service: planService,
+    // 自动认领默认关：没人叫它也能自己开工是产品决策，不是技术决策。
+    autoClaim: process.env.NXCORE_PLAN_AUTO_CLAIM === "1",
+    droppedRetentionDays: Number(process.env.NXCORE_PLAN_RETENTION_DAYS ?? "30") || 0,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  if (process.env.NODE_ENV !== "test") {
+    const timer = setTimeout(() => {
+      for (const spaceId of spaceCacheManager.boundSpaceIds()) {
+        void spaceCacheManager.gc(spaceId).catch(() => undefined);
+      }
+    }, 60_000);
+    timer.unref?.();
+  }
+
+  // 长期记忆（hippo-memory）：默认开启，无环境变量开关；库在 <dataDir>/memory/hippo。
+  // 进程内嵌库（node:sqlite），无独立服务与端口，见 docs/hippo-memory-adoption-plan.zh-CN.md。
+  const memoryService = new MemoryService({
+    root: config.memory?.root ?? join(config.dataDir, "memory", "hippo"),
+    // 空间绑定目录后，该空间的记忆落 `<space>/.everoffice/memory`（P2，方案 §8.5）。
+    spaceRootFor: spaceMemoryRoots.resolve,
+    enabled: true,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
+    skills: skillService,
     ...(connectorMcp ? { connectorMcp: { url: connectorMcp.url } } : {}),
+    memory: memoryService,
+    // 项目空间根（P2，方案 §8.5）：会话所属空间绑了目录，这一轮 run 的 cwd 就是空间根。
+    projectRoot: (input) => spaceAgentRoots.resolve(input.workspaceId),
     tools: [
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
@@ -697,6 +844,9 @@ export async function createServer(config: GatewayConfig) {
       // 按文件名在文件库定位 fileId：用户只说“那份报告”/要改的文件没打开时，
       // 先搜出 fileId 再交给 file_read / word_agent_*（同样惰性取 filesService）。
       createFileSearchPiTool({ files: () => filesService }),
+      // 分页浏览资料库/产物：用户问题指向自有材料但说不出文件名时，模型自己翻库
+      // （库可能上千份，不能靠运行提示塞一份「最近 N 条」的抽样快照）。
+      createLibraryBrowsePiTool({ files: () => filesService }),
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
@@ -707,7 +857,7 @@ export async function createServer(config: GatewayConfig) {
             // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
             setDocumentModificationLease: (documentId, value) =>
               documentService.setAgentModificationLease(documentId, value),
-            inferMaterialSources: (runId, roomId, material) => inferMaterialSourcesFromReads(
+            inferMaterialSources: (runId, material) => inferMaterialSourcesFromReads(
               documentReadAuthority,
               (documentId) => {
                 try {
@@ -717,7 +867,6 @@ export async function createServer(config: GatewayConfig) {
                 }
               },
               runId,
-              roomId,
               material,
             ),
             issueDraftReadReceipt: (context, documentId, version, blockIds) =>
@@ -786,6 +935,8 @@ export async function createServer(config: GatewayConfig) {
             },
          })
         : []),
+      // 计划（任务 / todo）：agent 可以建任务、读认领包、认领、推进、放回。
+      ...createPlanPiTools(planService),
       ...createNotificationPiTools(notificationMcpHost),
       ...createLocalAgentDispatchTools({
         registry: localAgentRuntimeRegistry,
@@ -823,7 +974,6 @@ export async function createServer(config: GatewayConfig) {
     agentRuntime,
     new AgentEventBroker(),
     app.log,
-    undefined,
     documentService,
     documentMcpHost,
     false,
@@ -842,7 +992,27 @@ export async function createServer(config: GatewayConfig) {
   agentService.setChannelSessionRevoker((sessionId) => channelMcpHost.revokeAgentSession(sessionId));
   localAgentDispatchSourceRef.current = (runId) => agentService.getLocalAgentDispatchSource(runId);
   await agentService.initialize();
+  // 计划的「交给 Agent」= 建会话 + 用认领包起一轮 run（用户能在会话里看到全过程）。
+  planDispatchRef.current = async ({ item, prompt }) => {
+    const label = item.title.slice(0, 60) || "计划任务";
+    const session = agentService.createSession({ pageLabel: label, workspaceId: item.workspaceId });
+    const run = await agentService.startRun(session.id, {
+      prompt,
+      displayPrompt: `执行计划任务：${item.title}`,
+      idempotencyKey: `plan-assign:${item.id}:${randomUUID()}`,
+      context: { pageLabel: label },
+    });
+    return { sessionId: session.id, runId: run.id };
+  };
   const sessionTitleService = new SessionTitleService(createSessionTitleRuntime(config));
+  // 工作会话标题：渲染层（对话面板开着时）先写；这里延迟兜底，覆盖后台跑完 /
+  // 计划指派等「没人在看」的会话，二者都只在标题仍是自动占位时替换，不会互相覆盖。
+  const autoSessionTitles = new AutoSessionTitles({
+    db,
+    generate: (input) => sessionTitleService.generate(input),
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  agentService.setSessionTitleGenerator((sessionId, runId) => autoSessionTitles.schedule(sessionId, runId));
   const conversationSuggestionService = new ConversationSuggestionService(createConversationSuggestionRuntime(config));
   runtimeConfigManager.onChange((snapshot) => {
     app.log.info({
@@ -905,6 +1075,8 @@ export async function createServer(config: GatewayConfig) {
     files: filesService,
     orchestrator: subagentOrchestrator,
     officeBridge: config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null,
+    // LibreOffice 等中间产物落空间 scratch（`.tmp/thesis/…`），随空间清理。
+    spaceScratch: spaceCacheManager,
     // 排版作业的阶段耗时/失败原因必须落网关日志：否则只能靠外部记录反推。
     logger: { info: (obj, msg) => app.log.info(obj, msg), warn: (obj, msg) => app.log.warn(obj, msg) },
   });
@@ -949,6 +1121,7 @@ export async function createServer(config: GatewayConfig) {
   const dataMigrationService = new DataMigrationService(db, sqlite);
   const searchService = new SearchService(db, sqlite);
   await app.register(searchRoutes(searchService));
+  await app.register(memoryRoutes(memoryService));
   dataMigrationService.setFilesService(filesService);
   dataMigrationService.recover();
   // @ 引用解析：先查导入的外部线程；未命中（本应用自有会话 id）回退读 agent_sessions 历史。
@@ -961,6 +1134,9 @@ export async function createServer(config: GatewayConfig) {
   };
   agentService.setExternalConversationResolver(dataMigrationService);
   agentService.setFilesService(filesService);
+  agentService.setWorkspaceLayout(workspaceLayoutService);
+  // 资料库落盘（P1）：入库/改名/删除时同步空间 Library；未绑目录的空间保持旧行为。
+  filesService.setSpaceLibrary(spaceLibraryWriter);
   const documentUnderstandingService = new DocumentUnderstandingService(
     db,
     filesService,
@@ -1000,6 +1176,7 @@ export async function createServer(config: GatewayConfig) {
   let documentHistoryBackfillWorker: DocumentHistoryBackfillWorker | null = null;
   let documentIndexBackfillWorker: DocumentIndexBackfillWorker | null = null;
   app.addHook("onClose", async () => {
+    autoSessionTitles.dispose();
     // Stop producers while all ingest/classification dependencies are still alive.
     await filesService.dispose();
     clearInterval(documentOperationExpiryTimer);
@@ -1013,15 +1190,35 @@ export async function createServer(config: GatewayConfig) {
     await documentListSyncWorker?.dispose();
     await documentHistoryBackfillWorker?.dispose();
     await documentIndexBackfillWorker?.dispose();
+    planLeaseReaper.stop();
     await agentSchedulerService.dispose();
     await agentResolver.dispose();
     await notificationMcpHost.close();
+    // 退出前先把未提炼的会话段冲刷掉（带超时，尽力而为），再停定时器。
+    await memoryDistiller.flushAll().catch(() => undefined);
+    journalScheduler.stop();
+    memoryProfile.stop();
+    memoryDistiller.dispose();
+    memoryService.stop();
     sqlite.close();
     await gatewayLogger.close();
   });
   // 同一份状态快照同时服务 /v1/agent/status 与 /v1/agent-debug/*（运行态口径一致）。
   const agentStatusService = new AgentStatusService(agentResolver, subagentOrchestrator);
   await app.register(agentRoutes(agentService, agentStatusService, localAgentDispatchStore));
+  // 项目空间目录：默认落点预览 / 判定 / 发现 / 健康 / 修复（见 docs/project-space-layout-plan.zh-CN.md §6.2）。
+  await app.register(workspaceLayoutRoutes(workspaceLayoutService, agentService, {
+    db,
+    writer: spaceLibraryWriter,
+    files: filesService,
+    cache: spaceCacheManager,
+  }));
+  // 「技能」页：清单/正文/启停。开关变化后重装运行时（skillPrompts 在新建 runtime 时定型）。
+  await app.register(skillRoutes(skillService, {
+    // 开关与目录变化都要重装运行时：skillPrompts 在新建 runtime 时定型。
+    onStateChanged: async () => { await hotReloadAgentRuntimes(); },
+    onCatalogChanged: async () => { await hotReloadAgentRuntimes(); },
+  }));
   await app.register(subagentRoutes(subagentOrchestrator));
   // Agent 调试面板（只读）：数据来自 runtime.describe() 的实际装配 + 使用记录。
   await app.register(agentDebugRoutes(new AgentDebugService({
@@ -1066,7 +1263,7 @@ export async function createServer(config: GatewayConfig) {
       sourceKey: input.sourceKey,
       originalName: input.filename,
       stream: Readable.from(input.buffer),
-      ...(input.roomId ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: false } } : {}),
+      ...(input.roomId ? { roomId: input.roomId, pipelines: { room: true, wiki: false } } : {}),
     });
     return {
       fileEntryId: result.fileEntryId,
@@ -1145,7 +1342,7 @@ export async function createServer(config: GatewayConfig) {
       if (context.invocationId) {
         if (!isSelectionRewriteInvocationAuthorized(
           subagentOrchestrator.getInvocation(context.invocationId),
-          { capabilityId: context.capabilityId, roomId: context.roomId },
+          { capabilityId: context.capabilityId },
         )) {
           throw new Error("agent_operation_context_invalid");
         }
@@ -1207,6 +1404,271 @@ export async function createServer(config: GatewayConfig) {
   documentHistoryBackfillWorker.start();
   // 统一搜索索引 worker（2s 轮询 + 启动回填）。
   searchService.start();
+  memoryService.start();
+  // 记忆提炼/画像聚合的模型调用：内部一次性 runtime，档位按 lite → background → primary
+  // 取第一个已配置的槽位。SaaS 激活时这些槽位已被重写到 /ai-relay 出口，
+  // 因此这里只会走到 SaaS 下发的模型。
+  //
+  // 关键：**不能启动时定型**。桌面端要先过运行时配置 gate，SaaS 激活后才把
+  // baseUrl/apiKey patch 进同一个 config 对象（applyRuntimeConfig 原地修改），
+  // 启动那一刻档位往往是空的——一次定型就永远是 null，提炼与画像聚合从此永久失效
+  // （日志表现为 memory.profile.failed: "no model slot configured for memory"，
+  // 表现就是「页面永远没有用户画像」）。这里保留 null 并在每次调用时重新解析。
+  const resolveMemoryRuntime = createMemoryRuntimeResolver(config);
+  if (!resolveMemoryRuntime()) {
+    app.log.warn("memory.model.unavailable: 未配置任何模型档位，记忆提炼与画像聚合将在档位就绪后启用");
+  }
+  const generateMemoryText = (prompt: string): Promise<string> => {
+    const runtime = resolveMemoryRuntime();
+    // 抛专用错误类型：档位未就绪属「环境没准备好」，提炼侧不计入重试次数。
+    if (!runtime) throw new MemoryModelUnavailableError();
+    return invokeRuntime(runtime, prompt, {
+      sessionId: `memory:${randomUUID()}`,
+      pageLabel: "记忆提炼",
+      timeoutMs: 60_000,
+    });
+  };
+
+  // 用户画像聚合：每日定时 + 新增偏好类事实达阈值时额外触发（双保险）。
+  const memoryProfile = new MemoryProfileAggregator({
+    service: memoryService,
+    generate: generateMemoryText,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  // 用户画像注入 system prompt：每轮 run 现取（带 60s TTL 缓存），记忆写入即失效。
+  // 画像本身是「每日定时 + 8 条阈值」才更新，缓存对新鲜度没有影响，只为省掉
+  // 每轮扫一遍记忆库 .md 的开销。
+  const userProfilePrompt = createUserProfilePromptCache(memoryService);
+  agentService.setUserProfileProvider(() => userProfilePrompt.get());
+
+  // 每日洞察（主页「今日洞察」卡）：当天新写的记忆条目 → 一段可读的日记。
+  // 供料只接记忆（见 docs/daily-journal-plan.zh-CN.md §3 的取舍）；
+  // 时区取本机时区（网关由桌面端 spawn，同机），显式覆盖走 NXCORE_JOURNAL_TIMEZONE。
+  const journalTimezone = process.env.NXCORE_JOURNAL_TIMEZONE?.trim()
+    || Intl.DateTimeFormat().resolvedOptions().timeZone
+    || "UTC";
+  const journalService = new JournalService({
+    db,
+    list: () => memoryService.list({ limit: JOURNAL_MEMORY_LIST_LIMIT }),
+    compose: (input) => composeJournal(input, {
+      generate: generateMemoryText,
+      isModelUnavailable: isMemoryModelUnavailable,
+      logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+    }),
+    timezone: () => journalTimezone,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  const journalScheduler = new JournalScheduler({
+    service: journalService,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  await app.register(journalRoutes(journalService, journalScheduler));
+
+  memoryService.setOnRemembered(() => {
+    userProfilePrompt.invalidate();
+    memoryProfile.noteNewMemory();
+    // 记忆写入是「今日洞察」最主要的信号源：去抖后补一版（见 scheduler 的四道闸）。
+    journalScheduler.noteSignal("memory");
+  });
+  memoryProfile.start();
+  journalScheduler.start();
+
+  // 工作空间洞察（概览 B 区卡片）：空间状态证据 → LLM 总结 + 建议（模板兜底）。
+  // 与 journal 同一条模型通道（generateMemoryText）；不落库，内存缓存按证据指纹复用。
+  const workspaceInsightService = new WorkspaceInsightService({
+    agent: agentService,
+    libraryCountSource: filesService,
+    workspaceName: (workspaceId) =>
+      db.select({ name: agentWorkspaces.name }).from(agentWorkspaces)
+        .where(eq(agentWorkspaces.id, workspaceId)).get()?.name ?? "项目空间",
+    compose: (evidence) => composeWorkspaceInsightViaLlm(evidence, {
+      generate: generateMemoryText,
+      isModelUnavailable: isMemoryModelUnavailable,
+      modelName: "memory-slot",
+      logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+    }),
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  await app.register(workspaceInsightRoutes(workspaceInsightService));
+
+  // 会话结束的记忆蒸馏：run 正常完成后由 AgentService 回调，用轻量模型
+  // （main-lite，零工具）把本轮对话提炼成 0–3 条长期事实写入记忆库。
+  // 未配置 lite 档或调用失败时静默跳过——记忆是增强能力，不阻断对话。
+  // 提炼游标存 gateway_metadata（key=memory_distill_cursor:<sessionId>），
+  // 进程重启后继续增量提炼，不会重复烧同一段对话。
+  const MEMORY_CURSOR_PREFIX = "memory_distill_cursor:";
+  const readDistillCursor = (sessionId: string): DistillCursor => {
+    const row = db.select().from(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, `${MEMORY_CURSOR_PREFIX}${sessionId}`))
+      .get();
+    if (!row) return { afterCreatedAt: null, afterId: null, attempts: 0 };
+    try {
+      const parsed = JSON.parse(row.value) as Partial<DistillCursor>;
+      return {
+        afterCreatedAt: typeof parsed.afterCreatedAt === "string" ? parsed.afterCreatedAt : null,
+        afterId: typeof parsed.afterId === "string" ? parsed.afterId : null,
+        attempts: Number.isFinite(parsed.attempts) ? Number(parsed.attempts) : 0,
+      };
+    } catch {
+      return { afterCreatedAt: null, afterId: null, attempts: 0 };
+    }
+  };
+  const writeDistillCursor = (sessionId: string, cursor: DistillCursor): void => {
+    const value = JSON.stringify(cursor);
+    const now = new Date();
+    db.insert(gatewayMetadata)
+      .values({ key: `${MEMORY_CURSOR_PREFIX}${sessionId}`, value, updatedAt: now })
+      .onConflictDoUpdate({ target: gatewayMetadata.key, set: { value, updatedAt: now } })
+      .run();
+  };
+  // 删除会话前的「抢救段」：消息随 session 级联删除，所以先把游标之后的段落落到
+  // gateway_metadata（key=memory_distill_captured:<sessionId>），提炼成功才清掉；
+  // 进程中途退出也会在下次启动时由 resumeCaptured() 重试。
+  const MEMORY_CAPTURED_PREFIX = "memory_distill_captured:";
+  const saveCapturedSegment = (sessionId: string, payload: CapturedSegment): void => {
+    const now = new Date();
+    db.insert(gatewayMetadata)
+      .values({ key: `${MEMORY_CAPTURED_PREFIX}${sessionId}`, value: JSON.stringify(payload), updatedAt: now })
+      .onConflictDoUpdate({
+        target: gatewayMetadata.key,
+        set: { value: JSON.stringify(payload), updatedAt: now },
+      })
+      .run();
+  };
+  const loadCapturedSegment = (sessionId: string): CapturedSegment | null => {
+    const row = db.select().from(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, `${MEMORY_CAPTURED_PREFIX}${sessionId}`))
+      .get();
+    if (!row) return null;
+    try {
+      const parsed = JSON.parse(row.value) as Partial<CapturedSegment>;
+      if (typeof parsed.transcript !== "string" || parsed.transcript.length === 0) return null;
+      return {
+        transcript: parsed.transcript,
+        messages: typeof parsed.messages === "number" ? parsed.messages : 0,
+        userTurns: typeof parsed.userTurns === "number" ? parsed.userTurns : 0,
+        capturedAt: typeof parsed.capturedAt === "string" ? parsed.capturedAt : new Date(0).toISOString(),
+        ...(typeof parsed.workspaceId === "string" && parsed.workspaceId.length > 0
+          ? { workspaceId: parsed.workspaceId }
+          : {}),
+      };
+    } catch {
+      return null;
+    }
+  };
+  const listCapturedSegments = (): string[] => db
+    .select({ key: gatewayMetadata.key })
+    .from(gatewayMetadata)
+    .all()
+    .filter((row) => row.key.startsWith(MEMORY_CAPTURED_PREFIX))
+    .map((row) => row.key.slice(MEMORY_CAPTURED_PREFIX.length));
+  const clearCapturedSegment = (sessionId: string): void => {
+    db.delete(gatewayMetadata)
+      .where(eq(gatewayMetadata.key, `${MEMORY_CAPTURED_PREFIX}${sessionId}`))
+      .run();
+  };
+  // 会话消息（createdAt + id 升序）；硬切段落时的上文与增量段共用同一份读取。
+  const loadSessionMessages = (sessionId: string) => db
+    .select({
+      id: agentMessages.id,
+      role: agentMessages.role,
+      content: agentMessages.content,
+      createdAt: agentMessages.createdAt,
+    })
+    .from(agentMessages)
+    .where(eq(agentMessages.sessionId, sessionId))
+    .orderBy(asc(agentMessages.createdAt), asc(agentMessages.id))
+    .all();
+  const memoryDistiller = new MemoryDistiller({
+    service: memoryService,
+    loadMessages: (sessionId, cursor) => {
+      const rows = loadSessionMessages(sessionId);
+      if (cursor.afterCreatedAt === null) return rows;
+      const after = cursor.afterCreatedAt;
+      const afterId = cursor.afterId ?? "";
+      return rows.filter((row) => {
+        const stamp = row.createdAt.toISOString();
+        return stamp > after || (stamp === after && row.id > afterId);
+      });
+    },
+    // 硬切段落时往前取 N 轮用户消息作上文（只作理解用，提示词已声明不要重复提炼）。
+    loadOverlap: (sessionId, cursor, userTurns) => {
+      if (cursor.afterCreatedAt === null || userTurns <= 0) return [];
+      const after = cursor.afterCreatedAt;
+      const afterId = cursor.afterId ?? "";
+      const rows = loadSessionMessages(sessionId);
+      const cutIndex = rows.findIndex((row) => {
+        const stamp = row.createdAt.toISOString();
+        return stamp > after || (stamp === after && row.id > afterId);
+      });
+      if (cutIndex <= 0) return [];
+      let start = cutIndex;
+      let seen = 0;
+      while (start > 0 && seen < userTurns) {
+        start -= 1;
+        if (rows[start]?.role === "user") seen += 1;
+      }
+      return rows.slice(start, cutIndex);
+    },
+    readCursor: readDistillCursor,
+    writeCursor: writeDistillCursor,
+    clearCursor: (sessionId) => {
+      db.delete(gatewayMetadata)
+        .where(eq(gatewayMetadata.key, `${MEMORY_CURSOR_PREFIX}${sessionId}`))
+        .run();
+    },
+    saveCaptured: saveCapturedSegment,
+    loadCaptured: loadCapturedSegment,
+    listCaptured: listCapturedSegments,
+    clearCaptured: clearCapturedSegment,
+    generate: generateMemoryText,
+    logger: (level, event, fields) => app.log[level](fields ?? {}, event),
+  });
+  // run 结束：先从 agent_events 里读出这轮「客观出过什么事」，再分两路用——
+  // ① 结算上一轮检索的记忆（顺利则隐性确认，出事则跳过）；② 作为坑信号喂给提炼判据。
+  // 全程不需要用户做任何操作。
+  const collectRunSignals = (runId: string): DistillSignals => {
+    const rows = db
+      .select({ type: agentEvents.type, payload: agentEvents.payload })
+      .from(agentEvents)
+      .where(eq(agentEvents.runId, runId))
+      .all();
+    const failures = new Map<string, number>();
+    let toolFailures = 0;
+    let retriedAfterFailure = 0;
+    for (const row of rows) {
+      if (row.type !== "tool.failed" && row.type !== "tool.completed") continue;
+      const name = (row.payload as { name?: unknown } | null)?.name;
+      const tool = typeof name === "string" && name.length > 0 ? name : "(unknown)";
+      if (row.type === "tool.failed") {
+        toolFailures += 1;
+        failures.set(tool, (failures.get(tool) ?? 0) + 1);
+        continue;
+      }
+      // 失败之后同一个工具又成功了 = 踩了坑并绕过去了，最有价值的经验来源。
+      const failedBefore = failures.get(tool) ?? 0;
+      if (failedBefore > 0) {
+        retriedAfterFailure += 1;
+        failures.set(tool, 0);
+      }
+    }
+    return { toolFailures, retriedAfterFailure };
+  };
+  // 一次 run 结束只登记「段状态」：段满（轮次/字符）立即提炼，否则等空闲。
+  agentService.setMemoryDistiller((sessionId, workspaceId, runId) => {
+    const signals = collectRunSignals(runId);
+    memoryService.settleRun(runId, { failed: signals.toolFailures > 0 });
+    memoryDistiller.noteRun(sessionId, workspaceId, signals);
+  });
+  // 删除会话前抢救：同步落盘，随后异步提炼（不阻塞删除动作）。
+  agentService.setMemorySessionCloser((sessionId) => {
+    if (!memoryDistiller.captureBeforeDelete(sessionId)) return;
+    void memoryDistiller.distillCaptured(sessionId).catch(() => undefined);
+  });
+  const resumedCaptured = memoryDistiller.resumeCaptured();
+  if (resumedCaptured > 0) {
+    app.log.info({ sessions: resumedCaptured }, "memory.captured.resumed");
+  }
   const searchBackfill = new SearchBackfill(db);
   searchBackfill.schedule();
   // 文档索引回溯（blockIndexMark）：确定性匹配 + LLM 兜底给存量文档补挂来源索引；
@@ -1238,6 +1700,11 @@ export async function createServer(config: GatewayConfig) {
   }
   // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
+  await app.register(planRoutes(planService, planStream));
+  await app.register(workspaceActivityRoutes(workspaceActivityService));
+  // 外部 Agent（本机 CLI Agent 等）经 MCP 读写同一个计划池。
+  await app.register(planMcpRoutes(planService));
+  planLeaseReaper.start();
   await app.register(agentSchedulerRoutes(agentSchedulerService));
   await app.register(agentSchedulerMcpRoutes(agentSchedulerService));
   await app.register(connectorRoutes(connectorCatalog, connectorAuthorization));

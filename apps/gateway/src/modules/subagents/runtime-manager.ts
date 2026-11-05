@@ -1,5 +1,5 @@
 import { lstat, readFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
 import { PiAgentRuntime, type PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
@@ -11,6 +11,7 @@ import { traceRuntime } from "../agent-debug/instrument.js";
 import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import type { LoadedSubagentRevision } from "./types.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
+import type { SkillGate } from "../skills/gate.js";
 
 export type SubagentResultValidator = (
   invocationInput: unknown,
@@ -25,8 +26,26 @@ const SUBAGENT_CONTEXT_GUARD_TRIGGER_RATIO = 0.5;
 // 加上 system/tools 后即使触发裁剪也降不下来；保留 3 轮给「当前工作证据 + 一步回退」。
 const SUBAGENT_CONTEXT_GUARD_KEEP_TURNS = 3;
 
-export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): PiAgentRuntimeTool {
+/** 技能文件相对路径的归属目录：`skills/<name>/...` → `<name>`；不在 skills 下返回 null。 */
+function skillDirectoryOf(relativeToRoot: string): string | null {
+  const segments = relativeToRoot.split(sep).filter(Boolean);
+  if (segments[0] !== "skills" || segments.length < 2) return null;
+  return segments[1] ?? null;
+}
+
+/**
+ * 子 Agent 的技能读取工具（名字就叫 `read`：SYSTEM.md 里按它是"读文件"来写的）。
+ *
+ * `allowedSkillNames` 是用户在「技能」页仍然启用的技能目录名；为 null 表示不过滤
+ * （未装配技能服务时的旧行为）。被停用的技能不给读：SYSTEM.md 可能还提到它，
+ * 但模型拿到 `subagent_skill_disabled` 就知道这条路已经关了。
+ */
+export function createSubagentSkillReadTool(
+  revision: LoadedSubagentRevision,
+  allowedSkillNames: readonly string[] | null = null,
+): PiAgentRuntimeTool {
   const root = `${resolve(revision.agentDirectory)}${sep}`;
+  const allowed = allowedSkillNames ? new Set(allowedSkillNames) : null;
   return {
     name: "read",
     label: "Read skill resource",
@@ -40,6 +59,10 @@ export function createSubagentSkillReadTool(revision: LoadedSubagentRevision): P
       // 相对路径以 revision 根解析：SYSTEM.md 无法预知运行期绝对路径。
       const requestedPath = resolve(root, String(params.path ?? ""));
       if (!requestedPath.startsWith(root)) throw new Error("subagent_skill_path_not_allowed");
+      if (allowed) {
+        const directory = skillDirectoryOf(requestedPath.slice(root.length));
+        if (directory && !allowed.has(directory)) throw new Error("subagent_skill_disabled");
+      }
       const stats = await lstat(requestedPath);
       if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("subagent_skill_file_not_readable");
       if (stats.size > 256 * 1024) throw new Error("subagent_skill_file_too_large");
@@ -209,6 +232,23 @@ export class SubagentRuntimeManager {
     private readonly agentDebugStore?: AgentDebugTraceStore,
   ) {}
 
+  /**
+   * 接入「技能」页的启停闸门。装配后才能过滤被停用的 Skill；
+   * 开关变化由网关侧的 runtime 重载（invalidate）生效。
+   */
+  setSkillGate(gate: SkillGate): void {
+    this.skillGate = gate;
+  }
+
+  /** 已登记的技能闸门（未装配＝不过滤，旧行为）。 */
+  private skillGate: SkillGate | null = null;
+
+  /** 本 revision 仍然启用的技能路径；未装配闸门时原样返回。 */
+  private enabledSkillPaths(revision: LoadedSubagentRevision): string[] {
+    const paths = revision.manifest.skills;
+    return this.skillGate ? this.skillGate.subagentSkillPaths(revision.manifest.id, paths) : [...paths];
+  }
+
   acquire(revision: LoadedSubagentRevision): AgentRuntime {
     this.users.set(revision.id, (this.users.get(revision.id) ?? 0) + 1);
     const cached = this.runtimes.get(revision.id);
@@ -317,9 +357,12 @@ export class SubagentRuntimeManager {
     if (!isPiRuntimeConfigured(base)) {
       return new UnconfiguredAgentRuntime(`subagent:${revision.id}`);
     }
-    const config = this.buildPiConfig(base, revision);
+    const enabledSkills = this.enabledSkillPaths(revision);
+    const config = this.buildPiConfig(base, revision, enabledSkills);
     const tools = [
-      ...(revision.manifest.skills.length > 0 ? [createSubagentSkillReadTool(revision)] : []),
+      ...(enabledSkills.length > 0
+        ? [createSubagentSkillReadTool(revision, enabledSkills.map((path) => basename(path)))]
+        : []),
       ...(this.agentTools.get(revision.manifest.id)?.() ?? []),
       ...(() => {
         const submitResult = this.resultCollector.createTool(
@@ -359,7 +402,11 @@ export class SubagentRuntimeManager {
     return resolved === undefined ? {} : { reasoning: resolved };
   }
 
-  private buildPiConfig(base: PiRuntimeConfig, revision: LoadedSubagentRevision): PiRuntimeConfig {
+  private buildPiConfig(
+    base: PiRuntimeConfig,
+    revision: LoadedSubagentRevision,
+    enabledSkills: readonly string[],
+  ): PiRuntimeConfig {
     const { mcp: _mcp, ...model } = base;
     const overrides = revision.policy.model;
     const contextWindow = overrides?.contextWindow ?? model.contextWindow;
@@ -374,7 +421,7 @@ export class SubagentRuntimeManager {
       runtimeId: `pi:subagent:${revision.id}`,
       systemPrompt: revision.systemPrompt,
       runtimeRole: "internal",
-      skillsEnabled: revision.manifest.skills.length > 0,
+      skillsEnabled: enabledSkills.length > 0,
       builtinTools: [],
       includeBashTool: false,
       // 不声明工具预算＝不注入上限：布局类长链路由 timeoutMs / 输出预算兜底。

@@ -6,7 +6,6 @@ export interface AgentNotificationRequest {
   platforms: Array<"ios"|"macos">;
   sessionId: string;
   runId: string;
-  roomId: string|null;
   idempotencyKey: string;
   /** true 时由来源桌面端在本机直接弹出内容相同的通知（点击定位到对应会话）。 */
   local?: boolean;

@@ -31,7 +31,6 @@
   "diary.imagePreview": "图片预览",
   "diary.kindCount": "{kind} · {count} 张",
   "diary.lessActivity": "记录较少",
-  "diary.memory": "记忆",
   "diary.month": "月份",
   "diary.moreActivity": "记录丰富",
   "diary.nexosYourPersonalInformationIsUsedOnlyFor": "NexOS · 个人信息仅用于你的日记回顾",
@@ -304,17 +303,5 @@
   "reality.noUnresolvedQuestions": "暂无未解决问题",
   "diary.dayTrace": "当日轨迹",
   "diary.todayShort": "今",
-  "recording.english": "英语",
-  "screenMemory.title": "屏幕记忆",
-  "screenMemory.disabledHint": "未开启",
-  "screenMemory.keyframeCount": "{{count}} 帧",
-  "screenMemory.summaryWaiting": "摘要等待中",
-  "screenMemory.summaryEmpty": "—",
-  "screenMemory.correct": "纠正",
-  "screenMemory.saveCorrection": "保存",
-  "screenMemory.cancel": "取消",
-  "screenMemory.empty": "暂无记录",
-  "screenMemory.addToRoom": "加入 Room",
-  "screenMemory.handToAgent": "交给 Agent",
-  "screenMemory.copied": "已复制引用"
+  "recording.english": "英语"
 }

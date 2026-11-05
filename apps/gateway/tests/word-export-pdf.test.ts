@@ -56,7 +56,6 @@ function context(activeFile = true): DocumentExecutionContext {
   const base: DocumentExecutionContext = {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: "room-9",
     workspaceId: "ws-7",
   };
   return activeFile
@@ -81,7 +80,8 @@ describe("word_export_pdf", () => {
     expect(exportPdf).toHaveBeenCalledOnce();
     expect(exportPdf.mock.calls[0]![0]).toEqual({
       fileId: "fe-1",
-      roomId: "room-9",
+      // Phase 2i 后无 Room 维度：不再向桌面端透传 roomId。
+      roomId: null,
       workspaceId: "ws-7",
     });
     expect(result.structuredContent).toMatchObject({

@@ -141,39 +141,13 @@
   position: relative;
 }
 
-.agent-user-copy {
-  position: absolute;
-  right: calc(100% + 6px);
-  bottom: 5px;
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #7b8088;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-.agent-message[data-role='user']:hover .agent-user-copy,
-.agent-user-copy:focus-visible,
-.agent-user-copy[data-copied='true'] {
-  opacity: 1;
-}
-
-.agent-user-copy:hover {
-  background: #f4f4f5;
-  color: #30343a;
-}
-
-.agent-user-copy svg {
-  width: 14px;
-  height: 14px;
+/* 用户消息整体（气泡 + 下方操作行）：右对齐一列。 */
+.agent-user-turn {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
 .agent-user-mention { align-self: flex-end; margin: 0 4px 3px; color: #9aa2ae; font-size: 10px; }
@@ -182,6 +156,37 @@ button.agent-user-mention[data-kind='room'] { background: #eaf5ec; }
 button.agent-user-mention[data-kind='file'] { background: #f6efe2; }
 button.agent-user-mention[data-kind='conversation'] { background: #f3ecfa; }
 button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
+
+/* 文档批注卡片（只读，与气泡分离）：浮在用户气泡上方、右对齐同列。
+   不占气泡底色——就是消息流上的一叠便签；hover 靠原生 title 展示全文。 */
+.agent-note-cards {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 4px; /* 与下方气泡（或下一个元素）拉开一点距离 */
+}
+.agent-note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: fit-content;
+  max-width: 78%;
+  padding: 7px 10px;
+  border-left: 2px solid #d0d5dd;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.75);
+  cursor: default;
+}
+.agent-note-card-source { color: #7b8088; font-size: 10.5px; line-height: 1.4; }
+.agent-note-card-excerpt {
+  color: #54585f;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-note-card-note { color: #17191d; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 
 .agent-message p {
   margin: 0;
@@ -475,7 +480,7 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-assistant-turn,
-.agent-message[data-role='user'] {
+.agent-user-turn {
   scroll-margin-block: 72px;
   transition: background-color 240ms ease, box-shadow 240ms ease;
 }
@@ -486,7 +491,7 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   box-shadow: 0 0 0 6px rgba(68, 105, 173, 0.07);
 }
 
-.agent-message[data-role='user'][data-notification-target='true'] {
+.agent-user-turn[data-notification-target='true'] .agent-message[data-role='user'] {
   box-shadow: 0 0 0 5px rgba(68, 105, 173, 0.12);
 }
 
@@ -1346,11 +1351,23 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   height: 11px;
 }
 
+/* 操作行（复制 / 重新生成 / 重新发送）：默认隐藏，悬浮所在消息
+   （agent 一轮 / 用户气泡+操作行整体）才浮现。
+   键盘可达性用 :has(:focus-visible)：鼠标点击不产生 focus-visible，
+   点击后移开鼠标操作行会照常隐藏；Tab 聚焦仍能唤出。 */
 .agent-message-actions {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-top: 1px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.agent-assistant-turn:hover .agent-message-actions,
+.agent-user-turn:hover .agent-message-actions,
+.agent-message-actions:has(:focus-visible) {
+  opacity: 1;
 }
 
 .agent-message-actions button {
@@ -3249,6 +3266,76 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #454b54;
 }
 
+/* ── 「+」入口（导入文件 / 挂载目录）与底栏控件语言 ──────────────────────────
+   底栏控件一律无边框：只有图标 + 文字，悬停才给浅底（Claude Code 桌面端同款
+   交互语言）。配色沿用本文件既有灰阶，不引入新色板。 */
+
+.agent-add-button {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.agent-add-button:hover:not(:disabled) { background: #f1f2f4; color: #344054; }
+.agent-add-button:active:not(:disabled) { background: #e9ebee; }
+.agent-add-button:disabled { cursor: default; opacity: 0.42; }
+.agent-add-button svg { width: 15px; height: 15px; flex: 0 0 15px; stroke-width: 2.1; }
+.agent-add-button-spinner { animation: agent-add-button-spin 900ms linear infinite; }
+
+@keyframes agent-add-button-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 「+」菜单：整块浮在输入框上方（不遮挡正在输入的正文），与 Claude Code 桌面端一致。 */
+.agent-composer-popover.agent-add-menu {
+  right: auto;
+  left: 12px;
+  bottom: calc(100% + 6px);
+  display: grid;
+  gap: 1px;
+  width: max-content;
+  min-width: 248px;
+  max-width: 320px;
+  padding: 4px;
+  border-color: #e8eaee;
+  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+}
+
+.agent-add-menu-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #22272f;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-add-menu-item:hover:not(:disabled) { background: #f0f2f5; }
+.agent-add-menu-item:disabled { cursor: default; opacity: 0.5; }
+.agent-add-menu-item > svg { width: 15px; height: 15px; color: #667085; }
+.agent-add-menu-item > span { display: grid; min-width: 0; gap: 1px; }
+.agent-add-menu-item strong { color: #22272f; font-size: 12px; font-weight: 560; }
+.agent-add-menu-item small { color: #8b93a0; font-size: 10px; line-height: 1.35; }
+
+/* 挂载目录 chip：沿用附件 chip 的形状，图标换文件夹、不给体积信息。 */
+.agent-mount { max-width: 260px; }
+.agent-mount > span { color: #3f4753; font-weight: 520; }
+
 .agent-attachment button svg {
   width: 12px;
   height: 12px;
@@ -3894,7 +3981,7 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   }
 
   .agent-assistant-turn,
-  .agent-message[data-role='user'],
+  .agent-user-turn,
   .agent-tool-row,
   .agent-loading,
   .agent-error {
@@ -3904,7 +3991,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   .agent-chat-empty-heading,
   .agent-conversation,
   .agent-assistant-turn,
-  .agent-message[data-role='user'],
+  .agent-user-turn,
+  .agent-message-actions,
   .agent-chat-quick-prompts,
   .agent-composer-shell,
   .agent-composer-popover,

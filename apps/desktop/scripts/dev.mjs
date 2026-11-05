@@ -140,7 +140,7 @@ function prepareMacElectron() {
   const brandedApp = join(cacheDirectory, 'EverRoom.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
-    brandingVersion: 8,
+    brandingVersion: 10,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,
@@ -165,9 +165,9 @@ function prepareMacElectron() {
   if (clone.status !== 0) cpSync(sourceApp, brandedApp, { recursive: true })
 
   const plistPath = join(brandedApp, 'Contents/Info.plist')
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName EverRoom', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverRoom', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier ai.nxcore.everroom', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName EverOffice', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverOffice', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier ai.nxcore.everoffice', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconFile icon.icns', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverRoom needs microphone access to record and transcribe your voice.', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverRoom needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
@@ -189,7 +189,7 @@ function prepareMacElectron() {
 <plist version="1.0">
 <dict>
   <key>com.apple.application-identifier</key>
-  <string>SS33VDS3A4.ai.nxcore.everroom</string>
+  <string>SS33VDS3A4.ai.nxcore.everoffice</string>
   <key>com.apple.developer.aps-environment</key>
   <string>development</string>
   <key>com.apple.developer.team-identifier</key>

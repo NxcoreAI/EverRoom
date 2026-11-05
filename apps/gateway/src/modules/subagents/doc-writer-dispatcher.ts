@@ -46,13 +46,13 @@ export class DocWriterAgentDispatcher implements DocWriterDispatcher {
 
 /**
  * 校验 document.selection-rewrite 操作的子 Agent 调用溯源（自 room-agent.ts 迁入并换绑）：
- * 必须是 doc-writer 子 Agent 的 internal_workflow 调用、已 completed、在宽限期内，
- * 且（入参带 roomId 时）与操作目标 Room 一致。
+ * 必须是 doc-writer 子 Agent 的 internal_workflow 调用、已 completed、在宽限期内。
+ * Phase 2i 后无 Room 维度：不再比对 invocation 入参与操作目标的 Room 归属。
  * 对齐 agent/service.ts 中主 Agent 会话溯源的 completedSelectionRewriteMatches 规则。
  */
 export function isSelectionRewriteInvocationAuthorized(
   invocation: SubagentInvocation | null | undefined,
-  options: { capabilityId: string; roomId: string | null; now?: Date },
+  options: { capabilityId: string; now?: Date },
 ): boolean {
   if (!invocation || options.capabilityId !== "document.selection-rewrite") return false;
   if (invocation.agentDefinitionId !== DOC_WRITER_AGENT_ID) return false;
@@ -62,10 +62,5 @@ export function isSelectionRewriteInvocationAuthorized(
   if (!Number.isFinite(completedAt)) return false;
   const now = options.now?.getTime() ?? Date.now();
   if (now - completedAt > SELECTION_REWRITE_OPERATION_GRACE_MS) return false;
-  const input = invocation.input;
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    const inputRoomId = (input as Record<string, unknown>).roomId;
-    if (typeof inputRoomId === "string" && inputRoomId !== options.roomId) return false;
-  }
   return true;
 }

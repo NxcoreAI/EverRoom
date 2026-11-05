@@ -1,7 +1,10 @@
 import { LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import type { AgentAttachmentReference, AgentMountedDirectory, AgentNoteCard } from '@nxcore/agent-contract'
+
 import { AgentChatView } from '@/components/agent/AgentChatView'
+import { buildAskBatch, type PendingAskDraft } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
@@ -13,10 +16,20 @@ import '@/components/agent/AgentPanel.css'
 import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
 import { ConversationEmpty } from './ConversationEmpty'
+import { NoteQueueChip } from './NoteQueueChip'
 import './conversation.css'
 
 /** 连接失败的「正在连接」提示延迟出现，避免 ready 帧到达前的闪烁。 */
 const CONNECTING_HINT_DELAY_MS = 1500
+
+/** 批注草稿 → 气泡卡片结构（原文摘录 + 注释原话；来源文件可辨时带标题）。 */
+function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCard[] {
+  return drafts.map((draft) => ({
+    excerpt: (draft.excerpt ?? '').replace(/\s+/g, ' ').trim(),
+    note: (draft.instruction ?? draft.displayMessage ?? draft.message).trim(),
+    ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
+  }))
+}
 
 export interface ConversationPaneProps {
   /** 所属工作空间标签 id：草稿落成会话时把标签视图切到该会话。 */
@@ -68,8 +81,13 @@ export function ConversationPane({ tabId, workspaceId, sessionId }: Conversation
 function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConversationKernel }: ConversationPaneProps & {
   onRestartConversationKernel: () => void
 }) {
-  const hook = useAgentSession('Agent', null, [], { workspaceId, initialSessionId: sessionId })
+  const hook = useAgentSession('Agent', { workspaceId, initialSessionId: sessionId })
   const syncTabSession = useWorkbenchStore((state) => state.syncTabSession)
+
+  const pendingAgentAsk = useWorkbenchStore((state) => state.pendingAgentAsk)
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const clearAskDrafts = useWorkbenchStore((state) => state.clearAskDrafts)
+  const askQueueSendNonce = useWorkbenchStore((state) => state.askQueueSendNonce)
 
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
@@ -122,6 +140,43 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     })
   }, [onRestartConversationKernel, sessionId])
 
+  /**
+   * Office「AI 修改」浮层的待注入消息（Word 选区浮层等）：本面板是这个工作空间的
+   * 对话出口，挂载/激活后消费一次——技术指令进 runtime，人话进气泡（displayPrompt）。
+   * 忙或未就绪时退化为填进输入框，绝不静默丢掉用户敲的东西。
+   */
+  useEffect(() => {
+    if (!pendingAgentAsk || pendingAgentAsk.workspaceId !== workspaceId) return
+    // 会话内核还没就绪：等它就绪再注入，别把消息降级成「Agent 正忙」。
+    if (!hook.scopeReady || hook.loading) return
+    const pending = pendingAgentAsk
+    // 消费即置空，避免重挂载/重渲染重复发送。
+    useWorkbenchStore.getState().setPendingAgentAsk(null)
+    const fallback = () => setDraft(pending.displayMessage ?? pending.message)
+    /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不能再回填输入框。 */
+    const queuesBehindRun = Boolean(hookRef.current.activeRunId)
+    void hookRef.current
+      .sendPrompt(
+        pending.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        // displayPrompt：气泡/标题只显示人话，块索引与工具名只进 runtime。
+        pending.displayMessage,
+      )
+      .then((runId) => {
+        if (runId !== null || queuesBehindRun) return
+        fallback()
+        workbenchToast('Agent 正忙，批注已放进输入框')
+      })
+      .catch(fallback)
+  }, [pendingAgentAsk, workspaceId, hook.scopeReady, hook.loading])
+
   // 会话快照同步回 store：首次发送自动建会话后，侧栏立刻出现该会话（不必等轮询）。
   // 只把「当前请求的会话」（或草稿态自动创建的会话）写回 store；切会话过程中旧的
   // 快照不能把侧栏选中态抢回去。
@@ -155,60 +210,161 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     return () => window.clearTimeout(timer)
   }, [hook.connected, hook.error, hook.sessionId])
 
-  const send = () => {
+  /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
+  const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
+
+  /**
+   * 待发送批注徽章：挂在输入框（composer / hero 输入框）正上方一行。空队列时
+   * NoteQueueChip 自身返回 null，不占任何空间。
+   */
+  const noteQueueChip = (
+    <NoteQueueChip workspaceId={workspaceId} drafts={workspaceAskDrafts} />
+  )
+
+  /**
+   * 发送一轮：输入框里的文件附件（文件引擎引用）与挂载目录一起进本轮运行上下文。
+   * sendPrompt 的入参是长参数位，这里按位补齐并在末尾追加 mountedDirectories。
+   *
+   * 批注队列自动附带：有未发批注时合并进**本次**发送（prompt 尾部拼 batch.message，
+   * displayPrompt 拼人话）——sendPrompt 在 loading/sending 时直接丢弃（返回 null，
+   * 不排队），连发两次第二条必丢，所以必须单次合并。投递成功（含排队）才清空队列。
+   */
+  const send = (attachments: AgentAttachmentReference[] = [], mountedDirectories: AgentMountedDirectory[] = []) => {
     const text = draft.trim()
-    if (!text || !canSend || hook.loading) return
+    // 只有批注也能发：批注等价于一条消息（输入框空 ≠ 没东西可发）。
+    if ((!text && attachments.length === 0 && workspaceAskDrafts.length === 0) || !canSend || hook.loading) return
+    // 合并路径总有用户文本（text 为空时只有附件能触发发送，批注跟着下一轮文本走）。
+    const batch = workspaceAskDrafts.length > 0 ? buildAskBatch(workspaceAskDrafts) : null
+    const prompt = batch ? (text ? `${text}\n\n${batch.message}` : batch.message) : text
+    const displayPrompt = batch ? (text ? `${text}\n\n${batch.displayMessage}` : batch.displayMessage) : undefined
+    // 批注卡片：有批注就带（气泡正文与卡片分离渲染）；displayContent＝输入框正文，
+    // 空串＝纯批注发送（无气泡，只有卡片）。
+    const noteCards = batch ? buildNoteCards(workspaceAskDrafts) : undefined
     setDraft('')
     setComposerResetKey((key) => key + 1)
+    /** 有在跑的 run 时 sendPrompt 会排队并返回 null——排队也算投递成功，不清回输入框。 */
+    const queuesBehindRun = Boolean(hookRef.current.activeRunId)
     // 首条消息在草稿态发出时由 hook 自动建会话（归属当前 workspaceId）。
-    void hook.sendPrompt(text).catch(() => {
+    void hook.sendPrompt(
+      prompt,
+      undefined,
+      undefined,
+      undefined,
+      attachments.length ? attachments : undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      displayPrompt,
+      mountedDirectories.length ? mountedDirectories : undefined,
+      noteCards,
+      text,
+    ).then((runId) => {
+      // 批注已随本轮发出（或已排队）：清掉队列；失败时留在队列里下次再带。
+      if (batch && workspaceId && (runId !== null || queuesBehindRun)) {
+        clearAskDrafts(workspaceId)
+      }
+    }).catch(() => {
       // 发送失败：内容还回输入框；用户已重新输入则不覆盖。
       setDraft((current) => (current ? current : text))
     })
   }
 
-  const composer = (
-    <AgentComposer
-      ref={composerRef}
-      contextSummary=""
-      contextItems={[]}
-      hasSelectedText={false}
-      resetKey={composerResetKey}
-      selectedExternalConversation={null}
-      localAgents={[]}
-      rooms={[]}
-      modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
-      modelPreferenceLocked={Boolean(hook.sessionId)}
-      loadModelAvailability={async () => ({ lite: true, primary: true })}
-      onSelectModelPreference={hook.setModelPreferenceDefault}
-      channelAgentId={null}
-      permissionMode={hook.permissionMode}
-      permissionModeAvailable={hook.permissionModeAvailable}
-      onSelectPermissionMode={hook.setSessionPermissionMode}
-      thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
-      onSelectThinkingLevel={hook.setSessionThinkingLevel}
-      contextUsage={hook.contextUsage}
-      contextCompacting={hook.contextCompacting}
-      ghostSuggestion={null}
-      queuedSubmissions={hook.queuedSubmissions}
-      onRemoveQueuedSubmission={hook.removeQueuedSubmission}
-      value={draft}
-      active={Boolean(hook.activeRunId)}
-      loading={hook.loading}
-      available={canSend}
-      onChange={setDraft}
-      onSelectExternalConversation={() => undefined}
-      onClearContext={() => undefined}
-      onRemoveContext={() => undefined}
-      onStop={() => void hook.stop()}
-      onSubmit={(files) => {
-        if (!draft.trim() && files.length) {
-          workbenchToast('工作台暂不支持直接发送附件，请先用文字描述任务')
+  /**
+   * 一次发出所有批注：合成一条消息（技术指令带编号，人话用圈号），投递成功才清空。
+   * 排队（有 run 在跑）也算投递成功；真正失败时草稿留着，用户可以再发一次。
+   * 气泡带批注卡片（原文摘录 + 注释，hover 只读展开），不显示合成文本。
+   */
+  const sendAskDrafts = () => {
+    const batch = buildAskBatch(workspaceAskDrafts)
+    if (!batch || !workspaceId || !canSend || hook.loading) return
+    void hook
+      .sendPrompt(
+        batch.message,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        batch.displayMessage,
+        undefined,
+        buildNoteCards(workspaceAskDrafts),
+        '',
+      )
+      .then((runId) => {
+        if (runId === null && !hookRef.current.activeRunId) {
+          workbenchToast('Agent 正忙，批注先留着，稍后再发')
           return
         }
-        send()
-      }}
-    />
+        clearAskDrafts(workspaceId)
+      })
+      .catch(() => workbenchToast('发送失败，批注已保留'))
+  }
+
+  /**
+   * 文档内批注面板点了「全部发送」：主进程把动作转成 nonce，这里消费一次。
+   * 用 ref 记住已处理的 nonce，避免重挂载后重复发送。
+   */
+  const handledSendNonce = useRef(0)
+  useEffect(() => {
+    if (askQueueSendNonce === 0 || askQueueSendNonce === handledSendNonce.current) return
+    // 未 ready 时不能先记账：否则后续 ready 的重跑会被「已处理」挡掉，批注永远发不出去。
+    if (workspaceAskDrafts.length === 0 || !hook.scopeReady || hook.loading) return
+    handledSendNonce.current = askQueueSendNonce
+    sendAskDrafts()
+  }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
+
+  /**
+   * 会话态输入框：AgentChatView 在消息列表底部渲染 {composer}（normal flow）。
+   * 徽章与 AgentComposer 平级放同一个 fragment——**不要**包一层 wrapper div：
+   * AgentComposer 的 ResizeObserver 把 --agent-composer-height 写在
+   * shell.parentElement 上（frame 级消费者都依赖它），多包一层就会写到 wrapper
+   * 上、frame 拿不到。徽章自身 absolute 吸在输入框上方（见 .wb-note-chip）。
+   */
+  const composer = (
+    <>
+      {noteQueueChip}
+      <AgentComposer
+        ref={composerRef}
+        contextSummary=""
+        contextItems={[]}
+        hasSelectedText={false}
+        /** 只有批注也允许发送：批注等价于一条消息，空输入不再是空提交。 */
+        hasSubmittableContext={workspaceAskDrafts.length > 0}
+        resetKey={composerResetKey}
+        selectedExternalConversation={null}
+        localAgents={[]}
+        rooms={[]}
+        modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
+        modelPreferenceLocked={Boolean(hook.sessionId)}
+        loadModelAvailability={async () => ({ lite: true, primary: true })}
+        onSelectModelPreference={hook.setModelPreferenceDefault}
+        channelAgentId={null}
+        permissionMode={hook.permissionMode}
+        permissionModeAvailable={hook.permissionModeAvailable}
+        onSelectPermissionMode={hook.setSessionPermissionMode}
+        thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
+        onSelectThinkingLevel={hook.setSessionThinkingLevel}
+        contextUsage={hook.contextUsage}
+        contextCompacting={hook.contextCompacting}
+        ghostSuggestion={null}
+        queuedSubmissions={hook.queuedSubmissions}
+        onRemoveQueuedSubmission={hook.removeQueuedSubmission}
+        value={draft}
+        active={Boolean(hook.activeRunId)}
+        loading={hook.loading}
+        available={canSend}
+        onChange={setDraft}
+        onSelectExternalConversation={() => undefined}
+        onClearContext={() => undefined}
+        onRemoveContext={() => undefined}
+        onStop={() => void hook.stop()}
+        onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
+      />
+    </>
   )
 
   const standaloneError = hook.error && !conversationState ? hook.error : null
@@ -217,6 +373,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     <div
       className="wb-conversation"
       data-state={loadingView ? 'loading' : conversationState ? 'active' : 'empty'}
+      data-has-note-queue={workspaceAskDrafts.length > 0 ? 'true' : undefined}
     >
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">
@@ -263,11 +420,10 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             agentIdByRun={hook.agentIdByRun}
             agentNamesById={{}}
             activityByRun={hook.activityByRun}
-            availableRooms={[]}
             cancelledRunIds={hook.cancelledRunIds}
             composer={composer}
             currentSessionId={hook.sessionId}
-            draftHasContent={Boolean(draft.trim())}
+            draftHasContent={Boolean(draft.trim()) || workspaceAskDrafts.length > 0}
             error={hook.error}
             interruptedRunIds={hook.interruptedRunIds}
             loading={hook.loading}
@@ -276,17 +432,13 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
               workbenchToast(`${item.kind === 'file' ? '文件' : item.kind === 'room' ? '房间' : '对话'}：${item.displayName}`)
             }}
             onOpenSessionLink={() => workbenchToast('会话引用跳转暂未接入工作台')}
-            onRejectDocumentIntent={() => composerRef.current?.focus()}
             onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
             onRetryError={() => hook.reload()}
-            onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, undefined, null, runId)}
+            onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, null, runId)}
             onSelectDocument={() => workbenchToast('文档选择暂未接入工作台产物面板')}
             onSelectPrompt={(prompt) => {
               setDraft(prompt)
               composerRef.current?.focus()
-            }}
-            onSelectRoom={async () => {
-              workbenchToast('房间选择暂未接入工作台')
             }}
             pendingApprovals={hook.pendingApprovals}
             pendingNavigationByRun={{}}
@@ -309,6 +461,8 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           disabled={!canSend || hook.loading}
           onDraftChange={setDraft}
           onSubmit={send}
+          aboveInput={noteQueueChip}
+          hasPendingNotes={workspaceAskDrafts.length > 0}
         />
       )}
     </div>

@@ -39,7 +39,6 @@ interface StoredResource extends ObsidianVaultResource {
   fileIdentity: string
   projectionFileId?: string
   projectionDocumentId?: string
-  memoryProjectionFileId?: string
 }
 
 interface StoredVault extends ObsidianVaultBinding {
@@ -77,7 +76,6 @@ export interface ObsidianVaultRemovedEvent {
   sourceType: ObsidianVaultSourceType
   projectionFileIds: string[]
   projectionDocumentIds: string[]
-  memoryProjectionFileIds: string[]
   updatedAt: string
 }
 
@@ -189,7 +187,6 @@ export class ObsidianVaultService {
   private readonly scanTimers = new Map<string, NodeJS.Timeout>()
   private readonly removedProjectionFileIds = new Map<string, Set<string>>()
   private readonly removedProjectionDocumentIds = new Map<string, Set<string>>()
-  private readonly removedMemoryProjectionFileIds = new Map<string, Set<string>>()
   private vaults: StoredVault[] = []
   private readonly discoveredPaths = new Map<string, string>()
   private readonly discoveredRegistryIds = new Map<string, string>()
@@ -218,19 +215,11 @@ export class ObsidianVaultService {
     try {
       const parsed = JSON.parse(await readFile(this.storePath, 'utf8')) as StoreFile
       if (parsed.version === 1 && Array.isArray(parsed.vaults)) {
-        this.vaults = parsed.vaults.map((vault) => {
-          const mountMode = vault.mountMode ?? 'dedicated'
-          const memoryEnabled = vault.memoryEnabled ?? mountMode === 'memory'
-          return {
-            ...vault,
-            mountMode,
-            memoryEnabled,
-            sourceType: vault.sourceType ?? 'obsidian-vault',
-            registryManaged: vault.registryManaged ?? (mountMode === 'memory' && memoryEnabled && Boolean(vault.registryId)),
-          }
-        })
-        this.autoImportRegisteredVaults = parsed.autoImportRegisteredVaults
-          ?? this.vaults.some((vault) => vault.memoryEnabled && Boolean(vault.registryId))
+        this.vaults = parsed.vaults.map((vault) => ({
+          ...vault,
+          mountMode: vault.mountMode ?? 'dedicated',
+          sourceType: vault.sourceType ?? 'obsidian-vault',
+        }))
         for (const root of parsed.knownVaultRoots ?? []) this.knownVaultRoots.add(root)
         for (const registryId of parsed.ignoredRegistryIds ?? []) this.ignoredRegistryIds.add(registryId)
         for (const root of parsed.ignoredVaultRoots ?? []) this.ignoredVaultRoots.add(root)
@@ -371,18 +360,12 @@ export class ObsidianVaultService {
     await this.rememberVaultRoot(root)
     const existing = this.vaults.find((vault) => resolve(vault.rootPath) === resolve(root))
     if (existing) {
-      if (mountMode === 'memory') {
-        existing.memoryEnabled = true
-      } else if (existing.mountMode === 'memory') {
-        existing.mountMode = mountMode
-        existing.roomId = roomId ?? `vault-room-${randomUUID().slice(0, 8)}`
-      } else if (roomId && existing.roomId !== roomId) {
+      if (roomId && existing.roomId !== roomId) {
         throw new Error(`该 Vault 已导入到另一个 Room（${existing.name}）。`)
       }
       existing.status = 'connected'
       if (effectiveRegistryId) {
         existing.registryId = effectiveRegistryId
-        if (existing.mountMode === 'memory') existing.registryManaged = true
       }
       await this.scan(existing.id, false)
       this.startWatching(existing.id)
@@ -395,9 +378,7 @@ export class ObsidianVaultService {
       roomId: roomId ?? `vault-room-${randomUUID().slice(0, 8)}`,
       mountMode,
       sourceType,
-      memoryEnabled: mountMode === 'memory',
       ...(effectiveRegistryId ? { registryId: effectiveRegistryId } : {}),
-      registryManaged: mountMode === 'memory' && Boolean(effectiveRegistryId),
       name: basename(root),
       rootPath: root,
       attachmentFolderPath: await this.readAttachmentFolder(root),
@@ -485,7 +466,6 @@ export class ObsidianVaultService {
     const registeredIds = new Set(registered.map((item) => item.registryId).filter((id): id is string => Boolean(id)))
     let changed = false
     const reboundVaults: StoredVault[] = []
-    const importedVaults: StoredVault[] = []
     const removedVaults: ObsidianVaultRemovedEvent[] = []
     for (const item of registered) {
       const root = await this.resolveRoot(item.rootPath).catch(() => null)
@@ -494,16 +474,9 @@ export class ObsidianVaultService {
       const boundByRegistry = this.vaults.find((vault) => vault.registryId === item.registryId)
       const boundByPath = this.vaults.find((vault) => comparablePath(vault.rootPath, this.discoveryOptions.platform ?? process.platform) === comparablePath(root, this.discoveryOptions.platform ?? process.platform))
       const bound = boundByRegistry ?? boundByPath
-      if (!bound) {
-        if (!this.autoImportRegisteredVaults || !item.registryId || this.ignoredRegistryIds.has(item.registryId)) continue
-        const imported = await this.mount(root, undefined, 'memory', item.registryId)
-        importedVaults.push(this.requireVault(imported.id))
-        changed = true
-        continue
-      }
+      if (!bound) continue
       if (item.registryId && bound.registryId !== item.registryId && (!boundByRegistry || boundByPath === bound)) {
         bound.registryId = item.registryId
-        if (bound.mountMode === 'memory') bound.registryManaged = true
         changed = true
       }
       if (resolve(bound.rootPath) === resolve(root)) continue
@@ -519,13 +492,15 @@ export class ObsidianVaultService {
       changed = true
     }
     for (const vault of [...this.vaults]) {
-      if (!vault.registryManaged || vault.mountMode !== 'memory' || !vault.registryId || registeredIds.has(vault.registryId)) continue
+      if (!vault.registryId || registeredIds.has(vault.registryId)) continue
+      // 挂载到 Room 的 Vault 生命周期由 Room 管理，注册表移除不触发卸载。
+      // （历史上还有仅进记忆的挂载会随注册表移除，该形态已下线。）
+      if (vault.mountMode === 'dedicated' || vault.mountMode === 'embedded') continue
       removedVaults.push(this.removeVault(vault, { suppressRoot: true, ignoreRegistry: false }))
       changed = true
     }
     if (changed) await this.persist()
     for (const vault of reboundVaults) this.emit(vault)
-    for (const vault of importedVaults) this.emit(vault)
     for (const event of removedVaults) await this.emitRemoved(event)
     if (notify && (changed || registryChanged)) this.emitDiscoveryChanged()
   }
@@ -591,7 +566,6 @@ export class ObsidianVaultService {
     this.discoveredPaths.set(id, item.rootPath)
     if (item.registryId) this.discoveredRegistryIds.set(id, item.registryId)
     const mounted = this.vaults.find((vault) => resolve(vault.rootPath) === resolve(item.rootPath))
-    const roomMounted = mounted && mounted.mountMode !== 'memory' ? mounted : null
     return {
       id,
       name: basename(item.rootPath),
@@ -601,8 +575,7 @@ export class ObsidianVaultService {
       sourceType: mounted?.sourceType ?? await this.sourceTypeOfRoot(item.rootPath),
       lastOpenedAt: item.lastOpenedAt,
       mountedVaultId: mounted?.id ?? null,
-      mountedRoomId: roomMounted?.roomId ?? null,
-      memoryEnabled: mounted?.memoryEnabled ?? false,
+      mountedRoomId: mounted?.roomId ?? null,
     }
   }
 
@@ -674,14 +647,6 @@ export class ObsidianVaultService {
     await this.persist()
   }
 
-  async setMemoryProjectionFileId(vaultId: string, relativePath: string, fileId: string): Promise<void> {
-    const vault = this.requireVault(vaultId)
-    const resource = vault.resources.find((item) => item.relativePath === relativePath)
-    if (!resource) return
-    resource.memoryProjectionFileId = fileId
-    await this.persist()
-  }
-
   noteForDocument(documentId: string): { vaultId: string; resourceId: string } | null {
     for (const vault of this.vaults) {
       const resource = vault.resources.find((item) => item.projectionDocumentId === documentId)
@@ -702,22 +667,12 @@ export class ObsidianVaultService {
     return ids
   }
 
-  takeRemovedMemoryProjectionFileIds(vaultId: string): string[] {
-    const ids = [...(this.removedMemoryProjectionFileIds.get(vaultId) ?? [])]
-    this.removedMemoryProjectionFileIds.delete(vaultId)
-    return ids
-  }
-
   projectionFileIds(vaultId: string): string[] {
     return this.requireVault(vaultId).resources.flatMap((resource) => resource.projectionFileId ? [resource.projectionFileId] : [])
   }
 
   projectionDocumentIds(vaultId: string): string[] {
     return this.requireVault(vaultId).resources.flatMap((resource) => resource.projectionDocumentId ? [resource.projectionDocumentId] : [])
-  }
-
-  memoryProjectionFileIds(vaultId: string): string[] {
-    return this.requireVault(vaultId).resources.flatMap((resource) => resource.memoryProjectionFileId ? [resource.memoryProjectionFileId] : [])
   }
 
   async rescan(vaultId: string): Promise<ObsidianVaultBinding> {
@@ -938,7 +893,6 @@ export class ObsidianVaultService {
         vaultId: vault.id,
         ...(previous?.projectionFileId ? { projectionFileId: previous.projectionFileId } : {}),
         ...(previous?.projectionDocumentId ? { projectionDocumentId: previous.projectionDocumentId } : {}),
-        ...(previous?.memoryProjectionFileId ? { memoryProjectionFileId: previous.memoryProjectionFileId } : {}),
         assetUrl: item.kind === 'note' ? null : this.assetUrl(vault.id, previous?.id ?? ''),
       }
     }).map((resource) => ({
@@ -956,12 +910,6 @@ export class ObsidianVaultService {
       const pending = this.removedProjectionDocumentIds.get(vault.id) ?? new Set<string>()
       removedDocumentIds.forEach((id) => pending.add(id))
       this.removedProjectionDocumentIds.set(vault.id, pending)
-    }
-    const removedMemoryIds = [...unmatched].flatMap((resource) => resource.memoryProjectionFileId ? [resource.memoryProjectionFileId] : [])
-    if (removedMemoryIds.length) {
-      const pending = this.removedMemoryProjectionFileIds.get(vault.id) ?? new Set<string>()
-      removedMemoryIds.forEach((id) => pending.add(id))
-      this.removedMemoryProjectionFileIds.set(vault.id, pending)
     }
     vault.noteCount = vault.resources.filter((resource) => resource.kind === 'note').length
     vault.attachmentCount = vault.resources.length - vault.noteCount
@@ -1080,7 +1028,6 @@ export class ObsidianVaultService {
       fileIdentity: _fileIdentity,
       projectionFileId: _projectionFileId,
       projectionDocumentId: _projectionDocumentId,
-      memoryProjectionFileId: _memoryProjectionFileId,
       ...value
     } = resource
     return { ...value }
@@ -1128,7 +1075,6 @@ export class ObsidianVaultService {
       sourceType: vault.sourceType,
       projectionFileIds: vault.resources.flatMap((resource) => resource.projectionFileId ? [resource.projectionFileId] : []),
       projectionDocumentIds: vault.resources.flatMap((resource) => resource.projectionDocumentId ? [resource.projectionDocumentId] : []),
-      memoryProjectionFileIds: vault.resources.flatMap((resource) => resource.memoryProjectionFileId ? [resource.memoryProjectionFileId] : []),
       updatedAt: new Date().toISOString(),
     }
   }

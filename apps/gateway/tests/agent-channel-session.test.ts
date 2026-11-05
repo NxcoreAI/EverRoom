@@ -74,7 +74,6 @@ async function createHarness() {
     { info: () => undefined },
     undefined,
     undefined,
-    undefined,
     true,
     (target) => (target.id === CHANNEL_AGENT_ID ? channel : null),
   );

@@ -34,7 +34,6 @@ export interface DocumentToolDiagnostic {
   toolName: string;
   sessionId: string;
   runId: string;
-  roomId: string | null;
   durationMs: number;
   /** Number of attempts for the same run/tool/operation/sequence tuple. */
   attempt?: number;
@@ -63,7 +62,7 @@ const DIAGNOSTIC_FIELDS = [
   "readReceiptResolved", "operationIdCorrected", "blockCount",
   "operationInferred", "finalSequenceCorrected", "adjacentContextStripped",
   "requiredMaximumCharacters", "expectedFinalSequence", "beforeCharacters", "afterCharacters",
-  "originalCode", "repeatedAttempts", "memoryIndexCount", "invalidTargets", "availableTargets",
+  "originalCode", "repeatedAttempts", "invalidTargets", "availableTargets",
 ] as const;
 
 const NON_PROGRESS_PATCH_ERRORS = new Set([
@@ -363,9 +362,8 @@ export class DocumentMcpHost {
     if (
       bound.agentSessionId !== request.agentSessionId
       || bound.runId !== request.runId
-      || bound.roomId !== request.roomId
     ) {
-      throw new Error("MCP_CONTEXT_MISMATCH: MCP session is bound to another Agent run or Room");
+      throw new Error("MCP_CONTEXT_MISMATCH: MCP session is bound to another Agent run");
     }
   }
 
@@ -391,7 +389,6 @@ export class DocumentMcpHost {
         toolName: name,
         sessionId: context.agentSessionId,
         runId: context.runId,
-        roomId: context.roomId,
         durationMs: Math.round(performance.now() - startedAt),
         attempt,
         ...(recoveredFromErrorCode ? { recovered: true, recoveredFromErrorCode } : {}),
@@ -444,7 +441,6 @@ export class DocumentMcpHost {
         toolName: name,
         sessionId: context.agentSessionId,
         runId: context.runId,
-        roomId: context.roomId,
         durationMs: Math.round(performance.now() - startedAt),
         attempt,
         input: diagnosticPayload(args),

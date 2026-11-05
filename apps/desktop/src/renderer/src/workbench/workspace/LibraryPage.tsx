@@ -1,5 +1,5 @@
 import { FileText, RefreshCw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
 
@@ -7,53 +7,28 @@ import { ConfirmModal } from '../ui/modal'
 import { EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import {
-  FileGrid,
   FileImportButton,
   FileLibraryLoading,
   FileLibraryUnavailable,
-  FileList,
-  FileNoMatches,
-  FileToolbar,
-  SOURCE_FILTERS,
-  countSourceFilters,
-  filterLibraryFiles,
-  groupFilesByDirectory,
-  type FileItemActions,
-  type FileViewMode,
-  type SourceFilterKey,
 } from './fileBrowser'
+import type { FileItemActions } from './fileItemViews'
+import { LibraryBrowser } from './LibraryBrowser'
 import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 
 /**
- * 资料库页：本工作空间专属的文件管理器（搜索 / 来源筛选 / 列表·网格 / 相对目录分组）。
+ * 资料库页：本工作空间专属的文件管理器（返回上一级 / 面包屑 / 搜索 / 网格·列表）。
  *
+ * 布局照 everoffice 原型「资料库」：目录层级由 `relativePath` 派生，网格里文件夹
+ * 在前、文件在后，列表是「名称 / 本地位置 / 修改时间 / 大小 / 操作」六列。
  * 文件入库时带 workspaceId（手动导入按当前空间，Agent 产物按其会话所属空间），
  * 本页只拉 `workspace.id` 名下的文件；存量文件迁移后归默认工作区。
  * 打开文件一律走注入的 onOpenFile → 工作空间右侧气泡窗；本页自己不挂编辑器。
  */
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
   const library = useFileLibrary(workspace.id)
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<SourceFilterKey>('all')
-  const [view, setView] = useState<FileViewMode>('list')
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
-
-  const filtered = useMemo(
-    () => filterLibraryFiles(library.items, query, filter),
-    [library.items, query, filter],
-  )
-  const counts = useMemo(() => countSourceFilters(library.items), [library.items])
-  const filters = useMemo(
-    () => SOURCE_FILTERS.map((option) => ({ ...option, count: counts[option.key] })),
-    [counts],
-  )
-  // 目录分组只在「全部 + 未搜索」时用，搜索/筛选后平铺更符合预期。
-  const groups = useMemo(
-    () => (filter === 'all' && !query.trim() ? groupFilesByDirectory(filtered) : undefined),
-    [filter, filtered, query],
-  )
 
   const openOriginal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
@@ -164,13 +139,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onDelete: (item) => setPendingDelete(item),
   }
 
-  const clearFilters = () => {
-    setQuery('')
-    setFilter('all')
-  }
-
-  const showToolbar = library.state === 'ready' && library.items.length > 0
-
   return (
     <div className="wb-wspage wb-library-page">
       <header className="wb-wspage-head">
@@ -186,18 +154,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         </div>
       </header>
 
-      {showToolbar ? (
-        <FileToolbar
-          query={query}
-          onQueryChange={setQuery}
-          filters={filters}
-          filter={filter}
-          onFilterChange={setFilter}
-          view={view}
-          onViewChange={setView}
-        />
-      ) : null}
-
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
 
@@ -209,16 +165,8 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         />
       ) : null}
 
-      {library.state === 'ready' && library.items.length > 0 && filtered.length === 0 ? (
-        <FileNoMatches onClear={clearFilters} />
-      ) : null}
-
-      {library.state === 'ready' && filtered.length > 0 ? (
-        view === 'list' ? (
-          <FileList items={filtered} groups={groups} actions={actions} />
-        ) : (
-          <FileGrid items={filtered} actions={actions} />
-        )
+      {library.state === 'ready' && library.items.length > 0 ? (
+        <LibraryBrowser items={library.items} actions={actions} />
       ) : null}
 
       <ConfirmModal

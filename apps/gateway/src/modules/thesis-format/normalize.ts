@@ -31,7 +31,11 @@ function sniffTemplateExt(bytes: Buffer): ".docx" | ".doc" | null {
   return null;
 }
 
-export async function unpackTemplateInput(bytes: Buffer, name: string): Promise<TemplateMember[]> {
+export async function unpackTemplateInput(
+  bytes: Buffer,
+  name: string,
+  scratchRoot?: string | null,
+): Promise<TemplateMember[]> {
   const ext = extname(name).toLowerCase();
   if (ext !== ".zip") {
     if (!MEMBER_EXTENSIONS.has(ext)) throw new Error(`thesis_template_unsupported_extension:${ext || "(none)"}`);
@@ -59,11 +63,14 @@ export async function unpackTemplateInput(bytes: Buffer, name: string): Promise<
 }
 
 /** .doc → .docx（soffice headless）。dotx 本就是 zip OOXML，仅改扩展名。 */
-export async function normalizeMembersToDocx(members: TemplateMember[]): Promise<TemplateMember[]> {
+export async function normalizeMembersToDocx(
+  members: TemplateMember[],
+  scratchRoot?: string | null,
+): Promise<TemplateMember[]> {
   const out: TemplateMember[] = [];
   for (const member of members) {
     if (member.ext === ".doc") {
-      const converted = await convertDocToDocx(member.bytes, member.name);
+      const converted = await convertDocToDocx(member.bytes, member.name, scratchRoot);
       if (converted) {
         out.push({ name: member.name.replace(/\.doc$/i, ".docx"), ext: ".docx", bytes: converted });
         continue;
@@ -78,8 +85,15 @@ export async function normalizeMembersToDocx(members: TemplateMember[]): Promise
   return out;
 }
 
-async function convertDocToDocx(bytes: Buffer, filename: string): Promise<Buffer | null> {
-  const workDirectory = await mkdtemp(join(tmpdir(), "everroom-thesis-"));
+async function convertDocToDocx(
+  bytes: Buffer,
+  filename: string,
+  scratchRoot?: string | null,
+): Promise<Buffer | null> {
+  // 有空间 scratch 就落 `<space>/.tmp/thesis/…`（随空间清理），否则回落系统临时目录。
+  const workDirectory = scratchRoot
+    ? await mkdtemp(join(scratchRoot, "convert-"))
+    : await mkdtemp(join(tmpdir(), "everroom-thesis-"));
   try {
     const inputBase = `input${extname(filename).toLowerCase() || ".bin"}`;
     const inputPath = join(workDirectory, inputBase);
