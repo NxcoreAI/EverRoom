@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { PlanItem, PlanStatus } from '@nxcore/agent-contract'
 
-import { applyLocalMove, groupPlanItems, isPlanOverdue, planOwnerLabel, resolveDrop, upsertPlanItem } from './planDrag'
+import { applyLocalMove, groupPlanItems, isPlanOverdue, resolveDrop, upsertPlanItem } from './planDrag'
 
 /**
  * 看板拖拽的全部状态机都在 `resolveDrop` / `applyLocalMove` 里（纯函数），
@@ -131,15 +131,16 @@ describe('upsertPlanItem', () => {
     const next = upsertPlanItem(board, item('z', 'todo'))
     expect(next.at(-1)!.id).toBe('z')
   })
+
+  it('非对象输入（SSE ready 帧缺 item 的 undefined）原样丢弃，不污染数组', () => {
+    // 回归（2026-11-05）：undefined 曾被追加进数组，看板渲染即崩
+    // （Cannot read properties of undefined (reading 'status')）。
+    expect(upsertPlanItem([], undefined as unknown as Parameters<typeof upsertPlanItem>[1])).toEqual([])
+    expect(upsertPlanItem(board, undefined as unknown as Parameters<typeof upsertPlanItem>[1])).toEqual(board)
+  })
 })
 
 describe('展示辅助', () => {
-  it('负责人标签', () => {
-    expect(planOwnerLabel(item('a', 'todo'))).toBe('待认领')
-    expect(planOwnerLabel(item('a', 'todo', { ownerKind: 'user' }))).toBe('我')
-    expect(planOwnerLabel(item('a', 'todo', { ownerKind: 'agent', ownerAgentId: 'main' }))).toBe('Agent main')
-  })
-
   it('截止判断留一天缓冲（当天不算过期）', () => {
     const now = Date.parse('2026-11-03T12:00:00.000Z')
     expect(isPlanOverdue('2026-11-03T09:00:00.000Z', now)).toBe(false)

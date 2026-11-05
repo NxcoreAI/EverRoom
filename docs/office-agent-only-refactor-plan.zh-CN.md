@@ -1,7 +1,7 @@
 # 只保留 Office + Agent：移除记忆与 Context Room 的可执行改造计划
 
 > 版本：v1 · 2026-10-23 · 状态：执行中
-> 范围：`NxcoreAI/EverRoom`（`nxcore-ce`）monorepo
+> 范围：`NxcoreAI/EverOffice`（`nxcore-ce`）monorepo
 > 前置审计：行号以 2026-10-23 工作区（起点 `3cbfc289`）为准。
 > 关联文档：[agent-architecture-optimization-plan.zh-CN.md](./agent-architecture-optimization-plan.zh-CN.md)、[agent-document-development-sop.md](./agent-document-development-sop.md)
 
@@ -257,7 +257,7 @@ MCP server name 同步由 `everroom-context-room` 改为 `everroom-office`（`mc
 | 2026-10-23 | Phase 1d | `data-migrations` 去 `memoryService`：`JobType` 只剩 `source_gc`、幂等门简化为内容 hash、删除 `indexMemory`/`afterJob`/记忆检索补全/GC 记忆清理，导入后运行直接完成（`phase` 由 `memory` 改 `finalizing`） | 完成（tsc 干净；套件维持基线 10 个失败；两个迁移测试文件 10 用例全绿，重启恢复用例改为真实崩溃路径） |
 | 2026-10-23 | Phase 1e | 补最后一条静态边：`documents/core/{commit-service,lifecycle-service}` 不再 `enqueueWritingStyleExtract`（提交/回收站/恢复/清空共 6 处）——此前扫描漏了 `writing-style`，它是唯一「存活 → 将删」的遗漏模块；`doc-writer` 的风格注入为结构化 provider，无静态依赖 | 完成（tsc 干净；`document-*` 87 用例全绿；套件维持基线 10 个失败） |
 | 2026-10-23 | Phase 1 闸门 | 网关「存活模块 → 将删模块」反向依赖 **18 → 0**（`data-migrations` 是最后一个）。剩余命中全部属于 Phase 2 范围：`create-server.ts` 40 处装配（§3 表逐行处理）+ 桌面 3 个自身即将删除的文件（`main/knowledge/llm-env.ts`、`shared/knowledge.ts`、`main/screenshot/window-screenshot-service.ts`，依赖方向均为将删→将删） | Phase 1 完成 |
-| 2026-10-23 | Phase 2a | 连接器子包去记忆扇出：`submodules/everroom-connectors/gateway-module` 删除 `memorySink`/`projectedRowIds` 与 `connector-memory.ts`，`domain-projection.ts` 只剩域投影（去掉 `IdentityRewriteSummary`/`IDENTITY_TABLES`/`rewriteConnectorRefIdentities`），收敛出自有 `errors.ts`（`IngestError`/`ConnectorConvertErrorCode`），`ports.ts` 不再转出宿主 `IngestService`；同时删掉网关侧死代码 `server/connector-identity-rewrite.ts` | 完成（子包 tsc 维持基线 202 错、6 文件 28 用例全绿；网关 tsc 干净） |
+| 2026-10-23 | Phase 2a | 连接器子包去记忆扇出：`submodules/everoffice-connectors/gateway-module` 删除 `memorySink`/`projectedRowIds` 与 `connector-memory.ts`，`domain-projection.ts` 只剩域投影（去掉 `IdentityRewriteSummary`/`IDENTITY_TABLES`/`rewriteConnectorRefIdentities`），收敛出自有 `errors.ts`（`IngestError`/`ConnectorConvertErrorCode`），`ports.ts` 不再转出宿主 `IngestService`；同时删掉网关侧死代码 `server/connector-identity-rewrite.ts` | 完成（子包 tsc 维持基线 202 错、6 文件 28 用例全绿；网关 tsc 干净） |
 | 2026-10-23 | Phase 2b-1 | 把文稿历史回填 worker 从 `modules/ingest/document-history-backfill-worker.ts` 迁到 `modules/documents/index-backfill/history-worker.ts`——它是 Yjs 版本快照能力，属 Office，不能随理解引擎一起删 | 完成（tsc 干净；`document-core`/`documents` 套件维持基线） |
 | 2026-10-23 | Phase 2b-2 | 停掉文稿出队到统一理解引擎：删 `documents/integration-outbox.ts` 的 `document.ingest`/`document.delete` 作业与契约、`core/{commit-service,lifecycle-service}` 的 `enqueueDocumentIngest`/`enqueueDocumentDelete`、`files/service` 的 `VersionIngestResult.ingestEventId`（改 `{ parsedId, dataType }` + `touchVersionParsed`） | 完成（tsc 干净；`documents`/`document-core`/`files-*` 用例改断言「不再有 ingest 作业」后全绿） |
 | 2026-10-23 | Phase 2b-3 | 删除统一理解引擎与网页剪藏：`modules/ingest/`（24 文件）、`modules/clipper/`、`apps/gateway/ingest-policy-defaults.json`、`agents/ingest-filter/`，连带 6 个专属测试。跨边界断点就地补齐：`knowledge/service` 内联 `truncateUtf8`、子包 `converters.ts` 改用自有 `errors.js`、删 `tests/memory-office-pdf-pipeline.test.ts` | 完成（tsc 干净；套件 9 个失败 = 基线：`file-catalog` 与 `sync-providers` 保留，`ingest-pipeline` 随用例删除） |

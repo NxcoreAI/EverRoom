@@ -248,7 +248,7 @@ readAuthority.issue(
 - 工具 description 的机械契约（sequence 连续、64KiB/块、2MiB 累计、readReceipt/operationId 免搬运）。
 
 **agents/main/SYSTEM.md 新增/修改**：
-1. 安全与边界第 3 条（L6，context_room 工具段）后追加：涉及 EverRoom 文档的**正文内容产出**（新建、修改、续写、选区改写）必须先经 `document_draft` 调度 doc-writer 子 agent 获得内容，再调用 write/patch 工具落库；不得自行撰写正文。
+1. 安全与边界第 3 条（L6，context_room 工具段）后追加：涉及 EverOffice 文档的**正文内容产出**（新建、修改、续写、选区改写）必须先经 `document_draft` 调度 doc-writer 子 agent 获得内容，再调用 write/patch 工具落库；不得自行撰写正文。
 2. 新增**逐字转发纪律**：`document_draft` 返回的 title/appendChunks/hunks/replacementText 必须逐字转发给对应工具，不得改写、增删、重组、合并或自行补写任何正文；需要调整内容时携带修改指令重新调用 `document_draft`。
 3. 失败语义：document_draft 失败/超时/被并发拒绝时，如实告知用户失败原因与可重试性；**禁止回退为主 agent 自行生成正文**（用户决策 4）。
 4. 交互输出规则第 5 条（L26）改为基于 digest 汇报（目标、大纲、字数、待审阅事项），不贴正文。

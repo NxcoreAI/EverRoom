@@ -16,7 +16,7 @@ function extOfImageMime(mime: string): string {
  * everroom-material:// 素材回源器：hash 命中本地网关 /v1/materials/:hash。
  * 任何失败（无桥/网络/404/非图片）都返回 null → 引擎按图片下载失败跳过该图。
  */
-export function createEverroomMaterialResolver(
+export function createEverofficeMaterialResolver(
   filesBridge: () => FilesGatewayBridge | null,
 ): GenOfficeMaterialResolver {
   return {

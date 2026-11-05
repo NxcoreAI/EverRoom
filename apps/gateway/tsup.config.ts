@@ -2,7 +2,7 @@ import { defineConfig } from "tsup";
 import { resolve } from "node:path";
 
 const submoduleGateway = (p: string) =>
-  resolve(__dirname, "../../submodules/everroom-connectors/gateway-module", p);
+  resolve(__dirname, "../../submodules/everoffice-connectors/gateway-module", p);
 
 export default defineConfig({
   entry: [

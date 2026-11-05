@@ -1,6 +1,6 @@
 # 测试要点：幻灯片质量整改 · 第一批（PR #315）
 
-- 分支：`feat/slides-layout-tree`　PR：[#315](https://github.com/NxcoreAI/EverRoom/pull/315)（base `dev`，已合入最新 dev）
+- 分支：`feat/slides-layout-tree`　PR：[#315](https://github.com/NxcoreAI/EverOffice/pull/315)（base `dev`，已合入最新 dev）
 - 日期：2026-10-22
 - 范围：字号体系 / 颜色守门 / 值轴刻度 / 结构指标 / 说明书收敛 / 进度卡
 

@@ -382,30 +382,6 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('agent-auth:event', handleEvent)
     },
   },
-  externalDocuments: {
-    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
-    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
-    importBatch: (input) => invoke('external-documents:import-batch', input),
-    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
-    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
-    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
-    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
-    importCommit: (input) => invoke('external-documents:import-commit', input),
-    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
-    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
-    importHistory: (documentId) => invokeQuietly('external-documents:import-history', documentId),
-    checkExternalUpdate: (documentId) => invoke('external-documents:check-external-update', documentId),
-    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
-    createExport: (input) => invoke('external-documents:create-export', input),
-    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
-    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
-    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
-    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
-    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
-    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
-    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
-    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
-  },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),
     saveServers: (servers) => invoke('mcp:servers:save', servers),
@@ -520,8 +496,6 @@ const api: NxcoreDesktopApi = {
       invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
   },
   subagents: {
-    dispatchSelectionRewrite: (input: SubagentSelectionRewriteInput) =>
-      invokeQuietly('subagents:dispatch-selection-rewrite', input),
     getSubagentInvocation: (invocationId: string) =>
       invokeQuietly('subagents:get-invocation', invocationId),
     cancelSubagentInvocation: (invocationId: string) =>
@@ -728,66 +702,6 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('cursor-completion-agent:event', handleEvent)
     },
   },
-  documents: {
-    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
-    list: (roomId?: string | null) => invoke('documents:list', roomId),
-    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
-    get: (documentId) => invoke('documents:get', documentId),
-    listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
-    listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
-    listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
-    getVersionSnapshot: (documentId, version) => invoke('documents:get-version-snapshot', documentId, version),
-    getDiff: (documentId, fromVersion, toVersion) => invoke('documents:get-diff', documentId, fromVersion, toVersion),
-    versionChangeSummary: (documentId, version) => invoke('documents:version-change-summary', documentId, version),
-    listDocumentComments: (documentId) => invoke('documents:list-document-comments', documentId),
-    createDocumentComment: (documentId, input) => invoke('documents:create-document-comment', documentId, input),
-    resolveDocumentComment: (documentId, commentId, resolved) => invoke('documents:resolve-document-comment', documentId, commentId, resolved),
-    deleteDocumentComment: (documentId, commentId) => invoke('documents:delete-document-comment', documentId, commentId),
-    getOverview: (documentId) => invoke('documents:get-overview', documentId),
-    generateOverview: (documentId) => invoke('documents:generate-overview', documentId),
-    getSectionPreview: (documentId, input) => invoke('documents:get-section-preview', documentId, input),
-    restoreVersion: (documentId, version, baseVersion) =>
-      invoke('documents:restore-version', documentId, version, baseVersion),
-    resolveBlockReferences: (input) => invoke('documents:resolve-block-references', input),
-    listOperations: (filters) => invokeQuietly('documents:list-operations', filters),
-    startOperation: (input) => invokeQuietly('documents:start-operation', input),
-    getOperation: (operationId, context) => invokeQuietly('documents:get-operation', operationId, context),
-    executeOperationCommand: (operationId, input) =>
-      invokeQuietly('documents:execute-operation-command', operationId, input),
-    storeImage: (documentId, input) => invoke('documents:store-image', documentId, input),
-    import: (input) => invoke('documents:import', input),
-    save: (documentId, input) => invoke('documents:save', documentId, input),
-    delete: (documentId) => invoke('documents:delete', documentId),
-    move: (documentId, fromRoomId, roomId) => invoke('documents:move', documentId, fromRoomId, roomId),
-    moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
-    restore: (documentId) => invoke('documents:restore', documentId),
-    deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
-    emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
-    exportPdf: (input) => invoke('documents:export-pdf', input),
-    subscribe: (roomId?: string | null) => invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId?: string | null) => invoke('documents:unsubscribe', roomId),
-    onEvent: (listener) => {
-      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
-        listener(frame)
-      }
-      ipcRenderer.on('documents:event', handleEvent)
-      return () => ipcRenderer.removeListener('documents:event', handleEvent)
-    },
-    onOperationChanged: (listener) => {
-      const handleEvent = (_event: Electron.IpcRendererEvent, operationId: string) => {
-        listener(operationId)
-      }
-      ipcRenderer.on('documents:operation-changed', handleEvent)
-      return () => ipcRenderer.removeListener('documents:operation-changed', handleEvent)
-    },
-    onReady: (listener) => {
-      const handleEvent = (_event: Electron.IpcRendererEvent, roomId: string) => {
-        listener(roomId)
-      }
-      ipcRenderer.on('documents:ready', handleEvent)
-      return () => ipcRenderer.removeListener('documents:ready', handleEvent)
-    },
-  },
   sources: {
     list: () => invoke('sources:list'),
     listFiles: (id) => invoke('sources:list-files', id),
@@ -945,7 +859,7 @@ const api: NxcoreDesktopApi = {
       },
     ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
     reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
-    /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
+    /** 导出 PDF（内置渲染引擎；老运行时回退 LibreOffice，两者都不可用才返回 { unavailable: true }）。 */
     exportPdf: (workspaceId: string, fileEntryId: string) =>
       invoke('thesis-format:export:pdf', fileEntryId),
     removeCard: (workspaceId: string, cardId: string) =>

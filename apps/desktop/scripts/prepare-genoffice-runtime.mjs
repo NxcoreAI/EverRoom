@@ -24,11 +24,13 @@ const slidesRoot = join(sourceRoot, 'apps', 'slides')
 const slidesOutput = join(slidesRoot, 'out')
 const pdfRoot = join(sourceRoot, 'apps', 'pdf')
 const pdfOutput = join(pdfRoot, 'out')
+const markdownRoot = join(sourceRoot, 'apps', 'markdown')
+const markdownOutput = join(markdownRoot, 'out')
 const sidecarOutput = join(sheetsRoot, 'native', 'xlsx-engine', 'target', 'release', process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar')
 const outputRoot = join(desktopRoot, 'build', 'genoffice-runtime')
 const stagingRoot = join(desktopRoot, 'build', `.genoffice-runtime-${process.pid}`)
 const cacheFile = join(outputRoot, 'manifest.json')
-const prepareVersion = 6
+const prepareVersion = 7
 const nodeBuiltins = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]))
 
 function fail(message) {
@@ -105,7 +107,7 @@ function sourceKey() {
     platform: process.platform,
     arch: process.arch,
     electronMajor: 39,
-    formats: ['docx', 'xlsx', 'pptx', 'pdf'],
+    formats: ['docx', 'xlsx', 'pptx', 'pdf', 'markdown'],
   }
 }
 
@@ -127,6 +129,9 @@ function cacheMatches(key) {
       && existsSync(join(outputRoot, 'pdf', 'main', 'embed.js'))
       && existsSync(join(outputRoot, 'pdf', 'preload', 'index.js'))
       && existsSync(join(outputRoot, 'pdf', 'renderer', 'index.html'))
+      && existsSync(join(outputRoot, 'markdown', 'main', 'embed.js'))
+      && existsSync(join(outputRoot, 'markdown', 'preload', 'index.js'))
+      && existsSync(join(outputRoot, 'markdown', 'renderer', 'index.html'))
       && existsSync(join(outputRoot, 'native', process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar'))
       && existsSync(join(outputRoot, 'fixtures', 'simple.docx'))
   } catch {
@@ -137,14 +142,14 @@ function cacheMatches(key) {
 function assertApacheOnlyBuild() {
   if (!existsSync(join(sourceRoot, 'ee'))) return
   if (resolve(docsOutput).startsWith(`${resolve(sourceRoot, 'ee')}/`)) {
-    fail('enterprise edition output must never enter the EverRoom runtime')
+    fail('enterprise edition output must never enter the EverOffice runtime')
   }
 }
 
 function assertEmbedBundle(mainDirectory) {
   const embed = join(mainDirectory, 'embed.js')
   if (!existsSync(embed)) {
-    fail('Docs embed entry is unavailable. Update the NxcoreAI/genoffice submodule to the EverRoom embed branch.')
+    fail('Docs embed entry is unavailable. Update the NxcoreAI/genoffice submodule to the EverOffice embed branch.')
   }
   const javascript = filesUnder(mainDirectory).filter((path) => path.endsWith('.js'))
   const forbidden = [
@@ -210,7 +215,7 @@ function copyDocsRuntime() {
     ['OpenAI endpoint', 'api.openai.com'],
   ]
   for (const [label, marker] of forbiddenBehaviors) {
-    if (executableText.includes(marker)) fail(`${label} leaked into the EverRoom runtime`)
+    if (executableText.includes(marker)) fail(`${label} leaked into the EverOffice runtime`)
   }
 }
 
@@ -251,7 +256,7 @@ function copySlidesRuntime() {
     ['Anthropic endpoint', 'api.anthropic.com'],
     ['OpenAI endpoint', 'api.openai.com'],
   ]) {
-    if (executableText.includes(marker)) fail(`${label} leaked into the EverRoom runtime`)
+    if (executableText.includes(marker)) fail(`${label} leaked into the EverOffice runtime`)
   }
 }
 
@@ -283,7 +288,38 @@ function copyPdfRuntime() {
     ['Anthropic endpoint', 'api.anthropic.com'],
     ['OpenAI endpoint', 'api.openai.com'],
   ]) {
-    if (executableText.includes(marker)) fail(`${label} leaked into the EverRoom runtime`)
+    if (executableText.includes(marker)) fail(`${label} leaked into the EverOffice runtime`)
+  }
+}
+
+function copyMarkdownRuntime() {
+  const target = join(stagingRoot, 'markdown')
+  cpSync(join(markdownOutput, 'main'), join(target, 'main'), { recursive: true })
+  cpSync(join(markdownOutput, 'preload'), join(target, 'preload'), { recursive: true })
+  cpSync(join(markdownOutput, 'renderer'), join(target, 'renderer'), { recursive: true })
+  rmSync(join(target, 'main', 'index.js'), { force: true })
+  writeFileSync(join(target, 'main', 'package.json'), '{\n  "type": "commonjs"\n}\n')
+  assertEmbedBundle(join(target, 'main'))
+  // The AI panel is define-folded out of embed renderer builds; delete any
+  // AiPanel chunk defensively (docs/slides/pdf runtimes do the same).
+  for (const path of filesUnder(join(target, 'renderer', 'assets'))) {
+    if (/[/\\]AiPanel-[^/\\]+\.js$/.test(path)) rmSync(path, { force: true })
+  }
+  // Same provider boundary as the other mains: no Genspark/Anthropic/OpenAI
+  // endpoints may ship in the closure. markdown additionally owns an image
+  // generation channel that embed builds must have folded away.
+  const executableText = filesUnder(join(target, 'main'))
+    .filter((path) => path.endsWith('.js'))
+    .map((path) => readFileSync(path, 'utf8'))
+    .join('\n')
+  for (const [label, marker] of [
+    ['GenOffice AI login IPC', 'ai:gsk-login'],
+    ['GenOffice AI streaming IPC', 'ai:stream'],
+    ['Genspark image-generation IPC', 'markdown:ai-generate-image'],
+    ['Anthropic endpoint', 'api.anthropic.com'],
+    ['OpenAI endpoint', 'api.openai.com'],
+  ]) {
+    if (executableText.includes(marker)) fail(`${label} leaked into the EverOffice runtime`)
   }
 }
 
@@ -309,6 +345,7 @@ run('npm', ['run', 'build', '-w', '@genoffice/docs'], sourceRoot)
 run('npm', ['run', 'build', '-w', '@genoffice/sheets'], sourceRoot)
 run('npm', ['run', 'build', '-w', '@genoffice/slides'], sourceRoot)
 run('npm', ['run', 'build', '-w', '@genoffice/pdf'], sourceRoot)
+run('npm', ['run', 'build', '-w', '@genoffice/markdown'], sourceRoot)
 assertApacheOnlyBuild()
 
 rmSync(stagingRoot, { recursive: true, force: true })
@@ -318,6 +355,7 @@ try {
   copySheetsRuntime()
   copySlidesRuntime()
   copyPdfRuntime()
+  copyMarkdownRuntime()
   mkdirSync(join(stagingRoot, 'fixtures'), { recursive: true })
   cpSync(
     join(sourceRoot, 'fixtures', 'generated', 'simple.docx'),

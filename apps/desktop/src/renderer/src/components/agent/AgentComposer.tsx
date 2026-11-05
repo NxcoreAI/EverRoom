@@ -166,6 +166,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion?: string | null
   onAcceptGhost?: () => void
   onDismissGhost?: () => void
+  /** 自定义空输入占位文案（如工作台 hero 的「今天帮你做些什么？」）；缺省用档位/同步提示。 */
+  placeholder?: string
   /** run 进行中排队的消息（run 终态后自动逐条发出）；空数组不渲染。 */
   queuedSubmissions?: Array<{ id: string; prompt: string }>
   onRemoveQueuedSubmission?: (id: string) => void
@@ -205,6 +207,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion = null,
   onAcceptGhost,
   onDismissGhost,
+  placeholder,
   queuedSubmissions = [],
   onRemoveQueuedSubmission,
   value,
@@ -1407,13 +1410,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <textarea
             ref={textareaRef}
             aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
-            placeholder={active
+            placeholder={placeholder ?? (active
               ? t('surface:agentComposer.queueHint')
               : ghostActive
                 ? ghostSuggestion ?? undefined
                 : available
                   ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
-                  : t('surface:agentComposer.syncingRoomData')}
+                  : t('surface:agentComposer.syncingRoomData'))}
             rows={2}
             value={value}
             aria-controls={menuOpen ? 'agent-composer-menu' : undefined}

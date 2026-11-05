@@ -12,7 +12,7 @@ if (!i18n.isInitialized) {
       fallbackLng: false,
       fallbackNS: 'common',
       defaultNS: 'common',
-      ns: ['common', 'contextRoom', 'diaryReality', 'search', 'surface'],
+      ns: ['common', 'surface'],
       interpolation: {
         escapeValue: false,
         prefix: '{',

@@ -245,7 +245,7 @@ export async function resolveLocalAcpAdapterSpawn(
         ELECTRON_RUN_AS_NODE: '1',
         PATH: searchEnv.PATH ?? '',
         // 两个适配器缺省都会以 process.execPath 拉起各自 CLI（Electron 承载下
-        // 就是 EverRoom.app 二进制），CLI 子进程及其整棵子树会以 EverRoom 包身份
+        // 就是 EverOffice.app 二进制），CLI 子进程及其整棵子树会以 EverOffice 包身份
         // 在 macOS LaunchServices 注册为 Foreground 应用：每次 Agent 调用弹一个
         // 空白应用实例且 prompt 结束后不退出。指向用户已装的 CLI 后：
         // - claude SDK 经 CLAUDE_CODE_EXECUTABLE 直接 spawn 原生二进制；

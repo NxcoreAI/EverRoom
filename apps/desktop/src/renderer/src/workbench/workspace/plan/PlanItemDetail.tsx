@@ -7,7 +7,6 @@ import { formatPlanClaimPackage } from '@nxcore/agent-contract'
 import { workbenchApi } from '../../api'
 import { relativeTimeLabel } from '../../types'
 import { Badge, Button, Field, IconButton, Spinner, TextArea, TextInput } from '../../ui/primitives'
-import { planOwnerLabel } from './planDrag'
 
 /** 详情抽屉里可编辑的字段（走 PATCH，不含状态迁移）。 */
 export type PlanDetailPatch = Partial<Pick<
@@ -121,7 +120,6 @@ export function PlanItemDetail({
         <div className="wb-plan-detail-heading">
           <span className={`wb-status-dot is-${item.status}`} aria-hidden="true" />
           <span className="wb-plan-detail-status">{STATUS_LABEL[item.status]}</span>
-          <span className="wb-plan-detail-owner">{planOwnerLabel(item)}</span>
         </div>
         <IconButton label="关闭详情" size="sm" icon={<X size={15} />} onClick={onClose} />
       </header>
@@ -163,7 +161,7 @@ export function PlanItemDetail({
           </Field>
         </div>
 
-        <Field label="背景与要求" hint="Agent 认领时会原样读到这段，写得越具体越好">
+        <Field label="背景与要求">
           <TextArea
             rows={4}
             value={detail}
@@ -175,7 +173,7 @@ export function PlanItemDetail({
           />
         </Field>
 
-        <Field label="验收标准" hint="怎么算做完（Agent 的完成判据）">
+        <Field label="验收标准">
           <TextArea
             rows={3}
             value={acceptance}
@@ -187,7 +185,7 @@ export function PlanItemDetail({
           />
         </Field>
 
-        <Field label="硬约束" hint="用顿号或逗号分隔（口径 / 格式 / 禁止项）">
+        <Field label="硬约束">
           <TextInput
             value={constraints}
             placeholder="例：只用 2025 年数据、不要超过 800 字"
@@ -305,7 +303,7 @@ export function PlanItemDetail({
         </div>
 
         <details className="wb-plan-detail-block wb-plan-claim">
-          <summary>Agent 认领时会看到什么</summary>
+          <summary>认领包</summary>
           {claimText ? <pre>{claimText}</pre> : <p className="wb-plan-detail-muted">认领包不可用。</p>}
         </details>
       </div>

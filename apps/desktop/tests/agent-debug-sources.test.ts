@@ -139,7 +139,7 @@ describe('pickSourceId', () => {
     expect(pickSourceId([liveA, archive], archive.id)).toBe(archive.id)
   })
 
-  it('当前 live 变不可用且有可用 archive 时自动切换（EverRoom 退出 → 历史归档）', () => {
+  it('当前 live 变不可用且有可用 archive 时自动切换（EverOffice 退出 → 历史归档）', () => {
     const live = makeLive({ available: false })
     const archive = makeArchive()
     expect(pickSourceId([live, archive], live.id)).toBe(archive.id)
@@ -173,10 +173,10 @@ describe('sourceConnectionLabel / sourceConnectionTitle', () => {
     expect(sourceConnectionLabel(null)).toBeNull()
   })
 
-  it('archive 连接态 title 给归档目录与「无需 EverRoom 运行」', () => {
+  it('archive 连接态 title 给归档目录与「无需 EverOffice 运行」', () => {
     const title = sourceConnectionTitle(makeArchive({ archiveDir: '/tmp/data/agent-debug/main' }))
     expect(title).toContain('/tmp/data/agent-debug/main')
-    expect(title).toContain('无需 EverRoom 运行')
+    expect(title).toContain('无需 EverOffice 运行')
     expect(sourceConnectionTitle(makeLive())).toBeNull()
     expect(sourceConnectionTitle(null)).toBeNull()
   })

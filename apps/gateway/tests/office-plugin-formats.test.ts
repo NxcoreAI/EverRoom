@@ -45,9 +45,10 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
-  it("插件暴露六个工具：word / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {
+  it("插件暴露七个工具：word / markdown 速记 / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {
     const { tools } = createHarness();
     expect([...tools.keys()].sort()).toEqual([
+      "markdown_create",
       "office_create",
       "sheets_create",
       "slides_create",
@@ -188,10 +189,10 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），六个工具照常暴露", () => {
+  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），七个工具照常暴露", () => {
     const { plugin, tools } = createHarness();
     expect(plugin.manifest.requiresRoom).toBe(false);
-    expect(tools.size).toBe(6);
+    expect(tools.size).toBe(7);
   });
 });
 

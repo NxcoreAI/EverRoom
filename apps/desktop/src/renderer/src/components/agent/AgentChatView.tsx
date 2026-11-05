@@ -1,4 +1,4 @@
-import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw } from 'lucide-react'
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
@@ -20,21 +20,15 @@ import {
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
+import { agentTurnFilesFromTools } from './agentTurnFiles'
+import { AgentTurnFilesCard } from './AgentTurnFilesCard'
 import { parseAgentNavigationTarget } from './agentNavigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AgentDocumentPicker } from './AgentDocumentPicker'
-import { uiText } from '../context-room/ported/adapters'
-import {
-  findPendingAgentDocumentSelection,
-  type AgentDocumentSelectionItem,
-  type AgentDocumentSelectionSubmission,
-} from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentNoteCard, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
-import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import type { AgentApprovalDecision } from '@/shared/sources'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -113,6 +107,9 @@ function toolNavigationResult(tool: DisplayAgentToolCall): boolean {
   return parsed
 }
 
+/** run → 本轮产生的文件（解析在 agentTurnFiles 内部按工具对象缓存）。 */
+const runTurnFiles = agentTurnFilesFromTools
+
 // react-markdown 每次渲染都全量重解析整条消息：长对话里每个流式渲染帧都会把
 // 全部历史消息重新解析一遍，主线程直接打满（表现为对话区卡死/滚动冻结）。
 // memo 按内容缓存——历史消息内容不变就不再重解析，流式中那条每次只解析一条。
@@ -183,13 +180,11 @@ function AgentResponseByline({ agentId, names }: { agentId?: string | null; name
   )
 }
 
+// 与 agentNavigation 的 pages 集合同步：rooms/docs/sources/diary 等页面已下线，
+// 历史链接里的旧 pageId 走 fallback（直接显示 pageId 字符串）。
 const navigationPageLabels: Record<string, string> = {
   home: 'surface:navigation.home',
   office: 'surface:navigation.office',
-  rooms: 'surface:navigation.contextRoom',
-  docs: 'surface:navigation.documents',
-  sources: 'surface:navigation.sources',
-  diary: 'surface:navigation.diary',
 }
 
 function SessionReference({ link, onOpen }: { link: AgentSessionLink; onOpen: () => void }) {
@@ -329,7 +324,6 @@ function LinkedRunProgress({ agentNamesById, state, failedRunIds }: {
 }
 
 export function AgentChatView({
-  activeDocument,
   activeRunId,
   agentIdByRun,
   agentNamesById,
@@ -351,7 +345,6 @@ export function AgentChatView({
   onSlidesAction,
   onOpenDraft,
   onOpenMention,
-  onSelectDocument,
   onSelectPrompt,
   cancelledRunIds,
   interruptedRunIds,
@@ -367,7 +360,6 @@ export function AgentChatView({
   submitting,
   toolCallsByRun,
 }: {
-  activeDocument: ActiveDocumentDescriptor | null
   activeRunId: string | null
   agentIdByRun: Record<string, string>
   agentNamesById: Record<string, string>
@@ -397,7 +389,6 @@ export function AgentChatView({
   /** 网关判定失败的 run：时间线标题显示「处理失败」（唯一权威口径）。 */
   failedRunIds?: ReadonlySet<string>
   onOpenMention?: (item: MentionedItem) => void
-  onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
   reasoningByRun?: Record<string, string>
@@ -413,12 +404,10 @@ export function AgentChatView({
 }) {
   const { t } = useLocale()
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
-  const [dismissedDocumentSelections, setDismissedDocumentSelections] = useState<Set<string>>(() => new Set())
   const [highlightedNotificationTarget, setHighlightedNotificationTarget] = useState<{
     key: string
     messageId: string
   } | null>(null)
-  const handledDocumentSelectionsRef = useRef(new Set<string>())
   const conversationRef = useRef<HTMLDivElement>(null)
   const pinnedToBottomRef = useRef(true)
   const lastScrollTopRef = useRef(0)
@@ -598,15 +587,6 @@ export function AgentChatView({
     }
     return messages.length
   }, [authChallenge?.id, authChallenge?.startedAt, messages])
-
-  const pendingDocumentSelection = useMemo(() => {
-    if (activeDocument) return null
-    return findPendingAgentDocumentSelection(
-      Object.values(toolCallsByRun).flat(),
-      messages,
-      dismissedDocumentSelections,
-    )
-  }, [activeDocument, dismissedDocumentSelections, messages, toolCallsByRun])
 
   useEffect(() => {
     const reset = () => setCopiedMessageId(null)
@@ -1071,6 +1051,10 @@ export function AgentChatView({
                     <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
                   </div>
                 ) : null}
+                {(() => {
+                  const turnFiles = runTurnFiles(tools)
+                  return turnFiles.length > 0 ? <AgentTurnFilesCard files={turnFiles} /> : null
+                })()}
                 {showActions ? (
                   <div className="agent-message-actions">
                     <button type="button" aria-label={t('surface:agentChat.copyResponse')} title={t('surface:agentChat.copyResponse')} onClick={() => void copyMessage(message.id, finalContent)}>
@@ -1120,6 +1104,8 @@ export function AgentChatView({
                   failedRunIds={failedRunIds}
                 />
               ) : null}
+              {/* 本轮文件产物随生成实时出现（工具转终态即有 fileId），不必等正文。 */}
+              <AgentTurnFilesCard files={runTurnFiles(latestTools)} />
             </div>
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
@@ -1167,30 +1153,6 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
-          {/* 等待用户决策 ≠ 执行中：run 挂着正是「agent 在等输入」的正常形态，
-              卡片此时必须可点；busy 只保留「提交通道被占用/会话加载中」。
-              Phase 2i 去 Room：Room 选择/文档归属确认卡已删除，仅保留文档选择卡。 */}
-          {pendingDocumentSelection ? (
-            <AgentDocumentPicker
-              awaitingInput
-              busy={loading || submitting}
-              documents={pendingDocumentSelection.documents}
-              onCancel={() => {
-                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
-                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
-              }}
-              onSelect={(document) => {
-                if (handledDocumentSelectionsRef.current.has(pendingDocumentSelection.toolId)) return
-                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
-                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
-                onSelectDocument({
-                  document,
-                  originalPrompt: pendingDocumentSelection.originalPrompt,
-                  toolId: pendingDocumentSelection.toolId,
-                })
-              }}
-            />
-          ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
           {error ? (
             <div className="agent-error" role="alert">

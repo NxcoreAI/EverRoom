@@ -22,7 +22,7 @@ describe('os-open document routing', () => {
 
   it('keeps only document arguments from argv, de-duplicated', () => {
     const paths = osOpenPathsFromArgv([
-      '/Applications/EverRoom.app/Contents/MacOS/EverRoom',
+      '/Applications/EverOffice.app/Contents/MacOS/EverOffice',
       '--no-sandbox',
       '/tmp/report.docx',
       './notes.pptx',

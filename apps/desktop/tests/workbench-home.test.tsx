@@ -7,7 +7,7 @@
  *
  * 覆盖：
  * 1. 最近页：真实文件库计数/项目空间数/最近会话/最近文件，且不出现「3 封新邮件」类假数据；
- * 2. 所有文件页：来源筛选、文件名搜索、列表/网格切换、点开文件进窗口级文件标签；
+ * 2. 所有文件页：文件名搜索、类型标签、列表/网格切换、点开文件在归属工作空间打开；
  * 3. 文件库失败 → 「文件库暂不可用」（不回退 mock 文件）；
  * 4. 项目空间空态 + 「新建项目空间」走全局事件；
  * 5. 项目空间列表：真实工作数/描述摘要、默认空间不可删、行内重命名写回；
@@ -78,6 +78,7 @@ function makeCatalog(overrides: Partial<FileCatalogDto> & { id: string; original
     currentVersionId: null,
     parsed: true,
     updatedAt: ISO,
+    workspaceId: null,
     ...overrides,
   }
 }
@@ -377,16 +378,19 @@ describe('最近页', () => {
     expect(spaceRows[0].textContent).toContain('打开')
     expect(spaceRows.some((row) => (row.textContent ?? '').includes('项工作'))).toBe(true)
 
-    // 点最近文件行（覆盖整行的透明按钮）→ 打开窗口级文件标签。
+    // 点最近文件行（覆盖整行的透明按钮）→ 在归属工作空间里打开（激活其标签，
+    // 文件交给气泡窗；未归类文件落默认空间）。
     const fileRow = [...container.querySelectorAll<HTMLElement>('.wb-home-filerow')]
       .find((row) => (row.textContent ?? '').includes('项目周报.docx'))
     expect(fileRow, '最近文件行应存在').toBeTruthy()
     await act(async () => { fileRow!.querySelector<HTMLButtonElement>('.wb-home-filerow-open')!.click() })
     await flush(2)
-    expect(useWorkbenchStore.getState().activeTabId).toBe('file:real:file-1')
+    const opened = useWorkbenchStore.getState()
+    expect(opened.activeTabId).toBe('ws:default')
+    expect(opened.pendingBubbleFile).toMatchObject({ workspaceId: 'default', file: { id: 'real:file-1' } })
   })
 
-  it('「新建」瓦片：空白空间走全局事件，文件瓦片开空白文档标签', async () => {
+  it('「新建」瓦片：空白空间走全局事件，文件瓦片在默认空间打开空白文档', async () => {
     installNxcore()
     resetStore({ workspaces: [makeWorkspace({ id: 'default', name: '默认工作区', kind: 'default' })] })
     await render('recent')
@@ -402,7 +406,11 @@ describe('最近页', () => {
 
     await act(async () => { findButtonByText(container, '文字文档').click() })
     await flush(2)
-    expect(useWorkbenchStore.getState().activeTabId).toMatch(/^file:f-blank-docx-/)
+    // 新建文件没有归属 → 默认空间标签激活，文件交接给该标签的气泡窗。
+    const opened = useWorkbenchStore.getState()
+    expect(opened.activeTabId).toBe('ws:default')
+    expect(opened.pendingBubbleFile?.file.id).toMatch(/^f-blank-docx-/)
+    expect(opened.pendingBubbleFile?.workspaceId).toBe('default')
   })
 })
 
@@ -413,23 +421,28 @@ describe('所有文件页', () => {
     makeCatalog({ id: 'file-pdf', originalName: '外部报告.pdf', sourceKind: 'connector', sourceLabel: '连接器' }),
   ]
 
-  it('类型标签 + 来源筛选 + 文件名搜索 + 列表/网格切换', async () => {
+  it('类型标签 + 文件名搜索 + 列表/网格切换', async () => {
     installNxcore({ catalogs, total: 3 })
     await render('files')
 
     const rowsNow = () => [...container.querySelectorAll<HTMLElement>('.wb-home-filerow')]
     expect(rowsNow().length).toBe(3)
 
-    // 表头列（照原型 FileTable）：文件名 / 修改时间 / 大小。
+    // 表头列（照原型 FileTable）：文件名 / 修改时间（带排序指示）/ 大小。
     const head = container.querySelector('.wb-home-filetbl-head')?.textContent ?? ''
     expect(head).toContain('文件名')
     expect(head).toContain('修改时间')
     expect(head).toContain('大小')
 
-    // 类型标签：全部 / 文档 / 表格 / 演示 / PDF / Markdown。
-    const kindBar = container.querySelectorAll('.wb-home-filetbl-bar .ui-segmented')[0]
-    expect([...kindBar.querySelectorAll('.ui-segmented-item')].map((el) => el.textContent))
-      .toEqual(['全部3', '文档1', '表格1', '演示', 'PDF1', 'Markdown'])
+    // 来源筛选标签已按原型去除（原型工具行只有类型标签 + 搜索 + 视图切换）。
+    expect(container.querySelector('.wb-home-filetbl-src')).toBeNull()
+
+    // 类型标签（照原型 Seg：胶囊裸标签，不带计数徽标）：
+    // 全部 / 文档 / 表格 / 演示 / PDF / Markdown。
+    const kindBar = container.querySelector('.wb-home-filetbl-bar .wb-home-ft-seg')
+    expect(kindBar, '类型标签栏应存在').toBeTruthy()
+    expect([...kindBar!.querySelectorAll('.wb-home-ft-seg-btn')].map((el) => el.textContent))
+      .toEqual(['全部', '文档', '表格', '演示', 'PDF', 'Markdown'])
 
     // 类型筛选：只看表格。
     await act(async () => { findButtonByText(container, '表格').click() })
@@ -437,42 +450,38 @@ describe('所有文件页', () => {
     expect(rowsNow().length).toBe(1)
     expect(rowsNow()[0].textContent).toContain('季度汇总.xlsx')
 
-    // 回到「全部」类型后再按来源筛选：只留 Agent 生成。
-    await act(async () => { findButtonByText(kindBar, '全部').click() })
+    // 回到「全部」类型后按文件名搜索。
+    await act(async () => { findButtonByText(kindBar!, '全部').click() })
     await flush(2)
     expect(rowsNow().length).toBe(3)
-    await act(async () => { findButtonByText(container, 'Agent 生成').click() })
-    await flush(2)
-    expect(rowsNow().length).toBe(1)
-    expect(rowsNow()[0].textContent).toContain('季度汇总.xlsx')
-
-    // 来源回到「全部来源」后按文件名搜索。
-    await act(async () => { findButtonByText(container, '全部来源').click() })
-    await flush(2)
     const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索文件"]')
     expect(search).toBeTruthy()
     await typeInto(search!, '周报')
     expect(rowsNow().length).toBe(1)
     expect(rowsNow()[0].textContent).toContain('本周周报.docx')
 
-    // 网格视图：同一批数据渲染成文件瓦片。
-    await act(async () => { findButtonByText(container, '网格').click() })
+    // 网格视图（原型 op-ft-views：图标按钮，无文字标签）：同一批数据渲染成文件瓦片。
+    const gridToggle = container.querySelector<HTMLButtonElement>('.wb-home-ft-views button[title="网格视图"]')
+    expect(gridToggle, '网格视图按钮应存在').toBeTruthy()
+    await act(async () => { gridToggle!.click() })
     await flush(2)
     const tiles = container.querySelectorAll('.wb-home-file-tile')
     expect(tiles.length).toBe(1)
     expect(tiles[0].textContent).toContain('本周周报.docx')
 
-    // 点瓦片 → 窗口级文件标签。
+    // 点瓦片 → 在归属工作空间里打开（该测试未配空间，落默认空间）。
     await act(async () => { (tiles[0] as HTMLButtonElement).click() })
     await flush(2)
-    expect(useWorkbenchStore.getState().activeTabId).toBe('file:real:file-doc')
+    const opened = useWorkbenchStore.getState()
+    expect(opened.activeTabId).toBe('ws:default')
+    expect(opened.pendingBubbleFile).toMatchObject({ workspaceId: 'default', file: { id: 'real:file-doc' } })
   })
 
   it('文件库失败时显示「暂不可用」，不回退 mock 文件', async () => {
     installNxcore({ filesFail: true })
     await render('files')
 
-    expect(text()).toContain('文件库暂不可用')
+    expect(text()).toContain('资料暂不可用')
     // 原型 mock 文件名不应出现（无 bridge 时不伪造文件）。
     expect(text()).not.toContain('周报：连接器统一排期')
   })

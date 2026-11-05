@@ -5,8 +5,8 @@ import { join } from 'node:path'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
 /**
- * GenOffice 原生编辑器运行时的宿主接口（类型裁剪自 EverRoom apps/desktop 的
- * office-runtime.ts；运行时本体是 EverRoom build/genoffice-runtime 的产物，
+ * GenOffice 原生编辑器运行时的宿主接口（类型裁剪自 EverOffice apps/desktop 的
+ * office-runtime.ts；运行时本体是 EverOffice build/genoffice-runtime 的产物，
  * 由 prepare-genoffice-runtime.mjs 从 Apache-2.0 fork 固定构建）。
  */
 export interface GenOfficeDocsRuntime {
@@ -102,7 +102,7 @@ export function loadGenOfficeRuntime(): PreparedGenOfficeRuntime {
     sidecar,
   ]) {
     if (!existsSync(path)) {
-      throw new Error(`GenOffice runtime 不完整（缺 ${path}）。可用 GENOFFICE_RUNTIME_ROOT 指向 EverRoom 的 build/genoffice-runtime。`)
+      throw new Error(`GenOffice runtime 不完整（缺 ${path}）。可用 GENOFFICE_RUNTIME_ROOT 指向 EverOffice 的 build/genoffice-runtime。`)
     }
   }
 

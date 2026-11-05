@@ -185,24 +185,13 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   send_notification: { kind: 'action', zh: ['发送通知', '已发送通知'], keys: ['surface:agentExecutionTimeline.sendNotification', 'surface:agentExecutionTimeline.notificationSent'] },
   submit_format_mapping: { kind: 'connector', zh: ['提交格式映射', '已提交格式映射'], keys: ['surface:agentExecutionTimeline.submitFormatMapping', 'surface:agentExecutionTimeline.formatMappingSubmitted'] },
   tool_search: { kind: 'action', zh: ['选择所需工具', '已选择所需工具'], keys: ['surface:agentExecutionTimeline.selectRequiredTool', 'surface:agentExecutionTimeline.requiredToolSelected'] },
-  // Room 与文档
-  context_room_document_intent: { kind: 'document', zh: ['准备创建选项', '已准备创建选项'], keys: ['surface:agentExecutionTimeline.prepareCreationOptions', 'surface:agentExecutionTimeline.creationOptionsPrepared'] },
-  context_room_document_list: { kind: 'document', zh: ['获取文档列表', '已获取文档列表'], keys: ['surface:agentExecutionTimeline.getDocumentList', 'surface:agentExecutionTimeline.documentListRetrieved'] },
-  context_room_document_read: { kind: 'document', zh: ['读取文档', '已读取文档'], keys: ['surface:agentExecutionTimeline.readDocument', 'surface:agentExecutionTimeline.documentRead'] },
-  context_room_document_delete: { kind: 'document', zh: ['删除文档', '已删除文档'], keys: ['surface:agentExecutionTimeline.deleteDocument', 'surface:agentExecutionTimeline.documentDeleted'] },
-  context_room_document_comment_add: { kind: 'document', zh: ['添加文档评论', '已添加文档评论'], keys: ['surface:agentExecutionTimeline.addDocumentComment', 'surface:agentExecutionTimeline.documentCommentAdded'] },
+  // Room 与文档（Markdown 文稿工具链已下线：context_room_document_*/write_*/patch_*
+  // 与 document_draft 等条目不再保留；office/sheets/slides 产物类见下节）
   context_room_list: { kind: 'document', zh: ['获取 Room 列表', '已获取 Room 列表'], keys: ['surface:agentExecutionTimeline.getRoomList', 'surface:agentExecutionTimeline.roomListRetrieved'] },
   context_room_create: { kind: 'action', zh: ['创建 Room', '已创建 Room'], keys: ['surface:agentExecutionTimeline.createRoom', 'surface:agentExecutionTimeline.roomCreated'] },
-  context_room_patch_begin: { kind: 'document', zh: ['准备文档修改', '已准备文档修改'], keys: ['surface:agentExecutionTimeline.prepareDocumentChanges', 'surface:agentExecutionTimeline.documentChangesPrepared'] },
-  context_room_patch_commit: { kind: 'document', zh: ['提交文档修改', '已提交文档修改'], keys: ['surface:agentExecutionTimeline.commitDocumentChanges', 'surface:agentExecutionTimeline.documentChangesCommitted'] },
-  context_room_patch_hunk: { kind: 'document', zh: ['生成文档修改', '已生成文档修改'], keys: ['surface:agentExecutionTimeline.generateDocumentChanges', 'surface:agentExecutionTimeline.documentChangesGenerated'] },
-  context_room_patch_abort: { kind: 'document', zh: ['取消文档修改', '已取消文档修改'], keys: ['surface:agentExecutionTimeline.abortDocumentChanges', 'surface:agentExecutionTimeline.documentChangesAborted'] },
-  context_room_write_append: { kind: 'document', zh: ['写入文档内容', '已写入文档内容'], keys: ['surface:agentExecutionTimeline.writeDocumentContent', 'surface:agentExecutionTimeline.documentContentWritten'] },
-  context_room_write_begin: { kind: 'document', zh: ['开始创建文档', '已开始创建文档'], keys: ['surface:agentExecutionTimeline.startDocumentCreation', 'surface:agentExecutionTimeline.documentCreationStarted'] },
-  context_room_write_commit: { kind: 'document', zh: ['提交新文档', '已提交新文档'], keys: ['surface:agentExecutionTimeline.commitNewDocument', 'surface:agentExecutionTimeline.newDocumentCommitted'] },
-  context_room_write_abort: { kind: 'document', zh: ['取消创建文档', '已取消创建文档'], keys: ['surface:agentExecutionTimeline.abortDocumentCreation', 'surface:agentExecutionTimeline.documentCreationAborted'] },
   // Office 与幻灯片
   context_room_office_create: { kind: 'document', zh: ['创建 Word 文档', '已创建 Word 文档'], keys: ['surface:agentExecutionTimeline.createWordDocument', 'surface:agentExecutionTimeline.wordDocumentCreated'] },
+  markdown_create: { kind: 'document', zh: ['创建 Markdown 文档', '已创建 Markdown 文档'], keys: ['surface:agentExecutionTimeline.createWordDocument', 'surface:agentExecutionTimeline.wordDocumentCreated'] },
   context_room_sheets_create: { kind: 'document', zh: ['创建电子表格', '已创建电子表格'], keys: ['surface:agentExecutionTimeline.createSpreadsheet', 'surface:agentExecutionTimeline.spreadsheetCreated'] },
   context_room_slides_create: { kind: 'slides', zh: ['创建演示文稿', '已创建演示文稿'], keys: ['surface:agentExecutionTimeline.createPresentation', 'surface:agentExecutionTimeline.presentationCreated'] },
   context_room_slides_set_page: { kind: 'slides', zh: ['生成幻灯片页面', '已生成幻灯片页面'], keys: ['surface:agentExecutionTimeline.generateSlidePage', 'surface:agentExecutionTimeline.slidePageGenerated'] },
@@ -232,17 +221,14 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   room_context_get: { kind: 'analysis', zh: ['读取 Room 资料', '已读取 Room 资料'], keys: ['surface:agentExecutionTimeline.readRoomContext', 'surface:agentExecutionTimeline.roomContextRead'] },
   room_analysis: { kind: 'analysis', zh: ['分析 Room 资料', '已分析 Room 资料'], keys: ['surface:agentExecutionTimeline.analyzeRoomMaterials', 'surface:agentExecutionTimeline.roomMaterialsAnalyzed'] },
   room_correction_draft: { kind: 'analysis', zh: ['起草 Room 纠正', '已起草 Room 纠正'], keys: ['surface:agentExecutionTimeline.draftRoomCorrection', 'surface:agentExecutionTimeline.roomCorrectionDrafted'] },
-  // 文档分析与导入导出
+  // 文档分析与导入导出（document_draft / document_read_* 属已下线的 Markdown 文稿链路）
   content_analysis: { kind: 'analysis', zh: ['分析内容', '已分析内容'], keys: ['surface:agentExecutionTimeline.analyzeContent', 'surface:agentExecutionTimeline.contentAnalyzed'] },
   document_analysis: { kind: 'document', zh: ['分析文档', '已分析文档'], keys: ['surface:agentExecutionTimeline.analyzeDocument', 'surface:agentExecutionTimeline.documentAnalyzed'] },
-  document_draft: { kind: 'document', zh: ['起草文档', '已起草文档'], keys: ['surface:agentExecutionTimeline.draftDocument', 'surface:agentExecutionTimeline.documentDrafted'] },
   document_export: { kind: 'document', zh: ['导出文档', '已导出文档'], keys: ['surface:agentExecutionTimeline.exportDocument', 'surface:agentExecutionTimeline.documentExported'] },
   document_import_search: { kind: 'search', zh: ['搜索可导入文档', '已搜索可导入文档'], keys: ['surface:agentExecutionTimeline.searchImportableDocuments', 'surface:agentExecutionTimeline.importableDocumentsSearched'] },
   document_import_preview: { kind: 'document', zh: ['预览导入文档', '已预览导入文档'], keys: ['surface:agentExecutionTimeline.previewImportedDocument', 'surface:agentExecutionTimeline.importedDocumentPreviewed'] },
   document_import_commit: { kind: 'document', zh: ['导入文档到 Room', '已导入文档到 Room'], keys: ['surface:agentExecutionTimeline.importDocumentToRoom', 'surface:agentExecutionTimeline.documentImportedToRoom'] },
   document_parse_native: { kind: 'document', zh: ['解析原生文档', '已解析原生文档'], keys: ['surface:agentExecutionTimeline.parseNativeDocument', 'surface:agentExecutionTimeline.nativeDocumentParsed'] },
-  document_read_artifact: { kind: 'document', zh: ['读取文档产物', '已读取文档产物'], keys: ['surface:agentExecutionTimeline.readDocumentArtifact', 'surface:agentExecutionTimeline.documentArtifactRead'] },
-  document_read_content: { kind: 'document', zh: ['读取文档内容', '已读取文档内容'], keys: ['surface:agentExecutionTimeline.readDocumentContent', 'surface:agentExecutionTimeline.documentContentRead'] },
   document_analyze_visuals: { kind: 'document', zh: ['分析文档视觉内容', '已分析文档视觉内容'], keys: ['surface:agentExecutionTimeline.analyzeDocumentVisuals', 'surface:agentExecutionTimeline.documentVisualsAnalyzed'] },
   document_validate_artifact: { kind: 'document', zh: ['校验文档产物', '已校验文档产物'], keys: ['surface:agentExecutionTimeline.validateDocumentArtifact', 'surface:agentExecutionTimeline.documentArtifactValidated'] },
   route_mindmap_finalize: { kind: 'analysis', zh: ['确定写作路线', '已确定写作路线'], keys: ['surface:agentExecutionTimeline.finalizeWritingRoute', 'surface:agentExecutionTimeline.writingRouteFinalized'] },
@@ -262,17 +248,17 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   subagent_submit_result: { kind: 'agent', zh: ['提交子 Agent 结果', '已提交子 Agent 结果'], keys: ['surface:agentExecutionTimeline.submitSubagentResult', 'surface:agentExecutionTimeline.subagentResultSubmitted'] },
   agent_schedule_list: { kind: 'calendar', zh: ['查看定时任务', '已查看定时任务'], keys: ['surface:agentExecutionTimeline.listAgentSchedules', 'surface:agentExecutionTimeline.agentSchedulesListed'] },
   agent_schedule_run: { kind: 'calendar', zh: ['运行定时任务', '已运行定时任务'], keys: ['surface:agentExecutionTimeline.runAgentSchedule', 'surface:agentExecutionTimeline.agentScheduleRun'] },
-  // EverRoom 访问
-  everroom: { kind: 'action', zh: ['访问 EverRoom', '已访问 EverRoom'], keys: ['surface:agentExecutionTimeline.accessEverRoom', 'surface:agentExecutionTimeline.everRoomAccessed'] },
-  everroom_fetch: { kind: 'document', zh: ['读取 EverRoom 内容', '已读取 EverRoom 内容'], keys: ['surface:agentExecutionTimeline.fetchEverRoomContent', 'surface:agentExecutionTimeline.everRoomContentFetched'] },
-  everroom_list_rooms: { kind: 'action', zh: ['获取 EverRoom Room 列表', '已获取 EverRoom Room 列表'], keys: ['surface:agentExecutionTimeline.listEverRoomRooms', 'surface:agentExecutionTimeline.everRoomRoomsListed'] },
-  everroom_search: { kind: 'search', zh: ['搜索 EverRoom', '已搜索 EverRoom'], keys: ['surface:agentExecutionTimeline.searchEverRoom', 'surface:agentExecutionTimeline.everRoomSearched'] },
-  everroom_read_file: { kind: 'file', zh: ['读取 EverRoom 文件', '已读取 EverRoom 文件'], keys: ['surface:agentExecutionTimeline.readEverRoomFile', 'surface:agentExecutionTimeline.everRoomFileRead'] },
-  everroom_get_rules: { kind: 'action', zh: ['查看 EverRoom 规则', '已查看 EverRoom 规则'], keys: ['surface:agentExecutionTimeline.viewEverRoomRules', 'surface:agentExecutionTimeline.everRoomRulesViewed'] },
-  everroom_get_status: { kind: 'action', zh: ['查看 EverRoom 状态', '已查看 EverRoom 状态'], keys: ['surface:agentExecutionTimeline.viewEverRoomStatus', 'surface:agentExecutionTimeline.everRoomStatusViewed'] },
-  everroom_register_file: { kind: 'action', zh: ['登记 EverRoom 文件', '已登记 EverRoom 文件'], keys: ['surface:agentExecutionTimeline.registerEverRoomFile', 'surface:agentExecutionTimeline.everRoomFileRegistered'] },
-  everroom_submit: { kind: 'action', zh: ['提交到 EverRoom', '已提交到 EverRoom'], keys: ['surface:agentExecutionTimeline.submitToEverRoom', 'surface:agentExecutionTimeline.submittedToEverRoom'] },
-  everroom_submit_status: { kind: 'action', zh: ['查看 EverRoom 提交状态', '已查看 EverRoom 提交状态'], keys: ['surface:agentExecutionTimeline.viewEverRoomSubmissionStatus', 'surface:agentExecutionTimeline.everRoomSubmissionStatusViewed'] },
+  // EverOffice 访问
+  everroom: { kind: 'action', zh: ['访问 EverOffice', '已访问 EverOffice'], keys: ['surface:agentExecutionTimeline.accessEverOffice', 'surface:agentExecutionTimeline.everRoomAccessed'] },
+  everroom_fetch: { kind: 'document', zh: ['读取 EverOffice 内容', '已读取 EverOffice 内容'], keys: ['surface:agentExecutionTimeline.fetchEverOfficeContent', 'surface:agentExecutionTimeline.everRoomContentFetched'] },
+  everroom_list_rooms: { kind: 'action', zh: ['获取 EverOffice Room 列表', '已获取 EverOffice Room 列表'], keys: ['surface:agentExecutionTimeline.listEverOfficeRooms', 'surface:agentExecutionTimeline.everRoomRoomsListed'] },
+  everroom_search: { kind: 'search', zh: ['搜索 EverOffice', '已搜索 EverOffice'], keys: ['surface:agentExecutionTimeline.searchEverOffice', 'surface:agentExecutionTimeline.everRoomSearched'] },
+  everroom_read_file: { kind: 'file', zh: ['读取 EverOffice 文件', '已读取 EverOffice 文件'], keys: ['surface:agentExecutionTimeline.readEverOfficeFile', 'surface:agentExecutionTimeline.everRoomFileRead'] },
+  everroom_get_rules: { kind: 'action', zh: ['查看 EverOffice 规则', '已查看 EverOffice 规则'], keys: ['surface:agentExecutionTimeline.viewEverOfficeRules', 'surface:agentExecutionTimeline.everRoomRulesViewed'] },
+  everroom_get_status: { kind: 'action', zh: ['查看 EverOffice 状态', '已查看 EverOffice 状态'], keys: ['surface:agentExecutionTimeline.viewEverOfficeStatus', 'surface:agentExecutionTimeline.everRoomStatusViewed'] },
+  everroom_register_file: { kind: 'action', zh: ['登记 EverOffice 文件', '已登记 EverOffice 文件'], keys: ['surface:agentExecutionTimeline.registerEverOfficeFile', 'surface:agentExecutionTimeline.everRoomFileRegistered'] },
+  everroom_submit: { kind: 'action', zh: ['提交到 EverOffice', '已提交到 EverOffice'], keys: ['surface:agentExecutionTimeline.submitToEverOffice', 'surface:agentExecutionTimeline.submittedToEverOffice'] },
+  everroom_submit_status: { kind: 'action', zh: ['查看 EverOffice 提交状态', '已查看 EverOffice 提交状态'], keys: ['surface:agentExecutionTimeline.viewEverOfficeSubmissionStatus', 'surface:agentExecutionTimeline.everRoomSubmissionStatusViewed'] },
   // 本地文件与命令
   read_file: { kind: 'file', zh: ['读取文件', '已读取文件'], keys: ['surface:agentExecutionTimeline.readFile', 'surface:agentExecutionTimeline.fileRead'] },
   read: { kind: 'file', zh: ['读取文件', '已读取文件'], keys: ['surface:agentExecutionTimeline.readFile', 'surface:agentExecutionTimeline.fileRead'] },
@@ -307,20 +293,9 @@ const AGENT_TOOL_SUBJECTS: Record<string, AgentToolSubjectSpec> = {
   send_notification: { keys: ['title'] },
   submit_format_mapping: { keys: ['service', 'recordKind'] },
   tool_search: { keys: ['query', 'name', 'tool'] },
-  context_room_document_list: { keys: ['title'] },
-  context_room_document_read: { keys: ['title', 'documentId'] },
-  context_room_document_delete: { keys: ['title', 'documentId'] },
-  context_room_document_comment_add: { keys: ['title', 'documentId'] },
   context_room_create: { keys: ['title', 'topic'] },
-  context_room_patch_begin: { keys: ['summary', 'title', 'documentId'] },
-  context_room_patch_commit: { keys: ['title', 'documentId'] },
-  context_room_patch_hunk: { keys: ['title', 'documentId'] },
-  context_room_patch_abort: { keys: ['title', 'documentId'] },
-  context_room_write_append: { keys: ['title', 'documentId'] },
-  context_room_write_begin: { keys: ['title', 'documentId'] },
-  context_room_write_commit: { keys: ['title', 'documentId'] },
-  context_room_write_abort: { keys: ['title', 'documentId'] },
   context_room_office_create: { keys: ['title', 'fileName'] },
+  markdown_create: { keys: ['title', 'fileName'] },
   context_room_sheets_create: { keys: ['title', 'name'] },
   context_room_slides_create: { keys: ['title', 'topic'] },
   context_room_slides_set_page: { keys: ['title', 'page', 'pageNumber', 'slideIndex'] },
@@ -349,14 +324,11 @@ const AGENT_TOOL_SUBJECTS: Record<string, AgentToolSubjectSpec> = {
   room_correction_draft: { keys: ['instruction', 'title'] },
   content_analysis: { pair: [['sourceLabel'], ['task']] },
   document_analysis: { keys: ['question', 'fileEntryId', 'title'] },
-  document_draft: { keys: ['title', 'topic', 'instruction'] },
   document_export: { keys: ['title', 'documentId'] },
   document_import_search: { keys: ['query', 'keyword'] },
   document_import_preview: { keys: ['remoteDocumentId', 'title', 'runId'] },
   document_import_commit: { keys: ['runId', 'roomId', 'title'] },
   document_parse_native: { keys: ['path', 'fileVersionId', 'artifactId', 'documentId', 'title'] },
-  document_read_artifact: { keys: ['path', 'artifactId', 'fileVersionId', 'title'] },
-  document_read_content: { keys: ['path', 'fileVersionId', 'artifactId', 'documentId', 'title'] },
   document_analyze_visuals: { keys: ['fileVersionId', 'artifactId', 'title'] },
   document_validate_artifact: { keys: ['fileVersionId', 'artifactId', 'title'] },
   route_mindmap_finalize: { keys: ['title', 'documentId'] },
@@ -411,7 +383,7 @@ export function agentToolLabel(tool: DisplayAgentToolCall, completed = tool.stat
     return t ? t(presentation.keys[completed ? 1 : 0]) : presentation.zh[completed ? 1 : 0]
   }
   // 安全家族兜底：只保留 photo/image/calendar/email/bash 这类无歧义词根。
-  // document/read/write/search/web 会误伤 document_draft、everroom_search
+  // document/read/write/search/web 会误伤 document_export、everroom_search
   // 这类业务工具，因此不再按这些词根猜语义。
   if (/photo|image/.test(name)) return t ? t(completed ? 'surface:agentExecutionTimeline.imageViewed' : 'surface:agentExecutionTimeline.viewImage') : completed ? '已查看图像' : '查看图像'
   if (/calendar/.test(name)) {
@@ -539,48 +511,6 @@ function resultRecord(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-function committedDocumentTitle(tool: DisplayAgentToolCall): string | null {
-  if (tool.name !== 'context_room_write_commit' || tool.status !== 'completed') return null
-  const root = resultRecord(tool.result)
-  const details = resultRecord(root?.details)
-  const structured = resultRecord(root?.structuredContent)
-  const navigation = resultRecord(details?.navigation)
-    ?? resultRecord(structured?.navigation)
-    ?? resultRecord(root?.navigation)
-  const title = typeof navigation?.title === 'string' ? navigation.title.trim() : ''
-  return title || null
-}
-
-function normalizeDocumentText(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/```\w*/g, ''))
-    .replace(/<[^>]+>/g, '')
-    .replace(/[#>*_~`\-[\](){}]/g, '')
-    .replace(/[\s，。；：！？、,.!?;:「」『』“”\"'（）()]/g, '')
-}
-
-function documentSummaryFallback(answer: string, tools: DisplayAgentToolCall[]): string {
-  const commit = [...tools].reverse().find((tool) => committedDocumentTitle(tool))
-  if (!commit) return answer
-  const title = committedDocumentTitle(commit)
-  if (!title) return answer
-  const documentText = normalizeDocumentText(tools
-    .filter((tool) => tool.name === 'context_room_write_append' && tool.status === 'completed')
-    .map((tool) => typeof tool.args.text === 'string' ? tool.args.text : '')
-    .join('\n'))
-  const normalizedAnswer = normalizeDocumentText(answer)
-  if (normalizedAnswer.length < 320 || documentText.length < 320) return answer
-
-  const chunks = Array.from(
-    { length: Math.floor(normalizedAnswer.length / 40) },
-    (_, index) => normalizedAnswer.slice(index * 40, index * 40 + 40),
-  )
-  const copied = chunks.filter((chunk) => documentText.includes(chunk)).length
-  if (!chunks.length || copied / chunks.length < 0.6) return answer
-  return `文档《${title}》已创建完成，内容已写入对应工作区。你可以在文档中继续查看或编辑。`
-}
-
 function filterActivityText(
   text: string,
   tool: DisplayAgentToolCall,
@@ -620,46 +550,6 @@ export function agentToolStageText(
     return punctuate(error || '工具调用失败')
   }
   if (tool.status === 'stopped') return t ? t('surface:agentExecutionTimeline.stopped') : '操作已停止。'
-
-  const root = resultRecord(tool.result ?? tool.partialResult)
-  const structured = resultRecord(root?.structuredContent) ?? resultRecord(root?.details) ?? root
-  if (tool.name === 'context_room_document_read') {
-    const title = userText(structured?.title, 80)
-    const blockCount = structured?.blockCount
-    const version = structured?.version
-    if (title && typeof blockCount === 'number' && typeof version === 'number') {
-      return t
-        ? t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', { title, count: blockCount, version })
-        : `《${title}》当前有 ${blockCount} 个可编辑内容块，基于版本 ${version} 处理。`
-    }
-  }
-  if (tool.name === 'context_room_patch_begin') {
-    const summary = userText(tool.args.summary, 180)
-    if (summary) return t
-      ? t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary })
-      : punctuate(`修改范围已确定：${summary}`)
-  }
-  if (tool.name === 'context_room_patch_hunk') {
-    const sequence = structured?.acceptedSequence ?? tool.args.sequence
-    const operation = tool.args.operation
-    const markdown = typeof tool.args.markdown === 'string' ? tool.args.markdown.trim() : ''
-    const action = operation === 'insert'
-      ? (t ? t('surface:agentExecutionTimeline.insertContent') : '新增内容')
-      : operation === 'replace'
-        ? (t ? t('surface:agentExecutionTimeline.replaceContent') : '替换内容')
-        : operation === 'delete'
-          ? (t ? t('surface:agentExecutionTimeline.deleteContent') : '删除内容')
-          : (t ? t('surface:agentExecutionTimeline.documentChange') : '文档修改')
-    if (typeof sequence === 'number') {
-      return t
-        ? (markdown
-          ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence, action, count: markdown.length })
-          : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence, action }))
-        : markdown
-          ? `第 ${sequence} 项为${action}，建议内容 ${markdown.length} 字。`
-          : `第 ${sequence} 项为${action}。`
-    }
-  }
 
   const result = agentToolResultSummary(tool.result ?? tool.partialResult, t)
   if (!result) return ''
@@ -820,7 +710,7 @@ export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): Agen
 
   const pendingAnswer = acc.completed ? '' : (acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
   const finalAnswer = acc.completed
-    ? documentSummaryFallback((acc.pendingText || acc.completedContent || acc.savedAnswer).trim(), acc.tools)
+    ? (acc.pendingText || acc.completedContent || acc.savedAnswer).trim()
     : ''
 
   return {

@@ -247,7 +247,7 @@ describe("database migrations", () => {
     db.sqlite.close();
   });
 
-  it("repairs databases that ran the EverRoom dev branch before this branch (mixed history)", async () => {
+  it("repairs databases that ran the EverOffice dev branch before this branch (mixed history)", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-mixed-dev-migration-test-"));
     temporaryDirectories.push(dataDir);
     const databasePath = join(dataDir, "gateway.sqlite");

@@ -66,7 +66,7 @@ Gmail / Notion / Drive / Slack / …
 |---|---|---|
 | Agent runtime（pi） | 决定查什么、调用工具、读结果、回答 | 不持 `oct_`、不持 provider token、不直连 oo |
 | 本地 Gateway | MCP 中转、查询层、预算/审计、会话管理 | 不存连接器内容、不做定时同步 |
-| EverRoom SaaS | 登录、代发 `oct_`、代发起 OAuth | 不在查询链路上、不转发数据 |
+| EverOffice SaaS | 登录、代发 `oct_`、代发起 OAuth | 不在查询链路上、不转发数据 |
 | oo | 凭据保管、action 执行、MCP 服务端 | 不做跨源概念检索、不做业务编排 |
 | Provider | 数据与权限 | — |
 

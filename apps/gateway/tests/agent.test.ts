@@ -476,7 +476,7 @@ describe("agent gateway", () => {
       method: "POST",
       url: "/v1/agent/sessions",
       headers,
-      payload: { pageLabel: "EverRoom" },
+      payload: { pageLabel: "EverOffice" },
     });
     if (sessionResponse.statusCode !== 201) {
       throw new Error(`create session ${sessionResponse.statusCode}: ${sessionResponse.body.slice(0, 300)}`);
@@ -523,7 +523,7 @@ describe("agent gateway", () => {
       method: "POST",
       url: "/v1/agent/sessions",
       headers,
-      payload: { pageLabel: "EverRoom-2" },
+      payload: { pageLabel: "EverOffice-2" },
     });
     if (secondSessionResponse.statusCode !== 201) {
       throw new Error(`second create ${secondSessionResponse.statusCode}: ${secondSessionResponse.body.slice(0, 300)}`);

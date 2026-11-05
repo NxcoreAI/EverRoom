@@ -122,7 +122,7 @@ describe("Agent runtime isolation", () => {
       agentDirectory: join(root, "config"),
     }));
 
-    await expect(invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, "EverRoom", {
+    await expect(invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, "EverOffice", {
       pageLabel: "search",
     })).resolves.toBe("search result");
     expect(fetchMock).toHaveBeenCalledWith(

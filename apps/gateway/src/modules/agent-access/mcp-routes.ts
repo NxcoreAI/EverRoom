@@ -27,7 +27,7 @@ export function agentAccessMcpRoutes(host: AgentAccessMcpHost): FastifyPluginAsy
           if (error instanceof Error && error.message.startsWith("MCP_CONNECTION_INVALID:")) {
             return reply.code(401).send({
               jsonrpc: "2.0",
-              error: { code: -32001, message: "EverRoom connection token is missing, paused or revoked" },
+              error: { code: -32001, message: "EverOffice connection token is missing, paused or revoked" },
               id: "id" in request.body ? request.body.id ?? null : null,
             });
           }

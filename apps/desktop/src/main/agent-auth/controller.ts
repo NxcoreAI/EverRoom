@@ -274,7 +274,7 @@ export class AgentAuthController {
         {
           id: 'wait-local',
           title: '等待本地 CLI 接收配置结果',
-          description: '凭据将写入本机系统安全存储，不经过 EverRoom 服务端',
+          description: '凭据将写入本机系统安全存储，不经过 EverOffice 服务端',
           action: 'wait_local_result',
           completed: false,
         },
@@ -397,7 +397,7 @@ export class AgentAuthController {
         {
           id: 'wait-local',
           title: '本地等待授权完成',
-          description: '凭据由官方 ntn CLI 存入系统钥匙串，不经过 EverRoom 服务端',
+          description: '凭据由官方 ntn CLI 存入系统钥匙串，不经过 EverOffice 服务端',
           action: 'wait_local_result',
           completed: false,
         },

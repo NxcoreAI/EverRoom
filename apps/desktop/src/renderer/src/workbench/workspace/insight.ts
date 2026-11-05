@@ -278,7 +278,7 @@ export function composeWorkspaceInsight(input: ComposeWorkspaceInsightInput): Co
 
   const summaryParts = [
     `${sessions.length} 项工作：${workStateLine(sessions)}。`,
-    fileCount === undefined ? null : `资料库 ${fileCount} 个文件。`,
+    fileCount === undefined ? null : `资料 ${fileCount} 个文件。`,
   ].filter(Boolean) as string[]
   const summary = summaryParts.join('')
 

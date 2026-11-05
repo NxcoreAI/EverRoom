@@ -6,7 +6,7 @@ import type { AgentDebugRunEvents, AgentDebugSnapshot } from '@nxcore/agent-cont
 
 import { snapshotSearchParams, type SnapshotQuery } from './history'
 
-/** 数据来源类型：live = 代理到 Gateway；archive = dev server 直读磁盘归档（只读，无需 EverRoom 运行）。 */
+/** 数据来源类型：live = 代理到 Gateway；archive = dev server 直读磁盘归档（只读，无需 EverOffice 运行）。 */
 export type DebugSourceBackend = 'live' | 'archive'
 
 export interface DebugSource {

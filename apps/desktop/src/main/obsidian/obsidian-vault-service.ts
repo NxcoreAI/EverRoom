@@ -686,7 +686,7 @@ export class ObsidianVaultService {
     const path = this.resolveInside(vault, resource.relativePath)
     await this.assertSafeExistingPath(vault, path)
     const buffer = await readFile(path)
-    if (buffer.byteLength > MAX_NOTE_BYTES) throw new Error('笔记超过 20 MB，无法在 EverRoom 中编辑。')
+    if (buffer.byteLength > MAX_NOTE_BYTES) throw new Error('笔记超过 20 MB，无法在 EverOffice 中编辑。')
     const sourceHash = sha256(buffer)
     if (sourceHash !== resource.sourceHash) await this.scan(vault.id)
     return {

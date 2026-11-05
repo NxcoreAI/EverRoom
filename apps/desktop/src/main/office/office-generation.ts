@@ -66,6 +66,10 @@ export function wireOfficeSavedHooks(target: PreparedGenOfficeRuntime): void {
   if (typeof target.pdf?.setPdfFileSavedHook === 'function') {
     target.pdf.setPdfFileSavedHook(fanOut)
   }
+  // markdown 同为可选面（runtime mock 缺它时跳过）。
+  if (typeof target.markdown?.setMarkdownFileSavedHook === 'function') {
+    target.markdown.setMarkdownFileSavedHook(fanOut)
+  }
   hookWired = true
 }
 
@@ -434,6 +438,83 @@ export function wirePdfAgentAsk(
   pdfAgentAskWired = true
 }
 
+// ── 「评论」转发：markdown 选区浮层提交 → 工作空间对话 ──
+
+/**
+ * markdown 选区「评论」的载荷：锚点与评论侧车同一型——顶层块索引 + 精确
+ * 摘要 + 块内字符偏移，宿主把队列快照回推时渲染层用同一模糊匹配器还原
+ * 选区范围（块索引漂移时按摘要重定位）。
+ */
+export interface MarkdownAgentAskPayload {
+  instruction: string
+  blockIndex: number
+  excerpt?: string
+  offset?: number
+  /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+  mode?: 'now' | 'queue'
+}
+
+/**
+ * 注入对话的用户消息：只带「哪份文件、第几块、原文摘要」的位置事实 +
+ * 用户原话，不预设是修改还是提问（markdown 轻文稿，评论多为批注/提问）。
+ */
+export function buildMarkdownAgentAskMessage(title: string, op: MarkdownAgentAskPayload): string {
+  const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 60)}」）` : ''
+  return `我在 Markdown《${title}》第 ${op.blockIndex} 块选中了这段内容${excerpt}：${instruction}。`
+}
+
+/** 用户可见文案：只留用户原话（trim 尾句号），定位信息不上社交层。 */
+export function buildMarkdownAgentAskDisplayMessage(
+  _title: string,
+  op: MarkdownAgentAskPayload,
+): string {
+  return op.instruction.trim().replace(/[。.!！]+$/, '')
+}
+
+let markdownAgentAskWired = false
+
+/** 全局只装一次（幂等）：markdown 选区浮层 → 反查工作空间 → 广播渲染层注入对话框。 */
+export function wireMarkdownAgentAsk(
+  target: PreparedGenOfficeRuntime,
+  deps: {
+    resolveInstance(wcId: number): {
+      fileId: string
+      title: string
+      kind: string
+      roomId: string | null
+      workspaceId?: string | null
+    } | null
+    forward(event: AgentAskForwardEvent): void
+  },
+): void {
+  if (markdownAgentAskWired) return
+  // 老 runtime（未重建 genoffice）没有这个 hook：静默跳过，浮层保持关闭。
+  if (typeof target.markdown.setMarkdownAgentAskHook !== 'function') return
+  target.markdown.setMarkdownAgentAskHook(async (wcId, op) => {
+    const instance = deps.resolveInstance(wcId)
+    if (!instance) return { ok: false, error: '未找到该文档对应的打开实例' }
+    const workspaceId = instance.workspaceId ?? instance.roomId ?? null
+    if (!workspaceId) {
+      return { ok: false, error: '该文件未归属任何工作空间，无法转发给 Agent（请在工作空间产物库中打开后再试）' }
+    }
+    deps.forward({
+      roomId: instance.roomId,
+      workspaceId,
+      ...(op.mode === 'queue' ? { mode: 'queue' as const } : {}),
+      title: instance.title,
+      fileId: instance.fileId,
+      instruction: op.instruction,
+      ...(op.excerpt ? { excerpt: op.excerpt } : {}),
+      anchor: { fromBlockIndex: op.blockIndex, offset: op.offset },
+      message: buildMarkdownAgentAskMessage(instance.title, op),
+      displayMessage: buildMarkdownAgentAskDisplayMessage(instance.title, op),
+    })
+    return { ok: true }
+  })
+  markdownAgentAskWired = true
+}
+
 // ── 批注队列：宿主下发快照 ↔ 各编辑器内的锚点动作 ──
 
 /** 批注队列动作：跨进程形状见 shared/office.ts。 */
@@ -517,6 +598,21 @@ export function wirePdfAskQueue(
   if (typeof target.pdf.setPdfAskQueueActionHook !== 'function') return
   target.pdf.setPdfAskQueueActionHook((wcId, action) => forwardAskQueueAction(deps, wcId, action))
   pdfAskQueueWired = true
+}
+
+let markdownAskQueueWired = false
+
+/** 全局只装一次（幂等）：markdown 批注锚点的动作回灌宿主。 */
+export function wireMarkdownAskQueue(
+  target: PreparedGenOfficeRuntime,
+  deps: AskQueueWiringDeps,
+): void {
+  if (markdownAskQueueWired) return
+  if (typeof target.markdown.setMarkdownAskQueueActionHook !== 'function') return
+  target.markdown.setMarkdownAskQueueActionHook((wcId, action) =>
+    forwardAskQueueAction(deps, wcId, action),
+  )
+  markdownAskQueueWired = true
 }
 
 export interface GeneratedDocx {
@@ -804,4 +900,26 @@ export async function generateXlsxFromSheets(
   const bytes = await buildAgentXlsxBytes(input.sheets)
   onPhase?.('saved')
   return { filePath: await writeGeneratedTempFile(bytes, '.xlsx'), bytes, title }
+}
+
+export interface GeneratedMarkdown {
+  filePath: string
+  bytes: Buffer
+  title: string
+}
+
+/**
+ * 生成一份 Markdown：纯文本落盘即可（无需渲染引擎）——资料页 / 气泡窗 /
+ * 内置预览对 .md 的展示链路已就绪，这里只负责把字节写进临时文件供导入。
+ */
+export async function generateMarkdownFromText(
+  input: { title: string; markdown: string },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedMarkdown> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('文档标题不能为空')
+  onPhase?.('rendering')
+  const bytes = Buffer.from(input.markdown, 'utf8')
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(bytes, '.md'), bytes, title }
 }

@@ -113,7 +113,7 @@ export function createFileReadPiTool(deps: FileReadToolDeps): PiAgentRuntimeTool
           entry = files.catalogEntry(fileId);
         }
       }
-      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在资料中（可能仍在导入或已被删除）`);
 
       let markdown = files.catalogMarkdownOf(fileId)
         ?? files.markdownOf(fileId)
@@ -198,9 +198,9 @@ export interface FileSearchToolDeps {
 export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntimeTool {
   return {
     name: "file_search",
-    label: "按文件名搜索文件库（可限定产物库/资料库）",
+    label: "按文件名搜索文件（可限定产物/资料）",
     description:
-      "在文件库里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
+      "在资料里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
       + "用户的问题可能落在工作区资料库/产物的某份材料里时，先用它把「哪份文件」变成确定 fileId，"
       + "不必等用户报出文件名，也不要要求用户先上传或打开文件。"
       + "query 同时匹配原始文件名和显示名（不区分大小写，中文按子串）；extension 可以是单个扩展名或数组。"
@@ -297,7 +297,7 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
           updatedAt: item.updatedAt,
         };
       });
-      const scopeLabel = scope === "artifacts" ? "产物库" : scope === "library" ? "资料库" : "文件库";
+      const scopeLabel = scope === "artifacts" ? "产物" : scope === "library" ? "资料" : "全部文件";
       const payload = {
         query,
         ...(extensions.length > 0 ? { extension: extensions.length === 1 ? extensions[0] : extensions } : {}),

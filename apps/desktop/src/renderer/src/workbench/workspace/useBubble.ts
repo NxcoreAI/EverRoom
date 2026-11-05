@@ -38,7 +38,8 @@ const CLOSED: BubbleState = {
  * - 打开/还原：面板挂载，宽度从 0 动画到目标宽度，内容区同步让位；
  * - 收起（minimize）/关闭（close）：面板宽度动画收到 0，结束后直接卸载；
  *   收起后对话区右上角的入口按钮重新出现（外观与首次完全一致，没有长条）；
- * - 最大化/还原也走宽度过渡（面板始终在 flex 布局里），对话区逐帧跟着变。
+ * - 最大化：面板切到绝对定位覆盖层铺满工作区，对话区在其下整块隐藏
+ *   （has-max-bubble），还原回停靠态、宽度动画恢复。
  */
 export function useWorkspaceBubble(tabId: string) {
   const [bubble, setBubble] = useState<BubbleState>(CLOSED)
@@ -100,8 +101,8 @@ export function useWorkspaceBubble(tabId: string) {
   const beginExit = useCallback((kind: BubbleExitKind) => {
     clearExitTimer()
     setExitKind(kind)
-    // 注意：退场期间保留 maximized 状态——最大化面板的宽度是 CSS clamp 值，
-    // 提前改成 false 会让退场动画从 480px 起点开始跳一下。
+    // 注意：退场期间保留 maximized 状态——提前改成 false 会让覆盖层提前变回
+    // 停靠宽度，退场动画起点跳一下（覆盖层与停靠态的退场是两套 keyframes）。
     setBubble((current) => ({
       ...current,
       mode: kind === 'minimize' ? 'minimized' : 'closed',

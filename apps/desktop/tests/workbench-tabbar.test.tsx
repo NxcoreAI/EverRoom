@@ -3,9 +3,9 @@
  * 顶栏「收起/展开侧栏」按钮回归测试。
  *
  * 背景：顶栏最右的侧栏按钮一度看起来「点了没反应」——它包在 Radix Tooltip.Trigger(asChild)
- * 里，而 IconButton 是普通函数组件不转发 ref；同时文件标签本来就没有侧栏，按钮留在那里是死按钮。
+ * 里，而 IconButton 是普通函数组件不转发 ref。
  * 本测试锁定：①点击确实切换 store 的 sidebarCollapsed，②按钮语义随状态变化（收起↔展开），
- * ③文件标签下不渲染侧栏按钮。
+ * ③主页与工作空间标签都渲染侧栏按钮（文件不再有独立标签形态）。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -13,23 +13,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { TabBar } from '../src/renderer/src/workbench/shell/TabBar'
 import { useWorkbenchStore } from '../src/renderer/src/workbench/state/store'
-import { HOME_TAB_ID, fileTabId, workspaceTabId } from '../src/renderer/src/workbench/types'
-import type { OfficeFile } from '../src/renderer/src/office-proto/data'
+import { HOME_TAB_ID, workspaceTabId } from '../src/renderer/src/workbench/types'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-function officeFile(id: string): OfficeFile {
-  return {
-    id,
-    name: `${id}.docx`,
-    kind: 'docx',
-    roomId: null,
-    updatedLabel: '刚刚',
-    sizeLabel: '1 KB',
-    memoryCount: 0,
-    content: { type: 'md', source: '' },
-  }
-}
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -111,15 +97,18 @@ describe('顶栏侧栏收起按钮', () => {
     expect(findToggle('收起侧栏')).not.toBeNull()
   })
 
-  it('文件标签没有侧栏，不渲染死按钮', async () => {
-    resetStore(fileTabId('real:f1'), [
+  it('不再有文件标签形态：标签栏只渲染主页与工作空间标签', async () => {
+    resetStore(workspaceTabId('ws-1'), [
       { id: HOME_TAB_ID, kind: 'home', page: 'recent' },
-      { id: fileTabId('real:f1'), kind: 'file', file: officeFile('real:f1') },
+      { id: workspaceTabId('ws-1'), kind: 'workspace', workspaceId: 'ws-1', view: { kind: 'page', page: 'overview' } },
     ])
     await render(<TabBar />)
-    expect(findToggle('收起侧栏')).toBeNull()
-    expect(findToggle('展开侧栏')).toBeNull()
+    // 所有窗口标签（主页 + 工作空间）都有侧栏：按钮恒在，没有「点了没反应」的死槽。
+    expect(findToggle('收起侧栏')).not.toBeNull()
     // 搜索按钮仍然在，顶栏右侧动作没有整体消失。
     expect(findToggle('搜索')).not.toBeNull()
+    // 标签列表只含工作空间标签（主页是独立的固定按钮）。
+    const tabNames = Array.from(container.querySelectorAll('.wb-tab-name')).map((node) => node.textContent)
+    expect(tabNames).toEqual(['主页', '连接器项目'])
   })
 })

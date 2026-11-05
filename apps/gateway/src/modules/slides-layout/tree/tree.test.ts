@@ -1304,7 +1304,7 @@ describe("P0 扩展：质感层", () => {
   });
 
   it("页脚契约：brand/label/页码注入常规页，整页构图自动跳过", () => {
-    const contract = contractFromStyleParams({ footer: { brand: "EverRoom", label: "对外资料", pageNumbers: true } });
+    const contract = contractFromStyleParams({ footer: { brand: "EverOffice", label: "对外资料", pageNumbers: true } });
     const normal = compileTree(tree({
       role: "content", title: "常规页", direction: "row",
       children: [{ type: "text", variant: "body", text: "正文" }],
@@ -1313,7 +1313,7 @@ describe("P0 扩展：质感层", () => {
       (el) => el.type === "text" && el.y > 680,
     ) as TextElement[];
     const texts = footerTexts.flatMap((el) => el.paragraphs.flatMap((p) => p.runs.map((r) => r.text)));
-    expect(texts).toContain("EverRoom");
+    expect(texts).toContain("EverOffice");
     expect(texts).toContain("对外资料");
     expect(texts).toContain("7 / 24");
     // 封面（省略 title）无页脚

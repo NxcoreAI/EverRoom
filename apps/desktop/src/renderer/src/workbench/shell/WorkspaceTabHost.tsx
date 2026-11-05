@@ -7,6 +7,7 @@ import type { OfficeFile } from '@/office-proto/data'
 
 import { ConversationPane } from '../conversation/ConversationPane'
 import { useWorkbenchStore, useWorkspaceSessions, useWorkspace } from '../state/store'
+import { cn } from '../ui/cn'
 import {
   type WorkspacePageKey,
   type WorkspaceTab,
@@ -22,6 +23,7 @@ import { PlanPage } from '../workspace/PlanPage'
 import { useWorkspaceBubble } from '../workspace/useBubble'
 import type { WorkspacePageProps } from '../workspace/contracts'
 import { workbenchToast } from '../shell/toast'
+import { isWorkspaceBubbleTarget, OPEN_AGENT_FILE_EVENT, type OpenAgentFileDetail } from '../shell/openAgentFile'
 import '../workspace/workspace.css'
 
 /**
@@ -49,6 +51,31 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
     window.addEventListener('everroom:workbench-toggle-bubble', onToggle)
     return () => window.removeEventListener('everroom:workbench-toggle-bubble', onToggle)
   }, [active, bubble, tab.id])
+
+  // Agent 产物就绪（Workbench 按 workspaceId 定向派发）：气泡窗自动展开并打开
+  // 该文件——任务完成的「结果展示」一步到位，用户不必自己去产物库找。
+  // 非激活标签只收事件不展开（激活时气泡窗才可见），避免后台空间互相打扰。
+  useEffect(() => {
+    const onOpenAgentFile = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAgentFileDetail>).detail
+      if (!isWorkspaceBubbleTarget(detail, tab.id) || !active) return
+      bubble.openFile(detail.file)
+    }
+    window.addEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
+    return () => window.removeEventListener(OPEN_AGENT_FILE_EVENT, onOpenAgentFile)
+  }, [active, bubble, tab.id])
+
+  // 「在工作空间里打开文件」（openFileInWorkspace 写入 store 的交接载荷）：
+  // 挂载/激活时取走一次并交给气泡窗。非激活标签不抢——store 里只有一份，
+  // 等目标标签激活后消费，避免后台空间替别人开文件。
+  const consumePendingBubbleFile = useWorkbenchStore((state) => state.consumePendingBubbleFile)
+  const pendingBubbleFile = useWorkbenchStore((state) => state.pendingBubbleFile)
+  useEffect(() => {
+    if (!active || !pendingBubbleFile) return
+    if (pendingBubbleFile.tabId !== tab.id) return
+    const file = consumePendingBubbleFile(tab.id)
+    if (file) bubble.openFile(file)
+  }, [active, pendingBubbleFile, consumePendingBubbleFile, bubble, tab.id])
 
   // 激活标签时刷新一次会话列表（后台 run 的标题/状态可能已经变了）。
   const refreshSessions = useWorkbenchStore((state) => state.refreshSessions)
@@ -93,7 +120,13 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   }
 
   return (
-    <div className="wb-ws">
+    <div className={cn(
+      'wb-ws',
+      // 最大化覆盖层显示期间隐藏主区（对话区）；退场开始就摘掉，
+      // 让对话区随覆盖层淡出逐渐显现。仅会话/草稿视图有对话区可覆盖，
+      // 功能页（资料库/产物/计划）下面同样被盖住，行为一致。
+      bubble.bubble.maximized && bubble.visible && !bubble.exitKind && 'has-max-bubble',
+    )}>
       <div className="wb-ws-main">
         {view.kind === 'page' ? renderPage() : null}
         {/* 对话区：右上角一个图标入口，点开右侧「资料与文件」面板（无文字，保持极简）。 */}

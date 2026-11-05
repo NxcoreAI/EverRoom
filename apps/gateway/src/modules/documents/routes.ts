@@ -14,17 +14,10 @@ function errorPayload(error: DocumentServiceError) {
   return { error: error.code, message: error.message, ...error.details };
 }
 
-/**
- * 划词改写的派发器（由 create-server 注入 `doc-writer` 的 rewrite task）：
- * documents 模块不依赖 subagents，只约定「拿任务入参、立即返回 invocationId」。
- */
-export type SelectionRewriteDispatch = (taskInput: Record<string, unknown>) => Promise<string>;
-
 export function documentRoutes(
   service: DocumentService,
   summaryRuntime?: () => import("@nxcore/agent-runtime").AgentRuntime | null,
   indexBackfillReadTrigger?: DocumentIndexBackfillReadTrigger | null,
-  dispatchSelectionRewrite?: SelectionRewriteDispatch | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     // 工作区级文稿库（Phase 2i 起不再有 Room 分区，roomId 查询参数已删除）。
@@ -314,59 +307,7 @@ export function documentRoutes(
         reply.code(201).send(await service.import({ ...request.body, roomId: request.body.roomId ?? null })),
     );
 
-    // 划词改写：编辑器选中文本 → 派发 doc-writer 的 rewrite task，立即返回 invocationId，
-    // 渲染层再轮询 GET /v1/subagent-invocations/:id 取替换文本（同步流由客户端轮询模拟）。
-    // Phase 2i-2：原 POST /v1/context-rooms/selection-rewrite 随 context-rooms 模块删除，
-    // 路径迁到 documents；roomId 不再出现在入参里（文稿一律工作区级）。
-    app.post(
-      "/v1/documents/selection-rewrite",
-      {
-        schema: {
-          tags: ["documents"],
-          body: Type.Object({
-            documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            documentName: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-            selectedText: Type.String({ minLength: 1, maxLength: 20_000 }),
-            instruction: Type.Optional(Type.String({ maxLength: 2_000 })),
-            contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
-            contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
-            blockType: Type.Optional(Type.String({ maxLength: 64 })),
-            responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-          }, { additionalProperties: false }),
-        },
-      },
-      async (request, reply) => {
-        if (!dispatchSelectionRewrite) {
-          return reply.code(503).send({ error: "doc_writer_not_configured" });
-        }
-        const body = request.body;
-        if (!body.selectedText.trim()) {
-          return reply.code(400).send({ error: "selection_required" });
-        }
-        // 框架无排队（方案 §5.1）：并发限额是可诊断的硬错误，直接冒 500 会在桌面端
-        // 变成笼统的 internal gateway error，这里显式透出错误码。
-        let invocationId: string;
-        try {
-          invocationId = await dispatchSelectionRewrite({
-            selectedText: body.selectedText,
-            ...(body.instruction?.trim() ? { instruction: body.instruction.trim() } : {}),
-            ...(body.contextBefore?.trim() ? { contextBefore: body.contextBefore } : {}),
-            ...(body.contextAfter?.trim() ? { contextAfter: body.contextAfter } : {}),
-            ...(body.blockType?.trim() ? { blockType: body.blockType } : {}),
-            ...(body.documentId ? { documentId: body.documentId } : {}),
-            ...(body.documentName ? { documentName: body.documentName } : {}),
-            ...(body.responseLanguage ? { responseLanguage: body.responseLanguage } : {}),
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          request.log.warn({ err: message }, "selection rewrite dispatch rejected");
-          const retryable = message === "subagent_concurrency_limit"
-            || message === "subagent_global_concurrency_limit";
-          return reply.code(retryable ? 503 : 500).send({ error: message });
-        }
-        return { invocationId };
-      },
-    );
+;
 
     app.put(
       "/v1/documents/:id",

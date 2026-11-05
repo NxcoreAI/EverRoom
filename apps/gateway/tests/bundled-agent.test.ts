@@ -44,9 +44,10 @@ describe("bundled project Agent", () => {
     expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
       required: expect.arrayContaining(["summary", "facts", "missingFields"]),
     });
-    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页降思考档、布局工具预算放宽）。
-    expect(registry.get("slides-reviewer")?.revision.policy.model).toMatchObject({ reasoning: "low" });
-    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBe(24);
+    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页并入 layouter：降思考档、
+    // 不设工具调用硬上限，仅受 timeout/输出预算约束——见 agents/slides-layouter/agent.yaml）。
+    expect(registry.get("slides-layouter")?.revision.policy.model).toMatchObject({ reasoning: "low" });
+    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls ?? undefined).toBeUndefined();
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;
@@ -178,16 +179,17 @@ describe("bundled project Agent", () => {
     });
     expect(JSON.parse(proseResult.content)).toMatchObject({
       status: "completed",
-      summary: null,
+      // 纯文本（非结构化）解析结果按 normalizeDocumentSummary 语义透传全文并标注 text。
+      summary: "文档解析完成。李展萍就读于示例大学，学籍状态为在籍。",
       facts: null,
       missingFields: null,
-      outputFormat: null,
+      outputFormat: "text",
     });
 
     const invocation = await orchestrator.dispatch({
       agentId: "content-analyst",
       task: "分析材料并提炼结论",
-      input: { content: "EverRoom 已把 Agent Bundle 放入项目并随应用打包。" },
+      input: { content: "EverOffice 已把 Agent Bundle 放入项目并随应用打包。" },
       idempotencyKey: "bundled-content-analyst",
       source: "primary_agent",
       parentSessionId: "main-session",

@@ -1,6 +1,6 @@
 # Word 操作区 → Agent 操作覆盖清单
 
-> 目的：GenOffice Word 编辑器的**操作区（Ribbon/工具栏/命令入口）可以隐藏，只留正文画布**；用户需要的一切文档操作由 EverRoom agent 完成。本文逐项对照「操作区入口 → agent 能力」。
+> 目的：GenOffice Word 编辑器的**操作区（Ribbon/工具栏/命令入口）可以隐藏，只留正文画布**；用户需要的一切文档操作由 EverOffice agent 完成。本文逐项对照「操作区入口 → agent 能力」。
 > 相关：`docs/word-agent-editing-implementation.zh-CN.md`、`word-agent-test-prompts.md`
 > 状态：2026-10-31，`word_agent_ops` 共 **69 个 op / 10 个域** + `word_agent_edit` 工具链 + `word_compare` / `word_export_pdf`。
 

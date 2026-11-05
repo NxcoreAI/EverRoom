@@ -27,7 +27,7 @@ open http://127.0.0.1:5199/debug/agent-debug.html        # 原调试台，仍在
 ```
 
 来源发现与调试台完全一致：先找运行中的 Gateway（进程存活时走 `/@agent-debug/gateway/:id/*` 代理，Bearer token 只存在于 dev server 的 Node 进程），
-再退回本机归档 `~/Library/Application Support/EverRoom/agent-debug/<source>/`（EverRoom 不启动也能复盘历史 run）。
+再退回本机归档 `~/Library/Application Support/EverOffice/agent-debug/<source>/`（EverOffice 不启动也能复盘历史 run）。
 
 ## 3. 信息分层与视觉（2026-11-02 改版）
 

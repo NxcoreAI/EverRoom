@@ -1,6 +1,6 @@
 # Word 文档 Agent 编辑能力测试手册
 
-> 使用前提：EverRoom 桌面端已重启（载入最新 embed runtime）。第一~七组按传统方式在界面里打开测试文档；
+> 使用前提：EverOffice 桌面端已重启（载入最新 embed runtime）。第一~七组按传统方式在界面里打开测试文档；
 > 第八组起验证 headless 通路——文件**不需要预先打开**，agent 会按 fileId 在后台编辑器里打开并静默保存。
 > 配图（5.3）依赖已登录的中转会话 + 套餐下发的生图模型；不可用时 agent 应报 ILLUSTRATION_UNAVAILABLE
 > 并退回「本地图片路径」方案，而不是继续用 bash 现画图。
@@ -10,7 +10,7 @@
 
 ## 准备：建测试文档
 
-先让 agent 生成一份内容丰富的文档（或者你手动准备一份带多级结构的 docx，在 EverRoom 里打开）：
+先让 agent 生成一份内容丰富的文档（或者你手动准备一份带多级结构的 docx，在 EverOffice 里打开）：
 
 ```
 帮我生成一份 Word 文档：《智能家居行业调研报告》。要求：一级标题 3 个章节
@@ -306,7 +306,7 @@ docParagraph/docHeading/docListItem，全文档操作只改一种算失败）。
 ### 8.3 应用重启后继续改
 
 1. 先让 agent 改一次（产生新版本）
-2. 完全退出并重启 EverRoom
+2. 完全退出并重启 EverOffice
 3. **不打开任何文件**，直接说：
 
 ```
@@ -420,11 +420,11 @@ docParagraph/docHeading/docListItem，全文档操作只改一种算失败）。
 ## 第十组：干净画布（操作区隐藏，只留正文）
 
 > 目标：Ribbon/工具栏等操作区隐藏后，用户不需要任何工具栏按钮，所有排版/插入/审阅操作都能由 agent 完成。
-> EverRoom embed 下默认隐藏；右上角半透明「显示工具栏」胶囊、`⌘⇧F`、宿主 `office.toggleChrome()` 都可恢复。
+> EverOffice embed 下默认隐藏；右上角半透明「显示工具栏」胶囊、`⌘⇧F`、宿主 `office.toggleChrome()` 都可恢复。
 
 ### 10.1 默认隐藏与恢复
 
-1. 重启 EverRoom，打开一份 docx。
+1. 重启 EverOffice，打开一份 docx。
 2. 观察：只看到正文画布（和右上角很小的「显示工具栏」胶囊），没有 Ribbon/状态栏/标尺/导航。
 3. 点击胶囊或按 `⌘⇧F`：操作区恢复；再按一次：再次隐藏。
 

@@ -100,6 +100,8 @@ export interface LayouterTailArgs {
   plan: Record<string, unknown>;
   armPlan: SlidesProgressPlan;
   styleParams: Record<string, unknown> | null;
+  /** 产物归属工作区（done 广播带上，桌面渲染层按空间定向自动展示成品）。 */
+  workspaceId?: string | null;
   /** 场景（静默判断得出）：决定字号阶梯、最小字号与字数预算。缺省落最保守一档。 */
   scene?: string | null;
   draftDocumentId: string;
@@ -954,6 +956,7 @@ export async function runLayouterTail(
         title: deckTitle,
         ...(originalName ? { originalName } : {}),
         roomId: args.roomId,
+        ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
         completed,
         appliedPages: appliedPages.size,
         totalPages,

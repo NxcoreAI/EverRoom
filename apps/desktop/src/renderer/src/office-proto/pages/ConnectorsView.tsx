@@ -86,7 +86,7 @@ const DATA_TYPE_SCOPES: Record<string, string> = {
 }
 
 /**
- * oo service → EverRoom provider（Google 系命名不同；与网关/主进程桥同值）。
+ * oo service → EverOffice provider（Google 系命名不同；与网关/主进程桥同值）。
  * 墓碑清单按 oo service 记录，卡片按 provider 索引——用它对齐。
  */
 const SERVICE_OF_PROVIDER_HINT: Record<string, string> = {

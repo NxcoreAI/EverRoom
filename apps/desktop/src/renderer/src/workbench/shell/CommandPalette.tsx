@@ -30,7 +30,7 @@ export function CommandPalette() {
   const sessions = useWorkbenchStore((state) => state.sessions)
   const openHome = useWorkbenchStore((state) => state.openHome)
   const openWorkspaceTab = useWorkbenchStore((state) => state.openWorkspaceTab)
-  const openFileTab = useWorkbenchStore((state) => state.openFileTab)
+  const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
 
   useEffect(() => {
     const show = () => setOpen(true)
@@ -139,14 +139,14 @@ export function CommandPalette() {
 
               <Command.Group heading="文件">
                 {files === null ? (
-                  <div className="wb-palette-loading"><Spinner size={13} /> 正在读取文件库…</div>
+                  <div className="wb-palette-loading"><Spinner size={13} /> 正在读取资料…</div>
                 ) : files.length === 0 ? (
-                  <div className="wb-palette-loading">文件库暂无文件</div>
+                  <div className="wb-palette-loading">资料暂无文件</div>
                 ) : files.map((item) => (
                   <Command.Item
                     key={item.file.id}
                     value={`文件 ${item.file.name} ${item.catalog.sourceLabel}`}
-                    onSelect={() => { openFileTab(item.file); close() }}
+                    onSelect={() => { openFileInWorkspace(item.file); close() }}
                   >
                     <span className="wb-palette-icon" aria-hidden="true">
                       <FileTypeIcon kind={item.file.kind} size={17} />
@@ -159,7 +159,7 @@ export function CommandPalette() {
 
               {files === null ? null : (
                 <Command.Item
-                  value="文件库 所有文件"
+                  value="资料 所有文件"
                   onSelect={() => { openHome('files'); close() }}
                 >
                   <span className="wb-palette-icon" aria-hidden="true"><FileText size={15} /></span>

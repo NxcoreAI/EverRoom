@@ -1,5 +1,5 @@
 import { LoaderCircle, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AgentAttachmentReference, AgentMountedDirectory, AgentNoteCard } from '@nxcore/agent-contract'
 
@@ -7,8 +7,6 @@ import { AgentChatView } from '@/components/agent/AgentChatView'
 import { buildAskBatch, type PendingAskDraft } from '@/components/agent/askDrafts'
 import { AgentComposer } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
-import { RoomDocumentsProvider } from '@/components/context-room/RoomDocumentsProvider'
-import { desktopOperationBridge, DocumentOperationProvider } from '@/components/context-room/operations'
 import { onToast as onAppToast } from '@/state/toast'
 import '@/components/agent/AgentChat.css'
 import '@/components/agent/AgentPanel.css'
@@ -21,6 +19,9 @@ import './conversation.css'
 
 /** 连接失败的「正在连接」提示延迟出现，避免 ready 帧到达前的闪烁。 */
 const CONNECTING_HINT_DELAY_MS = 1500
+
+/** 草稿态 hero 输入框占位文案（与会话态 composer 的占位区分）。 */
+const HERO_PLACEHOLDER = '今天帮你做些什么？'
 
 /** 批注草稿 → 气泡卡片结构（原文摘录 + 注释原话；来源文件可辨时带标题）。 */
 function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCard[] {
@@ -41,15 +42,14 @@ export interface ConversationPaneProps {
 /**
  * 主区对话：WorkBuddy 式大对话区。
  *
- * 装配与 office-proto/AgentChatDock 保持一致（DocumentOperationProvider +
- * RoomDocumentsProvider + useAgentSession + AgentChatView/AgentComposer），
- * 差异只在布局（占满主区、内容 820px 居中）和会话来源（工作台 store 驱动）。
+ * 装配与 office-proto/AgentChatDock 保持一致（useAgentSession +
+ * AgentChatView/AgentComposer），差异只在布局（占满主区、内容 820px 居中）
+ * 和会话来源（工作台 store 驱动）。
  *
  * 会话切换语义（重要）：切换只 unsubscribe 事件流，绝不 cancelRun——网关侧 run
  * 独立于渲染层继续跑，回到会话时由快照 + 事件全量恢复。
  */
 export function ConversationPane({ tabId, workspaceId, sessionId }: ConversationPaneProps) {
-  const operationBridge = useMemo(() => desktopOperationBridge(), [])
   /**
    * 会话内核的重挂载计数：当前会话还有 run 在跑时，useAgentSession.startNewConversation
    * 会拒绝进入草稿态（它只能停在自己那个会话上）。这里重挂载 inner 拿一个干净的内核，
@@ -64,17 +64,13 @@ export function ConversationPane({ tabId, workspaceId, sessionId }: Conversation
   }), [])
 
   return (
-    <DocumentOperationProvider operationBridge={operationBridge} onDocumentApplied={() => undefined}>
-      <RoomDocumentsProvider>
-        <ConversationPaneInner
-          key={paneEpoch}
-          tabId={tabId}
-          workspaceId={workspaceId}
-          sessionId={sessionId}
-          onRestartConversationKernel={restartConversationKernel}
-        />
-      </RoomDocumentsProvider>
-    </DocumentOperationProvider>
+    <ConversationPaneInner
+      key={paneEpoch}
+      tabId={tabId}
+      workspaceId={workspaceId}
+      sessionId={sessionId}
+      onRestartConversationKernel={restartConversationKernel}
+    />
   )
 }
 
@@ -318,53 +314,53 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   }, [askQueueSendNonce, workspaceAskDrafts.length, hook.scopeReady, hook.loading])
 
   /**
-   * 会话态输入框：AgentChatView 在消息列表底部渲染 {composer}（normal flow）。
-   * 徽章与 AgentComposer 平级放同一个 fragment——**不要**包一层 wrapper div：
-   * AgentComposer 的 ResizeObserver 把 --agent-composer-height 写在
-   * shell.parentElement 上（frame 级消费者都依赖它），多包一层就会写到 wrapper
-   * 上、frame 拿不到。徽章自身 absolute 吸在输入框上方（见 .wb-note-chip）。
+   * 输入框（草稿态 hero 与会话态共用同一个 AgentComposer 实例）：
+   * 「智能档位」「+ → 导入文件/挂载目录」「思考档位」等底栏控件在两种形态下
+   * 完全一致——这正是「新建任务对话框」与「已有会话对话框」体验对齐的关键。
+   * AgentComposer 不能包 wrapper div：ResizeObserver 把 --agent-composer-height
+   * 写在 shell.parentElement 上（frame 级消费者都依赖它），多包一层就会写到
+   * wrapper 上、frame 拿不到。批注徽章由各形态自行放置（会话态与 composer 平级
+   * 同一 fragment；hero 态走 aboveInput 行）。
    */
   const composer = (
-    <>
-      {noteQueueChip}
-      <AgentComposer
-        ref={composerRef}
-        contextSummary=""
-        contextItems={[]}
-        hasSelectedText={false}
-        /** 只有批注也允许发送：批注等价于一条消息，空输入不再是空提交。 */
-        hasSubmittableContext={workspaceAskDrafts.length > 0}
-        resetKey={composerResetKey}
-        selectedExternalConversation={null}
-        localAgents={[]}
-        rooms={[]}
-        modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
-        modelPreferenceLocked={Boolean(hook.sessionId)}
-        loadModelAvailability={async () => ({ lite: true, primary: true })}
-        onSelectModelPreference={hook.setModelPreferenceDefault}
-        channelAgentId={null}
-        permissionMode={hook.permissionMode}
-        permissionModeAvailable={hook.permissionModeAvailable}
-        onSelectPermissionMode={hook.setSessionPermissionMode}
-        thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
-        onSelectThinkingLevel={hook.setSessionThinkingLevel}
-        contextUsage={hook.contextUsage}
-        contextCompacting={hook.contextCompacting}
-        ghostSuggestion={null}
-        queuedSubmissions={hook.queuedSubmissions}
-        onRemoveQueuedSubmission={hook.removeQueuedSubmission}
-        value={draft}
-        active={Boolean(hook.activeRunId)}
-        loading={hook.loading}
-        available={canSend}
-        onChange={setDraft}
-        onSelectExternalConversation={() => undefined}
-        onClearContext={() => undefined}
-        onRemoveContext={() => undefined}
-        onStop={() => void hook.stop()}
-        onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
-      />
-    </>
+    <AgentComposer
+      ref={composerRef}
+      contextSummary=""
+      contextItems={[]}
+      hasSelectedText={false}
+      /** 只有批注也允许发送：批注等价于一条消息，空输入不再是空提交。 */
+      hasSubmittableContext={workspaceAskDrafts.length > 0}
+      resetKey={composerResetKey}
+      selectedExternalConversation={null}
+      localAgents={[]}
+      rooms={[]}
+      modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
+      modelPreferenceLocked={Boolean(hook.sessionId)}
+      loadModelAvailability={async () => ({ lite: true, primary: true })}
+      onSelectModelPreference={hook.setModelPreferenceDefault}
+      channelAgentId={null}
+      permissionMode={hook.permissionMode}
+      permissionModeAvailable={hook.permissionModeAvailable}
+      onSelectPermissionMode={hook.setSessionPermissionMode}
+      thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
+      onSelectThinkingLevel={hook.setSessionThinkingLevel}
+      contextUsage={hook.contextUsage}
+      contextCompacting={hook.contextCompacting}
+      ghostSuggestion={null}
+      placeholder={conversationState ? undefined : HERO_PLACEHOLDER}
+      queuedSubmissions={hook.queuedSubmissions}
+      onRemoveQueuedSubmission={hook.removeQueuedSubmission}
+      value={draft}
+      active={Boolean(hook.activeRunId)}
+      loading={hook.loading}
+      available={canSend}
+      onChange={setDraft}
+      onSelectExternalConversation={() => undefined}
+      onClearContext={() => undefined}
+      onRemoveContext={() => undefined}
+      onStop={() => void hook.stop()}
+      onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
+    />
   )
 
   const standaloneError = hook.error && !conversationState ? hook.error : null
@@ -415,13 +411,17 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             </div>
           ) : null}
           <AgentChatView
-            activeDocument={null}
             activeRunId={hook.activeRunId}
             agentIdByRun={hook.agentIdByRun}
             agentNamesById={{}}
             activityByRun={hook.activityByRun}
             cancelledRunIds={hook.cancelledRunIds}
-            composer={composer}
+            composer={(
+              <>
+                {noteQueueChip}
+                {composer}
+              </>
+            )}
             currentSessionId={hook.sessionId}
             draftHasContent={Boolean(draft.trim()) || workspaceAskDrafts.length > 0}
             error={hook.error}
@@ -435,7 +435,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
             onRetryError={() => hook.reload()}
             onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, null, runId)}
-            onSelectDocument={() => workbenchToast('文档选择暂未接入工作台产物面板')}
             onSelectPrompt={(prompt) => {
               setDraft(prompt)
               composerRef.current?.focus()
@@ -455,14 +454,12 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
           />
         </>
       ) : (
-        <ConversationEmpty
-          draft={draft}
-          disabled={!canSend || hook.loading}
-          onDraftChange={setDraft}
-          onSubmit={send}
-          aboveInput={noteQueueChip}
-          hasPendingNotes={workspaceAskDrafts.length > 0}
-        />
+        <ConversationEmpty aboveInput={noteQueueChip} onSuggestion={(prompt) => {
+          setDraft(prompt)
+          composerRef.current?.focus()
+        }}>
+          {composer}
+        </ConversationEmpty>
       )}
     </div>
   )

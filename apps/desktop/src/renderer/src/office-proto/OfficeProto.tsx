@@ -3,7 +3,7 @@ import {
   Clock, FolderOpen, Bot, Library, Plug, Settings, X, Home, Plus,
 } from 'lucide-react'
 
-import everroomAppIcon from '@/assets/everroom-app-icon.png'
+import everroomAppIcon from '@/assets/everoffice-app-icon.png'
 import { useOptionalAccount } from '@/state/AccountContext'
 
 import { type MenuKey, type OfficeFile, blankFile } from './data'
@@ -167,10 +167,10 @@ function Sidebar({
   return (
     <aside className="op-sidebar">
       <div className="op-brand">
-        {/* EverRoomMac 品牌标：项目原有 app 图标（原型占位 "E" 字方块已替换） */}
+        {/* EverOfficeMac 品牌标：项目原有 app 图标（原型占位 "E" 字方块已替换） */}
         <img className="op-brand-mark" src={everroomAppIcon} alt="" aria-hidden="true" draggable={false} />
         <div className="op-brand-text">
-          <span className="op-brand-name">EverRoom</span>
+          <span className="op-brand-name">EverOffice</span>
           <span className="op-brand-sub">Office</span>
         </div>
       </div>

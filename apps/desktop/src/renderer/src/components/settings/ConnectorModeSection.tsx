@@ -8,7 +8,7 @@ interface ConnectorModeState { mode: ConnectorLayerMode; switchedAt: string | nu
 
 /**
  * 连接层模式（P2-4 / D1-D2 决策）：全局单开关，默认 SaaS。
- * - SaaS：OpenConnector 由 EverRoomSass 托管（默认，需登录 EverRoom 账号）
+ * - SaaS：OpenConnector 由 EverRoomSass 托管（默认，需登录 EverOffice 账号）
  * - 本地：本地启动 OpenConnector 服务（隐私兜底）
  * 切换后已有连接需重新授权（C3：token 不跨实例迁移）。
  */
@@ -27,7 +27,7 @@ export function ConnectorModeSection() {
     if (!state || state.mode === mode || pending) return
     if (mode === 'saas' && !account?.authenticated) {
       setNotice(t('surface:settings.connectorModeSaasLoginRequired', {
-        defaultValue: '使用云端连接层需要先登录 EverRoom 账号（设置 → EverRoom 账号）。',
+        defaultValue: '使用云端连接层需要先登录 EverOffice 账号（设置 → EverOffice 账号）。',
       }))
       return
     }

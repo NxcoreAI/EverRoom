@@ -15,10 +15,10 @@ describe("tokenize", () => {
   });
 
   it("英文词保留整词并补字符 bigram", () => {
-    const tokens = tokenize("EverRoom");
-    expect(tokens[0]).toBe("everroom");
+    const tokens = tokenize("EverOffice");
+    expect(tokens[0]).toBe("everoffice");
     expect(tokens).toContain("ev");
-    expect(tokens).toContain("om");
+    expect(tokens).toContain("ce");
   });
 
   it("两字母英文词不补 bigram", () => {

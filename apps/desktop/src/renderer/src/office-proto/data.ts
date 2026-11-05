@@ -1,4 +1,4 @@
-// EverRoom Office 原型（方向 A）mock 数据。
+// EverOffice Office 原型（方向 A）mock 数据。
 // 人物与素材沿用仓库既有 mock 世界观（连接器项目室 / 林薇 / V1 视觉定稿…），
 // 保证各原型页之间叙事一致。
 
@@ -116,7 +116,7 @@ export const files: OfficeFile[] = [
   },
   {
     id: 'f-rival',
-    name: '竞品分析：Notion AI vs EverRoom.pdf',
+    name: '竞品分析：Notion AI vs EverOffice.pdf',
     kind: 'pdf',
     roomId: 'kb-visual',
     updatedLabel: '3 天前',
@@ -124,11 +124,11 @@ export const files: OfficeFile[] = [
     content: { type: 'pdf', pages: [
       { paragraphs: [
         '一、市场格局：Notion AI 的优势在通用写作补全与模板生态，其 AI 能力面向「任何人在任何文档」的通用场景，付费墙较高（每席 $10/月）。',
-        'EverRoom 的机会不在通用补全，而在「带着用户自己的记忆写」：邮件、会议、Wiki 构成的私有上下文是 Copilot 类产品拿不到的。',
+        'EverOffice 的机会不在通用补全，而在「带着用户自己的记忆写」：邮件、会议、Wiki 构成的私有上下文是 Copilot 类产品拿不到的。',
       ] },
       { paragraphs: [
-        '二、能力对比：Notion AI 支持问答、翻译、摘要、改写；EverRoom 原型已具备记忆起草、引用锚定、数据成表、论文装订四项独占能力。',
-        '在「从零起草」场景，Notion AI 产出通用模板化内容；EverRoom 能引用真实邮件与会议结论，可信度与可用性显著更高。',
+        '二、能力对比：Notion AI 支持问答、翻译、摘要、改写；EverOffice 原型已具备记忆起草、引用锚定、数据成表、论文装订四项独占能力。',
+        '在「从零起草」场景，Notion AI 产出通用模板化内容；EverOffice 能引用真实邮件与会议结论，可信度与可用性显著更高。',
       ] },
       { paragraphs: [
         '三、结论：以「引用锚定的 AI 写作」为核心叙事切入，避开与 Notion AI 在通用补全上的正面消耗战；定价锚点建议对齐 WPS 超级会员而非 Notion。',
@@ -314,7 +314,7 @@ export const knowledgeBases: KnowledgeBase[] = [
   ] },
   { id: 'kb-visual', title: '设计系统', icon: '🎨', updatedLabel: '昨天', sources: [
     { id: 'sc-release', kind: 'doc', title: 'V1 视觉定稿 · 发布计划.pptx', timeLabel: '昨天', status: 'indexed', fileId: 'f-release' },
-    { id: 'sc-rival', kind: 'doc', title: '竞品分析：Notion AI vs EverRoom.pdf', timeLabel: '3 天前', status: 'indexed', fileId: 'f-rival' },
+    { id: 'sc-rival', kind: 'doc', title: '竞品分析：Notion AI vs EverOffice.pdf', timeLabel: '3 天前', status: 'indexed', fileId: 'f-rival' },
     { id: 'sc-motion', kind: 'mail', title: '动效规范讨论（邮件串）', timeLabel: '上周', status: 'indexed' },
     { id: 'sc-ref', kind: 'web', title: 'Keynote 模板参考页', timeLabel: '上周', status: 'syncing' },
   ] },
@@ -525,7 +525,7 @@ export const starterPrompts: Record<FileKind, string[]> = {
   md: ['把这篇笔记整理成周报初稿', '补全「待办」的下一步行动', '总结这篇笔记的三条结论'],
 }
 
-/* ───────────── EverRoomMac 真实文件接入（迁移附加层，不改上方原型数据） ─────────────
+/* ───────────── EverOfficeMac 真实文件接入（迁移附加层，不改上方原型数据） ─────────────
  * 有 preload 网关桥（window.nxcore.files）时，最近/所有文件列表显示真实文件库；
  * 真实 docx/xlsx/pptx/pdf 点开后进标签页，由 NativeEditorHost 的 realCatalog 分支
  * 调 nxcore.files.openOriginal 打开内置 GenOffice 预览（可编辑，保存回填版本链），
