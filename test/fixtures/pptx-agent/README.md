@@ -203,3 +203,19 @@ python3 test/fixtures/pptx-agent/make_pptx_test_deck.py
 3. **第 8 页是隐藏页**：`slides_read` 大纲里仍会列出它——用来验证 Agent 不会把"隐藏"当成"不存在"；
 4. **第 6 页故意有歧义**：两个同名标题。如果 Agent 不澄清直接改一个，记为缺陷（PP-X-02）；
 5. **每例跑完看版本链**：正常编辑一次 +1；没 +1 说明事务没落盘。
+
+---
+
+## 两套夹具，别混用
+
+| 夹具 | 配套文档 | 用途 |
+|---|---|---|
+| `PPT测试_2026年Q3经营回顾.pptx`（9 页，合成） | `docs/pptx-agent-test-cases.zh-CN.md`（60 例） | 通用能力验收：刻意埋了双标题歧义、隐藏页、表格合计 |
+| `答辩PPT_测试副本.pptx`（10 页，个人答辩稿的逐字节副本） | `docs/pptx-agent-prompt-sheet.zh-CN.md` / `答辩PPT改稿测试_提示词清单.docx`（38 条） | 真实场景回归：提示词直接引用该稿的真实标题与文本 |
+
+§ `答辩PPT_测试副本.pptx` 含个人信息，**已在 .gitignore 中排除**，只在本机用于测试；改坏了重新拷贝一份即可：
+
+```bash
+cp "/Users/nxcore/学生/答辩PPT/学生体质健康信息查询智能体+课程设计答辩_优化版.pptx" \
+   "test/fixtures/pptx-agent/答辩PPT_测试副本.pptx"
+```
