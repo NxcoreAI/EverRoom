@@ -101,7 +101,7 @@ expectFile(join(resourcesRoot, 'open-connector', 'dist', 'web', 'index.html'), '
 const ooExe = join(resourcesRoot, 'oo', 'win32-x64', 'oo.exe')
 expectFile(ooExe, 'oo CLI win32-x64')
 expectFile(join(resourcesRoot, 'genoffice', 'native', 'xlsx-sidecar.exe'), 'genoffice xlsx-sidecar.exe')
-for (const app of ['docs', 'sheets', 'slides', 'pdf']) {
+for (const app of ['docs', 'sheets', 'slides', 'pdf', 'markdown']) {
   expectFile(join(resourcesRoot, 'genoffice', app, 'main', 'embed.js'), `genoffice ${app} embed entry`)
 }
 

@@ -61,6 +61,7 @@ import {
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
+import { MarkdownViewManager } from './markdown-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
 import { logOfficeDiag } from './office-diag'
 
@@ -181,8 +182,8 @@ export type SlidesEditArtifactOutcome =
 interface EditSyncState {
   filePath: string
   originalName: string
-  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets/pdf → docx/pptx/xlsx/pdf）。 */
-  kind: 'docx' | 'slides' | 'spreadsheet' | 'pdf'
+  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets/pdf/markdown → docx/pptx/xlsx/pdf/md）。 */
+  kind: 'docx' | 'slides' | 'spreadsheet' | 'pdf' | 'markdown'
   roomId: string | null
   /** 条目归属工作区：保存回填重导入时带上，避免归属被重置（资料库按空间隔离）。 */
   workspaceId: string | null
@@ -438,14 +439,14 @@ export class OfficePreviewRegistry {
     this.agentPdfs = null
   }
 
-  /** 是否有正在显示的 docs 页签（应用菜单接管闸门；后台会话不算）。 */
+  /** 是否有正在显示的文档编辑页签（应用菜单接管闸门；后台会话不算）。 */
   hasActiveDocInstance(): boolean {
     if (!this.activeId) return false
     return this.instances.get(this.activeId)?.descriptor.kind === 'docx'
   }
 
   /**
-   * EverRoom 宿主控制「干净画布」：隐藏/显示当前 Word 编辑器的操作区
+   * EverOffice 宿主控制「干净画布」：隐藏/显示当前 Word 编辑器的操作区
    * （Ribbon/状态栏/标尺/导航）。hidden 省略 = 切换。返回是否命中可见实例；
    * 渲染层自带恢复胶囊与 ⌘⇧F，隐藏后用户始终能恢复。
    */
@@ -1510,14 +1511,18 @@ export class OfficePreviewRegistry {
         ? 'slides'
         : state.kind === 'pdf'
           ? 'pdf'
-          : 'sheets'
+          : state.kind === 'markdown'
+            ? 'markdown'
+            : 'sheets'
     const format = state.kind === 'docx'
       ? 'docx'
       : state.kind === 'slides'
         ? 'pptx'
         : state.kind === 'pdf'
           ? 'pdf'
-          : 'xlsx'
+          : state.kind === 'markdown'
+            ? 'md'
+            : 'xlsx'
     const input = {
       filePath: state.filePath,
       originalName: state.originalName,
@@ -1618,6 +1623,12 @@ export class OfficePreviewRegistry {
       const view = await PdfViewManager.create(window, runtime.pdf, file, { editable })
       return { view, documentPath: view.documentPath }
     }
+    if (kind === 'markdown') {
+      // markdown 与 pdf 同一套工作副本快照模型；everroom hostMode（操作栏
+      // 收起默认开、自带 AI 面板折叠）由 MarkdownViewManager 内部决定。
+      const view = await MarkdownViewManager.create(window, runtime.markdown, file, { editable })
+      return { view, documentPath: view.documentPath }
+    }
     const view = await SpreadsheetViewManager.create(window, runtime.sheets, file, { editable })
     return { view, documentPath: view.documentPath }
   }
@@ -1677,8 +1688,8 @@ export class OfficePreviewRegistry {
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)
     this.runtime.slides.setSlidesShellWindow(window)
-    // 后台保存会 pushRecent → buildDocsMenu；只有可见 docs 页签活跃时才允许
-    // docs 接管应用菜单，否则关掉页签后的后台编辑会改掉整个应用的菜单。
+    // 后台保存会 pushRecent → buildDocsMenu；只有可见的文档编辑页签活跃时才
+    // 允许 docs 接管应用菜单，否则关掉页签后的后台编辑会改掉整个应用的菜单。
     if (typeof this.runtime.docs.setDocsMenuGate === 'function') {
       this.runtime.docs.setDocsMenuGate(() => this.hasActiveDocInstance())
     }

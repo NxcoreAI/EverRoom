@@ -13,6 +13,7 @@ export const OS_OPEN_DOCUMENT_EXTENSIONS = [
   '.docx', '.doc',
   '.xlsx', '.xls', '.xlsm',
   '.pptx', '.ppt',
+  '.md', '.markdown',
 ] as const
 
 /** 单个 argv 项是否是可以交给 EverOffice 打开的文档路径（排除以 - 开头的开关）。 */

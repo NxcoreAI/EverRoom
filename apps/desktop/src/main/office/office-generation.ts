@@ -66,6 +66,10 @@ export function wireOfficeSavedHooks(target: PreparedGenOfficeRuntime): void {
   if (typeof target.pdf?.setPdfFileSavedHook === 'function') {
     target.pdf.setPdfFileSavedHook(fanOut)
   }
+  // markdown 同为可选面（runtime mock 缺它时跳过）。
+  if (typeof target.markdown?.setMarkdownFileSavedHook === 'function') {
+    target.markdown.setMarkdownFileSavedHook(fanOut)
+  }
   hookWired = true
 }
 

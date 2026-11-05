@@ -554,8 +554,8 @@ export interface OfficeWorkspaceBounds {
   height: number
 }
 
-/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
+/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf / markdown 运行时）。 */
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf' | 'markdown'
 
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
@@ -588,6 +588,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
+  if (extension === '.md' || extension === '.markdown') return 'markdown'
   return null
 }
 

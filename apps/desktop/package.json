@@ -290,6 +290,18 @@
               "org.openxmlformats.presentationml.presentation",
               "com.microsoft.powerpoint.ppt"
             ]
+          },
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "markdown",
+              "md"
+            ],
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown"
+            ]
           }
         ]
       },
@@ -359,6 +371,15 @@
             "ppt"
           ],
           "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "md",
+            "markdown"
+          ],
+          "name": "Markdown Document",
           "role": "Editor",
           "rank": "Alternate"
         }

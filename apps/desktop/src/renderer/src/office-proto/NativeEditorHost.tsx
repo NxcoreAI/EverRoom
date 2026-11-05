@@ -36,11 +36,12 @@ interface Bounds {
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
 /** 文件库内置预览可编辑的扩展名（PDF 标注随选区工具卡一并开放编辑；
+ * markdown 评论/编辑随 genoffice markdown runtime 开放；
  * 旧格式转换失败会回退系统应用）。 */
 function isEditableName(name: string): boolean {
   const dot = name.lastIndexOf('.')
   const extension = dot >= 0 ? name.slice(dot).toLowerCase() : ''
-  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx', '.pdf'].includes(extension)
+  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx', '.pdf', '.md', '.markdown'].includes(extension)
 }
 
 export function NativeEditorHost({

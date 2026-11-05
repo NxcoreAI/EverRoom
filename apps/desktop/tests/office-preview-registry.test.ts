@@ -5,13 +5,18 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow } from 'electron'
 
-const { savedListenersByWc, domReadyByWc, createCalls, slidesCalls, sheetCalls, pdfUserData } = vi.hoisted(() => ({
+const { savedListenersByWc, domReadyByWc, createCalls, slidesCalls, sheetCalls, markdownCalls, pdfUserData } = vi.hoisted(() => ({
   savedListenersByWc: new Map<number, Set<(filePath: string) => void>>(),
   /** wcId → 该视图注册的 dom-ready 回调（批注快照重放测试用）。 */
   domReadyByWc: new Map<number, () => void>(),
   createCalls: { options: [] as Array<{ editable?: boolean }> },
   slidesCalls: { options: [] as Array<{ editable?: boolean }> },
   sheetCalls: { options: [] as Array<{ editable?: boolean }> },
+  markdownCalls: {
+    options: [] as Array<{ hostMode?: string; readonly?: boolean } | undefined>,
+    teardowns: 0,
+    chromeHidden: [] as Array<unknown[]>,
+  },
   // 后台 PDF 会话的工作副本桶（app.getPath('userData')）：每个用例指到临时目录。
   pdfUserData: { dir: '' as string },
 }))
@@ -81,6 +86,19 @@ vi.mock('../src/main/office/spreadsheet-view-manager', () => ({
     }),
   },
   prepareSpreadsheet: vi.fn(async () => '/tmp/workdir/book.xlsx'),
+}))
+vi.mock('../src/main/office/markdown-view-manager', () => ({
+  MarkdownViewManager: {
+    create: vi.fn(async (
+      _window: unknown,
+      _markdown: unknown,
+      _file: { originalName: string },
+      options?: { editable?: boolean },
+    ) => {
+      markdownCalls.options.push({ hostMode: 'everroom', readonly: options?.editable !== true })
+      return { ...makeView('markdown'), documentPath: `/tmp/workdir/${_file.originalName}` }
+    }),
+  },
 }))
 
 import { OfficePreviewRegistry, officePreviewKindFor } from '../src/main/office/office-preview-registry'
@@ -192,6 +210,22 @@ const runtime = {
       results: [{ id: 'call-1', name: 'edit_text', output: 'ok', mutated: true }],
     })),
   },
+  markdown: {
+    registerMarkdownIpc: vi.fn(),
+    createMarkdownView: vi.fn(),
+    requestMarkdownClose: vi.fn(async () => true),
+    requestMarkdownSave: vi.fn(async () => true),
+    markdownIsDirty: vi.fn(() => false),
+    markdownFilePath: vi.fn(() => undefined),
+    markdownFileRenamed: vi.fn(),
+    sendMarkdownExportRequest: vi.fn(),
+    sendMarkdownPrintRequest: vi.fn(),
+    setMarkdownChromeHidden: vi.fn((...args: unknown[]) => markdownCalls.chromeHidden.push(args)),
+    setMarkdownFileSavedHook: vi.fn(),
+    waitForMarkdownAgentReady: vi.fn(async () => true),
+    teardownMarkdownRenderer: vi.fn(() => { markdownCalls.teardowns += 1 }),
+    configureMarkdownRuntime: vi.fn(),
+  },
 }
 
 function makeWindow(): BrowserWindow {
@@ -222,6 +256,14 @@ describe('officePreviewKindFor', () => {
     expect(officePreviewKindFor('c.xlsm')).toBe('spreadsheet')
     expect(officePreviewKindFor('c.xls')).toBe('spreadsheet')
     expect(officePreviewKindFor('f.pdf')).toBe('pdf')
+  })
+
+  it('maps markdown extensions to the markdown runtime', () => {
+    expect(officePreviewKindFor('notes.md')).toBe('markdown')
+    expect(officePreviewKindFor('NOTES.MD')).toBe('markdown')
+    expect(officePreviewKindFor('notes.markdown')).toBe('markdown')
+    // .mdx 仍是资料文本，不进内嵌预览
+    expect(officePreviewKindFor('notes.mdx')).toBeNull()
   })
 })
 
@@ -1241,6 +1283,37 @@ describe('OfficePreviewRegistry', () => {
           roomId: 'room-x1',
         }))
         expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'edited', format: 'xlsx', fileId: 'file-x1' }))
+      })
+
+      it('syncs editable markdown saves with the markdown source key and md format', async () => {
+        const importAgentFile = vi.fn(async () => ({}))
+        const broadcast = vi.fn()
+        registry.setEditSync({ importAgentFile, broadcast })
+        const window = makeWindow()
+        await registry.open(window, { ...file('file-m1', '笔记.md'), editable: true, roomId: 'room-m1' })
+        // hostMode=everroom + readonly 反转点在 MarkdownViewManager 里。
+        expect(markdownCalls.options).toEqual([{ hostMode: 'everroom', readonly: false }])
+
+        emitSave(viewCalls[0]!)
+        await vi.advanceTimersByTimeAsync(2_500)
+        expect(importAgentFile).toHaveBeenCalledTimes(1)
+        expect(importAgentFile).toHaveBeenCalledWith(expect.objectContaining({
+          fileEntryId: 'file-m1',
+          sourceKey: 'agent:markdown:edit:file-m1',
+          filePath: '/tmp/workdir/笔记.md',
+          roomId: 'room-m1',
+        }))
+        expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'edited', format: 'md', fileId: 'file-m1' }))
+      })
+
+      it('routes markdown files to the markdown view manager (teardown covered in its own suite)', async () => {
+        const window = makeWindow()
+        const descriptor = await registry.open(window, file('file-m2', 'README.md'))
+        expect(descriptor).toMatchObject({ id: 'file-m2', kind: 'markdown' })
+        // 只读预览：readonly=1（前面 save-sync 用例已推过 editable 一条）。
+        expect(markdownCalls.options.at(-1)).toEqual({ hostMode: 'everroom', readonly: true })
+
+        await registry.close('file-m2')
       })
 
       it('surfaces a persistent import failure via the error broadcast', async () => {
