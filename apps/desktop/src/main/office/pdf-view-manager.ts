@@ -29,7 +29,11 @@ export class PdfViewManager {
   private readonly gate: OfficeViewFirstFrameGate
   private constructor(
     private readonly window: BrowserWindow,
+    private readonly pdf: GenOfficePdfRuntime,
     private readonly view: WebContentsView,
+    private readonly editable: boolean,
+    /** 工作副本路径：编辑回填（editStates.filePath）按它读盘。 */
+    readonly documentPath: string,
   ) {
     this.gate = new OfficeViewFirstFrameGate(view, window)
   }
@@ -38,14 +42,17 @@ export class PdfViewManager {
     window: BrowserWindow,
     pdf: GenOfficePdfRuntime,
     file: { id: string; contentHash: string; originalName: string; storagePath: string },
+    options?: { editable?: boolean },
   ): Promise<PdfViewManager> {
     const path = await preparePdf(file.id, file.contentHash, file.originalName, file.storagePath)
+    const editable = options?.editable === true
     // createPdfView queues the path for the renderer's mount-time
-    // consumePending and loads it with readonly=1 (host-readonly preview).
-    const view = pdf.createPdfView(path, { readonly: true })
+    // consumePending and loads it with readonly=1 for host-readonly preview.
+    // Editable opens (选区标注工具卡) keep the full markup surface on.
+    const view = pdf.createPdfView(path, { readonly: !editable })
     view.setVisible(false)
     window.contentView.addChildView(view)
-    const manager = new PdfViewManager(window, view)
+    const manager = new PdfViewManager(window, pdf, view, editable, path)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
     return manager
   }
@@ -81,6 +88,11 @@ export class PdfViewManager {
 
   readonly dispose = async (): Promise<boolean> => {
     if (this.disposed) return true
+    // 脏关闭守卫与其他三类视图一致：编辑打开的 PDF 有未保存标注时先问再关。
+    if (this.editable && !this.view.webContents.isDestroyed() && !this.window.isDestroyed()) {
+      const proceed = await this.pdf.requestPdfClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
     this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)

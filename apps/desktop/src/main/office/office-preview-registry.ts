@@ -567,7 +567,8 @@ export class OfficePreviewRegistry {
     })
     this.bindWindow(window)
     const runtime = this.ensureRuntime(window)
-    const editable = file.editable === true && kind !== 'pdf'
+    // PDF 与其他三类一致参与 editable（选区标注工具卡需要）；只读预览照旧。
+    const editable = file.editable === true
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
     const requestedWorkspaceId = typeof file.workspaceId === 'string' && file.workspaceId.trim()
       ? file.workspaceId.trim()
@@ -1611,7 +1612,11 @@ export class OfficePreviewRegistry {
       return { view, documentPath: view.documentPath }
     }
     if (kind === 'pdf') {
-      return { view: await PdfViewManager.create(window, runtime.pdf, file), documentPath: null }
+      // editable 与其他三类一致：选区标注工具卡（高亮/下划线/删除线）需要
+      // 可编辑打开；只读预览保持原 readonly=1 行为。工作副本路径同样交给
+      // 编辑回填（editStates.filePath）。
+      const view = await PdfViewManager.create(window, runtime.pdf, file, { editable })
+      return { view, documentPath: view.documentPath }
     }
     const view = await SpreadsheetViewManager.create(window, runtime.sheets, file, { editable })
     return { view, documentPath: view.documentPath }
