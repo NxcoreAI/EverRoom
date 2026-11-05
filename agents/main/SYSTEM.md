@@ -18,6 +18,7 @@
 | 问当前浏览的 Office 文件内容（Word/Excel/PPT/PDF） | file_read | 省略 fileId 即当前文件；用户说“这份文档/这个表格/当前打开的文件”就先读它再回答或修改，文件不在打开清单里先用 file_search 定位 |
 | 不确定用户说的是哪份文件（“那份报告/之前生成的”） | file_search | 按文件名子串搜索资料，拿到 fileId 后再用具体读写工具；不要要求用户先去打开或保存文件 |
 | 用户说的是“产物库里的/你生成的那份/上次做的” | file_search（scope=artifacts） | 界面上「产物」页签 = scope=artifacts（Agent 生成 + 产物导入），「资料」页签 = scope=library；不提哪一栏就省略 scope 搜整库，再按结果里的 scope 字段核对 |
+| 写笔记、速记、随手总结、会议纪要、清单这类轻量文本文档 | markdown_create | 输出 .md 文件，入资料与产物页并自动打开预览；正式报告/交付文档（要 Word 排版）用 office_create |
 | 修改任意 Word（不必已经打开，UI 隐藏/没有页签也行） | word_agent_read → word_agent_edit / word_agent_ops / word_agent_illustration | 先读块索引与工具指南；表格/分页与页面设置/批注/域/引用/修订等结构化操作用 word_agent_ops，配图用 word_agent_illustration |
 | 内嵌 Word 的 Ribbon/操作区被隐藏时用户的排版/插入/审阅请求 | word_agent_edit / word_agent_ops | 一律由你直接完成；不要引导用户点工具栏/菜单，隐藏 UI 不影响能力 |
 | 图片替换/裁剪/去背景、页眉页脚图片、手绘标注、新建字符样式 | word_agent_ops | 图片字节用 path/url 传，不要内联 base64；手绘用程序化笔画 |

@@ -149,6 +149,81 @@ describe("document capability registry", () => {
   });
 });
 
+describe("markdown_create（office 插件）", () => {
+  /** 桌面 office-bridge 的最小替身：记录 generate 入参并回一个成功条目。 */
+  function stubBridge(over: Partial<Record<string, unknown>> = {}) {
+    const calls: Array<Record<string, unknown>> = [];
+    return {
+      calls,
+      client: {
+        generate: async (input: Record<string, unknown>) => {
+          calls.push(input);
+          return {
+            fileEntryId: "fe-md-1",
+            fileVersionId: "fv-1",
+            jobId: "job-1",
+            contentHash: "hash-1",
+            blobDeduped: false,
+            versionDeduped: false,
+            roomRequested: false,
+            originalName: "会议纪要.md",
+            ...over,
+          };
+        },
+      },
+    };
+  }
+
+  async function callMarkdownCreate(input: Record<string, unknown>, bridge: { generate: unknown }) {
+    const registry = createBuiltinDocumentCapabilityRegistry(bridge as never);
+    const tool = registry.listTools().find((definition) => definition.name === "markdown_create");
+    expect(tool).toBeDefined();
+    return await registry.execute("markdown_create", input, {
+      agentSessionId: "session-1",
+      runId: "run-1",
+      workspaceId: "ws-1",
+    });
+  }
+
+  it("把 markdown 正文透传给桌面桥（format=md + 幂等键），并返回结构化产物", async () => {
+    const stub = stubBridge();
+    const result = await callMarkdownCreate({
+      title: "会议纪要",
+      markdown: "# 纪要\n\n- 第一项",
+    }, stub.client);
+    expect(stub.calls[0]).toMatchObject({
+      title: "会议纪要",
+      format: "md",
+      markdown: "# 纪要\n\n- 第一项",
+      roomId: null,
+      workspaceId: "ws-1",
+    });
+    // 幂等键来自 runId + title（同 run 同标题重试命中同一 sourceKey）。
+    expect(String(stub.calls[0]!.idempotencyKey).length).toBeGreaterThanOrEqual(8);
+    expect(result.structuredContent).toMatchObject({
+      fileEntryId: "fe-md-1",
+      originalName: "会议纪要.md",
+      format: "md",
+    });
+  });
+
+  it("fileName 不以 .md 结尾时拒绝（INVALID_REQUEST）", async () => {
+    const stub = stubBridge();
+    await expect(callMarkdownCreate({
+      title: "纪要",
+      markdown: "内容",
+      fileName: "纪要.docx",
+    }, stub.client)).rejects.toThrow(/fileName 必须以 \.md 结尾/);
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it("markdown 为空时拒绝（stringArg 校验）", async () => {
+    const stub = stubBridge();
+    await expect(callMarkdownCreate({ title: "纪要", markdown: "" }, stub.client)).rejects.toThrow();
+    expect(stub.calls).toHaveLength(0);
+  });
+});
+
 describe("selection-rewrite 内容重建（服务端）", () => {
   it("sanitizeSelectionRewriteReplacement 剥离围栏与前缀", () => {
     expect(sanitizeSelectionRewriteReplacement("```\n纯文本\n```")).toBe("纯文本");

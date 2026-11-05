@@ -377,7 +377,7 @@ export function officePlugin(
     title: "生成 Word 文档入 Room",
     description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前工作区（产物页 Office 产物 + 资料），"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
-      + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
+      + "普通速记、笔记、随手总结用 markdown_create，不要用本工具。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
       + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
     inputSchema: {
@@ -423,6 +423,65 @@ export function officePlugin(
         roomId: null,
         deduped: result.versionDeduped || result.blobDeduped,
         // Room 资料页投影由路由决策异步完成（知识路由关闭时会降级为仅入库）。
+        roomRoutingRequested: result.roomRequested,
+        nextAction: "report_result",
+      });
+    },
+  };
+
+  /** Markdown 速记上限：与 office_create 的 html 同量级，够写长笔记也防模型失控。 */
+  const MAX_MARKDOWN_LENGTH = 400_000;
+
+  const markdownCreate: DocumentCapabilityTool = {
+    name: "markdown_create",
+    title: "创建 Markdown 文档",
+    description: "创建一份 .md 文档并加入当前工作区（资料页 + 产物页可见），"
+      + "适合笔记、速记、随手总结、会议纪要、清单这类轻量文本——正式报告/交付文档用 office_create（Word），不要用本工具。"
+      + "title 用作文档标题与默认文件名（<title>.md，可用 fileName 覆盖）。"
+      + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 120, description: "文档标题（同时是默认文件名）" },
+        markdown: {
+          type: "string",
+          minLength: 1,
+          maxLength: MAX_MARKDOWN_LENGTH,
+          description: "Markdown 正文（标准 Markdown：标题/列表/表格/代码块/引用等）",
+        },
+        fileName: { type: "string", minLength: 4, maxLength: 120, description: "可选文件名，必须以 .md 结尾" },
+      },
+      required: ["title", "markdown"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      const title = stringArg(args, "title").trim().slice(0, 120);
+      const markdown = stringArg(args, "markdown");
+      if (markdown.length > MAX_MARKDOWN_LENGTH) {
+        throw new Error(`INVALID_REQUEST: markdown 超过长度上限（${MAX_MARKDOWN_LENGTH} 字符），请拆分内容`);
+      }
+      const fileName = optionalFileName(args, ".md");
+      // 同 run 同标题幂等：桌面侧以 sourceKey=agent:markdown:<key> 去重/续版本链。
+      const result = await bridge.generate({
+        title,
+        format: "md",
+        markdown,
+        roomId: null,
+        workspaceId: context.workspaceId ?? null,
+        fileName,
+        idempotencyKey: idempotencyKey("agent-markdown", context.runId, title),
+      });
+      if (!result.fileEntryId) throw new Error("OFFICE_GENERATION_FAILED: 桌面端未返回文件条目");
+      return success({
+        fileEntryId: result.fileEntryId,
+        fileVersionId: result.fileVersionId,
+        jobId: result.jobId,
+        contentHash: result.contentHash,
+        originalName: result.originalName,
+        format: "md",
+        roomId: null,
+        deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
         nextAction: "report_result",
       });
@@ -1832,7 +1891,7 @@ export function officePlugin(
     promptGuidelines: [
       "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
       + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，一律经 slides_draft 调度 slides 子代理（create 先方案后落页，edit 直改）完成；"
-      + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
+      + "普通笔记、速记、随手总结用 markdown_create，不要用 Office 工具。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
@@ -1870,6 +1929,7 @@ export function officePlugin(
     ],
     tools: [
       officeCreate,
+      markdownCreate,
       slidesCreate,
       slidesSetPage,
       sheetsCreate,

@@ -1,6 +1,6 @@
 import type { GatewayConfig } from "../../../config.js";
 
-export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx";
+export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx" | "md";
 
 export interface OfficeSheetBridgeInput {
   name: string | null;
@@ -17,6 +17,8 @@ export interface OfficeGenerateInput {
   pages?: string[] | null;
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
+  /** md：Markdown 正文（桌面端纯文本落盘，无渲染引擎）。 */
+  markdown?: string | null;
   roomId: string | null;
   /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;

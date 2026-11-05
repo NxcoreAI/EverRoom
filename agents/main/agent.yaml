@@ -20,6 +20,7 @@ capabilities:
 tools:
   - slides_draft
   - office_create
+  - markdown_create
   - slides_create
   - slides_set_page
   - slides_read

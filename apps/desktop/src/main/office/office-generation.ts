@@ -809,3 +809,25 @@ export async function generateXlsxFromSheets(
   onPhase?.('saved')
   return { filePath: await writeGeneratedTempFile(bytes, '.xlsx'), bytes, title }
 }
+
+export interface GeneratedMarkdown {
+  filePath: string
+  bytes: Buffer
+  title: string
+}
+
+/**
+ * 生成一份 Markdown：纯文本落盘即可（无需渲染引擎）——资料页 / 气泡窗 /
+ * 内置预览对 .md 的展示链路已就绪，这里只负责把字节写进临时文件供导入。
+ */
+export async function generateMarkdownFromText(
+  input: { title: string; markdown: string },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+): Promise<GeneratedMarkdown> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('文档标题不能为空')
+  onPhase?.('rendering')
+  const bytes = Buffer.from(input.markdown, 'utf8')
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(bytes, '.md'), bytes, title }
+}

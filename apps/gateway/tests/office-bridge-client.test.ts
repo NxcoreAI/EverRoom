@@ -61,6 +61,29 @@ describe("OfficeBridgeClient", () => {
     }
   });
 
+  it("generate 透传 md 正文（markdown_create 的 .md 落盘链路）", async () => {
+    const stub = await startStub(200, { fileEntryId: "file-2", originalName: "会议纪要.md" });
+    try {
+      const result = await stub.client.generate({
+        title: "会议纪要",
+        format: "md",
+        markdown: "# 纪要\n\n- 第一项",
+        roomId: null,
+        workspaceId: "ws-1",
+        fileName: null,
+        idempotencyKey: "idem-2",
+      });
+      expect(result.fileEntryId).toBe("file-2");
+      expect(stub.recorded[0]?.body).toMatchObject({
+        format: "md",
+        markdown: "# 纪要\n\n- 第一项",
+        workspaceId: "ws-1",
+      });
+    } finally {
+      await stub.close();
+    }
+  });
+
   it("completeDeck 调 /v1/office-complete 并带上真完成载荷", async () => {
     const stub = await startStub(200, { ok: true });
     try {

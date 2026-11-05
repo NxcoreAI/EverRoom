@@ -11,7 +11,7 @@ import type {
   SlidesEditArtifactOutcome,
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
-import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
+import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, generateMarkdownFromText, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
 import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
 import { createEverofficeMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
@@ -19,7 +19,7 @@ import type { AgentSheetInput } from '../office/xlsx-generation'
 // HTML 正文 / 页 spec / 表格 JSON 远大于通知，放宽到 2MB；超过视为模型输出异常。
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
-export type OfficeGenerateFormat = 'docx' | 'pptx' | 'xlsx'
+export type OfficeGenerateFormat = 'docx' | 'pptx' | 'xlsx' | 'md'
 
 export interface OfficeGenerateRequest {
   title: string
@@ -31,6 +31,8 @@ export interface OfficeGenerateRequest {
   pages?: string[] | null
   /** xlsx：sheets→rows 结构。 */
   sheets?: AgentSheetInput[] | null
+  /** md：Markdown 正文（纯文本落盘，无需渲染引擎）。 */
+  markdown?: string | null
   roomId: string | null
   /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null
@@ -206,8 +208,8 @@ function validApplyBytesBody(value: unknown): value is OfficeApplyBytesRequest {
     && typeof input.expectedContentHash === 'string' && /^[a-f0-9]{64}$/i.test(input.expectedContentHash)
 }
 
-const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
-const FORMAT_SOURCE: Record<OfficeGenerateFormat, string> = { docx: 'word', pptx: 'pptx', xlsx: 'xlsx' }
+const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx', md: '.md' }
+const FORMAT_SOURCE: Record<OfficeGenerateFormat, string> = { docx: 'word', pptx: 'pptx', xlsx: 'xlsx', md: 'markdown' }
 
 const KIND_LABEL: Record<string, string> = { docx: 'Word', slides: 'PPT', spreadsheet: 'Excel', pdf: 'PDF' }
 
@@ -238,7 +240,7 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
   const input = value as Partial<OfficeGenerateRequest>
   if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
   const format: OfficeGenerateFormat = input.format ?? 'docx'
-  if (format !== 'docx' && format !== 'pptx' && format !== 'xlsx') return false
+  if (format !== 'docx' && format !== 'pptx' && format !== 'xlsx' && format !== 'md') return false
   if (format === 'docx' && !(typeof input.html === 'string' && input.html.length > 0)) return false
   if (format === 'pptx') {
     if (!Array.isArray(input.pages) || input.pages.length === 0) return false
@@ -248,6 +250,7 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
     if (!Array.isArray(input.sheets) || input.sheets.length === 0) return false
     if (!input.sheets.every((sheet) => sheet && typeof sheet === 'object' && Array.isArray(sheet.rows))) return false
   }
+  if (format === 'md' && !(typeof input.markdown === 'string' && input.markdown.trim().length > 0)) return false
   return (input.roomId == null || typeof input.roomId === 'string')
     && (input.workspaceId == null || typeof input.workspaceId === 'string')
     && (input.fileName == null || typeof input.fileName === 'string')
@@ -852,7 +855,9 @@ export class OfficeBridgeServer {
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)
           : format === 'pptx'
             ? await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
-            : await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
+            : format === 'xlsx'
+              ? await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
+              : await generateMarkdownFromText({ title: parsed.title, markdown: parsed.markdown! }, broadcastPhase)
       const originalName = parsed.fileName?.trim() || `${generated.title}${FORMAT_EXT[format]}`
       this.broadcast({ type: 'phase', title: parsed.title, phase: 'importing', format })
       let accepted: FileImportAcceptedDto
@@ -867,7 +872,7 @@ export class OfficeBridgeServer {
         })
       } catch (error) {
         // 入库失败保留临时文件供人工恢复（docx 在 defaultSaveDir，其余在系统 temp）。
-        const kindLabel = format === 'docx' ? 'Word' : format === 'pptx' ? 'PPT' : 'Excel'
+        const kindLabel = format === 'docx' ? 'Word' : format === 'pptx' ? 'PPT' : format === 'xlsx' ? 'Excel' : 'Markdown'
         throw new Error(
           `${kindLabel} 已生成（${generated.filePath}）但入库失败：${error instanceof Error ? error.message : String(error)}`,
         )
