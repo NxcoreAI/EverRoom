@@ -4,7 +4,8 @@
  *
  * 覆盖：
  * 1) 资料：真实文件库渲染 + 目录层级导航 + 搜索 + 网格/列表两种视图 + 空态；
- * 2) 产物页：只列 agent-generated / artifact-imported，按更新时间倒序，点卡片交给 onOpenFile；
+ * 2) 产物页：只列 agent-generated / artifact-imported，按更新时间倒序，点行交给 onOpenFile；
+ *    列表/网格与资料页同一套 UI（同一表头/行结构/排序指示，以资料为主）；
  * 3) 文件库拉取失败（/没有桥）时两个页面都渲染「不可用」态，而不是空白或假数据；
  * 4) 筛选/分类纯函数口径（legacy-upload 归手动上传、artifact-imported 只出现在「全部」）。
  *
@@ -243,6 +244,8 @@ describe('资料页', () => {
     expect(container.querySelector('.wb-lib-list')).not.toBeNull()
     const head = allText('.wb-lib-head span').filter(Boolean)
     expect(head).toEqual(['名称', '本地位置', '修改时间', '大小'])
+    // 「修改时间」带倒序指示（与主页文件表同款；产物页列表是同一套表头）
+    expect(container.querySelector('.wb-lib-head .wb-lib-sort')?.textContent).toContain('修改时间')
 
     // 列表里文件夹排在文件前面，位置列是当前目录
     const names = allText('.wb-lib-name')
@@ -471,7 +474,8 @@ describe('产物页', () => {
     await act(async () => { root.render(<OutputsPage {...props} />) })
     await flush()
 
-    const names = allText('.wb-file-card-name')
+    // 网格与资料页同一套瓦片（.wb-lib-tile），顺序仍是更新时间倒序
+    const names = allText('.wb-lib-tile-name')
     expect(names).toEqual([AGENT_OUTPUT.file.name, ARTIFACT_OUTPUT.file.name])
     expect(names).not.toContain(MANUAL.file.name)
     expect(names).not.toContain(LOCAL_FOLDER.file.name)
@@ -482,8 +486,35 @@ describe('产物页', () => {
       .find((chip) => (chip.textContent ?? '').includes('全部产物'))
     expect(allChip!.textContent).toContain('2')
 
-    const firstCard = container.querySelector<HTMLButtonElement>('.wb-file-card-main')
-    await act(async () => { firstCard!.click() })
+    const firstTile = container.querySelector<HTMLButtonElement>('.wb-lib-tile')
+    await act(async () => { firstTile!.click() })
+    expect(props.onOpenFile).toHaveBeenCalledTimes(1)
+    const opened = (props.onOpenFile as ReturnType<typeof vi.fn>).mock.calls[0][0] as RealOfficeFile['file']
+    expect(opened.name).toBe(AGENT_OUTPUT.file.name)
+  })
+
+  it('列表视图与资料页同一套表头/行结构/排序指示（以资料为主）', async () => {
+    const props = pageProps({ tab: { id: 'ws:ws-1', kind: 'workspace', workspaceId: 'ws-1', view: { kind: 'page', page: 'outputs' } } })
+    installFilesApi(OPENABLE_KINDS)
+    await act(async () => { root.render(<OutputsPage {...props} />) })
+    await flush()
+
+    const listButton = container.querySelector<HTMLButtonElement>('button[aria-label="列表视图"]')
+    expect(listButton).not.toBeNull()
+    await act(async () => { listButton!.click() })
+
+    // 同一张六列表格：表头列名 + 「修改时间」倒序指示与资料页完全一致
+    expect(container.querySelector('.wb-lib-list')).not.toBeNull()
+    expect(allText('.wb-lib-head span').filter(Boolean)).toEqual(['名称', '本地位置', '修改时间', '大小'])
+    expect(container.querySelector('.wb-lib-head .wb-lib-sort')?.textContent).toContain('修改时间')
+
+    // 行序：更新时间倒序；位置列与资料同口径（relativePath 派生，根目录显示「资料」）
+    expect(allText('.wb-lib-name')).toEqual([AGENT_OUTPUT.file.name, ARTIFACT_OUTPUT.file.name])
+    expect(allText('.wb-lib-loc')).toEqual(['agent', '资料'])
+
+    // 点文件行 → onOpenFile（气泡窗），自己不开编辑器
+    const firstRow = container.querySelector<HTMLButtonElement>('.wb-lib-row-main')
+    await act(async () => { firstRow!.click() })
     expect(props.onOpenFile).toHaveBeenCalledTimes(1)
     const opened = (props.onOpenFile as ReturnType<typeof vi.fn>).mock.calls[0][0] as RealOfficeFile['file']
     expect(opened.name).toBe(AGENT_OUTPUT.file.name)

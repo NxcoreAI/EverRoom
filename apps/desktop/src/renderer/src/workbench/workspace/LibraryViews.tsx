@@ -1,4 +1,4 @@
-import { ChevronRight, FolderOpen } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen } from 'lucide-react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon, FolderGlyphIcon } from '@/office-proto/pages/parts'
@@ -13,6 +13,10 @@ import { LIBRARY_ROOT_LABEL, TMP_FOLDER_PATH, type LibraryRow } from './libraryT
  * 布局照 everoffice 原型 `WsLibraryPage`：文件夹在前、文件在后；网格瓦片无边框、
  * 悬停浅底，列表是「图标 / 名称 / 本地位置 / 修改时间 / 大小 / 操作」六列。
  * 只做展示，进入文件夹与打开文件都通过回调交给页面。
+ *
+ * 「修改时间」列带排序指示（当前按更新时间倒序，与主页文件表同一指示样式）；
+ * 表头是说明性 UI（aria-hidden），与主页文件表口径一致。
+ * 产物页复用这两个视图（同一套表头/行结构/排序，见 OutputsPage）。
  *
  * `.tmp/`（scratch）行：文件图标 + 「在访达中显示」动作，不支持打开/删除
  * （过程缓存随时被 GC，只读浏览）。
@@ -193,7 +197,7 @@ export function LibraryList({ rows, actions, onEnterFolder, onOpenFile, onReveal
         <span />
         <span>名称</span>
         <span>本地位置</span>
-        <span>修改时间</span>
+        <span className="wb-lib-sort">修改时间<ChevronDown size={11} /></span>
         <span>大小</span>
         <span />
       </div>
