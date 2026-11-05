@@ -17,7 +17,7 @@ export function createDocumentAnalysisResultValidator(service: DocumentUnderstan
     if (typeof input?.fileVersionId === "string" && input.fileVersionId !== fileVersionId) {
       throw new Error("subagent_result_file_version_mismatch");
     }
-    const parsed = service.get(fileVersionId);
+    const parsed = service.get(service.resolveVersionId(fileVersionId));
     if (!parsed) throw new Error("subagent_result_artifact_not_found");
     if (resultValue.artifactId !== parsed.id) {
       throw new Error("subagent_result_artifact_mismatch");
@@ -111,7 +111,7 @@ export function createDocumentUnderstandingTools(
       blockLimit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const offset = Number(params.blockOffset ?? 0);
       const limit = Number(params.blockLimit ?? 50);
@@ -139,7 +139,7 @@ export function createDocumentUnderstandingTools(
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100_000 })),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const offset = Number(params.offset ?? 0);
       const limit = Number(params.limit ?? 100_000);
@@ -202,7 +202,7 @@ export function createDocumentUnderstandingTools(
       fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const issues: string[] = [];
       const pageNumbers = result.artifact.pages.map((page) => page.pageNo);

@@ -82,7 +82,7 @@ import { DocumentServiceError } from "../modules/documents/errors.js";
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
-import { createWorkspaceFileCatalog, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
+import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
@@ -91,6 +91,7 @@ import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-bac
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { SearchService } from "../modules/search/service.js";
+import { createContentSearchPiTool } from "../modules/search/pi-tools.js";
 import { SearchBackfill } from "../modules/search/backfill.js";
 import { searchRoutes } from "../modules/search/routes.js";
 import { dataMigrationRoutes } from "../modules/data-migrations/routes.js";
@@ -732,6 +733,11 @@ export async function createServer(config: GatewayConfig) {
       // 文本类工作区文件（md/txt/csv 等）的正文直读：document_analysis 只覆盖
       // Office/PDF，md 文件在解析子代理那边永远产不出 artifact。
       createWorkspaceFileReadTool(readWorkspaceFileText, { mainAgent: true }),
+      // 批量预览（图片描述/文本前缀）与内容检索：消灭「逐个读文件/逐张视觉分析」
+      // 的串行模式——图片描述在导入时已解析落库，这里零推理直读。
+      createWorkspaceFilePreviewTool(() => filesService, readWorkspaceFileText),
+      createWorkspaceFilesReadBatchTool(() => filesService, readWorkspaceFileText),
+      createContentSearchPiTool(() => searchService),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
       // 当前浏览的 Office 文件（file_entries）正文读取：filesService 与本服务

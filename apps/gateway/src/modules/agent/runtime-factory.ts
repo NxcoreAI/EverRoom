@@ -142,6 +142,11 @@ function createUserFacingRuntime(
     // 用户档护栏：单轮工具预算 + 同一调用重复上限，超限即停并如实反馈。
     maxToolCallsPerRun: 60,
     maxRepeatedToolCalls: 3,
+    // 不挂 pi 原生文件工具（read/edit/write/grep/find/ls 均无沙箱、read 还能把任意
+    // 路径图片直接塞进视觉上下文——2026-11-05 实测模型反复 read /tmp 图片烧掉 42%
+    // 窗口后触发重复熔断）。文件访问一律走 workspace/file 工具面；工作目录内的
+    // 探索用下面的沙箱 bash。
+    builtinTools: [],
     // bash 仅在白名单根目录内沙箱执行（历史事故：无沙箱 bash 直读应用数据库「找图」）。
     bashSandbox: {
       allowedRoots: [agentDirectories(config, agentId).workingDirectory],

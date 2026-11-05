@@ -25,3 +25,17 @@ describe("ambiguousDocumentTopic", () => {
     expect(ambiguousDocumentTopic("做一个项目计划")).toBeNull();
   });
 });
+
+describe('具体交付格式不触发文档创建预检（2026-11-06「做一个 BP 的 PPT」误判短路 run）', () => {
+  it.each([
+    '做一个 BP 的 PPT',
+    '做一个 BP PPT',
+    '生成一份路演 PPT',
+    '做一个演示 pptx',
+    '创建一个 word 报告',
+    '做一份 excel 表',
+    '生成一份 pdf 简历',
+  ])('%s → null', (prompt) => {
+    expect(ambiguousDocumentTopic(prompt)).toBeNull()
+  })
+})

@@ -3,8 +3,11 @@ import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import {
   catalogQueryLikePatterns,
   createWorkspaceFileCatalog,
+  createWorkspaceFilePreviewTool,
   createWorkspaceFilesPiTools,
+  createWorkspaceFilesReadBatchTool,
   type WorkspaceFileSource,
+  type WorkspaceFileTextSource,
 } from "../src/modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../src/modules/subagents/workspace-materials.js";
 
@@ -238,5 +241,106 @@ describe("workspace image material search", () => {
     expect(search("现场", 6)).toEqual(hits);
     expect(search("", 3)).toEqual([]);
     expect(createWorkspaceImageMaterialSearch(() => null)("现场", 3)).toEqual([]);
+  });
+});
+
+describe("workspace_files_preview tool", () => {
+  const entries = new Map<string, { sharedTitle?: string | null; originalName: string; dataType: string | null; contentHash: string }>([
+    ["img-ok", { sharedTitle: null, originalName: "现场照片.jpg", dataType: "image", contentHash: HASH_A }],
+    ["img-missing", { sharedTitle: null, originalName: "无描述.png", dataType: "image", contentHash: HASH_B }],
+    ["doc", { sharedTitle: "BP 正文", originalName: "bp.md", dataType: "document", contentHash: HASH_C }],
+    ["binary", { sharedTitle: null, originalName: "report.pdf", dataType: "document", contentHash: "f".repeat(64) }],
+  ]);
+  const markdown = new Map<string, string | null>([
+    ["img-ok", "一张安装在现场的设备特写，机身银色。"],
+    ["img-missing", null],
+    ["doc", "# BP\n\n" + "内容".repeat(400)],
+    ["binary", null],
+  ]);
+  const RED_DOT_PNG = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const content = new Map<string, { buffer: Buffer; mime: string; filename: string } | null>([
+    ["img-ok", { buffer: RED_DOT_PNG, mime: "image/png", filename: "现场照片.jpg" }],
+  ]);
+  const source: WorkspaceFileTextSource = {
+    catalogEntry: (id) => entries.get(id) ?? null,
+    catalogMarkdownOf: (id) => markdown.get(id) ?? null,
+    catalogContentOf: async (id) => content.get(id) ?? null,
+  };
+  const read = async (id: string) => {
+    const text = markdown.get(id);
+    return text === null || text === undefined ? null : { text, filename: id };
+  };
+
+  it("图片返回缓存描述与 materialRef，不触发任何视觉分析路径", async () => {
+    const payload = JSON.parse((await createWorkspaceFilePreviewTool(() => source, read)
+      .execute(input, { fileIds: ["img-ok"] })).content) as {
+      previews: Array<{ kind: string; description: string; materialRef: string }>;
+    };
+    expect(payload.previews[0]).toMatchObject({
+      kind: "image",
+      description: "一张安装在现场的设备特写，机身银色。",
+      materialRef: `everroom-material://${HASH_A}`,
+      width: 1,
+      height: 1,
+    });
+  });
+
+  it("无描述的图片如实标 descriptionMissing；文档按 perFile 截断；未知 id 报 not_found", async () => {
+    const payload = JSON.parse((await createWorkspaceFilePreviewTool(() => source, read)
+      .execute(input, { fileIds: ["img-missing", "doc", "nope"], maxCharsPerFile: 300 })).content) as {
+      previews: Array<Record<string, unknown>>;
+    };
+    expect(payload.previews[0]).toMatchObject({ kind: "image", descriptionMissing: true, materialRef: `everroom-material://${HASH_B}` });
+    expect(payload.previews[1]).toMatchObject({ kind: "document", truncated: true, chars: 6 + 800 });
+    expect((payload.previews[1]!.preview as string).length).toBeLessThanOrEqual(300);
+    expect(payload.previews[2]).toMatchObject({ error: "not_found" });
+  });
+
+  it("服务未就绪时明确报错", async () => {
+    await expect(createWorkspaceFilePreviewTool(() => null, read).execute(input, { fileIds: ["x"] }))
+      .rejects.toThrow("workspace_files_preview 暂不可用");
+  });
+});
+
+describe("workspace_files_read_batch tool", () => {
+  const entries = new Map<string, { sharedTitle?: string | null; originalName: string; dataType: string | null; contentHash: string }>([
+    ["doc-a", { sharedTitle: "材料A", originalName: "a.md", dataType: "document", contentHash: "a".repeat(64) }],
+    ["doc-b", { sharedTitle: null, originalName: "b.md", dataType: "document", contentHash: "b".repeat(64) }],
+    ["img", { sharedTitle: null, originalName: "x.jpg", dataType: "image", contentHash: "c".repeat(64) }],
+  ]);
+  const texts = new Map<string, string>([
+    ["doc-a", "A".repeat(30_000)],
+    ["doc-b", "B".repeat(5_000)],
+  ]);
+  const source: WorkspaceFileTextSource = {
+    catalogEntry: (id) => entries.get(id) ?? null,
+    catalogMarkdownOf: (id) => texts.get(id) ?? null,
+    catalogContentOf: async () => null,
+  };
+  const read = async (id: string) => {
+    const text = texts.get(id);
+    return text === undefined ? null : { text, filename: id };
+  };
+
+  it("一次读多篇：单篇截断带 nextOffset，短篇全量；预算按序分配", async () => {
+    const payload = JSON.parse((await createWorkspaceFilesReadBatchTool(() => source, read)
+      .execute(input, { fileIds: ["doc-a", "doc-b"] })).content) as {
+      files: Array<{ name: string; text: string; chars: number; truncated: boolean; nextOffset?: number }>;
+    };
+    expect(payload.files[0]).toMatchObject({ name: "材料A", chars: 30_000, truncated: true, nextOffset: 20_000 });
+    expect(payload.files[0]!.text.length).toBe(20_000);
+    expect(payload.files[1]).toMatchObject({ truncated: false, chars: 5_000 });
+  });
+
+  it("图片拒读并指向 preview；未知 id 报 not_found", async () => {
+    const payload = JSON.parse((await createWorkspaceFilesReadBatchTool(() => source, read)
+      .execute(input, { fileIds: ["img", "nope"] })).content) as {
+      files: Array<Record<string, unknown>>;
+    };
+    expect(payload.files[0]).toMatchObject({ error: "image_not_supported" });
+    expect(payload.files[1]).toMatchObject({ error: "not_found" });
   });
 });

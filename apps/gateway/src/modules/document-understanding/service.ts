@@ -216,6 +216,14 @@ export class DocumentUnderstandingService {
     return row ? dtoOf(row, true) : null;
   }
 
+  /** fileVersionId 兜底：模型误传 fileEntryId 时回退条目当前版本（与 getVersionContext 同口径）。 */
+  resolveVersionId(fileVersionId: string): string {
+    if (this.get(fileVersionId)) return fileVersionId;
+    const entry = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileVersionId)).get();
+    return entry?.currentVersionId ?? fileVersionId;
+  }
+
   markdownForFile(fileEntryId: string): string | null {
     const row = this.db.select({ markdown: parsedDocuments.markdown })
       .from(fileEntries)
@@ -232,17 +240,20 @@ export class DocumentUnderstandingService {
     const context = this.files.getVersionContext(fileEntryId, fileVersionId);
     if (!context) throw new Error("document_file_version_not_found");
     if (!this.supports(context.entry.originalName)) return null;
-    const existing = this.get(fileVersionId);
+    // getVersionContext 会把误传的 fileEntryId 回退成真实版本：后续查/写一律用真实 id，
+    // 产物落库键与 artifact 工具的查询口径保持一致。
+    const versionId = context.version.id;
+    const existing = this.get(versionId);
     if (existing) return existing;
 
-    const active = this.parseInFlight.get(fileVersionId);
+    const active = this.parseInFlight.get(versionId);
     if (active) return active;
-    const parsing = this.parseVersionOnce(fileEntryId, fileVersionId, context);
-    this.parseInFlight.set(fileVersionId, parsing);
+    const parsing = this.parseVersionOnce(fileEntryId, versionId, context);
+    this.parseInFlight.set(versionId, parsing);
     try {
       return await parsing;
     } finally {
-      if (this.parseInFlight.get(fileVersionId) === parsing) {
+      if (this.parseInFlight.get(versionId) === parsing) {
         this.parseInFlight.delete(fileVersionId);
       }
     }

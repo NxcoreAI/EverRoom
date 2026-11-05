@@ -65,6 +65,22 @@ function minimalPdf(text: string): Buffer {
 }
 
 describe("DocumentUnderstandingService", () => {
+  it("resolveVersionId：模型误传 fileEntryId 时回退条目当前版本（2026-11-06 解析链路连环 not_found）", async () => {
+    const test = await setup();
+    const imported = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:resolve-version",
+      originalName: "sample.md",
+      buffer: Buffer.from("# 标题\n\n正文内容\n", "utf8"),
+      mime: "text/markdown",
+    });
+    // 误传形态：fileVersionId == fileEntryId → 回退 currentVersionId。
+    expect(test.service.resolveVersionId(imported.fileEntryId)).toBe(imported.fileVersionId);
+    // 正常版本号原样返回；不存在的 id 也原样返回（由调用方报 not_found）。
+    expect(test.service.resolveVersionId(imported.fileVersionId)).toBe(imported.fileVersionId);
+    expect(test.service.resolveVersionId("fver-does-not-exist")).toBe("fver-does-not-exist");
+  });
+
   it("parses legacy binary Office bytes in-process without an external converter", async () => {
     const test = await setup();
     const fixture = (name: string) => readFile(new URL(

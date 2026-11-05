@@ -466,9 +466,16 @@ export class FilesService {
     storagePath: string;
   } | null {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
-    const version = this.db.select().from(fileVersions).where(and(
+    let version = this.db.select().from(fileVersions).where(and(
       eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId),
     )).get();
+    // 模型常把 fileEntryId 误传进 fileVersionId（2026-11-06 实测连环 not_found）：版本号
+    // 恰等于条目 id 时回退到该条目当前版本，别让一整个解析链路就此报废。
+    if (!version && entry && fileVersionId === fileEntryId && entry.currentVersionId) {
+      version = this.db.select().from(fileVersions).where(and(
+        eq(fileVersions.id, entry.currentVersionId), eq(fileVersions.fileEntryId, fileEntryId),
+      )).get();
+    }
     if (!entry || !version) return null;
     const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
     if (!blob) return null;

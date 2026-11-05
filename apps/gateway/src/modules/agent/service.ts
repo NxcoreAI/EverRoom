@@ -191,7 +191,9 @@ function resolveRoomId(registry: AgentRoomRegistry | undefined, roomId: string |
 
 // 「页」单字与「到/至第 N 页」覆盖分页续跑措辞（「生成到第5页看下」曾被当成
 // 文档创建话题，预检把 run 短路成等待澄清——用户看到 agent 毫无反应）。
-const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|页|会话|对话|仓库|分支|数据库|接口|(?:到|至)\s*第?\s*\d+)/iu;
+// PPT/Word/Excel/PDF 等具体交付格式有专属工具（slides_create/office_create/…），
+// 明说格式的请求不是歧义文档话题（2026-11-06 实测「做一个 BP 的 PPT」被误判）。
+const NON_DOCUMENT_CREATION_TARGET = /(?:Room|房间|项目|任务|计划|方案|列表|代码|程序|函数|类|表格|图片|图像|幻灯片|演示|提醒|日记|记录|目录|文件夹|数据源|页面|页|会话|对话|仓库|分支|数据库|接口|pptx?|word|docx?|excel|xlsx?|pdf|keynote|slides|markdown|md)|(?:到|至)\s*第?\s*\d+/iu;
 
 export function ambiguousDocumentTopic(prompt: string): string | null {
   const text = prompt.trim().replace(/[。！？!?，,]+$/gu, "");

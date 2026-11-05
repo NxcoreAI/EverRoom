@@ -1,4 +1,5 @@
 import type { PiAgentRuntimeTool, PiAgentRuntimeToolResult } from "@nxcore/agent-runtime-pi";
+import { imageDimensions } from "../slides-layout/tree/aspect-ratio.js";
 
 /**
  * 工作区文件（用户上传/导入的文档与图片）的只读目录。
@@ -175,7 +176,14 @@ const TEXT_FILENAME = /\.(md|markdown|txt|csv|json|xml|html?)$/i;
 
 /** FilesService 的结构子集：读文件库正文本体（文档解析结果优先，文本原文件兜底）。 */
 export interface WorkspaceFileTextSource {
-  catalogEntry(fileEntryId: string): { sharedTitle?: string | null; originalName: string } | null;
+  catalogEntry(fileEntryId: string): {
+    sharedTitle?: string | null;
+    originalName: string;
+    /** 文件格式类别（图片为 "image"），预览用它区分图片描述与文本前缀。 */
+    dataType: string | null;
+    /** 内容哈希：图片据此生成 materialRef。 */
+    contentHash: string;
+  } | null;
   catalogMarkdownOf(fileEntryId: string): string | null;
   catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
 }
@@ -200,6 +208,138 @@ export function createWorkspaceFileTextReader(
       return { text: content.buffer.toString("utf8"), filename: content.filename };
     }
     return null;
+  };
+}
+
+/** workspace_file_read / 预览共用的正文读取函数形态。 */
+export type WorkspaceFileTextReader = (fileEntryId: string) => Promise<{ text: string; filename: string } | null>;
+
+const PREVIEW_MAX_FILES = 20;
+const BATCH_READ_MAX_FILES = 4;
+const BATCH_READ_DEFAULT_CHARS = 20_000;
+const BATCH_READ_MAX_CHARS = 40_000;
+/** 整批总预算：对齐旧 planner sourceDocuments 预取口径（合计 60k），防止一次读爆上下文。 */
+const BATCH_READ_TOTAL_BUDGET = 60_000;
+const PREVIEW_DEFAULT_CHARS = 500;
+const PREVIEW_MAX_CHARS = 4_000;
+const PREVIEW_MIN_CHARS = 100;
+const PREVIEW_TOTAL_BUDGET = 24_000;
+
+/**
+ * 批量预览工作区文件：一次调用返回多个文件的「图片视觉描述 / 文本正文前缀」。
+ *
+ * 动机：图片导入时 image-vlm 已把视觉描述落库（catalogMarkdownOf 直读即可），
+ * 模型却常逐张发起视觉分析——N 张图 = N 次串行 VLM 秒级调用。本工具把这一步
+ * 变成一次零推理的批量 DB 查询；文本文件同样受益（前缀筛内容，替代逐个全文读）。
+ */
+export function createWorkspaceFilePreviewTool(
+  getTextSource: () => WorkspaceFileTextSource | null,
+  readFileText: WorkspaceFileTextReader,
+): PiAgentRuntimeTool {
+  return {
+    name: "workspace_files_preview",
+    label: "批量预览工作区文件",
+    description: "一次调用批量获取多个工作区文件的内容预览，替代对每个文件逐个调用读取/视觉分析。"
+      + "图片返回导入时已解析好的视觉描述（不触发新的视觉分析，秒回）、宽高（width/height，配图按比例定框用）与 materialRef；"
+      + "文档/文本返回正文开头与是否截断。"
+      + "用途：选定要用的素材、判断文件是否与主题相关时先用本工具；只有确定承担页面内容的文件才需要再读全文。"
+      + "图片若返回 descriptionMissing（导入时解析失败），确需该图再单独做视觉分析。",
+    parameters: {
+      type: "object",
+      properties: {
+        fileIds: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: PREVIEW_MAX_FILES,
+          description: "workspace_files_list / file_search / content_search 返回的 fileEntryId 列表（最多 20 个）",
+        },
+        maxCharsPerFile: {
+          type: "integer",
+          minimum: PREVIEW_MIN_CHARS,
+          maximum: PREVIEW_MAX_CHARS,
+          description: `单文件返回字符上限，缺省 ${String(PREVIEW_DEFAULT_CHARS)}（图片描述一般几百字内）；超出上下限会自动收敛`,
+        },
+      },
+      required: ["fileIds"],
+      additionalProperties: false,
+    },
+    promptSnippet: "批量预览工作区文件",
+    promptGuidelines: [
+      "需要了解多张图片或多个文件的内容时，用 workspace_files_preview 一次批量拿描述/前缀；不要对素材图片逐张调视觉分析。",
+    ],
+    executionMode: "sequential",
+    execute: async (_input, params, signal): Promise<PiAgentRuntimeToolResult> => {
+      if (signal?.aborted) throw new Error("workspace_files_preview 已取消");
+      const source = getTextSource();
+      if (!source) throw new Error("workspace_files_preview 暂不可用：工作区文件服务尚未就绪，请稍后重试。");
+      const ids = [...new Set(
+        (Array.isArray(params.fileIds) ? params.fileIds : [])
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim()),
+      )].slice(0, PREVIEW_MAX_FILES);
+      const requestedPerFile = typeof params.maxCharsPerFile === "number" && Number.isFinite(params.maxCharsPerFile)
+        ? Math.min(PREVIEW_MAX_CHARS, Math.max(PREVIEW_MIN_CHARS, Math.trunc(params.maxCharsPerFile)))
+        : PREVIEW_DEFAULT_CHARS;
+      let budget = PREVIEW_TOTAL_BUDGET;
+      const previews: Array<Record<string, unknown>> = [];
+      for (const fileEntryId of ids) {
+        const entry = source.catalogEntry(fileEntryId);
+        if (!entry) {
+          previews.push({ fileEntryId, error: "not_found" });
+          continue;
+        }
+        const image = entry.dataType === "image" || IMAGE_NAME.test(entry.originalName);
+        const name = entry.sharedTitle || entry.originalName;
+        const perFile = Math.min(requestedPerFile, budget);
+        if (perFile <= 0) {
+          previews.push({ fileEntryId, name, kind: image ? "image" : "document", skipped: "budget_exhausted" });
+          continue;
+        }
+        const markdown = source.catalogMarkdownOf(fileEntryId);
+        if (image) {
+          // 宽高比是配图版式的刚需：没有这一对数字模型会去应用数据目录里 exiftool
+          // 挖元数据（2026-11-06 实测 15 次 bash 风暴）。本地字节头解析，无 VLM。
+          let dimensions: { w: number; h: number } | null = null;
+          try {
+            const content = await source.catalogContentOf(fileEntryId);
+            dimensions = content ? imageDimensions(content.buffer) : null;
+          } catch {
+            dimensions = null;
+          }
+          previews.push({
+            fileEntryId,
+            name,
+            kind: "image",
+            ...(dimensions ? { width: dimensions.w, height: dimensions.h } : {}),
+            ...(markdown && markdown.trim()
+              ? { description: markdown.slice(0, perFile), descriptionTruncated: markdown.length > perFile }
+              : { descriptionMissing: true }),
+            ...(entry.contentHash && /^[a-f0-9]{64}$/.test(entry.contentHash)
+              ? { materialRef: `everroom-material://${entry.contentHash}` }
+              : {}),
+          });
+          budget -= Math.min(markdown?.length ?? 0, perFile);
+          continue;
+        }
+        let text = markdown;
+        if (text === null) {
+          const read = await readFileText(fileEntryId);
+          text = read?.text ?? null;
+        }
+        previews.push({
+          fileEntryId,
+          name,
+          kind: "document",
+          ...(text !== null && text.trim()
+            ? { preview: text.slice(0, perFile), truncated: text.length > perFile, chars: text.length }
+            : { noText: true }),
+        });
+        budget -= Math.min(text?.length ?? 0, perFile);
+      }
+      const payload = { previews, total: previews.length };
+      return { content: JSON.stringify(payload), details: payload };
+    },
   };
 }
 
@@ -273,4 +413,102 @@ export function createWorkspaceFilesPiTools(
     },
   };
   return [tool];
+}
+
+/**
+ * 批量全文读取：一次调用拿 2~4 篇材料的正文（单篇与总量都有预算），替代逐个
+ * workspace_file_read 分页读——2026-11-06 实测生成 PPT 时模型逐篇读了 11 次。
+ * 预算口径对齐旧 planner sourceDocuments 预取（单篇 40k、合计 60k）：超出部分
+ * 截断并给 nextOffset，确需余篇再用 file_read 续读，不默认全量进上下文。
+ */
+export function createWorkspaceFilesReadBatchTool(
+  getTextSource: () => WorkspaceFileTextSource | null,
+  readFileText: WorkspaceFileTextReader,
+): PiAgentRuntimeTool {
+  return {
+    name: "workspace_files_read_batch",
+    label: "批量读取工作区文件正文",
+    description: "一次调用读取 2~4 篇工作区文件的正文（完整或带截断标记），替代对多份材料逐个分页读取。"
+      + "单篇默认 20000 字符（上限 40000）、整批合计 60000 字符封顶——超出部分截断并返回 nextOffset，需要余篇再用 file_read 续读。"
+      + "用途：确定要引用进产物的少数材料（PPT 页面内容、报告论据）在 preview 筛选后一次读齐；不要用它穷举整个资料库。"
+      + "图片不支持正文读取（用 workspace_files_preview 拿描述与宽高）。",
+    parameters: {
+      type: "object",
+      properties: {
+        fileIds: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: BATCH_READ_MAX_FILES,
+          description: `要读正文的 fileEntryId 列表（最多 ${String(BATCH_READ_MAX_FILES)} 篇，按重要性排序——预算不够时排前的拿全量）`,
+        },
+        maxCharsPerFile: {
+          type: "integer",
+          minimum: 2_000,
+          maximum: BATCH_READ_MAX_CHARS,
+          description: `单篇字符上限，缺省 ${String(BATCH_READ_DEFAULT_CHARS)}；超出上下限自动收敛`,
+        },
+      },
+      required: ["fileIds"],
+      additionalProperties: false,
+    },
+    promptSnippet: "批量读取工作区文件正文",
+    promptGuidelines: [
+      "多篇材料的正文用 workspace_files_read_batch 一次读齐（每篇截断处有 nextOffset），不要逐个分页读。",
+    ],
+    executionMode: "sequential",
+    execute: async (_input, params, signal): Promise<PiAgentRuntimeToolResult> => {
+      if (signal?.aborted) throw new Error("workspace_files_read_batch 已取消");
+      const source = getTextSource();
+      if (!source) throw new Error("workspace_files_read_batch 暂不可用：工作区文件服务尚未就绪，请稍后重试。");
+      const ids = [...new Set(
+        (Array.isArray(params.fileIds) ? params.fileIds : [])
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim()),
+      )].slice(0, BATCH_READ_MAX_FILES);
+      const requestedPerFile = typeof params.maxCharsPerFile === "number" && Number.isFinite(params.maxCharsPerFile)
+        ? Math.min(BATCH_READ_MAX_CHARS, Math.max(2_000, Math.trunc(params.maxCharsPerFile)))
+        : BATCH_READ_DEFAULT_CHARS;
+      let budget = BATCH_READ_TOTAL_BUDGET;
+      const files: Array<Record<string, unknown>> = [];
+      for (const fileEntryId of ids) {
+        const entry = source.catalogEntry(fileEntryId);
+        if (!entry) {
+          files.push({ fileEntryId, error: "not_found" });
+          continue;
+        }
+        const name = entry.sharedTitle || entry.originalName;
+        if (entry.dataType === "image" || IMAGE_NAME.test(entry.originalName)) {
+          files.push({ fileEntryId, name, error: "image_not_supported", hint: "用 workspace_files_preview 获取图片描述与宽高" });
+          continue;
+        }
+        const read = await readFileText(fileEntryId);
+        if (!read || !read.text.trim()) {
+          files.push({ fileEntryId, name, noText: true });
+          continue;
+        }
+        const perFile = Math.min(requestedPerFile, budget);
+        if (perFile <= 0) {
+          files.push({ fileEntryId, name, skipped: "budget_exhausted", chars: read.text.length });
+          continue;
+        }
+        const text = read.text.slice(0, perFile);
+        budget -= text.length;
+        files.push({
+          fileEntryId,
+          name,
+          text,
+          chars: read.text.length,
+          truncated: read.text.length > text.length,
+          ...(read.text.length > text.length ? { nextOffset: text.length } : {}),
+        });
+      }
+      const payload = {
+        files,
+        total: files.length,
+        note: "截断的文件用 file_read(fileId, offset=nextOffset) 续读余篇；图片走 workspace_files_preview。",
+      };
+      return { content: JSON.stringify(payload), details: payload };
+    },
+  };
 }

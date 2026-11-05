@@ -18,6 +18,7 @@ import {
   AGENT_CHAT_WHEEL_UP_DETACH_PX,
   isGeometryClampScroll,
   isNestedScrollerWheel,
+  wheelDownChaseBand,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
@@ -1088,7 +1089,8 @@ export function AgentChatView({
             return
           }
           const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          if (distance <= AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
+          // 追赶带随本次位移放款：流式爆发时固定 32px 永远追不上底部（生成进行中滑不到底）。
+          if (distance <= wheelDownChaseBand(event.deltaY) && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (
