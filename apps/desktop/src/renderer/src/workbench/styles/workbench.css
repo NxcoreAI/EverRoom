@@ -694,3 +694,112 @@
   height: 30px;
   flex: none;
 }
+
+/* ===== 升级弹窗(PlanUpgradeModal)与头像菜单账户区 ===== */
+
+/* 头像菜单顶部:档位行(Free/Pro + 升级)与积分余额行 */
+.wb-account-plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+}
+.wb-account-plan strong { flex: 1; font-size: 12.5px; color: var(--ui-text, #1d1d1f); }
+.wb-account-plan-upgrade {
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--ui-text, #1d1d1f);
+  color: var(--ui-surface, #fff);
+  cursor: pointer;
+}
+.wb-account-plan-upgrade:hover { opacity: 0.85; }
+.wb-account-credits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.wb-account-credits:hover { background: var(--ui-hover, rgba(0,0,0,0.05)); border-radius: 6px; }
+.wb-account-credits strong { flex: 1; font-size: 12.5px; color: var(--ui-text, #1d1d1f); }
+.wb-account-credits-value { font-variant-numeric: tabular-nums; }
+.wb-account-credits ChevronRight { flex: none; }
+
+/* 升级弹窗档位卡片 */
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 12px;
+  background: var(--ui-surface, #fff);
+}
+.plan-card[data-current='true'] {
+  border-color: var(--ui-accent, #0071e3);
+  box-shadow: 0 0 0 1px var(--ui-accent, #0071e3);
+}
+.plan-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.plan-card-head strong { font-size: 15px; }
+.plan-card-price { font-size: 13px; font-weight: 600; color: var(--ui-text-muted, #666); font-variant-numeric: tabular-nums; }
+.plan-card-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ui-text-muted, #555);
+  flex: 1;
+}
+.plan-card-features li { display: flex; gap: 6px; align-items: baseline; }
+.plan-card-features li::before { content: '✓'; color: var(--ui-accent, #0071e3); font-size: 11px; }
+/* 充值弹窗卡片:积分档位说明行 */
+.plan-card-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+  flex: 1;
+}
+.plan-card-cta {
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text-muted, #666);
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.plan-card-cta.is-primary {
+  background: var(--ui-text, #1d1d1f);
+  color: var(--ui-surface, #fff);
+  border-color: var(--ui-text, #1d1d1f);
+  cursor: pointer;
+}
+.plan-card-cta.is-primary:hover:not(:disabled) { opacity: 0.85; }
+.plan-card-cta:disabled { opacity: 0.6; cursor: default; }
+.plan-purchase-message { display: block; margin-top: 10px; font-size: 12px; color: var(--ui-text-muted, #666); }
+.plan-purchase-message[data-phase='failed'] { color: var(--ui-danger, #c4320e); }
+.plan-purchase-done { margin: 8px 0 0; font-size: 12.5px; color: var(--ui-accent, #0071e3); }

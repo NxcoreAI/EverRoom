@@ -457,6 +457,13 @@ const ACCOUNT_CHANNELS = {
   /** SaaS 权威额度判定（402/403 后置 true）：启动闸门用它区分「额度耗尽」
    *  与「服务未就绪」，keeper 未起/未判定返回 false。 */
   aiRelayVerdict: 'ai-relay:verdict',
+  /** 充值:档位列表 / 下单(approvalUrl 开系统浏览器) / 订单状态轮询 / mock 批准。 */
+  billingPacks: 'billing:packs',
+  billingTopup: 'billing:topup',
+  billingTopupStatus: 'billing:topup-status',
+  billingTopupMockApprove: 'billing:topup-mock-approve',
+  /** 套餐档位(升级弹窗)。 */
+  billingPlans: 'billing:plans',
 } as const
 
 // 通知偏好与云端会话：主进程直连 SaaS，渲染端只做只读代理（通知设置页）。
@@ -3450,6 +3457,38 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     return rateLimitAware(() => client.aiGatewayStatus())
   })
   handle(ACCOUNT_CHANNELS.aiRelayVerdict, () => ({ quotaExhausted: aiRelayKeeper?.isQuotaExhausted() ?? false }))
+  handle(ACCOUNT_CHANNELS.billingPacks, () => {
+    const client = saasClient
+    if (!client) return Promise.resolve([])
+    return rateLimitAware(() => client.creditPacks())
+  })
+  handle(ACCOUNT_CHANNELS.billingTopup, (_event, packCode: unknown) => {
+    const client = saasClient
+    if (!client || typeof packCode !== 'string') return Promise.reject(new Error('尚未登录。'))
+    // mock 协议不开系统浏览器(它不是真实 URL);真 paypal 的 approval 链外部打开
+    return rateLimitAware(async () => {
+      const order = await client.createTopup(packCode)
+      if (order.provider !== 'mock' && order.approvalUrl.startsWith('http')) {
+        void shell.openExternal(order.approvalUrl)
+      }
+      return order
+    })
+  })
+  handle(ACCOUNT_CHANNELS.billingTopupStatus, (_event, orderId: unknown) => {
+    const client = saasClient
+    if (!client || typeof orderId !== 'string') return Promise.reject(new Error('尚未登录。'))
+    return rateLimitAware(() => client.topupStatus(orderId))
+  })
+  handle(ACCOUNT_CHANNELS.billingTopupMockApprove, (_event, orderId: unknown) => {
+    const client = saasClient
+    if (!client || typeof orderId !== 'string') return Promise.reject(new Error('尚未登录。'))
+    return rateLimitAware(() => client.topupMockApprove(orderId))
+  })
+  handle(ACCOUNT_CHANNELS.billingPlans, () => {
+    const client = saasClient
+    if (!client) return Promise.resolve([])
+    return rateLimitAware(() => client.planTiers())
+  })
   // SaaS 客户端先于连接器栈构造：saas 连接层在 gateway 启动前就需要登录态换 oo 会话。
   // 放在 createWindow 之前：渲染层挂载即查账号，处理器必须先于首帧就位。
   const credentials = new CredentialStore(join(app.getPath('userData'), 'credentials.json'), join(app.getPath('userData'), 'backups'))

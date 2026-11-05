@@ -167,6 +167,22 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+/** 套餐档位（`GET /app/plans`），升级弹窗动态渲染权益列表。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
 export interface KeyringDevicePackage {
   algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
   ephemeralPublicKey: string
@@ -206,6 +222,28 @@ export interface AiGatewayToken {
   /** 套餐场景模型；套餐未配置时为 null（客户端沿用内置默认模型）。 */
   models?: AiPlanModels | null
 }
+
+/** 充值档位（`GET /app/billing/packs`）。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
+}
+
+/** 充值下单结果（`POST /app/billing/topup`）。 */
+export interface TopupOrder {
+  orderId: string
+  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议。 */
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
 
 
 /**
@@ -567,9 +605,9 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
-    // 保证扫码登录的环境校验在两端默认配置下直接通过。
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
+    // 打包默认指向生产 SaaS API；dev 由 .env 的 NXCORE_SAAS_API_URL 覆盖连内网，
+    // 手机 App 扫码登录的环境校验只在 dev 内网场景关心 origin 一致性。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'https://api.everoffice.vyitec.com/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
   }
@@ -837,6 +875,36 @@ export class SaasClient {
   async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
     await this.initialize()
     return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
+  }
+
+  /** 充值档位列表。 */
+  async creditPacks(): Promise<CreditPack[]> {
+    await this.initialize()
+    return this.request<CreditPack[]>('/app/billing/packs')
+  }
+
+  /** 充值下单:返回 approvalUrl(系统浏览器打开完成支付)。 */
+  async createTopup(packCode: string): Promise<TopupOrder> {
+    await this.initialize()
+    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode } })
+  }
+
+  /** 充值订单状态轮询(pending 时服务端主动核对支付渠道)。 */
+  async topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: TopupStatus; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/status`)
+  }
+
+  /** Mock 模式联调:模拟买家批准。真 paypal 模式服务端 409。 */
+  async topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: 'completed'; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/mock-approve`, { method: 'POST' })
+  }
+
+  /** 套餐档位列表(升级弹窗渲染)。 */
+  async planTiers(): Promise<PlanTier[]> {
+    await this.initialize()
+    return this.request<PlanTier[]>('/app/plans')
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {

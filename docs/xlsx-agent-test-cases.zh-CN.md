@@ -402,13 +402,13 @@
 - 判定标准：保存后重开仍存在；文本无乱码
 - 失败信号：形状没落盘；锚点跑到别的表
 
-### XL-V-05 插入图片
+### XL-V-05 插入图片（位图 + SVG）
 - 优先级：P2
-- 提示词：`把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方。`
-- 期望行为：`add_image {path}`（只收本地绝对路径或公网 URL，≤20MB）
-- 期望效果：图片对象写进文件；拒绝 base64/dataURL 并说明原因
-- 判定标准：图片存在且尺寸合理；不支持路径时明确报错而非假成功
-- 失败信号：静默跳过；把 SVG 当 PNG 插入导致打不开
+- 提示词：`把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。`
+- 期望行为：`add_image {path}`（本地绝对路径或公网 URL，≤20MB，不收 base64/dataURL）。**SVG 走「矢量 + 位图回退」**：渲染层先光栅化出 PNG，写盘时 `xl/media/` 同时出现 `.svg` 与 `.png`，drawing 里位图是主 `a:blip`、矢量挂在 `asvg:svgBlip` 扩展上
+- 期望效果：两张图都进文件；SVG 那条有 2 份 media + 2 条关系 + `Extension="svg"` 的 content-type；PNG 那条只有 1 份
+- 判定标准：解包能同时看到 `xl/media/*.svg` 与回退 `*.png`；Excel 里可见且放大不失真（矢量）；旧版 Excel / 预览 / 导出 PDF 仍有图（走回退）
+- 失败信号：只写 SVG 不写回退（老环境空白图）；把 SVG 冒充 PNG（魔数不符，打不开）；静默跳过；拒绝 base64/dataURL 却不说明原因
 
 ### XL-V-06 超链接与批注
 - 优先级：P2

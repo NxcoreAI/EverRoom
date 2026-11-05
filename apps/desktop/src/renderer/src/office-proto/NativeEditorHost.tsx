@@ -130,33 +130,151 @@ export function NativeEditorHost({
     if (!host) return
     let visible = false
     let raf = 0
+    let lastKey = ''
+
+    /// WebContentsView 盖在 DOM 之上、完全不吃 CSS：祖先用 visibility:hidden 收起
+    /// 原生区时（气泡窗收起/关闭/拖宽期间，见 bubble.css）布局不变、矩形也不变，
+    /// 只有显式上报 ZERO 才能让原生视图让位，否则它会继续画在下面的对话区上。
+    const hostPaintable = (): boolean => {
+      const rect = host.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return false
+      for (let node: HTMLElement | null = host; node; node = node.parentElement) {
+        const style = window.getComputedStyle(node)
+        if (style.visibility === 'hidden' || style.display === 'none') return false
+      }
+      return true
+    }
+
+    /// 模态浮层（新建空间对话框、命令面板…）也是 DOM：原生视图会把它们整块盖住。
+    /// Radix 只在打开时挂载并打 data-state=open，所以"有可见浮层"就等于"原生区被挡"。
+    const OVERLAY_SELECTOR =
+      '.ui-modal-overlay[data-state="open"], .wb-palette-overlay[data-state="open"], [role="dialog"][data-state="open"], [aria-modal="true"]'
+    const overlayCoversHost = (): boolean => {
+      for (const node of document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)) {
+        if (node.closest('.op-native-wrap')) continue
+        const rect = node.getBoundingClientRect()
+        if (rect.width <= 0 || rect.height <= 0) continue
+        if (window.getComputedStyle(node).visibility === 'hidden') continue
+        return true
+      }
+      return false
+    }
+
+    const paintable = (): boolean => hostPaintable() && !overlayCoversHost()
+
+    /// 原生视图同样不吃祖先的 overflow/contain 裁剪：flex 溢出、窗口变窄、面板动画中
+    /// 它都会画到兄弟元素上去（就是"右侧 Excel 悬浮窗盖住中间对话区"）。这里把上报
+    /// 矩形夹到宿主的裁剪祖先与视口的交集内，夹空即视为不可见。
+    const clippedRect = (rect: DOMRect): { x: number; y: number; width: number; height: number } | null => {
+      let left = rect.left
+      let top = rect.top
+      let right = rect.right
+      let bottom = rect.bottom
+      for (let node: HTMLElement | null = host.parentElement; node; node = node.parentElement) {
+        const style = window.getComputedStyle(node)
+        const clips =
+          style.overflowX !== 'visible' ||
+          style.overflowY !== 'visible' ||
+          style.contain.includes('paint')
+        if (!clips) continue
+        const box = node.getBoundingClientRect()
+        left = Math.max(left, box.left)
+        top = Math.max(top, box.top)
+        right = Math.min(right, box.right)
+        bottom = Math.min(bottom, box.bottom)
+      }
+      left = Math.max(left, 0)
+      top = Math.max(top, 0)
+      right = Math.min(right, window.innerWidth)
+      bottom = Math.min(bottom, window.innerHeight)
+      if (right - left < 1 || bottom - top < 1) return null
+      return { x: left, y: top, width: right - left, height: bottom - top }
+    }
 
     const report = async () => {
-      const rect = host.getBoundingClientRect()
-      if (rect.width > 0 && rect.height > 0) {
-        if (!visible) {
-          visible = true
-          await activate()
+      if (!paintable()) {
+        if (visible) {
+          visible = false
+          lastKey = ''
+          sendBounds(ZERO)
         }
-        sendBounds({ x: rect.x, y: rect.y, width: rect.width, height: rect.height })
-      } else if (visible) {
-        visible = false
-        sendBounds(ZERO)
+        return
       }
+      const rect = clippedRect(host.getBoundingClientRect())
+      if (rect === null) {
+        if (visible) {
+          visible = false
+          lastKey = ''
+          sendBounds(ZERO)
+        }
+        return
+      }
+      // 类名批量变动（拖拽、标签切换、悬停）会触发大量 mutation：矩形没变就不重复发 IPC。
+      const key = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`
+      if (key === lastKey) return
+      lastKey = key
+      if (!visible) {
+        visible = true
+        await activate()
+      }
+      sendBounds(rect)
+    }
+
+    // visibility / 浮层进出都不触发 ResizeObserver（原生区尺寸没动），靠 DOM mutation
+    // 兜住；按帧合并 + 100ms 节流，避免聊天流式输出时每帧都查一遍浮层。
+    let scheduled = false
+    let lastRun = 0
+    let trailing: ReturnType<typeof setTimeout> | null = null
+    const runReport = () => {
+      lastRun = Date.now()
+      void report()
+    }
+    const schedule = () => {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(() => {
+        scheduled = false
+        const wait = 100 - (Date.now() - lastRun)
+        if (wait <= 0) {
+          runReport()
+          return
+        }
+        // 节流窗内的最后一次变更不能丢：浮层"秒开秒关"时必须补一次上报，
+        // 否则原生视图会停在隐藏态。
+        if (trailing !== null) return
+        trailing = setTimeout(() => {
+          trailing = null
+          runReport()
+        }, wait)
+      })
     }
 
     const observer = new ResizeObserver(() => void report())
+    const mutations = new MutationObserver(schedule)
     const onResize = () => void report()
     const onScroll = () => void report()
     observer.observe(host)
+    mutations.observe(document.body, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ['class', 'style', 'data-state', 'aria-hidden', 'hidden'],
+    })
+    const onSettle = () => schedule()
     window.addEventListener('resize', onResize)
     window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('transitionend', onSettle, true)
+    window.addEventListener('animationend', onSettle, true)
     raf = requestAnimationFrame(() => requestAnimationFrame(() => void report()))
 
     return () => {
       observer.disconnect()
+      mutations.disconnect()
+      if (trailing !== null) clearTimeout(trailing)
       window.removeEventListener('resize', onResize)
       window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('transitionend', onSettle, true)
+      window.removeEventListener('animationend', onSettle, true)
       cancelAnimationFrame(raf)
       if (visible) sendBounds(ZERO)
     }

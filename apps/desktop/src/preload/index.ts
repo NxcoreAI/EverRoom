@@ -550,6 +550,13 @@ const api: NxcoreDesktopApi = {
       }
     },
   },
+  billing: {
+    packs: () => invoke('billing:packs') as Promise<import('../shared/sources').CreditPack[]>,
+    topup: (packCode: string) => invoke('billing:topup', packCode) as Promise<import('../shared/sources').TopupOrder>,
+    topupStatus: (orderId: string) => invoke('billing:topup-status', orderId) as Promise<{ status: import('../shared/sources').TopupStatus; amountCents: number }>,
+    topupMockApprove: (orderId: string) => invoke('billing:topup-mock-approve', orderId) as Promise<{ status: 'completed'; amountCents: number }>,
+    plans: () => invoke('billing:plans') as Promise<import('../shared/sources').PlanTier[]>,
+  },
   notifications: {
     preferences: () => invokeQuietly('notifications:preferences'),
     updatePreferences: (input) => invoke('notifications:update-preferences', input),

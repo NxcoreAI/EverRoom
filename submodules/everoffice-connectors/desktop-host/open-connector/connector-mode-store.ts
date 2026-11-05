@@ -62,5 +62,5 @@ export function createConnectorModeStore(dataDirectory: string): ConnectorModeSt
 
 /** 与 saas-client 同源的默认 SaaS API 地址（避免初始化顺序依赖 saasClient 实例）。 */
 export function defaultSaasApiBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return (env.NXCORE_SAAS_API_URL || 'http://192.168.1.99:4100/api/v1').replace(/\/+$/, '')
+  return (env.NXCORE_SAAS_API_URL || 'https://api.everoffice.vyitec.com/api/v1').replace(/\/+$/, '')
 }

@@ -405,13 +405,13 @@
 
 - 验收：保存后重开仍存在；文本无乱码
 
-### XL-V-05 · 插入图片 `P2`
+### XL-V-05 · 插入图片（位图 + SVG） `P2`
 
 ```
-把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方。
+把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。
 ```
 
-- 验收：图片存在且尺寸合理；不支持路径时明确报错而非假成功
+- 验收：解包能同时看到 `xl/media/*.svg` 与回退 `*.png`；Excel 里可见且放大不失真（矢量）；旧版 Excel / 预览 / 导出 PDF 仍有图（走回退）
 
 ### XL-V-06 · 超链接与批注 `P2`
 
