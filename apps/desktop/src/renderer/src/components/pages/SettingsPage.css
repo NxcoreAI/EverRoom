@@ -3153,7 +3153,7 @@
 }
 
 /* ===== 套餐与积分:总览卡(三列明细) ===== */
-.plan-overview-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.plan-overview-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 0; background: var(--surface); }
 .plan-overview-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .plan-overview-head .cloud-subscription-plan { border: none; padding: 0; margin: 0; background: none; }
 .plan-overview-total { display: flex; align-items: baseline; gap: 10px; }
