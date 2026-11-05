@@ -1,6 +1,12 @@
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
 import {
+  createRepeatedCallState,
+  DEFAULT_MAX_REPEATED_CALLS,
+  trackRepeatedCall,
+  type RepeatedCallState,
+} from "./tool-loop-guard.js";
+import {
   createToolResultDedupeState,
   dedupeToolResult,
   type ToolResultDedupeState,
@@ -94,6 +100,11 @@ export interface PiAgentRuntimeConfig {
   maxAutoContinuesPerRun?: number;
   /** 首轮连接类错误的重试次数（默认 2；仅在没有工具副作用时生效）。 */
   maxConnectionRetries?: number;
+  /**
+   * 同一工具用完全相同参数连续调用的次数上限（默认 5，0 关闭）。命中即中止：
+   * 连续同样的命令重复刷，说明模型在转圈而不是在推进。
+   */
+  maxRepeatedCalls?: number;
   /**
    * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
    * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
@@ -244,6 +255,9 @@ interface ActivePiRun {
   autoContinues: number;
   /** 正在自动续写：期间不能被 start() 的收尾逻辑提前判完成。 */
   continuing: boolean;
+  /** 连续相同调用的计数（原地打转守卫）。 */
+  repeated: RepeatedCallState;
+  repeatLimitExceeded: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -738,6 +752,8 @@ export class PiAgentRuntime implements AgentRuntime {
       toolResults: createToolResultDedupeState(),
       autoContinues: 0,
       continuing: false,
+      repeated: createRepeatedCallState(),
+      repeatLimitExceeded: false,
       terminal: false,
       finishPromise: null,
     };
@@ -1303,6 +1319,14 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
+      // 打转守卫：同一工具 + 完全相同的参数连续多次（实测有任务把同一条 python
+      // heredoc 刷了约 170 次、跑 7 分钟而没有任何文件被改），直接中止。
+      const repeatLimit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+      if (trackRepeatedCall(active.repeated, event.toolName, event.args, repeatLimit)) {
+        active.repeatLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       // 空转守卫：连续多次"打点式"调用（echo / read /dev/null）说明模型在原地转圈，
       // 继续跑只会刷满时间线而不推进任务，直接中止并如实报告。
       const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
@@ -1346,13 +1370,16 @@ export class PiAgentRuntime implements AgentRuntime {
         runId,
         active.cancelled
           ? "cancelled"
-          : active.toolLimitExceeded || active.noOpLimitExceeded || sessionError || outputLimitReached
+          : active.toolLimitExceeded || active.noOpLimitExceeded || active.repeatLimitExceeded
+            || sessionError || outputLimitReached
             ? "failed"
             : "completed",
         active.toolLimitExceeded
           ? new Error(this.toolLimitErrorMessage())
           : active.noOpLimitExceeded
             ? new Error(this.noOpLimitErrorMessage())
+            : active.repeatLimitExceeded
+              ? new Error(this.repeatLimitErrorMessage())
             : sessionError
             ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
@@ -1425,7 +1452,20 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   private toolLimitErrorMessage(): string {
-    return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+    const limit = this.config.maxToolCallsPerRun;
+    return (
+      `本轮工具调用已达上限（${limit} 次）仍未完成，已自动中止。` +
+      "建议把任务拆小后重试；如果只是想看进度，请直接说明下一步要做什么，不要重复调用工具。"
+    );
+  }
+
+  /** 打转中止说明：告诉用户这不是业务失败，而是模型在重复同一条命令。 */
+  private repeatLimitErrorMessage(): string {
+    const limit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+    return (
+      `本次处理在原地打转：同一条工具调用（参数完全相同）连续重复了 ${limit} 次，` +
+      "没有任何实际进展，已自动中止。可以把任务说得更具体一些，或换个方式描述目标后重试。"
+    );
   }
 
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */

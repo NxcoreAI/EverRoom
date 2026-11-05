@@ -736,8 +736,9 @@ describe("PiAgentRuntime", () => {
       expect(executions).toBe(1);
       expect(requestIndex).toBe(2);
       expect(events.map((event) => event.type)).toContain("run.failed");
+      // 文案改成中文可行动版本：说清上限、已中止、以及下一步怎么做
       expect(events.find((event) => event.type === "run.failed")?.payload).toEqual({
-        message: "Pi runtime exceeded the maximum tool calls per run (1)",
+        message: expect.stringContaining("工具调用已达上限（1 次）"),
       });
     } finally {
       await runtime.dispose();

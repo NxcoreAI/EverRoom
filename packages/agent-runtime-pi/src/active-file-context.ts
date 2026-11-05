@@ -30,6 +30,8 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
     "回答它的内容前先调用 file_read（省略 fileId 即读取这个当前文件）；不要用 document_list/document_read 去工作区里猜另一篇文稿。",
     activeFile.kind === "slides"
       ? "要修改或按页查看 PPT，改用 slides_read（fileId 省略即当前打开的 PPT）读取大纲与元素 id，再用 slides_edit 改。"
+        + "不要用 bash 解压 / 改写 .pptx（zip + XML），也不要用 file_read 去读它的内容——"
+        + ".pptx 是二进制压缩包，手改 XML 会损坏文件、读出来也是乱码；内容层面的读写一律走 slides_* 工具。"
       : null,
     activeFile.kind === "docx"
       ? "要修改这份 Word（改文字/格式、增删段落、插图、水印等）用 word_agent_edit：先 word_agent_read 拿块索引与 HTML/命令规则，再按块索引构造工具调用；"

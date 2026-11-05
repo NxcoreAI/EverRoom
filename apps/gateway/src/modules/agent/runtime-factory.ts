@@ -162,6 +162,9 @@ function createUserFacingRuntime(
     // 三份重复快照直接把上下文顶到 80%、末轮输出额度被思考吃光。60k 字符足够放下
     // 一份正常文档读取，超出部分按 JSON 感知截断并提示改读具体范围。
     maxToolResultChars: 60_000,
+    // 主 agent 也要有刹车：实测一个 PPT 任务调了 185 次工具（其中 170 次是同一条
+    // 命令）跑满 7 分钟，期间文件一次没改。120 次足够覆盖正常的长任务。
+    maxToolCallsPerRun: 120,
   }, {
     tools: [
       ...(integrations?.tools ?? []),
