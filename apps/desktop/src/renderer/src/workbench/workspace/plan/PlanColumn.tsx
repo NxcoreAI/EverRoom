@@ -9,7 +9,6 @@ import { PlanCard } from './PlanCard'
 export interface PlanColumnProps {
   status: PlanStatus
   label: string
-  hint: string
   items: PlanItem[]
   dragId: string | null
   sessionTitles: Map<string, string>
@@ -33,7 +32,6 @@ export interface PlanColumnProps {
 export function PlanColumn({
   status,
   label,
-  hint,
   items,
   dragId,
   sessionTitles,
@@ -148,8 +146,7 @@ export function PlanColumn({
 
         {!items.length && !composing ? (
           <button type="button" className="wb-plan-empty" onClick={() => setComposing(true)}>
-            <span>{hint}</span>
-            <span className="wb-plan-empty-action">拖到这里，或点 + 新建</span>
+            <span className="wb-plan-empty-action">新建任务</span>
           </button>
         ) : null}
       </div>

@@ -10,11 +10,11 @@ export interface PlanDropTarget {
 }
 
 /** 看板列顺序与列名（渲染层与网关共用语义，只是展示文案在这里）。 */
-export const PLAN_COLUMNS: ReadonlyArray<{ status: PlanStatus; label: string; hint: string }> = [
-  { status: 'todo', label: '待开始', hint: '认下来了但还没人动' },
-  { status: 'doing', label: '进行中', hint: '有人（或某个 Agent 会话）在做' },
-  { status: 'done', label: '已完成', hint: '有结论' },
-  { status: 'dropped', label: '已取消', hint: '不做了' },
+export const PLAN_COLUMNS: ReadonlyArray<{ status: PlanStatus; label: string }> = [
+  { status: 'todo', label: '待开始' },
+  { status: 'doing', label: '进行中' },
+  { status: 'done', label: '已完成' },
+  { status: 'dropped', label: '已取消' },
 ]
 
 /** 把扁平的 items（服务端按 rank 排好）按列分组，列内保持原有顺序。 */
@@ -101,11 +101,4 @@ export function isPlanOverdue(dueAt: string | null, now = Date.now()): boolean {
   const time = Date.parse(dueAt)
   if (!Number.isFinite(time)) return false
   return time < now - 24 * 60 * 60_000
-}
-
-/** 卡片上的负责人标签。 */
-export function planOwnerLabel(item: PlanItem): string {
-  if (item.ownerKind === 'agent') return item.ownerAgentId ? `Agent ${item.ownerAgentId}` : 'Agent'
-  if (item.ownerKind === 'user') return '我'
-  return '待认领'
 }

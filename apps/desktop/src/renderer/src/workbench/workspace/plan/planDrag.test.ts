@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { PlanItem, PlanStatus } from '@nxcore/agent-contract'
 
-import { applyLocalMove, groupPlanItems, isPlanOverdue, planOwnerLabel, resolveDrop, upsertPlanItem } from './planDrag'
+import { applyLocalMove, groupPlanItems, isPlanOverdue, resolveDrop, upsertPlanItem } from './planDrag'
 
 /**
  * 看板拖拽的全部状态机都在 `resolveDrop` / `applyLocalMove` 里（纯函数），
@@ -141,12 +141,6 @@ describe('upsertPlanItem', () => {
 })
 
 describe('展示辅助', () => {
-  it('负责人标签', () => {
-    expect(planOwnerLabel(item('a', 'todo'))).toBe('待认领')
-    expect(planOwnerLabel(item('a', 'todo', { ownerKind: 'user' }))).toBe('我')
-    expect(planOwnerLabel(item('a', 'todo', { ownerKind: 'agent', ownerAgentId: 'main' }))).toBe('Agent main')
-  })
-
   it('截止判断留一天缓冲（当天不算过期）', () => {
     const now = Date.parse('2026-11-03T12:00:00.000Z')
     expect(isPlanOverdue('2026-11-03T09:00:00.000Z', now)).toBe(false)
