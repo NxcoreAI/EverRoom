@@ -137,6 +137,8 @@ export interface PiAgentRuntimeConfig {
    * 思考就把 8192 的输出额度烧完、正文还没开始写，直接判失败等于把活甩回给用户。
    */
   maxAutoContinuesPerRun?: number;
+  /** 首轮连接类错误的重试次数（默认 2；仅在没有工具副作用时生效）。 */
+  maxConnectionRetries?: number;
   /**
    * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
    * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
@@ -304,6 +306,8 @@ interface ActivePiRun {
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** 命中输出上限后默认自动续写轮数。 */
 export const DEFAULT_MAX_AUTO_CONTINUES = 2;
+/** 首轮请求遇到连接类错误的默认重试次数（仅在没有工具副作用时）。 */
+export const DEFAULT_MAX_CONNECTION_RETRIES = 2;
 /** 续写提示词：只要求"接着写完"，避免模型重头再来或重新复述需求。 */
 const AUTO_CONTINUE_PROMPT = [
   "上一轮输出被长度上限截断了，没有写完。",
@@ -1289,7 +1293,8 @@ export class PiAgentRuntime implements AgentRuntime {
         mimeType: attachment.mimeType,
       }));
       try {
-        await active.handle.session.prompt(
+        await this.promptWithConnectionRetry(
+          active,
           promptText,
           { expandPromptTemplates: false, source: "rpc", ...(images?.length ? { images } : {}) },
         );
@@ -1444,6 +1449,34 @@ export class PiAgentRuntime implements AgentRuntime {
               : undefined,
         outputLimitReached ? "output_limit" : undefined,
       );
+    }
+  }
+
+  /**
+   * 首轮请求的连接抖动自动重试。
+   *
+   * SDK 把 DNS/超时/连接重置统一报成 "Connection error."；实测一个 run 在首包就挂掉
+   * （0 token、34 秒），用户只能看到一个英文短语再手动重发。此时还没有任何工具调用，
+   * 重发完全安全，所以按 1s/2s 退避重试两次；已经有工具副作用的不重试，避免重复执行。
+   */
+  private async promptWithConnectionRetry(
+    active: ActivePiRun,
+    promptText: string,
+    options: Parameters<AgentSession["prompt"]>[1],
+  ): Promise<void> {
+    const retries = this.config.maxConnectionRetries ?? DEFAULT_MAX_CONNECTION_RETRIES;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await active.handle.session.prompt(promptText, options);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const untouched = active.toolCallCount === 0 && active.content === "";
+        const retryable = CONNECTION_ERROR_PATTERN.test(message) && untouched && !active.cancelled;
+        if (!retryable || attempt >= retries) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
+        if (active.terminal) throw error;
+      }
     }
   }
 
@@ -1612,9 +1645,15 @@ export class PiAgentRuntime implements AgentRuntime {
 
 /** 运行失败文案翻译：上游 provider 的原始报错（如 404 model_not_found 的 JSON 串）
  *  对用户不可读，收口成可行动的提示；未识别的保持原文。 */
+/** 网络层失败：SDK 把 DNS/超时/连接重置统一说成 "Connection error."，对用户没有信息量。 */
+const CONNECTION_ERROR_PATTERN = /connection error|econnreset|econnrefused|econnaborted|etimedout|enotfound|eai_again|fetch failed|socket hang up|network error/i;
+
 export function friendlyRunError(raw: string): string {
   if (/model_not_found|Model not exist/i.test(raw)) {
     return "当前配置的模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查模型配置后重试。";
+  }
+  if (CONNECTION_ERROR_PATTERN.test(raw)) {
+    return "连接模型服务失败（网络中断、代理异常或服务端暂时不可达）。本轮没有任何改动，网络恢复后直接重试即可。";
   }
   return raw;
 }

@@ -561,7 +561,13 @@ export function useAgentSession(
       } else if (event.type === 'run.failed') {
         setFailedRunIds((current) => current.has(event.runId) ? current : new Set(current).add(event.runId))
         const reason = (event.payload as { reason?: unknown }).reason
-        setOutputLimitRunId(reason === 'output_limit' ? event.runId : null)
+        const failedMessage = (event.payload as { message?: unknown }).message
+        // 输出上限：接着写；连接失败：本轮没有任何改动，续跑等同于干净重试。
+        const networkFailure = typeof failedMessage === 'string'
+          && /连接模型服务失败|connection error/i.test(failedMessage)
+        setOutputLimitRunId(
+          reason === 'output_limit' || networkFailure ? event.runId : null,
+        )
       }
       setActiveRunId((current) => current === event.runId ? null : current)
       setMessages((current) => current.map((message) => message.runId === event.runId && message.streaming

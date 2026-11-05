@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { friendlyRunError } from '../src/index.js'
 import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpBashCommand, isNoOpToolCall } from '../src/noop-tool-call.js'
 
 describe('空转工具调用识别', () => {
@@ -32,5 +33,17 @@ describe('空转工具调用识别', () => {
 
   it('阈值是个正数', () => {
     expect(DEFAULT_MAX_NOOP_TOOL_CALLS).toBeGreaterThan(1)
+  })
+})
+
+describe('连接失败文案与重试判定', () => {
+  it('把 SDK 的 Connection error. 翻成可行动的中文', () => {
+    const text = friendlyRunError('Connection error.')
+    expect(text).toContain('连接模型服务失败')
+    expect(text).toContain('重试')
+  })
+
+  it('其它未知错误保持原文，不吞信息', () => {
+    expect(friendlyRunError('boom')).toBe('boom')
   })
 })
