@@ -541,16 +541,6 @@
 .wb-ws-work-row.is-renaming { padding: 2px 4px; }
 .wb-ws-work-rename { height: 28px; font-size: var(--ui-text-xs); }
 
-/* ───────────────── 文件标签 ───────────────── */
-
-.wb-filetab {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--ui-surface);
-}
-
 /* ───────────────── 新建空间弹窗表单 ───────────────── */
 
 .wb-newspace-form { display: flex; flex-direction: column; gap: 16px; }
@@ -689,7 +679,7 @@
   font-size: var(--ui-text-sm);
 }
 
-/* 标签栏左侧：侧栏开关（固定占位，文件标签时隐藏按钮但不改变标签位置）。 */
+/* 标签栏左侧：侧栏开关（固定占位，避免标签横跳）。 */
 .wb-tabbar-left {
   display: flex;
   align-items: center;

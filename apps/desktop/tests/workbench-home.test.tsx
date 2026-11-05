@@ -7,7 +7,7 @@
  *
  * 覆盖：
  * 1. 最近页：真实文件库计数/项目空间数/最近会话/最近文件，且不出现「3 封新邮件」类假数据；
- * 2. 所有文件页：来源筛选、文件名搜索、列表/网格切换、点开文件在归属工作空间打开；
+ * 2. 所有文件页：文件名搜索、类型标签、列表/网格切换、点开文件在归属工作空间打开；
  * 3. 文件库失败 → 「文件库暂不可用」（不回退 mock 文件）；
  * 4. 项目空间空态 + 「新建项目空间」走全局事件；
  * 5. 项目空间列表：真实工作数/描述摘要、默认空间不可删、行内重命名写回；
@@ -421,7 +421,7 @@ describe('所有文件页', () => {
     makeCatalog({ id: 'file-pdf', originalName: '外部报告.pdf', sourceKind: 'connector', sourceLabel: '连接器' }),
   ]
 
-  it('类型标签 + 来源筛选 + 文件名搜索 + 列表/网格切换', async () => {
+  it('类型标签 + 文件名搜索 + 列表/网格切换', async () => {
     installNxcore({ catalogs, total: 3 })
     await render('files')
 
@@ -433,6 +433,9 @@ describe('所有文件页', () => {
     expect(head).toContain('文件名')
     expect(head).toContain('修改时间')
     expect(head).toContain('大小')
+
+    // 来源筛选标签已按原型去除（原型工具行只有类型标签 + 搜索 + 视图切换）。
+    expect(container.querySelector('.wb-home-filetbl-src')).toBeNull()
 
     // 类型标签（照原型 Seg：胶囊裸标签，不带计数徽标）：
     // 全部 / 文档 / 表格 / 演示 / PDF / Markdown。
@@ -447,18 +450,10 @@ describe('所有文件页', () => {
     expect(rowsNow().length).toBe(1)
     expect(rowsNow()[0].textContent).toContain('季度汇总.xlsx')
 
-    // 回到「全部」类型后再按来源筛选：只留 Agent 生成。
+    // 回到「全部」类型后按文件名搜索。
     await act(async () => { findButtonByText(kindBar!, '全部').click() })
     await flush(2)
     expect(rowsNow().length).toBe(3)
-    await act(async () => { findButtonByText(container, 'Agent 生成').click() })
-    await flush(2)
-    expect(rowsNow().length).toBe(1)
-    expect(rowsNow()[0].textContent).toContain('季度汇总.xlsx')
-
-    // 来源回到「全部来源」后按文件名搜索。
-    await act(async () => { findButtonByText(container, '全部来源').click() })
-    await flush(2)
     const search = container.querySelector<HTMLInputElement>('input[aria-label="搜索文件"]')
     expect(search).toBeTruthy()
     await typeInto(search!, '周报')
@@ -486,7 +481,7 @@ describe('所有文件页', () => {
     installNxcore({ filesFail: true })
     await render('files')
 
-    expect(text()).toContain('文件库暂不可用')
+    expect(text()).toContain('资料暂不可用')
     // 原型 mock 文件名不应出现（无 bridge 时不伪造文件）。
     expect(text()).not.toContain('周报：连接器统一排期')
   })

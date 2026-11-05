@@ -487,8 +487,9 @@ export class OfficeBridgeClient {
   }
 
   /**
-   * /v1/office-export-pdf：桌面端用 LibreOffice 把文件库里的 .docx 转成 PDF，
-   * 并作为新文件入库（返回新 fileId/文件名）。网关不搬字节，只传目标与归属。
+   * /v1/office-export-pdf：桌面端用内置渲染引擎（genoffice，老运行时回退
+   * LibreOffice）把文件库里的 .docx 转成 PDF，并作为新文件入库（返回新
+   * fileId/文件名）。网关不搬字节，只传目标与归属。
    */
   async exportPdf(input: OfficeExportPdfInput): Promise<OfficeExportPdfResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-export-pdf`, {
@@ -499,7 +500,7 @@ export class OfficeBridgeClient {
         Accept: "application/json",
       },
       body: JSON.stringify(input),
-      // LibreOffice 转换 + PDF 入库整链路；大文档可到分钟级。
+      // 渲染引擎导出（分页+分组打印+合并）+ PDF 入库整链路；大文档可到分钟级。
       signal: AbortSignal.timeout(5 * 60_000),
     });
     const parsed = await response.json().catch(() => ({})) as {

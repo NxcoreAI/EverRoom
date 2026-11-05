@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 /**
- * 工作空间「资料库 / 产物」页回归测试。
+ * 工作空间「资料 / 产物」页回归测试。
  *
  * 覆盖：
- * 1) 资料库：真实文件库渲染 + 目录层级导航 + 搜索 + 网格/列表两种视图 + 空态；
+ * 1) 资料：真实文件库渲染 + 目录层级导航 + 搜索 + 网格/列表两种视图 + 空态；
  * 2) 产物页：只列 agent-generated / artifact-imported，按更新时间倒序，点卡片交给 onOpenFile；
  * 3) 文件库拉取失败（/没有桥）时两个页面都渲染「不可用」态，而不是空白或假数据；
  * 4) 筛选/分类纯函数口径（legacy-upload 归手动上传、artifact-imported 只出现在「全部」）。
@@ -158,7 +158,7 @@ function allText(selector: string): string[] {
 
 async function typeSearch(value: string): Promise<void> {
   const input = container.querySelector<HTMLInputElement>('.wb-lib-search input')
-  if (!input) throw new Error('资料库搜索框未渲染')
+  if (!input) throw new Error('资料搜索框未渲染')
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
   await act(async () => {
     setter?.call(input, value)
@@ -183,7 +183,7 @@ afterEach(async () => {
   delete (window as unknown as { nxcore?: unknown }).nxcore
 })
 
-describe('资料库页', () => {
+describe('资料页', () => {
   it('按当前工作空间过滤拉取（list 带 workspaceId）', async () => {
     const props = pageProps()
     const nxcore = installFilesApi(OPENABLE_KINDS)
@@ -199,8 +199,8 @@ describe('资料库页', () => {
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
-    expect(text('.wb-wspage-title')).toContain('资料库')
-    // 页头说明段与 badge 计数已删；来源 chips 不再出现在资料库
+    expect(text('.wb-wspage-title')).toContain('资料')
+    // 页头说明段与 badge 计数已删；来源 chips 不再出现在资料
     expect(container.querySelector('.wb-wspage-sub')).toBeNull()
     expect(container.querySelector('.ui-badge')).toBeNull()
     expect(container.querySelector('.wb-file-chip')).toBeNull()
@@ -217,9 +217,9 @@ describe('资料库页', () => {
       .find((tile) => (tile.textContent ?? '').includes('设计'))
     expect(designTile!.querySelector('.wb-lib-tile-meta')!.textContent).toBe('1 项')
 
-    // 点「设计」文件夹：面包屑变成 资料库 / 设计，网格里出现该目录下的文件
+    // 点「设计」文件夹：面包屑变成 资料 / 设计，网格里出现该目录下的文件
     await act(async () => { designTile!.click() })
-    expect(allText('.wb-lib-crumbs button')).toEqual(['资料库', '设计'])
+    expect(allText('.wb-lib-crumbs button')).toEqual(['资料', '设计'])
     expect(allText('.wb-lib-tile-name')).toEqual([MANUAL.file.name])
 
     // 返回上一级回到根目录
@@ -249,7 +249,7 @@ describe('资料库页', () => {
     expect(names).toEqual(expect.arrayContaining(['agent', '排期', '设计', ARTIFACT_OUTPUT.file.name]))
     expect(names.indexOf('设计')).toBeLessThan(names.indexOf(ARTIFACT_OUTPUT.file.name))
     expect(allText('.wb-lib-loc')).toEqual(
-      expect.arrayContaining(['资料库', '资料库', '资料库', '资料库']),
+      expect.arrayContaining(['资料', '资料', '资料', '资料']),
     )
 
     // 点文件行 → onOpenFile（气泡窗），自己不开编辑器
@@ -282,7 +282,7 @@ describe('资料库页', () => {
       .find((row) => (row.textContent ?? '').trim().startsWith('排期'))
     await act(async () => { folderRow!.click() })
     expect(container.querySelector<HTMLInputElement>('.wb-lib-search input')!.value).toBe('')
-    expect(allText('.wb-lib-crumbs button')).toEqual(['资料库', '排期'])
+    expect(allText('.wb-lib-crumbs button')).toEqual(['资料', '排期'])
     expect(allText('.wb-lib-tile-name')).toEqual([LOCAL_FOLDER.file.name])
 
     // 无命中时给出明确文案
@@ -290,7 +290,7 @@ describe('资料库页', () => {
     expect(text('.wb-lib-empty')).toContain('没有匹配「不存在的文件」的结果')
   })
 
-  it('排版产物落库后自动刷新资料库（别的空间不打扰）', async () => {
+  it('排版产物落库后自动刷新资料（别的空间不打扰）', async () => {
     const props = pageProps()
     const nxcore = installFilesApi(OPENABLE_KINDS)
     let listener: ((event: { type: string; workspaceId?: string }) => void) | null = null
@@ -379,7 +379,7 @@ describe('资料库页', () => {
     await act(async () => { root.render(<LibraryPage {...props} />) })
     await flush()
 
-    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).toContain('资料暂不可用')
     // 不可用态只留一句事实 + 重试按钮，不再展开解释
     expect(container.querySelector('.ui-empty-desc')).toBeNull()
     expect(container.querySelector('.wb-lib-tile')).toBeNull()
@@ -460,7 +460,7 @@ describe('资料库页', () => {
     })
     await flush()
 
-    expect(props.onToast).toHaveBeenCalledWith('文件库不可用，无法导入')
+    expect(props.onToast).toHaveBeenCalledWith('资料暂不可用，无法导入')
   })
 })
 
@@ -489,7 +489,7 @@ describe('产物页', () => {
     expect(opened.name).toBe(AGENT_OUTPUT.file.name)
   })
 
-  it('没有产物时：页头「去资料库」只出现一次，空态只留「新建工作」', async () => {
+  it('没有产物时：页头「去资料」只出现一次，空态只留「新建工作」', async () => {
     const props = pageProps()
     installFilesApi([MANUAL], 1)
     await act(async () => { root.render(<OutputsPage {...props} />) })
@@ -497,9 +497,9 @@ describe('产物页', () => {
 
     expect(container.textContent).toContain('还没有产物')
     expect(container.querySelector('.ui-empty-desc')).toBeNull()
-    // 空态不再重复页头的「去资料库」
+    // 空态不再重复页头的「去资料」
     const libraryButtons = [...container.querySelectorAll<HTMLButtonElement>('button')]
-      .filter((button) => (button.textContent ?? '').trim().includes('去资料库'))
+      .filter((button) => (button.textContent ?? '').trim().includes('去资料'))
     expect(libraryButtons).toHaveLength(1)
     await act(async () => { libraryButtons[0].click() })
     expect(props.onOpenPage).toHaveBeenCalledWith('library')
@@ -513,11 +513,11 @@ describe('产物页', () => {
     await act(async () => { root.render(<OutputsPage {...pageProps()} />) })
     await flush()
 
-    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).toContain('资料暂不可用')
   })
 })
 
-describe('资料库目录树 / 搜索纯函数', () => {
+describe('资料目录树 / 搜索纯函数', () => {
   it('目录层级从 relativePath 派生：根层只有直接子文件夹与根文件', () => {
     const level = buildLibraryLevel(OPENABLE_KINDS, '')
     expect(level.path).toBe('')
@@ -551,13 +551,13 @@ describe('资料库目录树 / 搜索纯函数', () => {
     expect(parentFolderOf('docs/api')).toBe('docs')
     expect(parentFolderOf('docs')).toBe('')
     expect(folderLabel('docs/api')).toBe('docs / api')
-    expect(folderLabel('')).toBe('资料库')
+    expect(folderLabel('')).toBe('资料')
   })
 
   it('搜索是全库范围：文件夹按名称、文件按名称/路径命中，均带位置文案', () => {
     const byFolder = searchLibrary(OPENABLE_KINDS, '排期')
     expect(byFolder.folders.map((row) => row.kind === 'folder' && row.name)).toEqual(['排期'])
-    expect(byFolder.folders[0]).toMatchObject({ location: '资料库', fileCount: 1 })
+    expect(byFolder.folders[0]).toMatchObject({ location: '资料', fileCount: 1 })
     // 「排期」同时命中文件名里的「排期」（周报：连接器统一排期）
     expect(byFolder.files.map((row) => row.kind === 'file' && row.item.catalog.id)).toEqual(['f-local', 'f-agent'])
 

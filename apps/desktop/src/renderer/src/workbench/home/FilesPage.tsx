@@ -16,13 +16,6 @@ import { useFileLibrary } from './useFileLibrary'
 type ViewMode = 'list' | 'grid'
 type KindFilter = 'all' | FileKind
 
-interface SourceFilter {
-  key: string
-  label: string
-  count: number
-}
-
-const ALL_SOURCES = 'all'
 const ALL_KINDS = 'all'
 /** 一次装载的目录条数上限（`files.list` 的分页大小）：超出时页面会说明只列最近这些。 */
 const LOAD_LIMIT = 200
@@ -38,54 +31,27 @@ const KIND_ORDER: readonly FileKind[] = ['docx', 'xlsx', 'pptx', 'pdf', 'md']
  *
  * 原型里「网格视图暂未开放」和行尾「⋯」只弹 toast；这里两者都是真功能：
  * 网格是文件瓦片，行菜单能打开原应用、导出定位、删除。
+ * 来源筛选标签是本端曾有的扩展，原型没有这一行，已按原型去除。
  */
 export function FilesPage() {
   const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
   const files = useFileLibrary(LOAD_LIMIT)
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState<KindFilter>(ALL_KINDS)
-  const [source, setSource] = useState<string>(ALL_SOURCES)
   const [view, setView] = useState<ViewMode>('list')
   const [importing, setImporting] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const sources = useMemo<SourceFilter[]>(() => {
-    const byKind = new Map<string, SourceFilter>()
-    for (const item of files.items) {
-      const key = item.catalog.sourceKind
-      const existing = byKind.get(key)
-      if (existing) {
-        existing.count += 1
-        continue
-      }
-      byKind.set(key, { key, label: item.catalog.sourceLabel || '其他来源', count: 1 })
-    }
-    return [...byKind.values()].sort((left, right) => right.count - left.count)
-  }, [files.items])
-
-  const kindCounts = useMemo(() => {
-    const counts = new Map<FileKind, number>()
-    for (const item of files.items) {
-      counts.set(item.file.kind, (counts.get(item.file.kind) ?? 0) + 1)
-    }
-    return counts
-  }, [files.items])
-
-  // 刷新后来源消失时回落「全部」，避免筛选到空集。
-  const activeSource = source === ALL_SOURCES || sources.some((item) => item.key === source) ? source : ALL_SOURCES
-
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return files.items.filter((item) => {
       if (kind !== ALL_KINDS && item.file.kind !== kind) return false
-      if (activeSource !== ALL_SOURCES && item.catalog.sourceKind !== activeSource) return false
       return !keyword || item.file.name.toLowerCase().includes(keyword)
     })
-  }, [activeSource, files.items, kind, query])
+  }, [files.items, kind, query])
 
   const canImport = typeof window.nxcore?.files?.pickAndImport === 'function'
-  const filtering = query.trim().length > 0 || kind !== ALL_KINDS || activeSource !== ALL_SOURCES
 
   const handleImport = async () => {
     if (importing || !canImport) return
@@ -278,35 +244,6 @@ export function FilesPage() {
               </button>
             </div>
           </div>
-
-          {sources.length > 1 ? (
-            <div className="wb-home-filetbl-src" role="group" aria-label="按来源筛选">
-              <button
-                type="button"
-                className={cn('wb-chip', activeSource === ALL_SOURCES && 'is-active')}
-                aria-pressed={activeSource === ALL_SOURCES}
-                onClick={() => setSource(ALL_SOURCES)}
-              >
-                全部来源
-                <span className="wb-chip-count">{files.items.length}</span>
-              </button>
-              {sources.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className={cn('wb-chip', activeSource === item.key && 'is-active')}
-                  aria-pressed={activeSource === item.key}
-                  onClick={() => setSource(item.key)}
-                >
-                  {item.label}
-                  <span className="wb-chip-count">{item.count}</span>
-                </button>
-              ))}
-              {filtering ? (
-                <span className="wb-home-toolbar-meta">匹配 {filtered.length} / {files.items.length}</span>
-              ) : null}
-            </div>
-          ) : null}
 
           {filtered.length === 0 ? (
             <div className="wb-home-filetbl-empty">没有匹配的文件。</div>

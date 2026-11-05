@@ -465,38 +465,7 @@
 .wb-home-search .ui-input { height: 32px; }
 
 .wb-home-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.wb-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-surface);
-  color: var(--ui-text-2);
-  font-size: var(--ui-text-xs);
-  font-weight: 550;
-  cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-chip:hover { background: var(--ui-hover); color: var(--ui-text); }
-.wb-chip:active { background: var(--ui-hover-strong); }
-.wb-chip.is-active { background: var(--ui-accent-soft); border-color: transparent; color: var(--ui-accent-strong); }
-.wb-chip-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-hover);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-2xs);
-  font-weight: 600;
-}
-.wb-chip.is-active .wb-chip-count { background: var(--ui-selected-strong); color: var(--ui-accent-strong); }
+/* wb-chip（来源筛选小圆片）已随来源筛选标签一并移除，页面不再使用。 */
 
 /* ───────────────── 文件表（最近 / 所有文件共用：表头 + 行） ─────────────────
  * 所有文件页照 everoffice 原型 `FileTable` 做「无外框的 WPS 式平铺表格」：
@@ -623,15 +592,6 @@
 }
 .wb-home-ft-views button:hover { background: var(--ui-hover); color: var(--ui-text); }
 .wb-home-ft-views button.active { background: var(--ui-hover); color: var(--ui-text); }
-.wb-home-filetbl-src {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 12px 10px;
-}
-.wb-home-filetbl-src .wb-home-toolbar-meta { margin-left: auto; }
-
 /* 「最近」分栏里的紧凑行变体（.wb-home-list 内）：列窄行矮，与分栏卡内边距对齐。 */
 .wb-home-list .wb-home-filerow {
   display: grid;

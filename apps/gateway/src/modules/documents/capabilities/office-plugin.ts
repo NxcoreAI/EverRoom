@@ -31,7 +31,7 @@ import {
 /**
  * Agent 写 Office：Word（受限 HTML）、PPT（两阶段：建文件 + 逐页生成）、Excel
  * （sheets→rows）三个工具，经桌面 office-bridge 生成真实文件并走
- * file-imports 入库，Room 产物库由路由决策自动投影展示。
+ * file-imports 入库，产物页由路由决策自动投影展示。
  * - Word：隐藏 GenOffice docs view（HTML 子集与 vendored
  *   apps/docs/src/renderer/ai/protocol.ts 的 HTML_RULES 一致）。
  * - PPT：两阶段生成。create 只带 outline（页序蓝图：每页标题、长度即页数上限），
@@ -41,7 +41,7 @@ import {
  *   slideIndex<页数原地替换，=页数末尾追加——文件页数随生成进度增长，失败不留空壳；
  *   实时重绘、每页独立失败重试）。单次输出一页，避免长输出结构漂移与黑盒等待。
  * - Excel：主进程直接拼标准 OOXML（jszip，inline string）。
- * 编辑：PPT 走 slides_read/edit（文件需在 Room 产物库打开为可编辑实例；
+ * 编辑：PPT 走 slides_read/edit（文件需在产物页打开为可编辑实例；
  * 编辑事务实时重绘在打开的视图上，保存自动回填版本链）。
  * Word/Excel 走 office_edit / sheets_read+sheets_edit（文本级/单元格级修改）：
  * 网关读当前版本字节 → 改字节 → 桌面端覆盖工作副本、回填版本链并重开视图。
@@ -367,7 +367,7 @@ export function officePlugin(
   slidesProgress?: SlidesPageProgressReporter | null,
   /** 落页视觉复检（preset 形态）：未注入或 VLM 未配置时复检整体跳过。 */
   visualReviewer?: SlidesVisualReviewer | null,
-  /** 文件库访问（惰性）：注入后才暴露 office_edit / sheets_read / sheets_edit。 */
+  /** 资料访问（惰性）：注入后才暴露 office_edit / sheets_read / sheets_edit。 */
   files?: () => OfficeFileAccess | null,
   /** 宿主生图端口：注入后才暴露 word_agent_illustration。 */
   illustration?: DocumentIllustrationPorts | null,
@@ -375,7 +375,7 @@ export function officePlugin(
   const officeCreate: DocumentCapabilityTool = {
     name: "office_create",
     title: "生成 Word 文档入 Room",
-    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room（产物库 Office 产物 + 文件库），"
+    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前工作区（产物页 Office 产物 + 资料），"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
       + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
@@ -432,7 +432,7 @@ export function officePlugin(
   const slidesCreate: DocumentCapabilityTool = {
     name: "slides_create",
     title: "创建 PPT 入 Room",
-    description: "创建一份新 .pptx 演示文稿并加入当前 Room（产物库 Office 产物 + 文件库），"
+    description: "创建一份新 .pptx 演示文稿并加入当前工作区（产物页 Office 产物 + 资料），"
       + "适合汇报、提案、培训等演示场景。只传 outline（每页一个标题，是页序蓝图：数组顺序即页序、"
       + `长度即页数上限，共 1~${MAX_SLIDES_PAGES} 页）；创建的文件初始只有 1 页骨架，页数随后续逐页生成增长。`
       + "第二步必须用 slides_set_page 一页一页生成——slideIndex=0 替换骨架页，"
@@ -572,7 +572,7 @@ export function officePlugin(
   const sheetsCreate: DocumentCapabilityTool = {
     name: "sheets_create",
     title: "生成 Excel 表格入 Room",
-    description: "生成本地排版的一份新 .xlsx 电子表格并加入当前 Room（产物库 Office 产物 + 文件库），"
+    description: "生成本地排版的一份新 .xlsx 电子表格并加入当前工作区（产物页 Office 产物 + 资料），"
       + "适合数据清单、预算、对比表、统计汇总等结构化数据。title 用作默认文件名（<title>.xlsx，可用 fileName 覆盖）。"
       + `sheets 是工作表数组。${SHEETS_GUIDE}`
       + "生成完成后桌面端会自动打开预览；在回复中告知文件名与表结构即可。",
@@ -641,12 +641,12 @@ export function officePlugin(
   const slidesRead: DocumentCapabilityTool = {
     name: "slides_read",
     title: "读取 PPT 大纲与操作词汇",
-    description: "读取一份 Room 产物库中的 .pptx 产物的大纲与可编辑操作词汇表。"
+    description: "读取一份产物页中的 .pptx 产物的大纲与可编辑操作词汇表。"
       + "fileId 缺省（或 \"active\"）= 用户当前打开的那个 PPT；传显式 fileEntryId 时未打开的 PPT 会自动以可编辑方式打开（应用重启后同会话也能继续改）。"
       + "大纲列出每页的元素（id | 类型 | 文本摘要），是编辑时定位元素的唯一依据；"
       + "opVocabulary 列出 slides_edit 可用的全部操作及其签名。"
       + "文件不存在会报错并列出当前打开的 Office 文件；editable=false 表示只读打开（能读大纲，"
-      + "要编辑需用户在产物库重新以可编辑方式打开）。"
+      + "要编辑需用户在产物页重新以可编辑方式打开）。"
       + "编辑前先读本工具，之后按大纲里的元素 id 发编辑事务。",
     inputSchema: {
       type: "object",
@@ -675,7 +675,7 @@ export function officePlugin(
   const slidesEdit: DocumentCapabilityTool = {
     name: "slides_edit",
     title: "编辑已打开的 PPT",
-    description: "向一份 Room 产物库中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
+    description: "向一份产物页中的 .pptx 产物应用一个操作事务（ops 数组，原子生效）。"
       + "fileId 可用 \"active\"（当前打开的那个）或显式 fileEntryId（未打开会自动以可编辑方式打开）。"
       + "常用操作：setText/setFont/setFill 改已有元素，addElement/addSlideWithLayout 新增，"
       + "deleteElement/deleteSlide 删除，moveSlide 调序，findReplace 全稿替换，setNotes 备注页；"
@@ -751,7 +751,7 @@ export function officePlugin(
     }
     const entry = access.catalogEntry(fileId);
     if (!entry) {
-      throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+      throw new Error(`FILE_NOT_FOUND: ${fileId} 不在资料中（可能仍在导入或已被删除）`);
     }
     if (!entry.contentHash) {
       throw new Error(`FILE_CONTENT_UNAVAILABLE: 《${entry.displayName ?? entry.originalName}》还没有可用的文件版本`);
@@ -761,7 +761,7 @@ export function officePlugin(
 
   /**
    * 图片来源解析端口：模型说“刚上传的 logo / 之前生成的那张图”时只拿得到
-   * fileId，宿主按 fileId 取文件库当前版本字节（非图片/不存在返回 null）。
+   * fileId，宿主按 fileId 取资料当前版本字节（非图片/不存在返回 null）。
    */
   const agentImageDepsFor = (access: OfficeFileAccess): AgentImageDeps => ({
     readLibraryFile: async (fileId) => (await access.catalogContentOf(fileId))?.buffer ?? null,
@@ -1103,7 +1103,7 @@ export function officePlugin(
       + "insert_chart / edit_chart（图表）、set_header_footer（页眉页脚，text 里 {PAGE}/{NUMPAGES} 是页码/总页数域，\n 分行）、"
       + "set_watermark（{text} 设置文字水印如 机密/草稿，text:null 移除；当前水印见 word_agent_read 的 watermark 字段）、"
       + "set_page_setup（{orientation/paperSize/margins(单位 twip, 1cm=567)/columns/pageColor/theme} 页面设置与主题；当前值见 pageSetup 字段）、"
-      + "insert_image_base64（{fileId|path|url|base64, afterIndex?, maxWidthPx?, label?} 插图：文件库里的图片（用户刚上传/之前生成的）传 fileId（先用 file_search 定位），"
+      + "insert_image_base64（{fileId|path|url|base64, afterIndex?, maxWidthPx?, label?} 插图：资料里的图片（用户刚上传/之前生成的）传 fileId（先用 file_search 定位），"
       + "本轮自己生成或用户给的本地文件传 path，公网图片传 url；网关直接读字节后注入，不需要也不允许把 base64 抄进工具参数）、"
       + "add_comment（{startIndex, endIndex?, text} 在块上建批注）、delete_comment（{id} 删整个批注线程）、"
       + "insert_shape（{prst, widthEmu?, heightEmu?, afterIndex?} 插入形状，prst 如 rect/roundRect/ellipse/triangle/star5/lineArrow）、"
@@ -1197,7 +1197,7 @@ export function officePlugin(
       + "形状层级 object.shape.zOrder、公式转换 object.equation.convert）、"
       + "页眉页脚图片（headerFooter.insertImage/removeImage/replaceImage）、程序化手绘（object.ink.add / object.ink.mark 画直线标注）、新建字符样式（format.createCharacterStyle）、"
       + "参考文献与交叉引用、修订接受/拒绝。op 词汇共 69 项 / 10 个域，以 word_agent_read 的 operationsGuide 为准。"
-      + "图片类 op（object.image.replace / headerFooter.insertImage / replaceImage）的来源用 fileId（文件库图片，用户刚上传/之前生成的）、"
+      + "图片类 op（object.image.replace / headerFooter.insertImage / replaceImage）的来源用 fileId（资料图片，用户刚上传/之前生成的）、"
       + "本地 path 或公网 url；网关负责取字节，不要把 base64 写进 ops。"
       + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
       + "高风险 op（review.accept/reject 全部修订、review.protect、review.encrypt）必须带 confirm: true，"
@@ -1303,7 +1303,7 @@ export function officePlugin(
   };
 
   /**
-   * 段落级对比：纯网关侧读文件库当前版本（不依赖桌面端打开状态），
+   * 段落级对比：纯网关侧读资料当前版本（不依赖桌面端打开状态），
    * LCS 对齐语义与 GenOffice docs 的「审阅 → 比较」一致（同一位置删+增合并成 changed）。
    */
   const wordCompare: DocumentCapabilityTool = {
@@ -1311,7 +1311,7 @@ export function officePlugin(
     title: "对比两份 Word 文档的段落差异",
     description: "逐段对比两份已入库 .docx 的当前版本（按段落纯文本做 LCS 对齐；同一位置的删除+新增合并为 changed），"
       + "回答“这两版改了什么 / 和模板差多少”。left = fileId（省略 = 用户当前浏览的文件），right = otherFileId（必填，"
-      + "可用 file_search 按文件名查找）。不需要文件在界面上打开，也不经过桌面编辑器，纯文件库读取。"
+      + "可用 file_search 按文件名查找）。不需要文件在界面上打开，也不经过桌面编辑器，纯资料读取。"
       + "返回 summary（same/changed/added/removed/total 条目计数）与 entries（kind + left/right 文本）；"
       + "entries 默认最多 200 条、可调至 500，超出时 truncated=true（完整计数看 summary.total）。"
       + "只比较段落文本，不比较表格结构/图片/格式/页眉页脚；两份都必须是 .docx。",
@@ -1347,7 +1347,7 @@ export function officePlugin(
       }
       const otherEntry = target.access.catalogEntry(otherFileId);
       if (!otherEntry) {
-        throw new Error(`FILE_NOT_FOUND: 对比文件 ${otherFileId} 不在文件库中（可能仍在导入或已被删除）`);
+        throw new Error(`FILE_NOT_FOUND: 对比文件 ${otherFileId} 不在资料中（可能仍在导入或已被删除）`);
       }
       if (!otherEntry.contentHash) {
         throw new Error(
@@ -1422,12 +1422,12 @@ export function officePlugin(
 
   /**
    * Word → PDF：桌面端 LibreOffice 转换并入库；网关只传 fileId/命名/归属，
-   * 不搬文档字节（PDF 由桌面端 import 进文件库后返回新 fileId）。
+   * 不搬文档字节（PDF 由桌面端 import 进资料后返回新 fileId）。
    */
   const wordExportPdf: DocumentCapabilityTool = {
     name: "word_export_pdf",
-    title: "把 Word 导出为 PDF 并加入文件库",
-    description: "把任意已入库 .docx 导出为 PDF（桌面端用 LibreOffice 转换，作为新文件加入文件库），"
+    title: "把 Word 导出为 PDF 并加入资料",
+    description: "把任意已入库 .docx 导出为 PDF（桌面端内置渲染引擎转换，无需本机安装任何外部应用；作为新文件加入资料），"
       + "适合“导出 PDF / 发我一份 PDF / 转成 PDF”这类请求。fileId 省略 = 用户当前浏览的文件；"
       + "不需要文件已经在界面上打开。返回新 PDF 的 fileId 与 originalName（原 .docx 不受影响、不会改版本）。"
       + "fileName 可选，必须以 .pdf 结尾（默认沿用原文件名）。",
@@ -1474,7 +1474,7 @@ export function officePlugin(
         originalName: exported.originalName,
         ...(exported.contentHash ? { contentHash: exported.contentHash } : {}),
         nextAction: "report_result",
-        hint: "PDF 已生成并加入文件库（原 Word 未改动）；回复里告知 PDF 文件名即可，不要重复导出。",
+        hint: "PDF 已生成并加入资料（原 Word 未改动）；回复里告知 PDF 文件名即可，不要重复导出。",
       });
     },
   };
@@ -1836,7 +1836,7 @@ export function officePlugin(
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
-      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在 Room 产物库（Office 产物）和文件库可见。",
+      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在产物页（Office 产物）和资料页可见。",
       "用户要求修改“我正开着的/这份 Word 或 Excel”时：Word 先 office_read 拿段落原文、Excel 先 sheets_read 看结构，"
       + "再用 office_edit / sheets_edit 按原文片段或单元格地址改；不要用 office_create/sheets_create 重建一份新文件。"
       + "office_edit 是字节级兜底（要求文件已打开）；Word/Excel 能用 word_agent_* / sheets_agent_* 时优先走 headless 通道路线。"

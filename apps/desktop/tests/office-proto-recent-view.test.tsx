@@ -201,7 +201,7 @@ describe('「最近」页假数据治理', () => {
 
     const sub = container.querySelector<HTMLElement>('.op-greeting p')
     expect(sub).not.toBeNull()
-    expect(sub!.textContent).toContain('文件库还没有内容')
+    expect(sub!.textContent).toContain('资料还没有内容')
   })
 
   it('无 preload 桥（浏览器预览）时不崩，问候退回纯问候', async () => {

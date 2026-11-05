@@ -10,7 +10,7 @@ import type { SlidesVisualReviewer } from "../../slides-visual-review/review.js"
  *
  * 曾经注册的 document_list / document_read / document_write_* / document_patch_* /
  * document_delete / document_comment_add 与 document_draft（doc-writer 调度）随
- * 「文稿库」概念一并摘除：新 workbench 只有「资料库 / 产物」两个文件入口，Markdown
+ * 「文稿库」概念一并摘除：新 workbench 只有「资料 / 产物」两个文件入口，Markdown
  * 文稿没有列表与编辑 UI，这些工具的产出用户不可达。DocumentService 内核、HTTP
  * 路由与 slides 草稿落库（createSlidesDraftDocument）不受影响。
  */
