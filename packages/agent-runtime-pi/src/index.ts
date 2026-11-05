@@ -1037,6 +1037,13 @@ export class PiAgentRuntime implements AgentRuntime {
             `当前界面 locale：${responseLanguage}。除非用户明确要求本次输出使用另一种语言，所有 Agent 生成的自然语言内容（包括聊天答复、总结、文档标题和文档正文）都必须使用 ${responseLanguage} 对应的主要语言；代码、路径、引用、专有名词和用户原文保持原样。`,
           );
         }
+        const workspaceId = context.current?.workspaceId?.trim();
+        if (workspaceId) {
+          const workspaceLabel = context.current?.workspaceLabel?.trim();
+          lines.push(
+            `当前工作区：${workspaceLabel || workspaceId}（workspaceId: ${workspaceId}）。文件检索与产物入库默认作用于该工作区（未指定 workspaceId 的工具按会话归属自动落到这里）；除非用户明确要求，不要把检索范围或产物落到其他工作区。`,
+          );
+        }
         if (memory && memoryClient && context.current?.toolsEnabled !== false) {
           lines.push(
             "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；问题与历史记忆相关时优先检索。",

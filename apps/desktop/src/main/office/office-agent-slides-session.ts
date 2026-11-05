@@ -35,8 +35,8 @@ const MAX_AGENT_SLIDE_BYTES = 100 * 1024 * 1024
 const SESSION_IDLE_MS = 5 * 60_000
 /** 同时保留的隐藏会话数（按最近使用淘汰）。 */
 const SESSION_MAX = 2
-/** 等渲染端 mount + consumePendingOpen + openAndBuild 注册会话的上限。 */
-const READY_TIMEOUT_MS = 20_000
+/** 等渲染端 mount + consumePendingOpen + openAndBuild 注册会话的上限（同 doc/sheet 会话口径）。 */
+const READY_TIMEOUT_MS = 45_000
 /** 隐藏视图给真实尺寸（渲染层 deck 布局测量依赖非 0 视口）。 */
 const HIDDEN_VIEW_BOUNDS = { x: 0, y: 0, width: 1280, height: 720 }
 /** OOXML 加密文件是 CFB 容器：正常 .pptx 是 zip（PK..）。 */

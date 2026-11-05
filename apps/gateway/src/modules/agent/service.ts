@@ -1923,6 +1923,9 @@ export class AgentService {
         rooms,
         ...(activeDocument ? { activeDocument } : {}),
       }) : undefined;
+      const runWorkspaceId = normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID;
+      const runWorkspaceName = this.db.select({ name: agentWorkspaces.name })
+        .from(agentWorkspaces).where(eq(agentWorkspaces.id, runWorkspaceId)).get()?.name ?? null;
       runtimeRun = await selectedRuntime.start({
         runId,
         sessionId,
@@ -1938,7 +1941,8 @@ export class AgentService {
         ...(responseLanguage ? { responseLanguage } : {}),
         pageLabel: runPageLabel,
         roomId: runRoomId,
-        workspaceId: normalizeWorkspaceId(session.workspaceId) ?? DEFAULT_AGENT_WORKSPACE_ID,
+        workspaceId: runWorkspaceId,
+        ...(runWorkspaceName ? { workspaceLabel: runWorkspaceName } : {}),
         availableRooms: rooms,
         captureMemory: input.captureMemory !== false,
         recallMemory: input.recallMemory !== false,

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createSlidesPptxPageResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
+import { createSlidesLayouterAgentTools, createSlidesTreeResultValidator, LAYOUTER_VALIDATE_TOOL, validateLayoutTree } from "../src/modules/subagents/slides-agent-tools.js";
 import { registerDeckLayoutContext, dropDeckLayoutContext, getDeckLayoutContext } from "../src/modules/slides-layout/deck-contract-context.js";
 import { contractFromStyleParams } from "../src/modules/slides-layout/tree/layout-contract.js";
 import type { SemanticPage } from "../src/modules/subagents/slides-semantic-contract.js";
@@ -234,55 +234,6 @@ describe("pptx skill 提示词契约", () => {
   });
 });
 
-describe("pptx 页面规格提交校验", () => {
-  const content: SemanticPage = {
-    id: "page-1",
-    sourceRefs: ["source-1"],
-    role: "content",
-    message: "规格测试页",
-    blocks: [
-      { id: "b1", sourceRefs: ["source-1"], priority: "primary", mustShow: true, type: "text", text: "规格测试页" },
-      { id: "b2", sourceRefs: ["source-1"], priority: "supporting", mustShow: true, type: "metric", label: "GDP", value: "3.87", unit: "万亿元" },
-    ],
-    relations: [],
-    focusRefs: ["source-1"],
-    constraints: { verbatimRefs: [] },
-    notes: "这是讲稿原文。",
-    omissions: [],
-  };
-  const goodPage = () => ({
-    kind: "pptxgenjs-page",
-    layout: "LAYOUT_WIDE",
-    operations: [
-      { op: "addText", text: "规格测试页", options: { x: 0.6, y: 0.5, w: 11, h: 0.9, fontSize: 32, bold: true, color: "1A1A2E", fontFace: "Microsoft YaHei", isTextBox: true, margin: 0 } },
-      { op: "addText", text: "GDP 3.87 万亿元", options: { x: 0.6, y: 1.8, w: 6, h: 0.6, fontSize: 18, color: "1A1A2E", fontFace: "Microsoft YaHei", isTextBox: true, margin: 0 } },
-      { op: "addNotes", notes: "这是讲稿原文。" },
-    ],
-  });
-  const done = (tree: unknown) => ({ status: "done", tree, designIntent: "单标题页" });
-
-  it("合格规格通过", () => {
-    expect(() => createSlidesPptxPageResultValidator()({ content }, done(goodPage()))).not.toThrow();
-  });
-
-  it("带 # 与 8 位 hex 的色号被拒（损坏文件）", () => {
-    const page = goodPage() as Record<string, unknown>;
-    (page.operations as Array<Record<string, unknown>>)[0]!.options = { ...(page.operations as Array<Record<string, unknown>>)[0]!.options as object, color: "#1A1A2E" };
-    expect(() => createSlidesPptxPageResultValidator()({ content }, done(page))).toThrow(/# 前缀/);
-    const page8 = goodPage() as Record<string, unknown>;
-    (page8.operations as Array<Record<string, unknown>>)[1]!.options = { ...(page8.operations as Array<Record<string, unknown>>)[1]!.options as object, color: "1A1A2E80" };
-    expect(() => createSlidesPptxPageResultValidator()({ content }, done(page8))).toThrow(/8 位 hex/);
-  });
-
-  it("必留内容缺失与讲稿不一致被拒", () => {
-    const missing = goodPage() as Record<string, unknown>;
-    (missing.operations as Array<Record<string, unknown>>).splice(1, 1);
-    expect(() => createSlidesPptxPageResultValidator()({ content }, done(missing))).toThrow(/必留内容缺失/);
-    const badNotes = goodPage() as Record<string, unknown>;
-    ((badNotes.operations as Array<Record<string, unknown>>)[2] as { notes: string }).notes = "改写过的讲稿";
-    expect(() => createSlidesPptxPageResultValidator()({ content }, done(badNotes))).toThrow(/addNotes/);
-  });
-});
   it("v1 树在校验阶段就被拒（布局只有 v2 一种格式）", () => {
     const token = "v1-reject-token-004";
     registerDeckLayoutContext(token, { contract: contractFromStyleParams(null), imageArs: new Map() });

@@ -533,7 +533,10 @@ export function loadConfig(
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
-    aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
+    // 主档输出上限：主 Agent 要一次产出整册 pptxgenjs 脚本（实测 5~15 页 deck 脚本
+    // 2~4 万 token），8192 会在工具参数中途截断（stopReason=length）并把重试轮
+    // 的上下文顶爆窗口。maxTokens 只是请求上限、按实际用量计费，给足即可。
+    aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "65536"),
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",

@@ -11,7 +11,7 @@ import type {
   SlidesEditArtifactOutcome,
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
-import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
+import { generateDocxFromHtml, generatePptxFromPageSpecs, generatePptxFromAgentScript, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
 import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
 import { createEverroomMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
@@ -29,6 +29,10 @@ export interface OfficeGenerateRequest {
   html?: string | null
   /** pptx：每页一个 PageSpec JSON 字符串（1280×720 画布）。 */
   pages?: string[] | null
+  /** pptx（pptx skill 路径）：整册 pptxgenjs 构建脚本，vm 沙箱执行，优先于 pages。 */
+  script?: string | null
+  /** pptx：skill 的 apply_theme.js 源码，网关从 agents 目录带下（单一事实源）。 */
+  applyThemeJs?: string | null
   /** xlsx：sheets→rows 结构。 */
   sheets?: AgentSheetInput[] | null
   roomId: string | null
@@ -241,8 +245,13 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
   if (format !== 'docx' && format !== 'pptx' && format !== 'xlsx') return false
   if (format === 'docx' && !(typeof input.html === 'string' && input.html.length > 0)) return false
   if (format === 'pptx') {
-    if (!Array.isArray(input.pages) || input.pages.length === 0) return false
-    if (!input.pages.every((page) => typeof page === 'string' && page.length > 0)) return false
+    // pptx skill 脚本路径（优先）或旧 PageSpec 路径，二者必居其一。
+    if (typeof input.script === 'string' && input.script.length > 0) {
+      if (input.script.length > 1_000_000) return false
+    } else {
+      if (!Array.isArray(input.pages) || input.pages.length === 0) return false
+      if (!input.pages.every((page) => typeof page === 'string' && page.length > 0)) return false
+    }
   }
   if (format === 'xlsx') {
     if (!Array.isArray(input.sheets) || input.sheets.length === 0) return false
@@ -500,7 +509,7 @@ export class OfficeBridgeServer {
                 : outcome.reason === 'too_large'
                   ? `${detail || '文件过大，超出后台编辑上限。'}`
                   : outcome.reason === 'not_docx' || outcome.reason === 'not_xlsx' || outcome.reason === 'open_failed'
-                    ? `无法在后台打开该${kindLabel}文件。${detail}`
+                    ? `无法在后台打开该${kindLabel}文件。${detail}如只需读取内容，可改用 file_read（确定性解析，不依赖编辑器）。`
                     : req.fileId === 'active'
                       ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId，把它作为 fileId 传入即可后台编辑；不知道时可先用 file_search 按文件名查找。${openSummary}`
                       : `fileId 对应的${kindLabel}文件未能打开。请核对 fileEntryId 后重试。${openSummary}${detail}`
@@ -859,7 +868,13 @@ export class OfficeBridgeServer {
         format === 'docx'
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)
           : format === 'pptx'
-            ? await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
+            ? parsed.script != null
+              ? await generatePptxFromAgentScript(
+                { title: parsed.title, script: parsed.script, applyThemeJs: parsed.applyThemeJs },
+                broadcastPhase,
+                imageResolver.resolveMaterial,
+              )
+              : await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
             : await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
       const originalName = parsed.fileName?.trim() || `${generated.title}${FORMAT_EXT[format]}`
       this.broadcast({ type: 'phase', title: parsed.title, phase: 'importing', format })
@@ -904,6 +919,9 @@ export class OfficeBridgeServer {
             // Room 已删除：roomRequested 仅表达调用方是否传了 scope，字段保留兼容旧消费方。
             roomRequested: Boolean(parsed.roomId),
             originalName,
+            ...((generated as { warnings?: string[] }).warnings?.length
+              ? { warnings: (generated as unknown as { warnings: string[] }).warnings }
+              : {}),
           },
         },
       }

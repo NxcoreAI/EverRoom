@@ -25,6 +25,8 @@ const SUPPORTED_EXTENSIONS = new Set([
   "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf",
   "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods",
   "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp",
+  // 纯文本：正文即 markdown，file_read / 解析管线直接可用。
+  "md", "markdown", "txt",
 ]);
 
 function extensionOf(filename: string): string {

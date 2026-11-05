@@ -32,6 +32,8 @@ export interface StartRuntimeRunInput {
   roomId: string | null;
   /** 会话所属工作区：Agent 产物入库时带上（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
+  /** 工作区展示名（与 workspaceId 同源）：注入运行期上下文，让模型知道当前处于哪个空间。 */
+  workspaceLabel?: string | null;
   availableRooms?: AgentRoomReference[];
   roomSelectionRequired?: boolean;
   captureMemory?: boolean;

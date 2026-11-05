@@ -466,7 +466,11 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
 
   if (!activity.hasTools) return null
 
-  const failed = tools.some((tool) => tool.status === 'error')
+  // 汇总态只看结果有没有产出：单个工具失败但 run 拿到 finalAnswer（代理自恢复、
+  // 重试该页成功）仍算已处理——工具级失败保留在展开行里看，不把整单标成
+  // 「处理失败」误导用户以为产品不可用。
+  const producedAnswer = Boolean(activity.pendingAnswer || activity.finalAnswer)
+  const failed = !producedAnswer && tools.some((tool) => tool.status === 'error')
   const stopped = tools.some((tool) => tool.status === 'stopped')
   const summary = continuing && !running
     ? t(continuationLabel)

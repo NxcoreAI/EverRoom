@@ -124,7 +124,7 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
 });
 
 describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
-  it("只放行 PPT 四件套；检索、写入、调度、通知类一律拒绝", () => {
+  it("只放行 PPT 三件套（create/read/edit，set_page 已随脚本化生成退场）；检索、写入、调度、通知类一律拒绝", () => {
     const tools = createSlidesBuilderAgentTools({
       documentTools: PLANNER_DOCUMENT_TOOLS,
     });
@@ -132,7 +132,6 @@ describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
       "slides_create",
       "slides_edit",
       "slides_read",
-      "slides_set_page",
     ]);
   });
 
@@ -221,24 +220,18 @@ describe("createSlidesPlannerAgentTools（网关预取协同）", () => {
 });
 
 describe("createSlidesLayouterAgentTools（validate 收口）", () => {
-  it("同一 run 连续 5 轮不收敛后网关收下当前树并提示提交", async () => {
+  it("校验预算由程序记账：预算耗尽后收口 blocked，提示改走 subagent_submit_result", async () => {
     const tool = createSlidesLayouterAgentTools()[0]!;
-    const input = { ...runInput(), runId: "validate-forced-run" };
-    for (let round = 1; round <= 4; round += 1) {
-      const outcome = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as {
-        ok: boolean;
-        round?: number;
-      };
-      expect(outcome.ok).toBe(false);
-      expect(outcome.round).toBe(round);
+    const input = { ...runInput(), runId: "validate-budget-run" };
+    let last: { stage?: string; nextAction?: string; warning?: string } = {};
+    // 超过两类预算上限（geometry 6 / schema 2）的循环次数，确保走到收口分支。
+    for (let i = 0; i < 8; i += 1) {
+      last = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as typeof last;
+      expect(last.nextAction).toBeDefined();
     }
-    const forced = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as {
-      ok: boolean;
-      forcedSubmission?: boolean;
-      warning?: string;
-    };
-    expect(forced).toMatchObject({ ok: true, forcedSubmission: true });
-    expect(forced.warning).toContain("subagent_submit_result");
+    expect(last.stage).toBe("exhausted");
+    expect(last.nextAction).toBe("blocked");
+    expect(last.warning).toContain("subagent_submit_result");
   });
 });
 

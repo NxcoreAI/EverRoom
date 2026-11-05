@@ -32,7 +32,6 @@ tools:
   - document_draft
   - office_create
   - slides_create
-  - slides_set_page
   - slides_read
   - slides_edit
   - sheets_create

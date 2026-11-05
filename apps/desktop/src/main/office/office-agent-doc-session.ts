@@ -32,8 +32,11 @@ const MAX_AGENT_DOC_BYTES = 100 * 1024 * 1024
 const SESSION_IDLE_MS = 3 * 60_000
 /** 同时保留的隐藏会话数（按最近使用淘汰）。 */
 const SESSION_MAX = 2
-/** 等渲染层报告「目标工作副本已装载」的上限。 */
-const READY_TIMEOUT_MS = 15_000
+/**
+ * 等渲染层报告「目标工作副本已装载」的上限。与 sheet 会话同口径放宽到 45s
+ * （冷启动/大文件并发装载时 15s 会误杀，网关 HTTP 上限 150s）。
+ */
+const READY_TIMEOUT_MS = 45_000
 /** 隐藏视图给分页/测量用的真实布局尺寸。 */
 const HIDDEN_VIEW_BOUNDS = { x: 0, y: 0, width: 1100, height: 1400 }
 /** OOXML 加密 / 旧版复合文档的 CFB 魔数：真正的 .docx 是 zip（PK..）。 */

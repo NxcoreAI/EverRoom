@@ -104,6 +104,29 @@ describe("workspace file catalog", () => {
     });
   });
 
+  it("kind=image 无 query 走扩展名下推：图片被当日新增挤出扫描窗口也能列出（2026-11-05 实测漏图）", () => {
+    // 500 条非图片占满「最新 500 条」窗口，图片排在窗口之外——纯 page-0 内存过滤会全漏。
+    const filler: Row[] = Array.from({ length: 500 }, (_, index) => ({
+      id: `doc-filler-${index}`,
+      originalName: `资料汇编 ${index}.docx`,
+      sharedTitle: `资料汇编 ${index}.docx`,
+      relativePath: null,
+      bytes: 1,
+      dataType: "document",
+      contentHash: HASH_C,
+    }));
+    const catalog = createWorkspaceFileCatalog(sourceOf([...filler, rows[0]!, rows[1]!]));
+    const images = catalog.list({ kind: "image" });
+    expect(images.map((entry) => entry.fileEntryId).sort()).toEqual(["img-1", "img-2"]);
+    // 下推命中的误报（文件名带 jpg 字样的非图片）由 isImageEntry 剔除。
+    const withDecoy = sourceOf([
+      ...filler,
+      { id: "doc-decoy", originalName: "jpg 转换说明.docx", sharedTitle: "jpg 转换说明.docx", relativePath: null, bytes: 1, dataType: "document", contentHash: HASH_C },
+      rows[0]!,
+    ]);
+    expect(createWorkspaceFileCatalog(withDecoy).list({ kind: "image" }).map((entry) => entry.fileEntryId)).toEqual(["img-1"]);
+  });
+
   it("filters by kind, query (name / display name / relative path), and limit", () => {
     const catalog = createWorkspaceFileCatalog(sourceOf(rows));
 
@@ -178,6 +201,25 @@ describe("workspace_files_list tool", () => {
 
     const [unavailable] = createWorkspaceFilesPiTools(() => null);
     await expect(unavailable!.execute(input, {})).rejects.toThrow("workspace_files_list 暂不可用");
+  });
+
+  it("会话工作区穿到目录查询：不再把别的空间的资料列进「工作区文件清单」", async () => {
+    const calls: Array<{ patterns?: string[]; workspaceId?: string }> = [];
+    const source: WorkspaceFileSource = {
+      listCatalog: (limit, _offset, patterns, workspaceId) => {
+        calls.push({ ...(patterns ? { patterns } : {}), ...(workspaceId ? { workspaceId } : {}) });
+        return { items: rows.slice(0, limit).map((row) => ({ ...row, updatedAt: UPDATED_AT })) };
+      },
+      catalogStoragePathOf: (fileEntryId) => `/data/files/${fileEntryId}`,
+    };
+    const [tool] = createWorkspaceFilesPiTools(() => createWorkspaceFileCatalog(source));
+
+    await tool!.execute({ ...input, workspaceId: "ws-current" }, { kind: "all", limit: 50 });
+    expect(calls[0]!.workspaceId).toBe("ws-current");
+
+    // 会话没有工作区时保持全库（兜底语义）。
+    await tool!.execute(input, { kind: "all", limit: 50 });
+    expect(calls[1]!.workspaceId).toBeUndefined();
   });
 });
 

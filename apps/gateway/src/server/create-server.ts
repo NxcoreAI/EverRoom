@@ -85,7 +85,7 @@ import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createWorkspaceFileCatalog, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createSlidesPptxPageResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
@@ -620,7 +620,7 @@ export async function createServer(config: GatewayConfig) {
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
   // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
   // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
-  subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesPptxPageResultValidator());
+  subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
       id: developerAgent.id,
@@ -948,7 +948,14 @@ export async function createServer(config: GatewayConfig) {
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
   // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
-  const workspaceFiles = createWorkspaceFileCatalog(filesService);
+  // listCatalog 第 3 参是 options 对象：把目录接口的 (patterns, workspaceId) 适配过去。
+  const workspaceFiles = createWorkspaceFileCatalog({
+    listCatalog: (limit, offset, nameLikePatterns, workspaceId) => filesService.listCatalog(limit, offset, {
+      ...(nameLikePatterns?.length ? { nameLikePatterns } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+    }),
+    catalogStoragePathOf: (fileEntryId) => filesService.catalogStoragePathOf(fileEntryId),
+  });
   workspaceFilesRef.current = workspaceFiles;
   workspaceMaterialsRef.current = createWorkspaceImageMaterialSearch(() => workspaceFiles);
   resolveFileCurrentVersionId = (fileEntryId) => filesService.currentVersionIdOf(fileEntryId);

@@ -158,9 +158,9 @@ function createUserFacingRuntime(
       ...(integrations?.workspaceFiles
         ? createWorkspaceFilesPiTools(integrations.workspaceFiles)
         : []),
-      // PPT 生成走主 Agent 直生：pptx skill（系统提示词内联）设计 + slides_create/
-      // slides_set_page(pptxOps) 逐页落页；四件套不再从用户档剔除。document_list
-      // （文稿库清单）仍剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
+      // PPT 生成走主 Agent 直生：pptx skill（系统提示词内联）设计 + slides_create
+      // 整册 pptxgenjs 脚本（桌面 vm 沙箱执行）；slides 三件套不再从用户档剔除。
+      // document_list（文稿库清单）仍剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
       ...createDocumentPiTools(mcpHost)
         .filter((tool) => !(USER_FACING_EXCLUDED_DOCUMENT_TOOLS as readonly string[]).includes(tool.name)),
       ...(config.webSearch && integrations?.agentResolver

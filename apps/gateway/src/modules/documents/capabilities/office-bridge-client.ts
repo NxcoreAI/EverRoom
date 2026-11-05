@@ -15,6 +15,10 @@ export interface OfficeGenerateInput {
   html?: string | null;
   /** pptx：每页一个 PageSpec JSON 字符串。 */
   pages?: string[] | null;
+  /** pptx（pptx skill 路径）：整册 pptxgenjs 构建脚本，桌面 vm 沙箱执行，优先于 pages。 */
+  script?: string | null;
+  /** pptx：skill 的 apply_theme.js 源码（从网关 agents 目录读取，单一事实源）。 */
+  applyThemeJs?: string | null;
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
   roomId: string | null;
@@ -192,6 +196,7 @@ export class OfficeBridgeClient {
       versionDeduped: data.versionDeduped === true,
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
+      ...(Array.isArray(data.warnings) ? { warnings: (data.warnings as unknown[]).filter((w): w is string => typeof w === "string") } : {}),
     };
   }
 

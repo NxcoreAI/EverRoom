@@ -30,6 +30,8 @@ export interface WorkspaceFileListInput {
   kind?: WorkspaceFileKind;
   query?: string;
   limit?: number;
+  /** 工作区过滤；缺省 = 全库（兼容素材检索等不区分空间的调用）。 */
+  workspaceId?: string;
 }
 
 export interface WorkspaceFileCatalog {
@@ -47,6 +49,8 @@ export interface WorkspaceFileSource {
     offset: number,
     /** 检索词的 LIKE 模式（见 catalogQueryLikePatterns）：在库内过滤，避免大目录只扫最新一页而漏检。 */
     nameLikePatterns?: string[],
+    /** 工作区过滤；缺省 = 全库（兼容素材检索等不区分空间的调用）。 */
+    workspaceId?: string,
   ): {
     items: ReadonlyArray<{
       id: string;
@@ -67,6 +71,12 @@ const MAX_LIMIT = 50;
 /** 单次扫描上限：工作区文件量大时也不做全表遍历。 */
 const SCAN_LIMIT = 500;
 const IMAGE_NAME = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i;
+/**
+ * kind=image 无 query 时的 SQL 下推模式：图片扩展名直接进库内过滤。否则只扫
+ * 「最新 500 条」再内存筛选——库大 + 当日新增多时图片全被挤出窗口（2026-11-05
+ * 实测 14 张图全漏）。SQL 命中的误报（文件名含 png/jpg 字样的非图片）由 isImageEntry 兜底剔除。
+ */
+const IMAGE_SCAN_QUERY = "png jpg jpeg gif webp bmp heic heif";
 
 function isImageEntry(entry: { dataType: string | null; originalName: string }): boolean {
   return entry.dataType === "image" || IMAGE_NAME.test(entry.originalName);
@@ -109,15 +119,18 @@ export function createWorkspaceFileCatalog(
   // arrange 素材预取会按页多次调用检索：短 TTL 缓存目录行，避免每次全量查库。
   const cacheTtlMs = options?.cacheTtlMs ?? 10_000;
   let cachedAt = 0;
+  let cachedKey = "";
   let cachedRows: ReturnType<WorkspaceFileSource["listCatalog"]>["items"] | null = null;
-  const rows = (query?: string) => {
+  const rows = (query: string | undefined, workspaceId: string | undefined) => {
     if (query) {
       // 带词检索在库内完成（结果集与无词缓存不同，不走共享缓存）。
-      return source.listCatalog(SCAN_LIMIT, 0, catalogQueryLikePatterns(query)).items;
+      return source.listCatalog(SCAN_LIMIT, 0, catalogQueryLikePatterns(query), workspaceId).items;
     }
+    const key = workspaceId ?? "all";
     const now = Date.now();
-    if (!cachedRows || now - cachedAt > cacheTtlMs) {
-      cachedRows = source.listCatalog(SCAN_LIMIT, 0).items;
+    if (cachedKey !== key || !cachedRows || now - cachedAt > cacheTtlMs) {
+      cachedRows = source.listCatalog(SCAN_LIMIT, 0, undefined, workspaceId).items;
+      cachedKey = key;
       cachedAt = now;
     }
     return cachedRows;
@@ -127,8 +140,11 @@ export function createWorkspaceFileCatalog(
       const kind = input.kind ?? "all";
       const limit = Math.min(MAX_LIMIT, Math.max(1, input.limit ?? DEFAULT_LIMIT));
       const query = input.query?.trim() ?? "";
+      // 无 query 的 kind=image 走图片扩展名下推（见 IMAGE_SCAN_QUERY）；其余走原路径。
+      const scanQuery = query || (kind === "image" ? IMAGE_SCAN_QUERY : "");
+      const workspaceId = input.workspaceId?.trim() || undefined;
       const entries: WorkspaceFileEntry[] = [];
-      for (const row of rows(query || undefined)) {
+      for (const row of rows(scanQuery || undefined, workspaceId)) {
         const image = isImageEntry(row);
         if (kind === "image" && !image) continue;
         if (kind === "document" && image) continue;
@@ -222,10 +238,10 @@ export function createWorkspaceFilesPiTools(
     promptSnippet: "工作区文件清单",
     promptGuidelines: [
       "需要工作区里的文件或图片（例如「用上传的图片做 PPT」「用资料里的照片」）时，先调用 workspace_files_list 获取清单与引用；不要用 shell、sqlite 或读应用数据目录去找文件。",
-      "把图片用于 PPT 时，把返回的 materialRef（everroom-material://…）直接作为 slides_set_page pptxOps 中 addImage 的 url（或 spec 图片元素的 url）落页；封面/产品图优先用素材，不要把图片读进自己的上下文，也不要用 AI 生图替代用户素材。",
+      "把图片用于 PPT 时，把返回的 materialRef（everroom-material://…）直接作为 slides_create 脚本里 addImage 的 path（或公网 http(s) 链接）；封面/产品图优先用素材，不要把图片读进自己的上下文，也不要用 AI 生图替代用户素材。",
     ],
     executionMode: "sequential",
-    execute: async (_input, params, signal): Promise<PiAgentRuntimeToolResult> => {
+    execute: async (input, params, signal): Promise<PiAgentRuntimeToolResult> => {
       if (signal?.aborted) throw new Error("workspace_files_list 已取消");
       const catalog = getCatalog();
       if (!catalog) throw new Error("workspace_files_list 暂不可用：工作区文件服务尚未就绪，请稍后重试。");
@@ -237,7 +253,14 @@ export function createWorkspaceFilesPiTools(
       const limit = typeof params.limit === "number" && Number.isFinite(params.limit)
         ? Math.trunc(params.limit)
         : undefined;
-      const files = catalog.list({ ...(kind ? { kind } : {}), ...(query ? { query } : {}), ...(limit ? { limit } : {}) });
+      const workspaceId = input.workspaceId?.trim();
+      const files = catalog.list({
+        ...(kind ? { kind } : {}),
+        ...(query ? { query } : {}),
+        ...(limit ? { limit } : {}),
+        // 工具语义是「工作区文件清单」：默认收敛到会话所属工作区，不再全库扫。
+        ...(workspaceId ? { workspaceId } : {}),
+      });
       const payload = {
         files,
         total: files.length,

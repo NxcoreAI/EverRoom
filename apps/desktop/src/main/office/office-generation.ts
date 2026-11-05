@@ -6,6 +6,7 @@ import { app } from 'electron'
 import type { WebContents, WebContentsView } from 'electron'
 
 import { loadPreparedGenOfficeRuntime, type GenOfficeMaterialResolver, type PreparedGenOfficeRuntime, type ThesisBindingSpecPayload, type ThesisFormatCardPayload } from './office-runtime'
+import { runAgentPptxScript } from './agent-pptx-script'
 import { backfillThesisCoverLogo, backfillThesisHeaderLogos } from './thesis-logo-backfill'
 import { selfCheckThesisDocx } from './thesis-selfcheck'
 import { buildAgentXlsxBytes, type AgentSheetInput } from './xlsx-generation'
@@ -210,6 +211,30 @@ export interface GeneratedPptx {
   title: string
   /** 页级容错警告（无效元素被丢弃等），供工具回传给模型自纠。 */
   warnings: string[]
+}
+
+/**
+ * pptx skill 脚本路径：agent 写的整册 pptxgenjs 脚本经 vm 沙箱执行产出 deck.pptx，
+ * 见 agent-pptx-script.ts。applyThemeJs 由网关从 agents 目录带下来（单一事实源）。
+ */
+export async function generatePptxFromAgentScript(
+  input: { title: string; script: string; applyThemeJs?: string | null },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+  resolveMaterial?: GenOfficeMaterialResolver['resolveMaterial'],
+): Promise<GeneratedPptx> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('演示标题不能为空')
+  if (!input.script.trim()) throw new Error('生成脚本不能为空')
+  onPhase?.('rendering')
+  const run = await runAgentPptxScript(input.script, {
+    ...(input.applyThemeJs ? { applyThemeJs: input.applyThemeJs } : {}),
+    resolveMaterial: resolveMaterial ?? null,
+  })
+  if (!run.ok) {
+    throw new Error(`PPT 脚本生成失败：${run.error}${run.consoleTail.length > 0 ? `；脚本输出尾部：${run.consoleTail.slice(-5).join(' | ')}` : ''}`)
+  }
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(run.bytes, '.pptx'), bytes: run.bytes, title, warnings: run.warnings }
 }
 
 /** 源论文 docx → 块大纲（论文排版映射的区间事实源）。 */
