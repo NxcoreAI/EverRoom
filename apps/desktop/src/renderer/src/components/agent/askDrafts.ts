@@ -7,6 +7,7 @@
  */
 
 import type { OfficeAskAnchor } from '@/shared/office'
+import type { AgentNoteCard } from '@nxcore/agent-contract'
 
 export interface PendingAskDraft {
   id: string
@@ -63,4 +64,21 @@ export function buildAskBatch(
         .map((draft, index) => `${circled(index)} ${(draft.displayMessage ?? draft.message).replace(/[。.]$/, '')}`)
         .join(' ')}`
   return { message, displayMessage }
+}
+
+/** 批注锚点没有文字内容（图片/形状等非文本选区）时的占位摘录。 */
+export const EMPTY_EXCERPT_PLACEHOLDER = '（该批注未选中文字内容）'
+
+/**
+ * 批注草稿 → 气泡卡片结构（原文摘录 + 注释原话；来源文件可辨时带标题）。
+ *
+ * excerpt 空串必须给占位：网关对 noteCards[].excerpt 有 minLength:1 校验，
+ * 直接传 '' 会被 422 拒掉整条消息（2026-11-05 实测「对图片写批注并发送」踩中）。
+ */
+export function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCard[] {
+  return drafts.map((draft) => ({
+    excerpt: (draft.excerpt ?? '').replace(/\s+/g, ' ').trim() || EMPTY_EXCERPT_PLACEHOLDER,
+    note: (draft.instruction ?? draft.displayMessage ?? draft.message).trim(),
+    ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
+  }))
 }

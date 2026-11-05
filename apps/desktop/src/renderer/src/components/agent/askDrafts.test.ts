@@ -1,15 +1,18 @@
 /** 批注草稿合批：技术指令与人话分开，单条不编号。 */
 import { describe, expect, it } from 'vitest'
 
-import { buildAskBatch, type PendingAskDraft } from './askDrafts'
+import { buildAskBatch, buildNoteCards, EMPTY_EXCERPT_PLACEHOLDER, type PendingAskDraft } from './askDrafts'
 
 function draft(overrides: Partial<PendingAskDraft> = {}): PendingAskDraft {
   return {
     id: overrides.id ?? 'd1',
     workspaceId: overrides.workspaceId ?? 'ws-1',
-    title: 'title' in overrides ? overrides.title : '方案.docx',
+    title: overrides.title,
+    instruction: overrides.instruction,
+    excerpt: overrides.excerpt,
     message: overrides.message ?? '我在 Word《方案.docx》第 4–6 块（正文「综上所述」）选中了这段内容：压缩成两句。',
-    displayMessage: overrides.displayMessage ?? '关于 Word《方案.docx》第 5–7 段选中的内容：压缩成两句。',
+    // 显式 undefined 也要覆盖默认值（note 退化链测试需要"真的没有 displayMessage"）。
+    displayMessage: 'displayMessage' in overrides ? overrides.displayMessage : '关于 Word《方案.docx》第 5–7 段选中的内容：压缩成两句。',
     createdAt: overrides.createdAt ?? new Date(0).toISOString(),
   }
 }
@@ -29,8 +32,8 @@ describe('buildAskBatch', () => {
 
   it('多条：合并成一条带编号的请求，并点名同一份文件；开场白不预设修改', () => {
     const batch = buildAskBatch([
-      draft({ id: 'a' }),
-      draft({ id: 'b', message: '我在 Word《方案.docx》第 9 块（表格）选中了这段内容：换列宽。', displayMessage: '关于第 10 段表格的内容：换列宽。' }),
+      draft({ id: 'a', title: '方案.docx' }),
+      draft({ id: 'b', title: '方案.docx', message: '我在 Word《方案.docx》第 9 块（表格）选中了这段内容：换列宽。', displayMessage: '关于第 10 段表格的内容：换列宽。' }),
     ])!
     expect(batch.message).toContain('我在《方案.docx》的 2 处内容上做了批注')
     expect(batch.message).toContain('请逐条看原话处理')
@@ -65,5 +68,37 @@ describe('buildAskBatch', () => {
     const batch = buildAskBatch(many)!
     expect(batch.displayMessage).toContain('⑫')
     expect(batch.displayMessage).toContain('(13)')
+  })
+})
+
+describe('buildNoteCards', () => {
+  it('有摘录：原样带上（折叠空白），note 取 instruction 优先', () => {
+    const [card] = buildNoteCards([
+      draft({ title: '方案.docx', instruction: '压缩成两句', excerpt: '综上所述……\n  项目达标。' }),
+    ])
+    expect(card!.excerpt).toBe('综上所述…… 项目达标。')
+    expect(card!.note).toBe('压缩成两句')
+    expect(card!.title).toBe('方案.docx')
+  })
+
+  it('摘录为 undefined（图片/形状等非文本选区）：给占位而不是空串，否则网关 minLength:1 会 422 拒掉整条消息', () => {
+    const [card] = buildNoteCards([draft({ excerpt: undefined, instruction: '把这张图转灰度' })])
+    expect(card!.excerpt).toBe(EMPTY_EXCERPT_PLACEHOLDER)
+    expect(card!.excerpt.length).toBeGreaterThan(0)
+  })
+
+  it('摘录为纯空白：同样给占位', () => {
+    const [card] = buildNoteCards([draft({ excerpt: '   \n\t ', instruction: '换个图' })])
+    expect(card!.excerpt).toBe(EMPTY_EXCERPT_PLACEHOLDER)
+  })
+
+  it('无 instruction 时 note 退化到 displayMessage / message，标题空白则省略', () => {
+    const [a, b] = buildNoteCards([
+      draft({ instruction: undefined, displayMessage: '关于第 5 段：加粗' }),
+      draft({ instruction: undefined, displayMessage: undefined, message: '技术指令', title: '   ' }),
+    ])
+    expect(a!.note).toBe('关于第 5 段：加粗')
+    expect(b!.note).toBe('技术指令')
+    expect(b).not.toHaveProperty('title')
   })
 })
