@@ -521,7 +521,7 @@ export function OverviewPage({
         ) : null}
 
         {files.state === 'unavailable' ? (
-          <p className="wb-ov-note">文件库暂不可用</p>
+          <p className="wb-ov-note">资料暂不可用</p>
         ) : null}
       </section>
     </div>

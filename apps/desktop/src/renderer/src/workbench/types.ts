@@ -25,7 +25,7 @@ export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'plan'
 
 export const WORKSPACE_PAGES: ReadonlyArray<{ key: WorkspacePageKey; label: string }> = [
   { key: 'overview', label: '概览' },
-  { key: 'library', label: '资料库' },
+  { key: 'library', label: '资料' },
   { key: 'outputs', label: '产物' },
   { key: 'plan', label: '计划' },
 ]

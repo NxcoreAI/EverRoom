@@ -66,7 +66,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverRoom」并定位到文件管理器')
+      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
     } catch {
       onToast('导出失败，请稍后重试')
     }
@@ -99,7 +99,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     try {
       const summary = await library.importFiles()
       if (!summary) {
-        onToast('文件库不可用，无法导入')
+        onToast('资料暂不可用，无法导入')
         return
       }
       if (summary.kind === 'cancelled') {
@@ -121,7 +121,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     try {
       const summary = await library.importDroppedFiles(files)
       if (!summary) {
-        onToast('文件库不可用，无法导入')
+        onToast('资料暂不可用，无法导入')
         return
       }
       if (summary.kind === 'cancelled') return
@@ -174,10 +174,10 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {...dragProps}
     >
       <header className="wb-wspage-head">
-        <h1 className="wb-wspage-title">资料库</h1>
+        <h1 className="wb-wspage-title">资料</h1>
         <div className="wb-file-head-actions">
           <IconButton
-            label="刷新文件库"
+            label="刷新资料"
             icon={<RefreshCw size={15} className={library.refreshing ? 'ui-spin' : undefined} />}
             onClick={library.refresh}
             disabled={library.refreshing}
@@ -205,7 +205,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       {dragActive ? (
         <div className="wb-lib-dropzone" aria-hidden="true">
           <FilePlus2 size={22} aria-hidden="true" />
-          <p>{library.importing ? '正在导入…' : '松手导入到资料库'}</p>
+          <p>{library.importing ? '正在导入…' : '松手导入到资料'}</p>
         </div>
       ) : null}
 
@@ -213,7 +213,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         open={pendingDelete !== null}
         onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null) }}
         title={pendingDelete ? `删除「${pendingDelete.file.name}」？` : '删除文件？'}
-        description="会从文件库删除该文件及其解析产物，操作不可撤销。"
+        description="会从资料删除该文件及其解析产物，操作不可撤销。"
         confirmLabel={deleting ? '删除中…' : '删除'}
         busy={deleting}
         onConfirm={() => { void confirmDelete() }}

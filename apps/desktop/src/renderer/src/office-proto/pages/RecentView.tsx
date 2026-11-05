@@ -83,8 +83,8 @@ export function RecentView({
         <h1>{greeting()}{accountName ? `，${accountName}` : ''}</h1>
         <p>
           {fileTotal !== null && fileTotal > 0
-            ? `文件库里已有 ${fileTotal} 份文件进入了你的记忆，随时可以调用。`
-            : '文件库还没有内容，导入文件后即可在记忆中调用。'}
+            ? `资料里已有 ${fileTotal} 份文件进入了你的记忆，随时可以调用。`
+            : '资料还没有内容，导入文件后即可在记忆中调用。'}
         </p>
       </section>
 

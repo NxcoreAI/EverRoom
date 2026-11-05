@@ -171,7 +171,7 @@ export function CreateWorkspaceDialog({ open, onOpenChange }: {
         <Field
           label="空间目录"
           hint={path
-            ? '目录将就地接管为项目空间（只新增 .everoffice/ 元数据目录，其余文件原样保留、直接作为资料库）'
+            ? '目录将就地接管为项目空间（只新增 .everoffice/ 元数据目录，其余文件原样保留、直接作为资料）'
             : defaultRoot
               ? `默认建在应用目录下；根上只有 .everoffice/（元数据）和 .tmp/（过程缓存），其余位置都留给你放资料${defaultRoot.exists ? '。同名目录已存在，将自动改用带后缀的名字' : ''}`
               : '默认建在应用目录下（Workspace）'}

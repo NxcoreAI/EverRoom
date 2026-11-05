@@ -101,7 +101,7 @@ function FileRow({ item, actions }: { item: RealOfficeFile; actions: FileItemAct
         <FileTypeIcon kind={item.file.kind} size={26} />
         <span className="wb-file-row-name">
           <span className="wb-file-row-title">{item.file.name}</span>
-          <span className="wb-file-row-path">{path || '文件库根目录'}</span>
+          <span className="wb-file-row-path">{path || '资料根目录'}</span>
         </span>
         <span className="wb-file-row-source">{item.catalog.sourceLabel}</span>
         <span className="wb-file-row-time">{item.file.updatedLabel}</span>
@@ -139,7 +139,7 @@ function FileCard({ item, actions }: { item: RealOfficeFile; actions: FileItemAc
       >
         <FileTypeIcon kind={item.file.kind} size={32} />
         <span className="wb-file-card-name">{item.file.name}</span>
-        <span className="wb-file-card-path">{path || '文件库根目录'}</span>
+        <span className="wb-file-card-path">{path || '资料根目录'}</span>
         <span className="wb-file-card-meta">
           <span>{item.catalog.sourceLabel}</span>
           <span>{item.file.updatedLabel}</span>

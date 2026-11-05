@@ -67,7 +67,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverRoom」并定位到文件管理器')
+      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
     } catch {
       onToast('导出失败，请稍后重试')
     }
@@ -108,7 +108,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
             disabled={library.refreshing}
           />
           <Button variant="secondary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>
-            去资料库
+            去资料
           </Button>
         </div>
       </header>

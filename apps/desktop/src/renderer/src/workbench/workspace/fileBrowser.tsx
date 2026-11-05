@@ -148,7 +148,7 @@ export function FileLibraryUnavailable({ onRetry }: { onRetry?: () => void }) {
     <EmptyState
       className="wb-file-state is-unavailable"
       icon={<AlertTriangle size={18} />}
-      title="文件库暂不可用"
+      title="资料暂不可用"
       action={onRetry ? <Button variant="secondary" onClick={onRetry}>重试</Button> : null}
     />
   )
