@@ -14,7 +14,9 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-width: 320px;
+  /* 240 而非 320：气泡窗宽度按容器收敛后，窄窗口下这里要让得出来，
+   * 否则两者最小宽度之和超过容器 → flex 溢出（原生视图会画到对话区上）。 */
+  min-width: 240px;
   min-height: 0;
   overflow: hidden;
   /* 面板宽度动画时把重排限制在本区域，减少整页 layout 抖动。 */

@@ -375,17 +375,71 @@ export interface CloudDevice {
 }
 
 /** 中转额度视图（`GET /app/ai-gateway/status`，按订阅周期开窗）。 */
+/** 充值档位(主进程经 SaaS /app/billing/packs 拉取)。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
+}
+
+/** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议)。 */
+export interface TopupOrder {
+  orderId: string
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+/** 套餐档位(GET /app/plans),升级弹窗动态渲染权益。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
+
 export interface AiGatewayStatus {
   configured: boolean
   subscriptionStatus: string | null
   llmCredits: number | null
   usedCredits: number
   remainingCredits: number
+  /** 周期内剩余(套餐月额度口径;旧后端无此字段时等于 remainingCredits)。 */
+  periodRemainingCredits?: number
+  /** 充值余额(旁路,长期有效;旧后端无此字段时为 0)。 */
+  topupRemainingCredits?: number
+  /** 活跃充值 grant 明细(新后端下发;无此字段时只展示充值合计行)。 */
+  /** 套餐周期额度(quota 原值,2026-11-04 后端起提供):进度条分母,与美元口径字段区分。 */
+  planPeriodQuota?: number
+  /** 额度包明细(购买+赠送):credits 字段为美元口径(quota/500000)。 */
+  grants?: Array<{ id: string; remainingCredits: number; amountCredits: number; expiresAt: string | null; source?: string }>
   periodEnd: string | null
 }
 
 /** LLM 额度换算：new-api 原生 quota 单位 ↔ 美元（QuotaPerUnit 默认 500000 = $1）。 */
 export const QUOTA_PER_USD = 500000
+
+/** 用户侧积分口径：1 积分 = $0.1 = 50000 quota(展示层换算,后端 quota 一概不动)。 */
+export const QUOTA_PER_CREDIT = 50000
+
+/** quota → 积分整数(四舍五入);全面积分化后所有面向用户的额度都走这里。 */
+export function formatCredits(quota: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(quota / QUOTA_PER_CREDIT))
+}
 
 export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
@@ -1106,6 +1160,18 @@ export interface NxcoreDesktopApi {
     /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
     verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
+  }
+  billing: {
+    /** 充值档位(登录后可用)。 */
+    packs(): Promise<CreditPack[]>
+    /** 下单:真实渠道时主进程自动用系统浏览器打开 approval 页。 */
+    topup(packCode: string): Promise<TopupOrder>
+    /** 订单状态轮询(pending 时服务端主动核对渠道)。 */
+    topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }>
+    /** Mock 联调批准;真实渠道服务端 409。 */
+    topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }>
+    /** 套餐档位列表(升级弹窗)。 */
+    plans(): Promise<PlanTier[]>
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>

@@ -445,6 +445,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             reasoningByRun={hook.reasoningByRun}
             resolvingApprovalIds={hook.resolvingApprovalIds}
             runCompletedAtByRun={hook.runCompletedAtByRun}
+            failedRunIds={hook.failedRunIds}
             runStartedAtByRun={hook.runStartedAtByRun}
             scopeReady={hook.scopeReady}
             sessionLinks={hook.sessionLinks}

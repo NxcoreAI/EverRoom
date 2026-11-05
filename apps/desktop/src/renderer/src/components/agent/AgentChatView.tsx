@@ -272,7 +272,12 @@ function UserNoteCards({ cards }: { cards: AgentNoteCard[] }) {
   )
 }
 
-function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {  const { t } = useLocale()
+function LinkedRunProgress({ agentNamesById, state, failedRunIds }: {
+  agentNamesById: Record<string, string>
+  state: LinkedAgentRunState
+  failedRunIds?: ReadonlySet<string> | undefined
+}) {
+  const { t } = useLocale()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
   const rawFinalContent = state.documentPending
@@ -303,6 +308,7 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
             continuing={state.documentPending}
             continuationLabel={t('surface:agentChat.editingDocumentLabel')}
             sessionId={state.sessionId}
+            failedRunIds={failedRunIds}
           />
         ) : null}
         {state.status === 'completed' && !finalContent ? (
@@ -349,6 +355,7 @@ export function AgentChatView({
   onSelectPrompt,
   cancelledRunIds,
   interruptedRunIds,
+  failedRunIds,
   pendingNavigationByRun,
   reasoningByRun = {},
   runCompletedAtByRun,
@@ -387,6 +394,8 @@ export function AgentChatView({
   cancelledRunIds?: ReadonlySet<string>
   /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
   interruptedRunIds?: ReadonlySet<string>
+  /** 网关判定失败的 run：时间线标题显示「处理失败」（唯一权威口径）。 */
+  failedRunIds?: ReadonlySet<string>
   onOpenMention?: (item: MentionedItem) => void
   onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
@@ -913,7 +922,7 @@ export function AgentChatView({
           {incomingLink ? (
             <>
               <SessionReference link={incomingLink} onOpen={() => onOpenSessionLink(incomingLink)} />
-              <LinkedRunProgress agentNamesById={agentNamesById} state={linkedRun} />
+              <LinkedRunProgress agentNamesById={agentNamesById} failedRunIds={failedRunIds} state={linkedRun} />
             </>
           ) : null}
           {messages.map((message, index) => {
@@ -1050,6 +1059,7 @@ export function AgentChatView({
                     runStartedAt={runStartedAtByRun[message.runId]}
                     runCompletedAt={runCompletedAtByRun[message.runId]}
                     sessionId={currentSessionId}
+                    failedRunIds={failedRunIds}
                   />
                 ) : null}
                 {partialContent ? (
@@ -1107,6 +1117,7 @@ export function AgentChatView({
                   runStartedAt={runStartedAtByRun[activeRunId]}
                   runCompletedAt={runCompletedAtByRun[activeRunId]}
                   sessionId={currentSessionId}
+                  failedRunIds={failedRunIds}
                 />
               ) : null}
             </div>

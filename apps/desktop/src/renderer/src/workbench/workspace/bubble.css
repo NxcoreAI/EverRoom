@@ -27,10 +27,13 @@
 .wb-bubble.is-closing,
 .wb-bubble.is-minimizing { transition: none; }
 
-/* 宽度动画期间隐藏原生编辑器：WebContentsView 跟随 IPC 重定位会滞后，看起来会抖。 */
+/* 宽度动画期间隐藏原生编辑器：WebContentsView 跟随 IPC 重定位会滞后，看起来会抖，
+ * 而且它会越过容器画到中间对话区上。注意 visibility 只是 DOM 层面的信号——
+ * NativeEditorHost 检测到祖先 hidden 后会显式上报 ZERO 让主进程隐藏原生视图。 */
 .wb-bubble.is-closing .op-native-wrap,
 .wb-bubble.is-minimizing .op-native-wrap,
-.wb-bubble.is-resizing .op-native-wrap { visibility: hidden; }
+.wb-bubble.is-resizing .op-native-wrap,
+.wb-bubble.is-settling .op-native-wrap { visibility: hidden; }
 
 .wb-bubble-inner {
   display: flex;
