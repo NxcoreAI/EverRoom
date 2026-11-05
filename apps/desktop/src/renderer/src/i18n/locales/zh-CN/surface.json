@@ -2197,7 +2197,7 @@
   "plans.featureDevices": "最多 {count} 台设备同时在线",
   "plans.featureRetention": "云端同步保留 {days} 天",
   "settings.navigationPlan": "套餐与积分",
-  "settings.planOverviewTotal": "总剩余积分",
+  "settings.planOverviewTotal": "总剩余 {credits} 积分 · ",
   "settings.planOverviewBuiltin": "套餐基础积分",
   "settings.planOverviewPurchased": "充值积分",
   "plans.perMonth": "月",

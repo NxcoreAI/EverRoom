@@ -287,28 +287,6 @@ export function SettingsPage({
     }
   }
 
-  // 已登录直接兑换：一次请求完成核验+升级，无效码/已用码标 invalid，成功后刷新订阅展示
-  const redeemNow = async () => {
-    if (!window.nxcore) return
-    const code = redeemCode.code.trim().toUpperCase()
-    if (!code) return
-    try {
-      const result = await window.nxcore.account.redeemInvitationCode(code)
-      if (result.applied) {
-        redeemCode.markDone('applied')
-        await refreshAccountStatus()
-        // 兑换即恢复额度：立即触发一次续签回灌槽位（relayReady 内含
-        // renewNow），不等 keeper 的 20min 周期；失败静默，周期兜底。
-        void window.nxcore.runtimeConfig?.relayReady().catch(() => undefined)
-      } else {
-        redeemCode.markDone('already-pro')
-      }
-    } catch (error) {
-      if (error instanceof Error && /invitation code/i.test(error.message)) redeemCode.markInvalid()
-      else redeemCode.markError()
-    }
-  }
-
   const refreshAccountStatus = async () => {
     if (!window.nxcore) return
     setPending('refresh')
@@ -609,161 +587,146 @@ export function SettingsPage({
         )}
       </section>
 
-      <section id="settings-plan" className="cloud-account-section settings-anchor-section" aria-labelledby="plan-credits-title">
-        <header className="cloud-account-header">
-          <span className="cloud-account-icon"><WalletCards aria-hidden="true" /></span>
+      <section id="settings-plan" className="reality-settings-section settings-anchor-section" aria-labelledby="plan-credits-title">
+        <header>
+          <span><WalletCards aria-hidden="true" /></span>
           <div>
             <h2 id="plan-credits-title">{t('surface:settings.navigationPlan')}</h2>
           </div>
         </header>
-        {account?.authenticated ? (
-          <div className="cloud-account-connected">
-            {account.subscription ? (() => {
-              const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
-              /* 字段单位(2026-11-04 后端 87ef144 起):quotaStatus 所有 *Credits
-                 字段一律 quota 原值(500000 quota=$1),formatCredits 统一 ÷50000
-                 出积分——前端不做任何还原换算。 */
-              const periodRemaining = aiRelayStatus?.planPeriodQuota != null
-                ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
-                : (aiRelayStatus?.periodRemainingCredits ?? 0)
-              const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
-              const usedQuota = aiRelayStatus?.usedCredits ?? 0
-              const grants = aiRelayStatus?.grants ?? []
-              // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
-              const grantRows = grants.length
-                ? grants
-                : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
-                  ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
-                  : []
-              // 额度包 = 购买 + 赠送(signup_bonus 等旁路 grant)
-              const packsTotal = grantRows.reduce((sum, grant) => sum + grant.remainingCredits, 0)
-              const totalRemaining = aiRelayStatus?.remainingCredits ?? periodRemaining + packsTotal
-              // 注册赠送独立成行(用完不显示——后端只返回 remaining≠0 的 grant)
-              const signupGrant = grantRows.find((grant) => grant.source === 'signup_bonus') ?? null
-              const purchaseGrants = grantRows.filter((grant) => grant.source !== 'signup_bonus')
-              // 永不过期的充值包合成一行合计;有到期日的各自一行
-              const perpetualGrants = purchaseGrants.filter((grant) => !grant.expiresAt)
-              const expiringGrants = purchaseGrants.filter((grant) => grant.expiresAt)
-              return (
-              <div className="cloud-subscription">
-                <div className="plan-overview-card">
-                  <div className="plan-overview-head">
-                    <div className="cloud-subscription-plan">
-                      <span><WalletCards aria-hidden="true" />{t('surface:settings.currentPlan')}</span>
-                      <strong>{account.subscription.planName}</strong>
-                      <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
-                    </div>
-                    <div className="plan-overview-actions">
-                      {aiRelayStatus?.configured ? (
-                        <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
-                          {t('surface:settings.topupBuy')}
-                        </button>
-                      ) : null}
-                      {!isProActive ? (
-                        <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
-                          {t('surface:plans.buyPro')}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="plan-overview-total">
-                    <strong>{aiRelayStatus?.configured ? formatCredits(totalRemaining, locale) : '—'}</strong>
-                    <span>{t('surface:settings.planOverviewTotal')}</span>
-                  </div>
-                  {aiRelayStatus?.configured ? (
-                  <div className="plan-overview-rows">
-                    <div className="plan-overview-row">
-                      <div className="plan-overview-row-head">
-                        <span>{t('surface:settings.planOverviewBuiltin')}</span>
-                        <strong>{formatCredits(periodRemaining, locale)} / {formatCredits(planPeriodQuota, locale)}</strong>
-                      </div>
-                      <progress
-                        aria-label={t('surface:settings.planOverviewBuiltin')}
-                        max={Math.max(1, planPeriodQuota)}
-                        value={Math.min(Math.max(0, periodRemaining), Math.max(1, planPeriodQuota))}
-                      />
-                      <small>
-                        {(aiRelayStatus.remainingCredits ?? 0) <= 0
-                          ? t('surface:settings.llmQuotaExhausted')
-                          : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatCredits(usedQuota, locale),
-                            total: formatCredits(planPeriodQuota, locale),
-                          })}
-                        {' · '}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}
-                      </small>
-                    </div>
-                    {signupGrant ? (
-                    <div className="plan-overview-row">
-                      <div className="plan-overview-row-head">
-                        <span>{t('surface:settings.planOverviewBonus')}</span>
-                        <strong>{formatCredits(signupGrant.remainingCredits, locale)} / {formatCredits(signupGrant.amountCredits, locale)}</strong>
-                      </div>
-                      <progress
-                        aria-label={t('surface:settings.planOverviewBonus')}
-                        max={Math.max(1, signupGrant.amountCredits)}
-                        value={Math.min(Math.max(0, signupGrant.remainingCredits), Math.max(1, signupGrant.amountCredits))}
-                      />
-                      <small>
-                        {signupGrant.expiresAt
-                          ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(signupGrant.expiresAt, locale) })
-                          : t('surface:settings.topupBalanceNote')}
-                      </small>
-                    </div>
-                    ) : null}
-                    {purchaseGrants.length ? (
-                    <div className="plan-overview-row">
-                      <div className="plan-overview-row-head">
-                        <span>{t('surface:settings.planOverviewPurchased')}</span>
-                        <strong>{formatCredits(purchaseGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)}</strong>
-                      </div>
-                      {perpetualGrants.length ? (
-                        <div className="plan-overview-grant">
-                          <div className="plan-overview-grant-head">
-                            <span>{t('surface:settings.topupCredits')}</span>
-                            <strong>{formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)} / {formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0), locale)}</strong>
-                          </div>
-                          <progress
-                            aria-label={t('surface:settings.topupCredits')}
-                            max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
-                            value={Math.min(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
-                          />
-                          <small>{t('surface:settings.topupBalanceNote')}</small>
-                        </div>
-                      ) : null}
-                      {expiringGrants.map((grant) => (
-                        <div key={grant.id} className="plan-overview-grant">
-                          <div className="plan-overview-grant-head">
-                            <span>{t('surface:settings.topupCredits')}</span>
-                            <strong>{formatCredits(grant.remainingCredits, locale)} / {formatCredits(grant.amountCredits, locale)}</strong>
-                          </div>
-                          <progress
-                            aria-label={t('surface:settings.topupCredits')}
-                            max={Math.max(1, grant.amountCredits)}
-                            value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
-                          />
-                          <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
-                        </div>
-                      ))}
-                    </div>
-                    ) : null}
-                  </div>
-                  ) : null}
-                </div>
+        {account?.authenticated && account.subscription ? (() => {
+          const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
+          /* 字段单位(2026-11-04 后端 87ef144 起):quotaStatus 所有 *Credits
+             字段一律 quota 原值(500000 quota=$1),formatCredits 统一 ÷50000
+             出积分——前端不做任何还原换算。 */
+          const periodRemaining = aiRelayStatus?.planPeriodQuota != null
+            ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
+            : (aiRelayStatus?.periodRemainingCredits ?? 0)
+          const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
+          const usedQuota = aiRelayStatus?.usedCredits ?? 0
+          const grants = aiRelayStatus?.grants ?? []
+          // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
+          const grantRows = grants.length
+            ? grants
+            : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
+              ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
+              : []
+          const totalRemaining = aiRelayStatus?.remainingCredits ?? 0
+          // 注册赠送独立成行(用完不显示——后端只返回 remaining≠0 的 grant)
+          const signupGrant = grantRows.find((grant) => grant.source === 'signup_bonus') ?? null
+          const purchaseGrants = grantRows.filter((grant) => grant.source !== 'signup_bonus')
+          // 永不过期的充值包合成一行合计;有到期日的各自一行
+          const perpetualGrants = purchaseGrants.filter((grant) => !grant.expiresAt)
+          const expiringGrants = purchaseGrants.filter((grant) => grant.expiresAt)
+          return (
+          <>
+            <div className="reality-setting-row plan-summary-row">
+              <div>
+                <strong>{account.subscription.planName} · {subscriptionStatusLabel(account.subscription.status, t)}</strong>
+                <small>{t('surface:settings.planOverviewTotal', { credits: aiRelayStatus?.configured ? formatCredits(totalRemaining, locale) : '—' })}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}</small>
               </div>
-              )
-            })() : null}
-
-            {!(account.subscription?.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
-              <RedeemCodeField
-                value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy}
-                actionLabel={t('surface:settings.redeemCodeRedeem')}
-                onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}
-                onVerify={()=>{void redeemNow()}}
-              />
+              <div className="plan-summary-actions">
+                {aiRelayStatus?.configured ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
+                    {t('surface:settings.topupBuy')}
+                  </button>
+                ) : null}
+                {!isProActive ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
+                    {t('surface:plans.buyPro')}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {aiRelayStatus?.configured ? (
+            <>
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBuiltin')}</span>
+                  <strong>{formatCredits(periodRemaining, locale)} / {formatCredits(planPeriodQuota, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBuiltin')}
+                  max={Math.max(1, planPeriodQuota)}
+                  value={Math.min(Math.max(0, periodRemaining), Math.max(1, planPeriodQuota))}
+                />
+                <small>
+                  {(aiRelayStatus.remainingCredits ?? 0) <= 0
+                    ? t('surface:settings.llmQuotaExhausted')
+                    : t('surface:settings.usedUsedTotalTotal', {
+                      used: formatCredits(usedQuota, locale),
+                      total: formatCredits(planPeriodQuota, locale),
+                    })}
+                </small>
+              </div>
+            </div>
+            {signupGrant ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBonus')}</span>
+                  <strong>{formatCredits(signupGrant.remainingCredits, locale)} / {formatCredits(signupGrant.amountCredits, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBonus')}
+                  max={Math.max(1, signupGrant.amountCredits)}
+                  value={Math.min(Math.max(0, signupGrant.remainingCredits), Math.max(1, signupGrant.amountCredits))}
+                />
+                <small>
+                  {signupGrant.expiresAt
+                    ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(signupGrant.expiresAt, locale) })
+                    : t('surface:settings.topupBalanceNote')}
+                </small>
+              </div>
+            </div>
             ) : null}
+            {purchaseGrants.length ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewPurchased')}</span>
+                  <strong>{formatCredits(purchaseGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)}</strong>
+                </div>
+                {perpetualGrants.length ? (
+                  <div className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)} / {formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0), locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                      value={Math.min(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                    />
+                    <small>{t('surface:settings.topupBalanceNote')}</small>
+                  </div>
+                ) : null}
+                {expiringGrants.map((grant) => (
+                  <div key={grant.id} className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(grant.remainingCredits, locale)} / {formatCredits(grant.amountCredits, locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, grant.amountCredits)}
+                      value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
+                    />
+                    <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+            ) : null}
+            </>
+            ) : null}
+          </>
+          )
+        })() : (
+          <div className="reality-setting-row">
+            <div><strong>{t('surface:settings.signedOut')}</strong></div>
           </div>
-        ) : (
-          <small className="cloud-device-empty">{t('surface:settings.signedOut')}</small>
         )}
         <PlanUpgradeModal
           open={planModalOpen}

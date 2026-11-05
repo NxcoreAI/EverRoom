@@ -2180,7 +2180,7 @@
   "settings.topupPackCredits": "{credits} credits",
   "settings.topupPackNote": "No expiry, deducted as you use",
   "settings.topupLoadFailed": "Failed to load credit packs, please retry later",
-  "settings.planOverviewTotal": "Total credits left",
+  "settings.planOverviewTotal": "{credits} credits left · ",
   "settings.planOverviewBuiltin": "Included in plan",
   "settings.planOverviewPurchased": "Purchased credits",
   "plans.modalTitle": "Choose the plan that fits you",
