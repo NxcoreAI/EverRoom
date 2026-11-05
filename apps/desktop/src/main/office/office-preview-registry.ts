@@ -15,6 +15,8 @@ import {
   onOfficeFileSaved,
   wireDocsAgentAsk,
   wireDocsAskQueue,
+  wireMarkdownAgentAsk,
+  wireMarkdownAskQueue,
   wireOfficeSavedHooks,
   wirePdfAgentAsk,
   wirePdfAskQueue,
@@ -387,6 +389,20 @@ export class OfficePreviewRegistry {
         }]
       })
       runtime.pdf.pushPdfAskQueue(wcId, pdfRows)
+      return true
+    }
+    if (instance.descriptor.kind === 'markdown') {
+      if (typeof runtime.markdown.pushMarkdownAskQueue !== 'function') return false
+      // 锚型与评论侧车一致：块索引（复用 fromBlockIndex）+ 摘要 + 块内偏移；
+      // 渲染层用模糊匹配器还原范围，缺 excerpt 的行也能锚到整块。
+      const mdRows = rows.map((item) => ({
+        id: item.id,
+        instruction: item.instruction,
+        ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+        blockIndex: item.anchor?.fromBlockIndex ?? 0,
+        ...(item.anchor?.offset !== undefined ? { offset: item.anchor.offset } : {}),
+      }))
+      runtime.markdown.pushMarkdownAskQueue(wcId, mdRows)
       return true
     }
     return false
@@ -1709,6 +1725,11 @@ export class OfficePreviewRegistry {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),
         forward: this.agentAskForward,
       })
+      // Markdown 选区「评论」浮层：与评论侧车同一锚型（块索引 + 摘要 + 偏移）。
+      wireMarkdownAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
       // 批注队列：编辑器内锚点动作 ↔ 宿主（队列事实只在宿主侧）。
       if (this.askQueueActionForward) {
         const queueDeps = {
@@ -1719,6 +1740,7 @@ export class OfficePreviewRegistry {
         wireSheetsAskQueue(this.runtime, queueDeps)
         wireSlidesAskQueue(this.runtime, queueDeps)
         wirePdfAskQueue(this.runtime, queueDeps)
+        wireMarkdownAskQueue(this.runtime, queueDeps)
       }
     }
     // AI 页签论文排版桥（注入晚于首开也在此补挂，幂等）。

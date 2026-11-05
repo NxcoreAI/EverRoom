@@ -59,11 +59,12 @@ export interface OfficeAgentAskEvent {
 }
 
 /**
- * 选区锚点：四种编辑器各自的定位字段并列在这里，宿主只做透传。
+ * 选区锚点：各编辑器各自的定位字段并列在这里，宿主只做透传。
  * - Word：顶层块索引区间
  * - Excel：sheetId + A1 区域
  * - PPT：页码（0 起）+ 选中元素的 durable id
  * - PDF：原始页序（0 起，旋转稳定）+ PDF 坐标的选区 quads
+ * - Markdown：顶层块索引 + 摘要 + 块内字符偏移（与评论侧车同一锚型）
  */
 export interface OfficeAskAnchor {
   // Word
@@ -80,6 +81,8 @@ export interface OfficeAskAnchor {
   // PDF
   pageIndex?: number
   quads?: number[][]
+  // Markdown（块索引复用 fromBlockIndex；offset 为块内字符偏移）
+  offset?: number
 }
 
 /**

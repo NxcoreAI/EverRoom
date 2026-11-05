@@ -475,6 +475,41 @@ export interface GenOfficeMarkdownRuntime {
     expectedPath: string,
     timeoutMs?: number,
   ): Promise<boolean>
+  /**
+   * 选区「评论」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引 + 摘要 + 块内偏移，与评论侧车同一锚型）。
+   * 可选：老运行时缺这个导出时 wire 静默跳过，浮层保持关闭。
+   */
+  setMarkdownAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            blockIndex: number
+            excerpt?: string
+            offset?: number
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 markdown 视图（空数组 = 清空文档内锚点）。 */
+  pushMarkdownAskQueue?(
+    wcId: number,
+    items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      blockIndex: number
+      offset?: number
+    }>,
+  ): void
+  /** markdown 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setMarkdownAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
   /** 视图销毁：清 IPC 状态映射 + 解除等待者。 */
   teardownMarkdownRenderer(contents: WebContents): void
 }
