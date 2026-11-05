@@ -2162,7 +2162,28 @@
   "agentChat.SLIDES_DRAFT_ARCHIVED": "内容稿已归档，可在资料面板恢复。",
   "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。",
   "agentExecutionTimeline": {
-    "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）"
+    "noopFolded": "已折叠 {count} 次空调用（echo / 读取 /dev/null 这类打点）",
+    "sheetsRead": "读取表格",
+    "sheetsReadDone": "已读取表格",
+    "sheetsEdit": "编辑表格",
+    "sheetsEditDone": "已编辑表格",
+    "wordRead": "读取文档",
+    "wordReadDone": "已读取文档",
+    "wordEdit": "编辑文档",
+    "wordEditDone": "已编辑文档",
+    "pdfRead": "读取 PDF",
+    "pdfReadDone": "已读取 PDF",
+    "pdfEdit": "编辑 PDF",
+    "pdfEditDone": "已编辑 PDF",
+    "slidesRead": "读取演示文稿",
+    "slidesReadDone": "已读取演示文稿",
+    "slidesEdit": "编辑演示文稿",
+    "slidesEditDone": "已编辑演示文稿",
+    "officeOpsDone": "{count} 处操作已完成",
+    "officeOpsPartial": "{total} 处操作中 {failed} 处失败",
+    "officeOpsFailed": "{total} 处操作失败",
+    "officeOpsEmpty": "无可执行操作",
+    "repeatCalls": "连续 {count} 次「{name}」，点开看每次的对象"
   },
   "agentChat": {
     "continueRun": "继续"

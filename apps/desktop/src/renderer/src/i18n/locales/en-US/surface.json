@@ -2162,7 +2162,28 @@
   "agentChat.SLIDES_DRAFT_ARCHIVED": "The content draft was archived; you can restore it from the Materials panel.",
   "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
   "agentExecutionTimeline": {
-    "noopFolded": "Collapsed {count} no-op tool calls (echo / reading /dev/null)"
+    "noopFolded": "Collapsed {count} no-op tool calls (echo / reading /dev/null)",
+    "sheetsRead": "Read spreadsheet",
+    "sheetsReadDone": "Spreadsheet read",
+    "sheetsEdit": "Edit spreadsheet",
+    "sheetsEditDone": "Spreadsheet edited",
+    "wordRead": "Read document",
+    "wordReadDone": "Document read",
+    "wordEdit": "Edit document",
+    "wordEditDone": "Document edited",
+    "pdfRead": "Read PDF",
+    "pdfReadDone": "PDF read",
+    "pdfEdit": "Edit PDF",
+    "pdfEditDone": "PDF edited",
+    "slidesRead": "Read slides",
+    "slidesReadDone": "Slides read",
+    "slidesEdit": "Edit slides",
+    "slidesEditDone": "Slides edited",
+    "officeOpsDone": "{count} changes applied",
+    "officeOpsPartial": "{failed} of {total} changes failed",
+    "officeOpsFailed": "{total} changes failed",
+    "officeOpsEmpty": "No operation to apply",
+    "repeatCalls": "{count} consecutive \"{name}\" calls — expand to see each target"
   },
   "agentChat": {
     "continueRun": "Continue"

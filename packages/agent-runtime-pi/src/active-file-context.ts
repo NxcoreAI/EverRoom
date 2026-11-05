@@ -49,6 +49,8 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
         + "修改不要求这份表格已经打开——后台会以 headless 方式打开一份隐藏工作簿并静默保存、自动更新版本（UI 隐藏/没有页签也行），"
         + "不要要求用户先打开或先切页签；用户说的是“另一份表格”或没给 fileId 时先用 file_search 按文件名找到 fileId。"
         + "sheets_create 是另建一份新文件，不是修改当前文件。"
+        + "调用要合并：同一张表的多处改动放进一次 sheets_agent_edit 的 calls 数组（一次十几二十处），"
+        + "要读多个区域也放进一次 calls；界面按次显示进度，一格一格地改会把过程刷成几十行重复条目。"
       : null,
     activeFile.editable === false
       ? "它是只读打开：正文可以读取，但不要承诺修改它。"
