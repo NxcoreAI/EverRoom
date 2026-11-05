@@ -143,10 +143,15 @@ export function NativeEditorHost({
       return true
     }
 
-    /// 模态浮层（新建空间对话框、命令面板…）也是 DOM：原生视图会把它们整块盖住。
-    /// Radix 只在打开时挂载并打 data-state=open，所以"有可见浮层"就等于"原生区被挡"。
+    /// 模态浮层（新建空间对话框、命令面板…）与下拉浮层（标签栏「+」菜单、Select 弹层）
+    /// 也是 DOM：原生视图会把它们整块盖住。Radix 只在打开时挂载并打 data-state=open，
+    /// 所以"有可见浮层"就等于"原生区被挡"。菜单必须单列：DropdownMenu/ContextMenu 的
+    /// Content 是 role=menu，不带 aria-modal 也不是 dialog，漏了它就会出现
+    /// 「标签栏 + 菜单被右侧文档原生视图盖住、新建项目空间点不到」（2026-11-05 实测）。
+    /// tooltip 不收：Radix 悬浮提示的 data-state 是 delayed-open/instant-open，
+    /// 且为一条小提示隐藏整块原生区只会造成闪隐。
     const OVERLAY_SELECTOR =
-      '.ui-modal-overlay[data-state="open"], .wb-palette-overlay[data-state="open"], [role="dialog"][data-state="open"], [aria-modal="true"]'
+      '.ui-modal-overlay[data-state="open"], .wb-palette-overlay[data-state="open"], [role="dialog"][data-state="open"], [aria-modal="true"], [role="menu"][data-state="open"], [role="listbox"][data-state="open"]'
     const overlayCoversHost = (): boolean => {
       for (const node of document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)) {
         if (node.closest('.op-native-wrap')) continue
