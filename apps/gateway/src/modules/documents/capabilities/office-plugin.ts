@@ -83,6 +83,21 @@ export interface OfficeFileAccess {
     contentHash: string;
   } | null;
   catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
+  /** 版本历史（word_agent_revert 用）；未实现时回滚工具不暴露。 */
+  listVersions?(fileEntryId: string, limit?: number): Array<{
+    versionNo: number;
+    contentHash: string;
+    createdAt: string;
+    status: string;
+    byteSize: number;
+    current: boolean;
+  }>;
+  /** 回滚到历史版本（字节重走判重导入：currentVersionId 指回旧版本行）。 */
+  revertToVersion?(fileEntryId: string, versionNo: number): Promise<{
+    versionNo: number;
+    contentHash: string;
+    alreadyCurrent: boolean;
+  } | null>;
 }
 
 /**
@@ -1303,6 +1318,69 @@ export function officePlugin(
   };
 
   /**
+   * 版本回滚：不依赖桌面编辑器，纯文件库操作。灰度/裁剪等破坏性 op 不可逆，
+   * 但每次 agent 编辑都落了新版本——回滚 = 把旧版本字节重新指为当前版。
+   */
+  const wordAgentRevert: DocumentCapabilityTool = {
+    name: "word_agent_revert",
+    title: "查看 Word 版本历史 / 回滚到历史版本",
+    description: "查看一份已入库 .docx 的版本历史，或回滚到某个历史版本（mode: list|revert）。"
+      + "每次保存/agent 编辑都会产生新版本（content_hash 变化即新版本，历史字节都在对象库）。"
+      + "list 返回最近版本（versionNo 倒序，current 标当前版）；revert 把指定版本的字节重新指为当前版——"
+      + "典型场景：agent 改坏了/图片转灰度后想恢复原图/误删内容，说“回到改之前那版”即可。"
+      + "回滚不是删除历史：当前版字节仍在版本链里，还能再滚回来（往返无损）。"
+      + "revert 前先 list 确认 versionNo；不确定该回哪版时把最近几版列给用户选，不要猜。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        mode: { type: "string", enum: ["list", "revert"], description: "list = 查看版本历史（默认）；revert = 回滚" },
+        versionNo: { type: "integer", minimum: 1, description: "revert 模式必填：目标版本号（先 list 拿到）" },
+      },
+      required: [],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_revert 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const access = target.access;
+      if (typeof access.listVersions !== "function" || typeof access.revertToVersion !== "function") {
+        throw new Error("VERSION_PORT_UNAVAILABLE: 该文件服务不支持版本操作");
+      }
+      const mode = args.mode === "revert" ? "revert" : "list";
+      if (mode === "list") {
+        const versions = access.listVersions(target.fileId, 30);
+        if (versions.length === 0) throw new Error(`VERSION_HISTORY_EMPTY: 《${target.entry.originalName}》没有可用的版本历史`);
+        const lines = versions.map((v) =>
+          `v${v.versionNo}${v.current ? "（当前版）" : ""} · ${v.createdAt} · ${v.byteSize} bytes · ${v.status}`);
+        return {
+          content: [{ type: "text", text: `《${target.entry.originalName}》版本历史（最近 ${versions.length} 版，倒序）：\n${lines.join("\n")}` }],
+          structuredContent: { fileId: target.fileId, versions },
+        };
+      }
+      const versionNo = args.versionNo;
+      if (typeof versionNo !== "number" || !Number.isInteger(versionNo) || versionNo < 1) {
+        throw new Error("INVALID_ARGS: revert 模式必须带 versionNo（正整数，先 list 拿到）");
+      }
+      const result = await access.revertToVersion(target.fileId, versionNo);
+      if (!result) {
+        throw new Error(`REVERT_FAILED: 《${target.entry.originalName}》没有版本 v${versionNo}（先 list 确认版本号）`);
+      }
+      const message = result.alreadyCurrent
+        ? `v${versionNo} 已经是《${target.entry.originalName}》的当前版，无需回滚。`
+        : `已把《${target.entry.originalName}》回滚到 v${versionNo}（content ${result.contentHash.slice(0, 8)}）。`
+          + "当前版的字节仍在版本链里，随时可以再滚回来。";
+      return {
+        content: [{ type: "text", text: message }],
+        structuredContent: { fileId: target.fileId, ...result },
+      };
+    },
+  };
+
+  /**
    * 段落级对比：纯网关侧读文件库当前版本（不依赖桌面端打开状态），
    * LCS 对齐语义与 GenOffice docs 的「审阅 → 比较」一致（同一位置删+增合并成 changed）。
    */
@@ -1867,6 +1945,9 @@ export function officePlugin(
       + "导出后告知新 PDF 文件名即可，不要用 office_create 重建一份、也不要假装改动原 .docx。",
       "word_agent_ops 的 object.image.replace 图片来源只写本地图片绝对路径 path 或公网图片 url"
       + "（网关读字节后注入 base64/mime，模型不必也不许把 base64 抄进 ops）；来源解析失败会整批拒绝，先修正 path/url 再重试。",
+      "破坏性 op（图片转灰度/裁剪/去背景、删块、整章删除）不可逆但版本链兜底：用户想反悔（“恢复原图/回到改之前”）"
+      + "用 word_agent_revert（先 mode:list 看版本，再 mode:revert 回滚），不要让用户重新上传原件；"
+      + "不确定该回哪版时把最近几版列出来让用户选。",
     ],
     tools: [
       officeCreate,
@@ -1877,7 +1958,7 @@ export function officePlugin(
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
       ...(files
-        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
+        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordAgentRevert, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
         : []),
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],

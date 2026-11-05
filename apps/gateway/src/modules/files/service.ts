@@ -836,6 +836,66 @@ export class FilesService {
     return { buffer, mime: sniffImageMime(buffer) ?? row.blob.mime, filename: row.entry.originalName };
   }
 
+  /** 版本历史（agent 回滚用）：按版本号倒序，最近 N 条。 */
+  listVersions(
+    fileEntryId: string,
+    limit = 30,
+  ): Array<{ versionNo: number; contentHash: string; createdAt: string; status: string; byteSize: number; current: boolean }> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return [];
+    const rows = this.db.select({ version: fileVersions, blob: fileBlobs })
+      .from(fileVersions)
+      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .where(eq(fileVersions.fileEntryId, fileEntryId))
+      .orderBy(desc(fileVersions.versionNo)).limit(limit).all();
+    return rows.map(({ version, blob }) => ({
+      versionNo: version.versionNo,
+      contentHash: version.contentHash,
+      createdAt: version.createdAt.toISOString(),
+      status: version.status,
+      byteSize: blob?.byteSize ?? 0,
+      current: version.id === entry.currentVersionId,
+    }));
+  }
+
+  /**
+   * 回滚到历史版本：旧 blob 的字节重新走 importFile（按 fileEntryId 钉住条目）。
+   * 内容哈希与旧版本一致 → registerImportedFile 的判重分支只把 currentVersionId
+   * 指回既有版本行（版本不增、字节零拷贝），并重新入队解析让索引跟上。
+   * 返回 null = 条目/版本不存在；返回 current=true 表示目标就是当前版（幂等空操作）。
+   */
+  async revertToVersion(
+    fileEntryId: string,
+    versionNo: number,
+  ): Promise<{ versionNo: number; contentHash: string; alreadyCurrent: boolean } | null> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return null;
+    const target = this.db.select().from(fileVersions)
+      .where(and(eq(fileVersions.fileEntryId, fileEntryId), eq(fileVersions.versionNo, versionNo))).get();
+    if (!target) return null;
+    const alreadyCurrent = entry.currentVersionId === target.id;
+    if (alreadyCurrent) return { versionNo, contentHash: target.contentHash, alreadyCurrent: true };
+    const blob = this.db.select().from(fileBlobs)
+      .where(eq(fileBlobs.contentHash, target.contentHash)).get();
+    if (!blob) return null;
+    // 本地夹条目按引用访问用户磁盘，不持有字节镜像：blob 一定在对象库（导入时
+    // storeFileBlobStream 先落库），这里不区分 sourceKind，统一从对象库读。
+    const blobPath = join(this.dataDir, blob.storagePath);
+    if (!existsSync(blobPath)) return null;
+    const buffer = await readFile(blobPath);
+    const result = await this.importFile({
+      // sourceKind/sourceKey 会被 fileEntryId 钉住逻辑忽略，取合法占位即可。
+      sourceKind: "artifact-imported",
+      sourceKey: `revert:${fileEntryId}`,
+      originalName: entry.originalName,
+      buffer,
+      mime: blob.mime,
+      // 保留条目当前归属：不传 workspaceId 时 registerImportedFile 沿用 entry 上的值。
+      fileEntryId,
+    });
+    return { versionNo, contentHash: result.contentHash, alreadyCurrent: false };
+  }
+
   async markLocalFileMissing(localSourceId: string, localItemId: string): Promise<boolean> {
     const entry = this.db.select().from(fileEntries).where(and(
       eq(fileEntries.sourceKind, "local-folder"),
