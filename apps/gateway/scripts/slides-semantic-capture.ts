@@ -35,7 +35,7 @@ const skipSelfReview = args.includes("--skip-self-review");
 if (!["pages", "layouts", "decks"].includes(suite) || ![repetitions, limit, parallel].every(n => Number.isInteger(n) && n > 0)) throw new Error("invalid evaluation options");
 mkdirSync(output, { recursive: true });
 
-const connectionPath = option("--connection", join(homedir(), "Library/Application Support/EverRoom/runtime/gateway.json"));
+const connectionPath = option("--connection", join(homedir(), "Library/Application Support/EverOffice/runtime/gateway.json"));
 const connection = JSON.parse(readFileSync(connectionPath, "utf8"));
 const response = await fetch(`${connection.baseUrl}/v1/runtime-config/secrets`, {
   headers: { Authorization: `Bearer ${connection.token}` }, signal: AbortSignal.timeout(10_000),

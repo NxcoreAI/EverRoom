@@ -1,6 +1,6 @@
 ---
 name: document-cursor-completion
-description: Complete a rich-text document at the cursor using the EverRoom FIM protocol. Use for editor cursor-completion requests.
+description: Complete a rich-text document at the cursor using the EverOffice FIM protocol. Use for editor cursor-completion requests.
 ---
 
 # Document Cursor Completion

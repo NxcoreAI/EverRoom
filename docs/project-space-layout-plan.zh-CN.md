@@ -29,7 +29,7 @@
 | Agent 沙箱工作目录 | `<dataDir>/agent/runtimes/<agentId>/workspace`（**按 agent 全局**，不是按空间） | `agent/runtime-factory.ts:41-49` |
 | Agent 临时/派生文件 | 全部 `mkdtemp(os.tmpdir())`，进程/机器级别，与空间无关 | `thesis-format/normalize.ts:82`、`subagents/screenshot-jpeg.ts:19`、`vision/vlm-client.ts:335` 等 10 余处 |
 | 本机 CLI Agent 目录绑定 | JSON 存储，按 `(sessionId, agentId)` 记 `rootPath` | `desktop/src/main/local-agents/workspace-binding-store.ts:82` |
-| 应用数据根 | `~/Library/Application Support/EverRoom`（`app.getPath('appData')/APP_NAME`，可被 `NXCORE_DATA_DIR` 覆盖） | `desktop/src/main/index.ts:175-183` |
+| 应用数据根 | `~/Library/Application Support/EverOffice`（`app.getPath('appData')/APP_NAME`，可被 `NXCORE_DATA_DIR` 覆盖） | `desktop/src/main/index.ts:175-183` |
 
 ### 1.2 「字节」和「索引」到底指什么（评审问题 5 的答复）
 
@@ -78,7 +78,7 @@
 
 ## 3. 目标目录结构（v2：根即资料库）
 
-默认根：`<dataDir>/Workspace/`（`dataDir` = `~/Library/Application Support/EverRoom`）。新建空间名「飞书相关工作」→ 目录 `Workspace/feishu-work/`。目录名一律 ASCII（中文名只存 manifest 与 DB，UI 显示中文）。
+默认根：`<dataDir>/Workspace/`（`dataDir` = `~/Library/Application Support/EverOffice`）。新建空间名「飞书相关工作」→ 目录 `Workspace/feishu-work/`。目录名一律 ASCII（中文名只存 manifest 与 DB，UI 显示中文）。
 
 **核心约定：空间根就是资料库根。** 空间里只有两个隐藏目录（`.everoffice/` 元数据、`.tmp/` 过程缓存），其余位置全部是用户的资料；新生成的文件直接平铺在根上。这样"用户已经存满资料的目录"也能直接设为工作空间：应用只往里加两个隐藏目录，不会和任何已有文件冲突，Agent 也能直接用 bash 浏览。
 
@@ -111,7 +111,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `Workspace/` | 空间容器 | 网关（首个空间时创建） | 网关、桌面「发现空间」 | 应用级 | 容器根路径来自设置（默认 `dataDir/Workspace`），可整体改 |
 | `<space>/` | **空间根 = 资料库根** | `WorkspaceLayoutService.provision()` | 全部 | 空间级 | 判定条件：`.everoffice/space.json` 可解析 |
-| `.everoffice/space.json` | 空间 manifest | 网关 | 网关、桌面（识别）、其他 EverRoom | 空间级，唯一必需 | 见 §4 |
+| `.everoffice/space.json` | 空间 manifest | 网关 | 网关、桌面（识别）、其他 EverOffice | 空间级，唯一必需 | 见 §4 |
 | `.everoffice/memory/` | 记忆库根 | 记忆服务 | 记忆服务、记忆页 | 空间级 | per-space hippo root；随空间搬走 |
 | `.everoffice/conversation/` | 对话投影占位 | 网关（仅开启镜像时） | 用户、外部工具 | 空间级 | 默认空目录；会话权威仍在 DB |
 | `.everoffice/trash/` | 空间内回收站 | 网关 | 网关（恢复/GC） | 30 天 | 删除 = 移入 `trash/<YYYYMMDD>/<uuid>/`，可恢复 |
@@ -145,7 +145,7 @@
   "layoutVersion": 2,
   "rootMode": "managed",
   "createdAt": "2026-11-02T13:04:11.512Z",
-  "createdBy": { "app": "EverRoom", "version": "0.1.0", "platform": "darwin" },
+  "createdBy": { "app": "EverOffice", "version": "0.1.0", "platform": "darwin" },
   "layout": {
     "library": "",
     "meta": ".everoffice",
@@ -319,7 +319,7 @@ onLayoutChanged(cb: (spaceId: string) => void): () => void   // 主进程 fs.wat
 
 ### 8.1 创建空间（默认目录，无需手动选）
 
-1. 弹窗调 `projectSpace.defaultRootPreview(name)`，**直接显示**：「将创建于 `…/EverRoom/Workspace/feishu-work`（可改）」；名字一改预览实时变。
+1. 弹窗调 `projectSpace.defaultRootPreview(name)`，**直接显示**：「将创建于 `…/EverOffice/Workspace/feishu-work`（可改）」；名字一改预览实时变。
 2. 点「创建空间」→ `workspace.create({ name, description, goals, rootMode: 'managed' })`（不再带 `path`）。
 3. 网关 `provision()`：生成 `slug` → 同卷 `Workspace/.staging-<uuid>/` 建完整布局（`.everoffice/{memory,conversation,trash,objects,cache/derived}`、`.tmp/`）→ 写 `.everoffice/space.json` → `rename` 成最终目录 → 落 DB 行。根上不建任何资料子目录（资料平铺）。
 4. 任一步失败：删 staging，DB 不落行，UI 报「创建失败」。
@@ -421,7 +421,7 @@ onLayoutChanged(cb: (spaceId: string) => void): () => void   // 主进程 fs.wat
 
 | # | 决策 | 结论 |
 | --- | --- | --- |
-| 1 | 默认根 | `<dataDir>/Workspace/`（`~/Library/Application Support/EverRoom/Workspace`） |
+| 1 | 默认根 | `<dataDir>/Workspace/`（`~/Library/Application Support/EverOffice/Workspace`） |
 | 2 | 目录名语言 | v2：根上只有 `.everoffice/`、`.tmp/` 两个隐藏目录；角色映射写在 manifest `layout`（全相对空间根）。UI 显示中文 |
 | 3 | 标记文件 | **每个空间只一个** `.everoffice/space.json`（v2；v1 为根上 `space.everoffice`，自动迁移）——子目录、容器根都不放标记；它同时声明内部布局 |
 | 4 | `default` 空间 | **绑目录**：`Workspace/inbox/` |
@@ -504,7 +504,7 @@ onLayoutChanged(cb: (spaceId: string) => void): () => void   // 主进程 fs.wat
 
 ### 15.4 用户可见行为
 
-- 新建空间：不选目录，直接落 `…/EverRoom/Workspace/<slug>`；同名自动 `-2`；概览页能看到目录、缓存占用、一键同步/修复。
+- 新建空间：不选目录，直接落 `…/EverOffice/Workspace/<slug>`；同名自动 `-2`；概览页能看到目录、缓存占用、一键同步/修复。
 - 资料库：导入/生成的文件**真的在空间根上**（与用户自己的文件并排），访达可见可用；改名同步改磁盘；删除进 `.everoffice/trash/<日期>/`。
 - 访达里删/加文件 → 概览「同步目录」：删掉的标 missing、加上来的自动入库到原目录位置。
 - 目录被搬走 → 概览显示「目录不在原位」，可「重新定位」（选目录把空间搬过去）或「在原位重建」。

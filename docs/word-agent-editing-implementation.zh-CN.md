@@ -156,8 +156,8 @@ Agent (gateway)
 > 用户要求：GenOffice 编辑器的**操作区**（Ribbon/工具栏/命令入口）可以隐藏，正文画布保留，由 agent 承担全部操作；隐藏操作区不能降低可用能力。
 
 实现：
-- docs 渲染器新增 `chromeHidden` 状态：EverRoom embed 下**默认隐藏**；localStorage `aidocs.chromeHidden` 记住用户选择；standalone 默认显示。
+- docs 渲染器新增 `chromeHidden` 状态：EverOffice embed 下**默认隐藏**；localStorage `aidocs.chromeHidden` 记住用户选择；standalone 默认显示。
 - 根节点加 `chrome-hidden` class，隐藏 `.ribbon / .status-bar / .nav-pane / .ruler / .hf-variant-chips`；正文画布、查找/批注/比较面板、对话框保留。
 - 恢复入口：右上角半透明「显示工具栏」胶囊（`chrome-restore`）、`⌘⇧F` 切换、宿主 IPC `setDocsChromeHidden(contents, hidden?)`。
-- EverRoom 宿主：`OfficePreviewRegistry.setDocsChromeHidden(fileId|'active', hidden?)` + `office:chrome-toggle` IPC + `window.desktop.office.toggleChrome({fileId?, hidden?})`，供顶栏/菜单/快捷键接入。
+- EverOffice 宿主：`OfficePreviewRegistry.setDocsChromeHidden(fileId|'active', hidden?)` + `office:chrome-toggle` IPC + `window.desktop.office.toggleChrome({fileId?, hidden?})`，供顶栏/菜单/快捷键接入。
 - Agent 的所有工具/op 直接调用编辑器内部命令与 helper，**不经过 Ribbon**，因此操作区隐藏不影响能力；操作区 → agent 对照见 `docs/word-agent-operation-coverage.zh-CN.md`。

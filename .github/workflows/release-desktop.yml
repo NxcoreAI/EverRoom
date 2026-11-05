@@ -204,8 +204,8 @@ jobs:
       - name: Audit package contents
         shell: bash
         run: |
-          app_path="$(find release -type d -name EverRoom.app -print -quit)"
-          test -n "$app_path" || { echo "EverRoom.app was not produced" >&2; exit 1; }
+          app_path="$(find release -type d -name EverOffice.app -print -quit)"
+          test -n "$app_path" || { echo "EverOffice.app was not produced" >&2; exit 1; }
           resources="$app_path/Contents/Resources"
           forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.map$'
 
@@ -256,13 +256,13 @@ jobs:
       - name: Verify artifacts
         shell: bash
         run: |
-          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          app_path="$(find release -type d -name EverOffice.app -print -quit)"
           dmgs=(release/*.dmg)
           zips=(release/*.zip)
           test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
           test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
-          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64" \
-            || { echo "unexpected archs in EverRoom binary" >&2; exit 1; }
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverOffice")" = "arm64" \
+            || { echo "unexpected archs in EverOffice binary" >&2; exit 1; }
           test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
             || { echo "missing gateway better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
           hdiutil verify "${dmgs[0]}"
@@ -451,11 +451,11 @@ jobs:
           # 资产名与打包侧 artifactName 一致：tag 完整版本号（nightly 含后缀）。
           version="${GITHUB_REF_NAME#desktop-v}"
           expected=(
-            "release-assets/EverRoom-$version-arm64.dmg"
-            "release-assets/EverRoom-$version-arm64.zip"
-            "release-assets/EverRoom-$version-arm64.zip.blockmap"
-            "release-assets/EverRoom-$version-windows-x64.exe"
-            "release-assets/EverRoom-$version-windows-x64.exe.blockmap"
+            "release-assets/EverOffice-$version-arm64.dmg"
+            "release-assets/EverOffice-$version-arm64.zip"
+            "release-assets/EverOffice-$version-arm64.zip.blockmap"
+            "release-assets/EverOffice-$version-windows-x64.exe"
+            "release-assets/EverOffice-$version-windows-x64.exe.blockmap"
           )
           files=(release-assets/*)
           test "${#files[@]}" -eq "${#expected[@]}" || {
@@ -514,17 +514,17 @@ jobs:
           ossutil() { "$RUNNER_TEMP/ossutil64" "$@" -e "$OSS_ENDPOINT" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"; }
 
           ossutil cp release-assets/ "oss://$OSS_BUCKET/archive/$version/" -r -f
-          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-windows-x64.exe" | base64 -w0)
-          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-arm64.zip" | base64 -w0)
-          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$version-arm64.dmg" | base64 -w0)
-          size_exe=$(stat -c%s "release-assets/EverRoom-$version-windows-x64.exe")
-          size_zip=$(stat -c%s "release-assets/EverRoom-$version-arm64.zip")
-          size_dmg=$(stat -c%s "release-assets/EverRoom-$version-arm64.dmg")
+          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-windows-x64.exe" | base64 -w0)
+          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-arm64.zip" | base64 -w0)
+          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-arm64.dmg" | base64 -w0)
+          size_exe=$(stat -c%s "release-assets/EverOffice-$version-windows-x64.exe")
+          size_zip=$(stat -c%s "release-assets/EverOffice-$version-arm64.zip")
+          size_dmg=$(stat -c%s "release-assets/EverOffice-$version-arm64.dmg")
 
           jq -n --arg v "$version" --arg c "$channel" --arg sha "$GITHUB_SHA" \
-            --arg exe "EverRoom-$version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
-            --arg zip "EverRoom-$version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
-            --arg dmg "EverRoom-$version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
+            --arg exe "EverOffice-$version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
+            --arg zip "EverOffice-$version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
+            --arg dmg "EverOffice-$version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
             '{version:$v,channel:$c,commitSha:$sha,files:[
               {platform:"windows",fileName:$exe,fileSize:$size_exe,sha512Base64:$sha_exe},
               {platform:"macos",fileName:$zip,fileSize:$size_zip,sha512Base64:$sha_zip},
@@ -553,7 +553,7 @@ jobs:
             # 结束符带前导空格则 bash 不认，heredoc 永不终止。
             cat > "$RUNNER_TEMP/latest.yml" <<YAML
           version: $version
-          path: $public_base/archive/$version/EverRoom-$version-windows-x64.exe
+          path: $public_base/archive/$version/EverOffice-$version-windows-x64.exe
           sha512: $sha_exe
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
           releaseName: '$version'
@@ -561,7 +561,7 @@ jobs:
             cat > "$RUNNER_TEMP/latest-mac.yml" <<YAML
           version: $version
           files:
-            - url: $public_base/archive/$version/EverRoom-$version-arm64.zip
+            - url: $public_base/archive/$version/EverOffice-$version-arm64.zip
               sha512: $sha_zip
           sha512: $sha_zip
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
@@ -611,8 +611,8 @@ jobs:
 
           repo_url="https://github.com/$GITHUB_REPOSITORY"
           if [[ "$PUBLISH_RESULT" == "success" ]]; then
-            buttons="$(jq -nc --arg dmg "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-arm64.dmg" \
-              --arg exe "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-windows-x64.exe" \
+            buttons="$(jq -nc --arg dmg "$repo_url/releases/download/$GITHUB_REF_NAME/EverOffice-$version-arm64.dmg" \
+              --arg exe "$repo_url/releases/download/$GITHUB_REF_NAME/EverOffice-$version-windows-x64.exe" \
               --arg rel "$repo_url/releases/tag/$GITHUB_REF_NAME" '[
                 {text:"⬇ macOS .dmg", url:$dmg, type:"default"},
                 {text:"⬇ Windows .exe", url:$exe, type:"default"},

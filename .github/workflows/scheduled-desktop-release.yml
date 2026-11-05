@@ -162,7 +162,7 @@ jobs:
             echo "::warning::FEISHU_RELEASE_WEBHOOK is not configured; skipping notification."
             exit 0
           fi
-          message="EverRoom 每日发布检查失败
+          message="EverOffice 每日发布检查失败
           分支：dev
           提交：$(git log -1 --pretty='%h %s (%an)')
           日志：https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

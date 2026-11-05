@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import React, { useState } from 'react'
 
-import everroomAppIcon from '@/assets/everroom-app-icon.png'
+import everroomAppIcon from '@/assets/everoffice-app-icon.png'
 import { useOptionalAccount } from '@/state/AccountContext'
 
 import { useHomeTab, useWorkbenchStore } from '../state/store'
@@ -46,7 +46,7 @@ export function HomeSidebar() {
   const signedIn = account?.authenticated === true
   const accountName = account?.user?.name || account?.user?.email || account?.user?.phone || null
   const accountLabel = signedIn ? (accountName ?? '已登录') : '未登录'
-  const accountHint = signedIn ? (account?.subscription?.planName ?? 'EverRoom 账号') : '登录后同步项目空间'
+  const accountHint = signedIn ? (account?.subscription?.planName ?? 'EverOffice 账号') : '登录后同步项目空间'
   const avatarText = signedIn && accountName ? accountName.trim().slice(0, 1).toUpperCase() : '登'
 
   const [loggingOut, setLoggingOut] = useState(false)
@@ -68,7 +68,7 @@ export function HomeSidebar() {
       <div className="wb-sidebar-brand">
         <img className="wb-sidebar-brand-mark" src={everroomAppIcon} alt="" aria-hidden="true" draggable={false} />
         <div className="wb-sidebar-brand-text">
-          <strong>EverRoom</strong>
+          <strong>EverOffice</strong>
           <span>Agent 工作台</span>
         </div>
       </div>
@@ -98,7 +98,7 @@ export function HomeSidebar() {
               type="button"
               className="wb-account"
               aria-label={signedIn ? `账号：${accountLabel}` : '账号'}
-              title={signedIn ? accountLabel : '登录 EverRoom 账号'}
+              title={signedIn ? accountLabel : '登录 EverOffice 账号'}
             >
               <span className="wb-account-avatar" aria-hidden="true">{avatarText}</span>
               <span className="wb-account-text">

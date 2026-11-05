@@ -1,7 +1,7 @@
 # 外部 Agent 访问（MCP + Skills）设计与影响评估
 
-- 对应 PRD：《EverRoom 0.2.0 大版本更新 PRD》第 7 章（L2.5 外部 Agent 接入）+ 附录 A.3 外部读取与回写协议 + 10.2「Skills」发布门槛。
-- 前置调研：`docs/notes/everroom-agent-access-research.md`（2026-10-16，四路调查合成）。
+- 对应 PRD：《EverOffice 0.2.0 大版本更新 PRD》第 7 章（L2.5 外部 Agent 接入）+ 附录 A.3 外部读取与回写协议 + 10.2「Skills」发布门槛。
+- 前置调研：`docs/notes/everoffice-agent-access-research.md`（2026-10-16，四路调查合成）。
 - 状态：**阶段 1（网关后端核心）与阶段 2（桌面端固定端口 + Agent 连接页 + 安装落盘）均已实施并通过测试**（2026-10-17）。阶段 1：3 张表 + 迁移 0081、agent-access 模块（连接/提交/事件服务、9 工具面、MCP host、连接页 REST、安装代写生成）、`/v1/mcp/agents` 端点与 auth 豁免；`tests/agent-access.test.ts` 7 用例全绿。阶段 2：`GatewaySupervisor.portProvider` 固定端口（`dataDir/agent-access-settings.json`）、`AgentAccessGatewayBridge` + IPC 通道组 + preload `agentAccess` API + shared DTO、AgentConnectionsPage（列表/新建含 Room 多选与能力勾选/暂停恢复/换 token/自检/示例查询/安装/调试面板/固定端口设置卡）、`AgentAccessInstaller` 落盘（Claude Code/Cursor 自动合并配置、Codex 手动片段、先备份、损坏不写）；desktop typecheck + electron-vite build + 11 项相关测试通过。剩余：真机端到端验证（见 §8）。
 - 本文档是大任务门禁（开发规范 §6）的影响评估 + 接口设计，开工已获用户确认（2026-10-17「开工」）。
 
@@ -34,7 +34,7 @@
 | `apps/gateway/src/modules/agent/channel-mcp-host.ts` | `ExchangeTransport` 加 export（复用不复制） |
 | `apps/gateway/src/server/create-server.ts` | 组装 + 注册（channelMcpRoutes 注册点之后） |
 | `apps/gateway/tests/agent-access.test.ts` | 新增测试 |
-| `docs/notes/everroom-agent-access-research.md` | 调研报告从仓库根迁入（规范 §4） |
+| `docs/notes/everoffice-agent-access-research.md` | 调研报告从仓库根迁入（规范 §4） |
 
 回滚：纯增量，revert 工作区文件即可；迁移为 CREATE TABLE 幂等 additive（client.ts 的 runAdditiveMigrationIdempotently 语义）。
 
@@ -141,5 +141,5 @@ Skill 遵循 agentskills.io 六字段规范（name=everroom-agent），由网关
 1. 桌面启动 → Agent 连接页 → 设置固定端口（如 8790）→ 重启网关 → 端口生效。
 2. 新建 claude-code 连接（全部 Room + 读能力 + 回写）→ 复制 token → 安装 → 检查 `~/.claude/skills/everroom-agent/` 与 `~/.claude.json` 的 `mcpServers.everroom`。
 3. 终端起 Claude Code（项目目录）→ `/mcp` 查看 everroom 服务器 → 让它 `everroom_search` 一次 → 命中带 URI/版本 → `everroom_fetch` 精读 → `everroom_submit` 提交一条候选 → 连接页调试面板看到提交（pending_review）。
-4. 重启 EverRoom（网关随固定端口重生）→ Claude Code 直接再调一次工具（连接持久 + 会话自愈验证）。
+4. 重启 EverOffice（网关随固定端口重生）→ Claude Code 直接再调一次工具（连接持久 + 会话自愈验证）。
 5. PRD 10.2 门槛用例：G1 搜索→精读原会话与源文件；G2 双连接范围隔离；G3 同 submissionId 重放 duplicate。

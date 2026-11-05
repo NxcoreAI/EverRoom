@@ -1,4 +1,4 @@
-/* EverRoom Office 页面层（最近 / 所有文件 / 知识库 / 连接器 / 智能体 / 编辑器外壳）。
+/* EverOffice Office 页面层（最近 / 所有文件 / 知识库 / 连接器 / 智能体 / 编辑器外壳）。
    视觉 token 统一来自 styles/tokens.css 的暖纸品牌体系，这里不再局部覆写色值；
    页面内的排版、卡片、表格与编辑器外壳规则从下方开始。 */
 
@@ -49,8 +49,8 @@
   padding: 16px 12px 12px;
 }
 /* 品牌与账户（侧边栏内） */
-/* EverRoomMac 品牌标：项目原有 app 图标图片（原型占位为蓝色渐变 squircle + "E" 白字，
- * 迁移时替换为 everroom-app-icon.png，此处仅保留尺寸与圆角投影）。 */
+/* EverOfficeMac 品牌标：项目原有 app 图标图片（原型占位为蓝色渐变 squircle + "E" 白字，
+ * 迁移时替换为 everoffice-app-icon.png，此处仅保留尺寸与圆角投影）。 */
 .op-brand-mark {
   display: block;
   object-fit: contain;
@@ -1139,8 +1139,8 @@ table.op-sheet td input {
 .op-src-status.syncing::before { background: var(--ui-warm); }
 
 /* ───────────── 连接器页 ───────────── */
-/* 停靠栏内的 EverRoom agent 面板适配：原 .agent-panel 是窗口级 fixed 浮层
-   （EverRoom 主应用右上角挂载），在 dock 里改为铺满内容区。 */
+/* 停靠栏内的 EverOffice agent 面板适配：原 .agent-panel 是窗口级 fixed 浮层
+   （EverOffice 主应用右上角挂载），在 dock 里改为铺满内容区。 */
 .op-dock-body .agent-panel {
   position: static;
   inset: auto;

@@ -38,7 +38,7 @@ export interface AgentImageDeps {
   lookupImpl?: (host: string) => Promise<Array<{ address: string }>>;
   maxBytes?: number;
   /**
-   * EverRoom 文件库图片：模型说“刚上传的 logo / 之前生成的那张图”时只拿得到
+   * EverOffice 文件库图片：模型说“刚上传的 logo / 之前生成的那张图”时只拿得到
    * fileId，宿主按 fileId 取当前版本字节（非图片/不存在返回 null）。
    */
   readLibraryFile?: (fileId: string) => Promise<Buffer | null>;

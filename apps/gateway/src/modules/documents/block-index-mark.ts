@@ -2,7 +2,7 @@ import { Node, type MarkdownToken } from "@tiptap/core";
 import {
   formatBlockIndexMarkMarkdown,
   parseBlockIndexMarkMarkdown,
-  type EverroomBlockIndexTarget,
+  type EverofficeBlockIndexTarget,
 } from "@nxcore/document-model";
 
 export const BLOCK_INDEX_MARK_NODE = "blockIndexMark";
@@ -17,7 +17,7 @@ interface BlockIndexMarkNodeAttrs {
   fallbackPreview: string | null;
 }
 
-function attrsToTarget(attrs: Partial<BlockIndexMarkNodeAttrs>): EverroomBlockIndexTarget | null {
+function attrsToTarget(attrs: Partial<BlockIndexMarkNodeAttrs>): EverofficeBlockIndexTarget | null {
   if (!attrs.targetRoomId || !attrs.targetDocumentId || !attrs.targetBlockId) return null;
   return {
     kind: "document",
@@ -29,7 +29,7 @@ function attrsToTarget(attrs: Partial<BlockIndexMarkNodeAttrs>): EverroomBlockIn
   };
 }
 
-function targetToAttrs(target: EverroomBlockIndexTarget): BlockIndexMarkNodeAttrs {
+function targetToAttrs(target: EverofficeBlockIndexTarget): BlockIndexMarkNodeAttrs {
   return {
     kind: target.kind,
     targetRoomId: target.roomId,

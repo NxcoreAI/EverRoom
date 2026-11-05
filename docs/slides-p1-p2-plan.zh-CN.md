@@ -39,7 +39,7 @@
 ### 批次 3：图标系统
 
 1. **形态**：icon 叶加 `chip?: "tint"|"solid"`（底衬圆角块/实底反白）、`tone?: "primary"|"accent"|"onDark"`；featureCards/bentoGrid 内图标缺省带 tint 底衬（修「裸图标无落点」）。展开产物 +1 shape/图标，SKILL.md 预算表同步。
-2. **扩容**：genoffice `assets/icons` 补 Heroicons 至 120+（财务/法务/医疗/制造/物流场景），重跑 `scripts/bake-icons.mjs`；EverRoom 侧 `tree/icons.ts` 镜像同步；schema optIcon 校验自动随行。
+2. **扩容**：genoffice `assets/icons` 补 Heroicons 至 120+（财务/法务/医疗/制造/物流场景），重跑 `scripts/bake-icons.mjs`；EverOffice 侧 `tree/icons.ts` 镜像同步；schema optIcon 校验自动随行。
 - 风险：组件内底衬使既有页面元素数 +N，注意 48 cap 的存量页回归（跑金标准全量树测试）。
 
 ### 批次 4：文字形态

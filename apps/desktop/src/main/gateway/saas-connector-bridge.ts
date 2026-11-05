@@ -19,7 +19,7 @@ const AUTHORIZATION_TTL_MS = 15 * 60_000
 const PROBE_TIMEOUT_MS = 5_000
 
 /**
- * oo service（oo 目录/配置列表的命名，Google 系无连字符）↔ EverRoom provider
+ * oo service（oo 目录/配置列表的命名，Google 系无连字符）↔ EverOffice provider
  * （注册表/连接注册表的命名）。与 gateway 侧 SERVICE_OF_PROVIDER
  * （everroom-connectors gateway-module/open-connector-authorization.ts）保持同值。
  */
@@ -36,12 +36,12 @@ const SERVICE_OF_PROVIDER: Record<string, string> = Object.fromEntries(
   Object.entries(PROVIDER_OF_SERVICE).map(([service, provider]) => [provider, service]),
 )
 
-/** EverRoom provider → oo service；未知 provider 原样返回（多数 provider 与 service 同名）。 */
+/** EverOffice provider → oo service；未知 provider 原样返回（多数 provider 与 service 同名）。 */
 export function serviceOfProvider(provider: string): string {
   return SERVICE_OF_PROVIDER[provider] ?? provider
 }
 
-/** oo service → EverRoom provider；未知 service（无桌面适配器）返回 null——对账/探测据此跳过。 */
+/** oo service → EverOffice provider；未知 service（无桌面适配器）返回 null——对账/探测据此跳过。 */
 export function providerOfService(service: string): string | null {
   return PROVIDER_OF_SERVICE[service] ?? null
 }

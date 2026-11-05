@@ -1,7 +1,7 @@
 schemaVersion: 1
 id: doc-writer
 name: Document Writer
-description: 承接 EverRoom 文档正文的内容生成，包括新建起草、修改建议、续写与选区改写，输出结构化写作产物
+description: 承接 EverOffice 文档正文的内容生成，包括新建起草、修改建议、续写与选区改写，输出结构化写作产物
 mode: dispatch_only
 enabled: true
 

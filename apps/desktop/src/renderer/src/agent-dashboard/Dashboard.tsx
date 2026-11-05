@@ -126,13 +126,13 @@ export function Dashboard() {
 
   const connection = useMemo((): { state: ConnectionState; label: string; title: string } => {
     if (!source) {
-      return { state: 'pending', label: '未发现来源', title: '未发现 Gateway manifest 或本机归档；请确认 EverRoom 已启动一次' }
+      return { state: 'pending', label: '未发现来源', title: '未发现 Gateway manifest 或本机归档；请确认 EverOffice 已启动一次' }
     }
     if (source.backend === 'archive') {
       return {
         state: 'readonly',
         label: `${source.runCount} 条历史`,
-        title: source.archiveDir ?? '直接读取本机归档，无需 EverRoom 运行',
+        title: source.archiveDir ?? '直接读取本机归档，无需 EverOffice 运行',
       }
     }
     if (!source.available) {
@@ -289,7 +289,7 @@ export function Dashboard() {
               <span className="db-empty-hint">
                 {data.runsState === 'error'
                   ? (data.runsError ?? '拉取失败')
-                  : '看板读取 Gateway 的 /v1/agent-debug 埋点；EverRoom 没运行时，把顶栏「来源」切到历史归档即可复盘本机 run。'}
+                  : '看板读取 Gateway 的 /v1/agent-debug 埋点；EverOffice 没运行时，把顶栏「来源」切到历史归档即可复盘本机 run。'}
               </span>
             </div>
           )}

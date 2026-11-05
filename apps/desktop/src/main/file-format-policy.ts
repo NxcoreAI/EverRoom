@@ -82,7 +82,7 @@ export function isLocalParseableExtension(extension: string): boolean {
 
 /**
  * 扫描时直接剪枝的无意义目录：依赖、构建产物、缓存、测试缓存和工具
- * 生成目录不应进入 EverRoom 的本地知识库。
+ * 生成目录不应进入 EverOffice 的本地知识库。
  */
 export const IGNORED_LOCAL_DIRECTORY_NAMES = new Set([
   '.cache',

@@ -205,7 +205,7 @@ export function agentAccessRoutes(
         // Phase 2i：list_rooms 已删除，第一步改为 get_status 自述（steps.list 键
         // 保留，桌面 AgentConnectionCard 按该键渲染自检结果）。
         const list = await host.runTool(connection, "everroom_get_status", {}).catch(unavailableState);
-        const query = "EverRoom";
+        const query = "EverOffice";
         const search = await host
           .runTool(connection, "everroom_search", { query, limit: 3 })
           .catch(unavailableState);
@@ -241,7 +241,7 @@ export function agentAccessRoutes(
         const view = service.getConnection(request.params.id);
         if (!view) return reply.code(404).send({ error: "not_found" });
         const connection = resolvedFrom(view);
-        const query = request.body.query ?? "EverRoom";
+        const query = request.body.query ?? "EverOffice";
         const result = await host
           .runTool(connection, "everroom_search", { query, limit: 5 })
           .catch(unavailableState);

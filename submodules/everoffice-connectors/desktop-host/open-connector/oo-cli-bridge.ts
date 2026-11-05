@@ -99,7 +99,7 @@ function parseJsonOutput(output: string): unknown {
   try {
     return JSON.parse(normalized)
   } catch {
-    throw new Error('EverRoom CLI 返回了无法解析的 JSON。')
+    throw new Error('EverOffice CLI 返回了无法解析的 JSON。')
   }
 }
 
@@ -251,7 +251,7 @@ export class OoCliBridge {
         data?: { ok?: unknown }
       } | null
       if (payload?.success !== true || payload.data?.ok !== true) {
-        return { gatewayState: 'unreachable', gatewayMessage: '目标服务不是兼容的 EverRoom 连接器网关。' }
+        return { gatewayState: 'unreachable', gatewayMessage: '目标服务不是兼容的 EverOffice 连接器网关。' }
       }
       return { gatewayState: 'ready', gatewayMessage: null }
     } catch (error) {
@@ -308,7 +308,7 @@ export class OoCliBridge {
         if (code === 0) resolve({ stdout, stderr })
         else reject(new Error(
           redactText(stderr.trim(), this.options.runtimeToken)
-            || `EverRoom CLI 退出码为 ${String(code)}。`,
+            || `EverOffice CLI 退出码为 ${String(code)}。`,
         ))
       })
     })
@@ -387,14 +387,14 @@ export class OoCliBridge {
       }
       const timeout = setTimeout(() => {
         child.kill('SIGTERM')
-        finish(new Error('EverRoom CLI 执行超时。'), 124)
+        finish(new Error('EverOffice CLI 执行超时。'), 124)
       }, this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
       const append = (stream: 'stdout' | 'stderr', chunk: string): void => {
         if (settled) return
         outputBytes += Buffer.byteLength(chunk)
         if (outputBytes > MAX_OUTPUT_BYTES) {
           child.kill('SIGTERM')
-          finish(new Error('EverRoom CLI 输出超过 4 MiB 限制。'), 125)
+          finish(new Error('EverOffice CLI 输出超过 4 MiB 限制。'), 125)
           return
         }
         if (stream === 'stdout') stdout += chunk
@@ -411,7 +411,7 @@ export class OoCliBridge {
         const exitCode = code ?? (signal ? 130 : 1)
         finish(exitCode === 0 ? null : new Error(
           redactText(stderr.trim(), this.options.runtimeToken)
-            || `EverRoom CLI 执行失败（${exitCode}）。`,
+            || `EverOffice CLI 执行失败（${exitCode}）。`,
         ), exitCode)
       })
     })

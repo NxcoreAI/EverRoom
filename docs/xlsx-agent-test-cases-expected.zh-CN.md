@@ -619,7 +619,7 @@
 
 **提示词**
 ```
-把 /Users/nxcore/EverRoom/everroom.svg 这张图插到「编制说明」下方。
+把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方。
 ```
 
 **预期结果**
@@ -819,7 +819,7 @@
 
 ### XL-H-03 · 重启后继续编辑 `P1`
 
-**前置**：重启 EverRoom，不打开该文件
+**前置**：重启 EverOffice，不打开该文件
 
 **提示词**
 ```

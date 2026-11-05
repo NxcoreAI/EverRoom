@@ -235,7 +235,7 @@ function flagsFrom(raw: unknown): SpaceMarker["flags"] {
 function createdByFrom(raw: unknown): SpaceMarker["createdBy"] {
   const record = asRecord(raw);
   return {
-    app: nonEmptyString(record?.app) ?? "EverRoom",
+    app: nonEmptyString(record?.app) ?? "EverOffice",
     version: nonEmptyString(record?.version) ?? "0.0.0",
     platform: nonEmptyString(record?.platform) ?? process.platform,
   };
@@ -401,7 +401,7 @@ export function buildSpaceMarker(input: {
     rootMode: input.rootMode,
     createdAt: created,
     createdBy: {
-      app: "EverRoom",
+      app: "EverOffice",
       version: input.appVersion ?? "0.0.0",
       platform: process.platform,
     },

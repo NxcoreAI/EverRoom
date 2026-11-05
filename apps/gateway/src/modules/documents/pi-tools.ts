@@ -11,11 +11,11 @@ import {
 } from "./mcp-host.js";
 
 const EXTERNAL_SERVICE_REQUEST = /(?:Gmail|GitHub|Notion|Google\s*Drive|Slack|Dropbox|Outlook|日历|邮件|邮箱|云盘|第三方服务|OAuth)/iu;
-const EXPLICIT_EVERROOM_DOCUMENT_TARGET = /(?:(?:EverRoom|NxCore|Context\s*Room|ContextRoom|某个\s*Room|指定\s*Room|Room|房间).{0,24}(?:文档|文件|页面)|(?:文档|文件|页面).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间)|(?:保存|写入|存入|落盘|创建).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间))/iu;
+const EXPLICIT_EVERROOM_DOCUMENT_TARGET = /(?:(?:EverOffice|NxCore|Context\s*Room|ContextRoom|某个\s*Room|指定\s*Room|Room|房间).{0,24}(?:文档|文件|页面)|(?:文档|文件|页面).{0,24}(?:EverOffice|NxCore|Context\s*Room|ContextRoom|Room|房间)|(?:保存|写入|存入|落盘|创建).{0,24}(?:EverOffice|NxCore|Context\s*Room|ContextRoom|Room|房间))/iu;
 const DOCUMENT_ROUTE_MISMATCH = "Document tool route mismatch";
 class DocumentRouteMismatchError extends Error {
   constructor() {
-    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not create or edit EverRoom documents.`);
+    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not create or edit EverOffice documents.`);
     this.name = "DocumentRouteMismatchError";
   }
 }
@@ -84,7 +84,7 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         category: "route_mismatch",
         recoverable: true,
         recommendedTool: "connector_search",
-        instruction: "Use the external service named in the original user request. Do not call document or office tools unless the user explicitly asks to create or edit an EverRoom document.",
+        instruction: "Use the external service named in the original user request. Do not call document or office tools unless the user explicitly asks to create or edit an EverOffice document.",
         retryKey: "external-service-to-context-room",
         maxAttempts: 1,
       };

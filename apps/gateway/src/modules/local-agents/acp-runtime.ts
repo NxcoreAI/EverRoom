@@ -244,7 +244,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     private readonly workingDirectory: string,
     installationId: string,
     /**
-     * 渠道会话的 EverRoom MCP 注入源（create-server 按 session 渠道锁定
+     * 渠道会话的 EverOffice MCP 注入源（create-server 按 session 渠道锁定
      * 判定后转发到这里）；派发子任务不注入。loadSession 时适配器可能忽略
      * 该参数（claude 内存 session 持有首轮配置），故 token 需跨 run 稳定。
      */
@@ -370,7 +370,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     try {
       await this.ensureConnection();
       const mcpServers = await this.mcpServersForRun?.(input) ?? [];
-      // 注入的 EverRoom MCP 工具与 pi 渠道同语义（token 即能力，不做权限门）：
+      // 注入的 EverOffice MCP 工具与 pi 渠道同语义（token 即能力，不做权限门）：
       // 经 _meta.claudeCode.options.allowedTools 预授权整个服务器，否则 CLI 对每个
       // mcp__everroom__* 调用走 canUseTool→requestPermission，在无工作区绑定
       // （inspect → mutationAllowed=false）下连只读检索也会被拒。

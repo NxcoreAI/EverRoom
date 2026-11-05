@@ -33,7 +33,7 @@ jobs:
             const attachments = input.attachments == null
               ? []
               : (Array.isArray(input.attachments) ? [...new Set(input.attachments)] : [input.attachments]);
-            const assetPattern = /^!\[[^\]]*\]\(https:\/\/raw\.githubusercontent\.com\/NxcoreAI\/EverRoom\/issue-assets\/(?:\.github\/issue-assets\/)?[A-Za-z0-9._-]+\)$/;
+            const assetPattern = /^!\[[^\]]*\]\(https:\/\/raw\.githubusercontent\.com\/NxcoreAI\/EverOffice\/issue-assets\/(?:\.github\/issue-assets\/)?[A-Za-z0-9._-]+\)$/;
 
             if (!/^[0-9a-f]{32}$/.test(requestId)
                 || !title || title.length > 256

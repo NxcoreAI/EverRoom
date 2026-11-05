@@ -456,7 +456,7 @@ describe('ObsidianVaultService', () => {
     const snapshot = await service.readNote(binding.id, note.id)
     await writeFile(join(vaultPath, note.relativePath), '# Changed in Obsidian')
 
-    const result = await service.saveNote(binding.id, note.id, '# Changed in EverRoom', snapshot.sourceHash)
+    const result = await service.saveNote(binding.id, note.id, '# Changed in EverOffice', snapshot.sourceHash)
 
     expect(result.status).toBe('conflict')
     expect(result.snapshot.markdown).toBe('# Changed in Obsidian')

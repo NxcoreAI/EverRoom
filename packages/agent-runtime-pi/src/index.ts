@@ -1017,7 +1017,7 @@ export class PiAgentRuntime implements AgentRuntime {
         const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
         if (hasDocumentTools && hasConnectorTools) {
           lines.push(
-            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverRoom 工作区文稿。只有用户明确要求创建、读取或修改 EverRoom 工作区文稿时才使用 document_* 工具。",
+            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverOffice 工作区文稿。只有用户明确要求创建、读取或修改 EverOffice 工作区文稿时才使用 document_* 工具。",
           );
         }
         if (context.current?.toolsEnabled !== false) {

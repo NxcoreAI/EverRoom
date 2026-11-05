@@ -73,7 +73,7 @@
 | API 调用 | action 实现、分页、重试 | oo action 目录（900+） | **0** |
 | 同步机制 | 调度、checkpoint、断点续传、quarantine、lease/fence | gateway `ConnectorSyncService` | **1**（已存在） |
 | 落库 + 双 sink | markdown 化、MemoryCore、知识库 import | gateway | **1**（已存在） |
-| **归一化映射** | action JSON → EverRoom 记录 schema | **我们** | **每 provider 一次**（很薄：现有 gmail.ts 11 行 / outlook.ts 2 行 / skill 30 行 markdown） |
+| **归一化映射** | action JSON → EverOffice 记录 schema | **我们** | **每 provider 一次**（很薄：现有 gmail.ts 11 行 / outlook.ts 2 行 / skill 30 行 markdown） |
 
 ### 2.4 三档接入阶梯（「数十个连接器维护方便」的答案）
 
@@ -113,7 +113,7 @@
 
 原则：
 
-1. **一个连接层**：OAuth、凭据、adapter 全部收敛到 oo；Everroom 只维护归一化 + 游标 + 落库 + sink 的自家价值代码；
+1. **一个连接层**：OAuth、凭据、adapter 全部收敛到 oo；Everoffice 只维护归一化 + 游标 + 落库 + sink 的自家价值代码；
 2. **一个传输缝**：gateway 与 oo 之间只经 `OpenConnectorHttpClient`（HTTP），消灭 CLI spawn / stdout JSON / 64MiB 上限；
 3. **双 sink 不变**：记忆与知识库的分流发生在 sink 层，不在取数层；
 4. **两个编排器暂不合并**：链路 A（scope/trigger/cursor）与链路 B（job/run/records）各自成熟，共享同一执行层与连接层；合并作为后续优化项，不阻塞本方案；

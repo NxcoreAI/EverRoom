@@ -12,7 +12,7 @@ const JsonRpcBody = Type.Object({
 const tools = [
   {
     name: "agent_schedule_list",
-    description: "列出 EverRoom 中所有 Agent 定时任务及其运行状态。",
+    description: "列出 EverOffice 中所有 Agent 定时任务及其运行状态。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {

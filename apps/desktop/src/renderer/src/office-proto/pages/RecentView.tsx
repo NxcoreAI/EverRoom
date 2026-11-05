@@ -50,7 +50,7 @@ export function RecentView({
   onToast: (msg: string) => void
 }) {
   const [drafting, setDrafting] = useState(false)
-  // EverRoomMac 接入：有真实文件库时最近文件显示真实文件（打开走内置预览）。
+  // EverOfficeMac 接入：有真实文件库时最近文件显示真实文件（打开走内置预览）。
   const [real, setReal] = useState<RealOfficeFile[] | null>(null)
   // 副标题的真实文件库计数；null = 无桥/查询失败（文案退回中性兜底）。
   const [fileTotal, setFileTotal] = useState<number | null>(null)

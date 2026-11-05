@@ -67,9 +67,9 @@ interface ManifestCacheEntry {
 const manifestCache = new Map<string, ManifestCacheEntry>()
 
 function everroomDataDir(): string {
-  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'EverRoom')
-  if (process.platform === 'win32') return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'EverRoom')
-  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'EverRoom')
+  if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'EverOffice')
+  if (process.platform === 'win32') return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'EverOffice')
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'EverOffice')
 }
 
 function nxcoreDataDir(): string {
@@ -81,7 +81,7 @@ function nxcoreDataDir(): string {
 /**
  * manifest 发现顺序：
  * 1. EVERROOM_AGENT_DEBUG_MANIFEST（POSIX 用 `:`、Windows 用 `;` 分隔）；
- * 2. NXCORE_DATA_DIR（缺省为 EverRoom 平台默认数据目录）下的主网关与补全网关；
+ * 2. NXCORE_DATA_DIR（缺省为 EverOffice 平台默认数据目录）下的主网关与补全网关；
  * 3. NxCore 独立网关默认数据目录（独立 `pnpm dev` 场景）；
  * 4. 仓库 .data/runtime/gateway.json。
  * 无效/缺失的候选直接跳过；`dataDir` 用于发现同目录下的历史归档。
@@ -104,7 +104,7 @@ function resolveManifestCandidates(): ManifestCandidate[] {
   const baseDataDir = process.env.NXCORE_DATA_DIR?.trim() || everroomDataDir()
   candidates.push({
     path: join(baseDataDir, 'runtime', 'gateway.json'),
-    label: 'EverRoom 主网关',
+    label: 'EverOffice 主网关',
     dataDir: baseDataDir,
   })
   candidates.push({
@@ -430,7 +430,7 @@ async function handleAgentDebugRequest(
   if (sources.length === 0 && archiveSources.length === 0) {
     sendJson(response, 503, {
       error: 'no_manifest',
-      message: '未发现 Gateway runtime manifest：请先启动 EverRoom，或设置 EVERROOM_AGENT_DEBUG_MANIFEST 指向 runtime/gateway.json',
+      message: '未发现 Gateway runtime manifest：请先启动 EverOffice，或设置 EVERROOM_AGENT_DEBUG_MANIFEST 指向 runtime/gateway.json',
     })
     return
   }

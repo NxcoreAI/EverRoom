@@ -126,7 +126,7 @@ async function writeLegacySpaceV1(root: string): Promise<{ spaceId: string }> {
     layoutVersion: 1,
     rootMode: "external",
     createdAt: "2026-01-01T00:00:00.000Z",
-    createdBy: { app: "EverRoom", version: "0.0.1", platform: "darwin" },
+    createdBy: { app: "EverOffice", version: "0.0.1", platform: "darwin" },
     layout: {
       library: "Library",
       memory: "Memory",

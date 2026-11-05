@@ -45,7 +45,7 @@
 ```
 材料入口                    路由瀑布（router.ts）                实体生命周期                Room 消费
 ─────────                ──────────────────                ────────────                ─────────
-EverRoom 文档 ─┐         ① 入口确定性（文档首链/entryRoomId）   entity_doc_links ─┐        八面板
+EverOffice 文档 ─┐         ① 入口确定性（文档首链/entryRoomId）   entity_doc_links ─┐        八面板
   (防抖10min)  │         ②b 手动规则（routing_rules,仅manual）   证据分累积 scoreEvidence │       （overview/documents/
 上传文件 ──────┼── fanOut ─③′ LLM 开集实体抽取（串行15-20s/个）   weak ──┐              │        relations/memories/
 连接器 /v1/ingest│         │   无LLM→awaiting_review             │ 达阈值               │        wiki/schedule/tasks/mails)
@@ -60,7 +60,7 @@ EverRoom 文档 ─┐         ① 入口确定性（文档首链/entryRoomId）
 
 ### 2.2 材料入口与路由瀑布
 
-- **入口四条**：EverRoom 文档事件防抖 10 分钟入队；上传文件内容寻址判重（同名新内容=版本更新）；连接器走 `/v1/ingest`（先过滤闸，误杀可恢复 `reinstatedAt`）；手动 `routeDocumentNow`（`knowledge/service.ts:929`）绕过防抖。
+- **入口四条**：EverOffice 文档事件防抖 10 分钟入队；上传文件内容寻址判重（同名新内容=版本更新）；连接器走 `/v1/ingest`（先过滤闸，误杀可恢复 `reinstatedAt`）；手动 `routeDocumentNow`（`knowledge/service.ts:929`）绕过防抖。
 - **瀑布四级**（`router.ts:167-383`）：① 入口确定性——文档按 `room_doc_links` 首链定源 Room（`:184`）；②b 手动规则——`routing_rules` 仅 manual、默认空表、按匹配器具体度排序（`:199`），schema 注释明示"不做自动回写"（`schema.ts:1706`）；③′ LLM 开集实体抽取——串行、实测 15-20s/文件（`KnowledgePendingPanel.tsx:75` 注释），瞬态错误退避重试不落死信（`:227`），无 LLM 落 awaiting_review（`:214/:250`）；③″ 实体解析——精确名/别名 → embedding 质心消歧 → Dice 模糊带（≥0.75 同弱自动合并、0.6-0.75 走 LLM 同一性判定）；④ 链接落库 `replaceResolutionLinks`——**`decidedBy=user` 链接不被重抽取覆盖**（`:296`）。
 - **出口**：链接实体中有已晋升者 → execute 多对多沉淀（每目标 Room 一个 ingest job，`pickPromotedTargets` `:140`）；全部未晋升 → linked 孵化；抽取空 → awaiting_review。
 - **手动挂载**：`attachDoc`（`knowledge/service.ts:2679`，端点 `routes.ts:1019`）upsert `role=manual` 链接，权重 1.5（`entity-registry.ts:44`），`decidedBy=user` 在证据分中显式加权（`:119`）。

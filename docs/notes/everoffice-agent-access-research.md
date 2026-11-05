@@ -1,13 +1,13 @@
-# EverRoom 外部 Agent 访问调研：MCP + Skills 方案
+# EverOffice 外部 Agent 访问调研：MCP + Skills 方案
 
 > 调研日期：2026-10-16。四路并行调查合成：网关代码现状 / 领域数据模型 / MCP+Skills 官方规范与生态 / 竞品架构。
 >
-> PRD 目标（1.1）：「在原来的 AI 工具中继续工作，通过 Skills 按需获取 EverRoom 的积累；修正后的新读取校验有效版本，未刷新的副本可见。」
+> PRD 目标（1.1）：「在原来的 AI 工具中继续工作，通过 Skills 按需获取 EverOffice 的积累；修正后的新读取校验有效版本，未刷新的副本可见。」
 > 发布门槛（10.2）：「搜索能精读原对话和源文件；范围控制有效；主动回写与后台同步无重复。」
 
 ## 0. 结论速览
 
-1. **不用从零做。** 网关里已有成型 MCP 基建：`documents/mcp-host.ts`（MCP 服务器 `everroom-context-room`，25 个 `context_room_*` 读写工具）和对外通道 `POST /v1/mcp/everroom/:token`（token 在路径、24h TTL、绑 Room 范围，含 `memory_search / conversation_search / wiki_search / wiki_read / room_context_get`）。它今天只被注入 EverRoom 自己经 ACP 拉起的 CLI；外部 Agent 访问 = 把这套工具面改造成**可对第三方签发、可范围控制、可持久化**的正式端点。
+1. **不用从零做。** 网关里已有成型 MCP 基建：`documents/mcp-host.ts`（MCP 服务器 `everroom-context-room`，25 个 `context_room_*` 读写工具）和对外通道 `POST /v1/mcp/everroom/:token`（token 在路径、24h TTL、绑 Room 范围，含 `memory_search / conversation_search / wiki_search / wiki_read / room_context_get`）。它今天只被注入 EverOffice 自己经 ACP 拉起的 CLI；外部 Agent 访问 = 把这套工具面改造成**可对第三方签发、可范围控制、可持久化**的正式端点。
 2. **形态：远程 Streamable HTTP MCP 挂在网关上，不做 stdio 代理。** 本地 127.0.0.1 与云端多租户同一形态。用官方 TS SDK v2 的 `createMcpHandler`——一个端点同时兼容 2025 握手时代与 2026-07-28 无状态时代（客户端舰队混编是现实，SDK 自动协商）。
 3. **鉴权分两档：** 本地桌面 = 持久化连接 token（连接页签发/暂停/吊销，HTTP header 携带）；云端 SaaS = OAuth 2.1 资源服务器全套（RFC 9728 + DCR/CIMD + PKCE，scopes 映射 Room 与读写能力）。
 4. **Skill 是方法层，MCP 是能力层，Plugin 是分发层**（Anthropic 官方三件套提法）。Skill 遵循 agentskills.io 开放标准（六字段 frontmatter），同一份 SKILL.md 在 Claude Code / Cursor / Codex / Gemini CLI / Windsurf / Copilot 等 46 个客户端可用；Claude 生态再用 plugin 把 skill + `.mcp.json` 打包成一次安装。连接页可为各工具**代写配置文件**完成安装。
@@ -30,7 +30,7 @@
 | R8 | 修正后的新读取校验有效版本，未刷新的副本可见 | 版本 |
 | G1–G3 | 发布门槛：搜索能精读原对话和源文件 / 范围控制有效 / 主动回写与后台同步无重复 | 验收 |
 
-> ✅ **2026-10-16 已拿到总表 PRD（《EverRoom 0.2.0 大版本更新 PRD》），本调研对应其第 7 章「外部 Agent 接入」（L2.5，Skills／MCP）**，L3 单元 L3.5.1–L3.5.5；交付在 M2（各工具取用）+ M5（适配增量/回写），契约依赖 M1（附录 A 公共对象）；发布门槛 = 10.2「Skills」验收包。据此澄清三处此前的不确定：
+> ✅ **2026-10-16 已拿到总表 PRD（《EverOffice 0.2.0 大版本更新 PRD》），本调研对应其第 7 章「外部 Agent 接入」（L2.5，Skills／MCP）**，L3 单元 L3.5.1–L3.5.5；交付在 M2（各工具取用）+ M5（适配增量/回写），契约依赖 M1（附录 A 公共对象）；发布门槛 = 10.2「Skills」验收包。据此澄清三处此前的不确定：
 > - **「三路处理」= 6.3.6 治理分流的「自动完成 / 按启用规则保存 / 生成问题卡」**，不是记忆/Wiki/偏好三个去向（提交载荷仍是 7.4 的记忆/Wiki/偏好候选，处理进治理三路）。
 > - **「获取本次规则」= 任务适用的技能、偏好、模板**（6.7 统一库；返回规则版本、作用范围、参考资源、优先级），不是 ingest 策略。
 > - 附录 A.3 定死六组能力（发现对象/搜索内容/读取对象与消息范围/读出处与文件/取规则/提交结果与候选）、**聊天搜索必须携带 conversation_id+message_id**、提交键幂等、以及 DeliveryReceipt（A.6）承载外部副本「待刷新/回执」。B.1 基线 E19 与本文 §2 的起点判断一致：「内部记忆/对话检索、源文档与出处、文档 MCP 读取已有；扩展外部统一发现→精读→源文件→回写；补搜索的会话 ID」。
@@ -96,7 +96,7 @@
 
 - **agentskills.io 标准**：`SKILL.md` + 六个规范字段（`name/description/license/compatibility/metadata/allowed-tools`），渐进披露三级（元数据 ~100 token → 正文 <5K token → 按需文件）。**46 个客户端支持**：Claude 全家、ChatGPT/Codex、Cursor、Copilot、VS Code、Gemini CLI、OpenCode、Windsurf 等。可移植的产品 skill 应只用规范六字段（Claude 私有扩展如 shell 注入在其他端不跑）。
 - **Claude 插件可同时打包 skill + MCP 配置**：plugin 根 `.claude-plugin/plugin.json` + `skills/<skill>/SKILL.md` + `.mcp.json`（`{"type":"http","url":…}`，工具名 `mcp__plugin_…`），`/plugin marketplace add` + `/plugin install` 一次装齐。官方定位原话：「连接器 = 触达产品能力；技能 = 教工作流；大多数产品插件两者都带」。
-- **Skills-over-MCP 扩展**（`io.modelcontextprotocol/skills`，Final）：MCP 服务器可直接下发 skill（`skills/list/get` + `skill://` URI）——未来可让网关直接serve EverRoom 工作流技能，ChatGPT 已部分支持。
+- **Skills-over-MCP 扩展**（`io.modelcontextprotocol/skills`，Final）：MCP 服务器可直接下发 skill（`skills/list/get` + `skill://` URI）——未来可让网关直接serve EverOffice 工作流技能，ChatGPT 已部分支持。
 - 分发渠道对照：Claude Code `~/.claude/skills`、`.claude/skills`、plugin；Cursor `.cursor/skills`（兼容读 `.claude/skills`）；Codex `.codex/skills`；Gemini `.gemini/skills`；Windsurf `.windsurf/skills`。
 
 ### 3.3 客户端远程 MCP + OAuth 支持矩阵（2026-10）
@@ -123,7 +123,7 @@
 | **Slack** | 远程托管 `mcp.slack.com/mcp` | **拒绝 DCR**：每个 MCP 连接都挂在注册 App 身份上，企业管理员审批/审计/IP 白名单原样生效；scope 直接映射经典 Web API scope，逐工具对照表 | ①两段式文件上传（拿 URL→传→确认）；②scope=产品既有权限模型而非 MCP 新造 |
 | **GitHub** | 双轨：远程托管（GA）+ 本地 Docker/二进制（隔离网） | OAuth 2.1+PKCE；**逐工具 OAuth challenge scope**（调写工具触发增量授权）；org 级工具集开关 | ①动词合并（`issue_read` 带 `method:get|list|add_labels`）；②`--read-only` 全局开关；③`fields` 投影参数缩响应；④`get_rate_limit` 自省 |
 | **Obsidian 生态**（最近邻） | 无官方，社区三分（Local REST 桥 / URI 命令 / 裸文件） | 本地 API key | `obsidian://` URI 转换工具（link-back 产品）；教训：本地优先产品要给 **app 级语义搜索**，不能让 Agent 裸 grep |
-| **Mem0/OpenMemory**（记忆层最近邻） | 托管 `mcp.mem0.ai`（API key bearer）+ 自托管 OpenMemory（本地 Docker、per-project 命名空间、跨 Agent 共享） | API key | 「本地记忆中枢」形态与 EverRoom 槽位相同；我们的差异点 = 记忆锚在真实 Room/会话/文档上，且可回到原会话 |
+| **Mem0/OpenMemory**（记忆层最近邻） | 托管 `mcp.mem0.ai`（API key bearer）+ 自托管 OpenMemory（本地 Docker、per-project 命名空间、跨 Agent 共享） | API key | 「本地记忆中枢」形态与 EverOffice 槽位相同；我们的差异点 = 记忆锚在真实 Room/会话/文档上，且可回到原会话 |
 
 **跨竞品结论**：没有一家做客户端幂等提交键（Notion 靠异步任务 id + 分段上传近似达成）；版本字段只有 Notion 认真做。这两点都是 PRD 明确要求 → 直接做成长板。
 

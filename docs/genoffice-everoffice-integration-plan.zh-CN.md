@@ -1,21 +1,21 @@
-# GenOffice 编辑能力集成 EverRoom 实施方案
+# GenOffice 编辑能力集成 EverOffice 实施方案
 
 > 状态：阶段 A 技术探针已实现，阶段 B 待实施  
 > 日期：2026-08-28  
-> 目标工程：`/Users/rlacat/projects/Everroom`  
+> 目标工程：`/Users/rlacat/projects/Everoffice`  
 > 上游基线：`genspark-ai/genoffice@583a045212f871943afb8ca4503fcb5ddf99a23f`
 
 ## 1. 方案结论
 
-EverRoom 采用 Fork GenOffice 的方案，并参照当前 Nango 的集成方式，以 Git submodule 固定 Fork 源码版本。EverRoom 的准备脚本从 submodule 构建并裁剪运行时，正式发行包只携带裁剪后的 Office runtime。EverRoom 只复用 GenOffice 的 Office 格式引擎、编辑器 UI、结构化命令和事务执行能力，继续作为唯一产品 Shell，并继续拥有 Agent Runtime、文档操作审阅、文件版本、知识摄取、账号、更新和发布体系。
+EverOffice 采用 Fork GenOffice 的方案，并参照当前 Nango 的集成方式，以 Git submodule 固定 Fork 源码版本。EverOffice 的准备脚本从 submodule 构建并裁剪运行时，正式发行包只携带裁剪后的 Office runtime。EverOffice 只复用 GenOffice 的 Office 格式引擎、编辑器 UI、结构化命令和事务执行能力，继续作为唯一产品 Shell，并继续拥有 Agent Runtime、文档操作审阅、文件版本、知识摄取、账号、更新和发布体系。
 
 不创建新的 PC 工程，不嵌入完整 GenOffice Shell，不复制 GenOffice 的 `agent-core`，也不引入第二套 Agent 对话面板、模型配置、审批或审计系统。
 
 目标形态：
 
 ```text
-EverRoom BrowserWindow
-├── EverRoom React Renderer
+EverOffice BrowserWindow
+├── EverOffice React Renderer
 │   ├── TopBar
 │   ├── 左侧导航
 │   ├── 普通 workspace 页面
@@ -39,7 +39,7 @@ EverRoom BrowserWindow
 1. 对 DOCX、XLSX、PPTX 的原生结构进行读取和修改；
 2. 保留未触及的 OOXML 内容，避免简单“导入为内部模型再整体导出”造成格式丢失；
 3. 为 Agent 暴露稳定、可验证、可回滚的结构化操作；
-4. 嵌入 Electron，同时保留 EverRoom 自己的 Agent 面板和产品 Shell；
+4. 嵌入 Electron，同时保留 EverOffice 自己的 Agent 面板和产品 Shell；
 5. 使用可接受的开源协议，避免 OnlyOffice AGPL 对桌面端和 SaaS 组合分发带来的合规复杂度。
 
 GenOffice 主体使用 Apache-2.0，已有 DOCX 段落 patch、XLSX 工作簿事务、PPTX element patch 和 dry-run/atomic transaction 等能力，适合作为 Office 技术底座。它并非完整替代 Microsoft Office 的成熟套件，因此仍需通过兼容性测试约束支持范围。
@@ -55,7 +55,7 @@ GenOffice 主体使用 Apache-2.0，已有 DOCX 段落 patch、XLSX 工作簿事
 
 ### 2.3 不选择完整 GenOffice Shell
 
-完整 Shell 同时拥有文件关联、窗口生命周期、标签页、账号、云项目、AI Provider、Agent 面板和自动更新。直接嵌入会与 EverRoom 的下列能力形成重复真源：
+完整 Shell 同时拥有文件关联、窗口生命周期、标签页、账号、云项目、AI Provider、Agent 面板和自动更新。直接嵌入会与 EverOffice 的下列能力形成重复真源：
 
 - Agent 会话、工具调用、事件和审批；
 - Context Room 和 Active Document Context；
@@ -65,7 +65,7 @@ GenOffice 主体使用 Apache-2.0，已有 DOCX 段落 patch、XLSX 工作簿事
 
 因此仅借鉴 GenOffice 的 `WebContentsView` 管理方式，并将各格式编辑器改造成可嵌入模块。
 
-## 3. EverRoom 当前基线
+## 3. EverOffice 当前基线
 
 本方案基于当前正式工程，而不是原型工程。
 
@@ -87,7 +87,7 @@ GenOffice 主体使用 Apache-2.0，已有 DOCX 段落 patch、XLSX 工作簿事
 
 ### 3.2 Agent 文档能力
 
-EverRoom 已经具备：
+EverOffice 已经具备：
 
 - Agent 运行前 flush 当前文档；
 - `roomId`、`documentId`、标题、版本和 cursor anchor 上下文；
@@ -125,10 +125,10 @@ Office 文件必须继续作为 versioned file artifact，不能写入 Tiptap `R
 
 ```mermaid
 flowchart LR
-  UI[EverRoom Renderer] -->|Typed IPC| MAIN[Electron Main]
+  UI[EverOffice Renderer] -->|Typed IPC| MAIN[Electron Main]
   MAIN -->|管理 bounds 和生命周期| VIEW[Office WebContentsView]
   VIEW -->|Office Embed API| MAIN
-  MAIN -->|Bearer REST / WebSocket| GW[EverRoom Gateway]
+  MAIN -->|Bearer REST / WebSocket| GW[EverOffice Gateway]
   AGENT[Agent / Pi / MCP] --> CAP[Office Capability]
   CAP --> OP[Office Operation Service]
   OP --> REQ[Desktop Capability Request]
@@ -159,7 +159,7 @@ Renderer 增加 `OfficeViewportReporter`：
 3. 在窗口 resize、Agent Panel 展开/折叠、导航宽度变化和页面切换时发送 bounds；
 4. Main Process 将 DIP bounds 应用到活动 Office View；
 5. 页面离开 Office artifact 时隐藏 View，而不是依靠 z-index；
-6. EverRoom 打开模态框、全屏遮罩或新手引导时暂时隐藏 View。
+6. EverOffice 打开模态框、全屏遮罩或新手引导时暂时隐藏 View。
 
 Main Process 增加 `OfficeViewManager`：
 
@@ -183,7 +183,7 @@ apps/desktop/src/main/office/
 
 ### 4.3 GenOffice Embed Runtime
 
-Fork 中新增一个稳定嵌入层，不让 EverRoom 直接依赖各应用内部实现：
+Fork 中新增一个稳定嵌入层，不让 EverOffice 直接依赖各应用内部实现：
 
 ```text
 @everroom/genoffice-embed
@@ -235,7 +235,7 @@ Fork 中新增一个稳定嵌入层，不让 EverRoom 直接依赖各应用内�
 - 品牌图标、商标和产品文案
 - `ee/` 全部内容
 
-如果编辑器代码当前在编译期直接依赖上述模块，Fork 应先通过接口注入或 feature flag 解耦，再产出 Embed Runtime。不能在 EverRoom 里用空实现长期掩盖耦合。
+如果编辑器代码当前在编译期直接依赖上述模块，Fork 应先通过接口注入或 feature flag 解耦，再产出 Embed Runtime。不能在 EverOffice 里用空实现长期掩盖耦合。
 
 ### 5.3 Fork 和 Submodule
 
@@ -243,10 +243,10 @@ Fork 中新增一个稳定嵌入层，不让 EverRoom 直接依赖各应用内�
 
 ```text
 NxcoreAI/genoffice
-└── EverRoom embed patches
+└── EverOffice embed patches
 ```
 
-EverRoom 将 Fork 注册为 Git submodule，建议路径：
+EverOffice 将 Fork 注册为 Git submodule，建议路径：
 
 ```text
 apps/desktop/vendor/genoffice
@@ -260,11 +260,11 @@ apps/desktop/vendor/genoffice
 	url = https://github.com/NxcoreAI/genoffice.git
 ```
 
-版本由 EverRoom 父仓记录的 submodule commit 固定，不依赖浮动 branch、运行时下载或最新 release。首个基线从上游 `583a045212f871943afb8ca4503fcb5ddf99a23f` 建立，后续上游同步先合入 Fork、通过兼容测试，再在 EverRoom 提交中更新 submodule pointer。
+版本由 EverOffice 父仓记录的 submodule commit 固定，不依赖浮动 branch、运行时下载或最新 release。首个基线从上游 `583a045212f871943afb8ca4503fcb5ddf99a23f` 建立，后续上游同步先合入 Fork、通过兼容测试，再在 EverOffice 提交中更新 submodule pointer。
 
-Fork 的远端配置、下游补丁、Embed 稳定契约、上游同步、验证、父仓 gitlink 更新及回滚步骤，统一维护在 [`apps/desktop/vendor/genoffice/UPSTREAM.md`](../apps/desktop/vendor/genoffice/UPSTREAM.md)。上游更新采用临时 `sync/upstream-YYYYMMDD` 分支和 PR，不重写 Fork `main` 历史；只有远端已存在的新 commit 才能更新 EverRoom 的 submodule pointer。
+Fork 的远端配置、下游补丁、Embed 稳定契约、上游同步、验证、父仓 gitlink 更新及回滚步骤，统一维护在 [`apps/desktop/vendor/genoffice/UPSTREAM.md`](../apps/desktop/vendor/genoffice/UPSTREAM.md)。上游更新采用临时 `sync/upstream-YYYYMMDD` 分支和 PR，不重写 Fork `main` 历史；只有远端已存在的新 commit 才能更新 EverOffice 的 submodule pointer。
 
-选择 `apps/desktop/vendor/genoffice` 而不是 `apps/desktop/src/**`，避免 GenOffice 源码进入 EverRoom Desktop TypeScript include、electron-vite 模块扫描和业务源码边界。该目录也不能加入根 `pnpm-workspace.yaml`；GenOffice 保持自己的依赖锁和构建工具。
+选择 `apps/desktop/vendor/genoffice` 而不是 `apps/desktop/src/**`，避免 GenOffice 源码进入 EverOffice Desktop TypeScript include、electron-vite 模块扫描和业务源码边界。该目录也不能加入根 `pnpm-workspace.yaml`；GenOffice 保持自己的依赖锁和构建工具。
 
 开发者和 CI checkout 必须初始化 submodule：
 
@@ -311,7 +311,7 @@ apps/desktop/build/genoffice-runtime/
 `manifest.json` 至少记录：
 
 - GenOffice upstream commit；
-- EverRoom Fork commit；
+- EverOffice Fork commit；
 - runtime protocol version；
 - 支持的格式；
 - Electron ABI 要求；
@@ -420,7 +420,7 @@ Agent mutation 必须有明确 Room。全局文件页面打开但未关联 Room 
 Main Process 为每个打开的 artifact 创建受控工作副本：
 
 ```text
-<EverRoom userData>/office-working-copies/<artifactId>/<sessionId>/
+<EverOffice userData>/office-working-copies/<artifactId>/<sessionId>/
 ├── document.docx
 └── state.json
 ```
@@ -435,7 +435,7 @@ Main Process 为每个打开的 artifact 创建受控工作副本：
 - `lastFlushedAt`
 - `editorRuntimeVersion`
 
-工作副本路径只在 Main Process 和对应 Office preload 内可见，不返回给 EverRoom 主 Renderer 或 Agent。
+工作副本路径只在 Main Process 和对应 Office preload 内可见，不返回给 EverOffice 主 Renderer 或 Agent。
 
 ### 7.2 保存新版本
 
@@ -471,7 +471,7 @@ file = <bytes>
 
 ### 7.3 写回用户原文件
 
-默认保存仅生成 EverRoom 文件库新版本，不覆盖用户原文件。
+默认保存仅生成 EverOffice 文件库新版本，不覆盖用户原文件。
 
 “写回原文件”是额外能力，必须满足：
 
@@ -479,7 +479,7 @@ file = <bytes>
 - 写入前重新计算磁盘 source hash；
 - source hash 与导入或上次同步时一致；
 - 使用同目录临时文件、fsync 和原子 rename；
-- 冲突时保留 EverRoom 新版本，并要求用户选择另存或重新同步；
+- 冲突时保留 EverOffice 新版本，并要求用户选择另存或重新同步；
 - Agent 不得自动批准覆盖外部文件。
 
 ## 8. Agent Capability 和 Desktop Capability Bridge
@@ -579,7 +579,7 @@ office_operation_status
 ```mermaid
 sequenceDiagram
   participant U as User
-  participant A as EverRoom Agent
+  participant A as EverOffice Agent
   participant G as Gateway
   participant M as Desktop Main
   participant E as Office Editor
@@ -691,7 +691,7 @@ created
 
 DOCX 第一阶段采用 `atomic_review`：用户可以逐项接受/拒绝，但最终将接受项作为一个原子 command transaction 应用，并只创建一个新文件版本。
 
-审阅 UI 优先显示在 Office 编辑器内，因为它掌握真实分页和结构锚点；EverRoom `DocumentOperationCenter` 扩展为 Artifact Operation Center，负责跨文件发现、状态、错误和导航。两者使用同一 Gateway 快照，不能各自维护 operation 状态。
+审阅 UI 优先显示在 Office 编辑器内，因为它掌握真实分页和结构锚点；EverOffice `DocumentOperationCenter` 扩展为 Artifact Operation Center，负责跨文件发现、状态、错误和导航。两者使用同一 Gateway 快照，不能各自维护 operation 状态。
 
 Presenter key：
 
@@ -762,16 +762,16 @@ office-pptx-diff
 
 ## 11. 构建、Electron 版本和发布
 
-EverRoom 当前 Electron 39，GenOffice 基线使用 Electron 43；React 分别为 18 和 19。
+EverOffice 当前 Electron 39，GenOffice 基线使用 Electron 43；React 分别为 18 和 19。
 
 第一阶段策略：
 
 - Office renderer 作为独立 bundle 和独立 `WebContentsView`，避免 React singleton 冲突；
-- 优先让 Embed Runtime 兼容 EverRoom Electron 39；
-- 不因 Office 集成直接升级整个 EverRoom Electron；
+- 优先让 Embed Runtime 兼容 EverOffice Electron 39；
+- 不因 Office 集成直接升级整个 EverOffice Electron；
 - 如果 GenOffice 确实依赖 Electron 40-43 API，单独提交 Electron 升级 RFC，并完成全应用回归。
 
-EverRoom `apps/desktop/package.json` 增加：
+EverOffice `apps/desktop/package.json` 增加：
 
 ```text
 extraResources:
@@ -811,7 +811,7 @@ extraResources:
 ### 13.1 Fork 引擎测试
 
 - 上游原有 unit/fixture/compat 测试持续运行；
-- EverRoom Embed API contract test；
+- EverOffice Embed API contract test；
 - 禁用 AI、登录和云服务后编辑功能不回归；
 - 同一 command id 重试不重复修改；
 - inspect/preview 不改变文件；
@@ -855,7 +855,7 @@ DOCX P1 至少覆盖：标题、段落、列表、表格、图片、页眉页脚
 
 ### 14.1 P0 验收
 
-- 从 EverRoom 文件页打开 DOCX，无独立 GenOffice 窗口。
+- 从 EverOffice 文件页打开 DOCX，无独立 GenOffice 窗口。
 - Office View 只占中间工作区，Agent Panel 始终可见可用。
 - 人工编辑保存后创建同一 `fileEntryId` 的新版本。
 - 原 blob 不变，新版本能重新解析并进入 ingest。
@@ -904,23 +904,23 @@ DOCX P1 至少覆盖：标题、段落、列表、表格、图片、页眉页脚
 - Fork 已加入 `apps/desktop/vendor/genoffice` submodule，并增加无启动副作用的 Docs embed entry。
 - `prepare-genoffice-runtime.mjs` 已能以固定源码构建、裁剪、缓存并生成 SHA-256 manifest。
 - 产物通过 `extraResources` 分发到 `resources/genoffice`，当前 DOCX runtime 约 25 MiB。
-- EverRoom 已增加 `OfficeViewManager`，通过 `ResizeObserver` 只覆盖 `.workspace-main`。
+- EverOffice 已增加 `OfficeViewManager`，通过 `ResizeObserver` 只覆盖 `.workspace-main`。
 - Electron 39 已成功启动 GenOffice DOCX `WebContentsView` 并打开固定 fixture，无需先升级 Electron。
-- EverRoom embed 构建不注册或分发 GenOffice AI/Genspark、standalone updater 和 standalone main entry。
+- EverOffice embed 构建不注册或分发 GenOffice AI/Genspark、standalone updater 和 standalone main entry。
 - 开发态通过左侧“Office 测试”入口打开 runtime 内置 `simple.docx`；离开页面隐藏 Office View。尚未接入正式文件页导航、工作副本、版本提交或 Agent command contract。
 - Fork 的本地 embed 提交尚待推送到 `NxcoreAI/genoffice`；父仓不能提交远端不可达的 submodule gitlink。
 
-### 阶段 B：EverRoom P0
+### 阶段 B：EverOffice P0
 
 1. 完成可缓存的 GenOffice submodule runtime 裁剪和 `extraResources`。
 2. 增加 `OfficeViewManager` 和 typed IPC。
-3. 文件页支持“在 EverRoom 中打开”。
+3. 文件页支持“在 EverOffice 中打开”。
 4. 增加工作副本管理。
 5. 增加文件版本提交 API 和 CAS。
 6. 新版本接回 Files/ingest。
 7. 完成 P0 Desktop/Gateway 测试和 macOS 打包验证。
 
-### 阶段 C：EverRoom P1
+### 阶段 C：EverOffice P1
 
 1. 增加 Artifact/Room link 和 Active Artifact contract。
 2. 增加 Office Operation schema/service/routes。
@@ -938,7 +938,7 @@ DOCX P1 至少覆盖：标题、段落、列表、表格、图片、页眉页脚
 
 - 不新建另一个 `nexcore-pc` 或 GenOffice 套壳应用。
 - 不以源码复制、包管理 workspace 成员或浮动网络依赖的方式接入 GenOffice；只允许固定 commit 的 submodule。
-- 不把 GenOffice `agent-core` 接到 EverRoom Agent 旁边。
+- 不把 GenOffice `agent-core` 接到 EverOffice Agent 旁边。
 - 不让 Office Renderer 直接访问 Gateway 数据库、Token 或任意文件路径。
 - 不让 Gateway 以内存 Promise 等待不可恢复的 Renderer IPC。
 - 不把 Office 文件转成 Tiptap 后当作权威 Office 数据。
@@ -952,13 +952,13 @@ DOCX P1 至少覆盖：标题、段落、列表、表格、图片、页眉页脚
 
 | 决策 | 选择 | 原因 |
 | --- | --- | --- |
-| PC 工程 | 直接修改 EverRoom `apps/desktop` | 这是正式 Electron 产品和 Agent Shell |
+| PC 工程 | 直接修改 EverOffice `apps/desktop` | 这是正式 Electron 产品和 Agent Shell |
 | Office 引擎 | Fork GenOffice Apache 部分 | 避免重造 OOXML 编辑引擎和 AGPL 风险 |
 | 源码供应链 | Fork + Git submodule | 与 Nango 一样由父仓固定版本、可审计更新 |
 | 构建供应链 | 本地 prepare 脚本裁剪为 `extraResources` | 开发和 CI 不依赖浮动预构建下载，正式包不携带源码 |
 | UI 嵌入 | 中间区域 `WebContentsView` | 隔离 React/依赖，同时保留 Agent Panel |
 | 文件真源 | `file_entries/file_versions/file_blobs` | 复用现有不可变版本、解析和 ingest |
-| Agent 真源 | EverRoom Capability/Operation | 避免双 Agent Runtime、审批和审计 |
+| Agent 真源 | EverOffice Capability/Operation | 避免双 Agent Runtime、审批和审计 |
 | Renderer 调用 | 持久化 Desktop Capability Request | 支持断线、超时、取消、崩溃恢复和幂等 |
 | 首发格式 | DOCX | 验证完整链路且不引入 Rust sidecar |
 | 外部文件写回 | 默认关闭，显式确认 + source hash CAS | 防止覆盖用户在其他应用中的修改 |

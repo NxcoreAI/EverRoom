@@ -22,16 +22,16 @@ export interface InstallPlan {
 function skillBody(connection: AgentConnectionView, url: string): string {
   return `---
 name: everroom-agent
-description: 在当前工具中继续使用 EverRoom 的积累：搜索会话/文档/文件、精读原文、按授权范围回写结果与候选。当任务需要找回历史讨论、核查出处、复用个人知识或把成果保存回 EverRoom 时使用。
+description: 在当前工具中继续使用 EverOffice 的积累：搜索会话/文档/文件、精读原文、按授权范围回写结果与候选。当任务需要找回历史讨论、核查出处、复用个人知识或把成果保存回 EverOffice 时使用。
 compatibility: 需要 MCP 客户端（HTTP 传输）；Claude Code、Cursor、Codex、Cherry Studio 等均支持。
 metadata:
   connection: ${connection.name}
   gateway: ${url}
 ---
 
-# EverRoom Agent
+# EverOffice Agent
 
-你已接入 EverRoom（连接名「${connection.name}」）。本技能约定使用姿势；能力由 MCP 服务器 \`${url}\` 提供。
+你已接入 EverOffice（连接名「${connection.name}」）。本技能约定使用姿势；能力由 MCP 服务器 \`${url}\` 提供。
 
 ## 工作流
 
@@ -50,7 +50,7 @@ metadata:
 
 - 候选（记忆/Wiki/偏好）只进入待确认队列：未经用户确认，不要声称"已记住"。
 - 遇到失败先 \`everroom_get_status\` 判断能力/服务状态，不要盲目重试。
-- 引用 EverRoom 内容时给出对象 ID 与版本，便于用户回溯原文。
+- 引用 EverOffice 内容时给出对象 ID 与版本，便于用户回溯原文。
 `;
 }
 

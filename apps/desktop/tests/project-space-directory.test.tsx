@@ -22,7 +22,7 @@ import type { WorkspaceTab } from '../src/renderer/src/workbench/types'
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const ISO = '2026-11-02T08:00:00.000Z'
-const ROOT = '/Users/wang/Library/Application Support/EverRoom/Workspace/feishu-work'
+const ROOT = '/Users/wang/Library/Application Support/EverOffice/Workspace/feishu-work'
 
 const WORKSPACE: AgentWorkspace = {
   id: 'ws-feishu',
@@ -111,7 +111,7 @@ function installNxcore(overrides: {
       }))),
       reveal: vi.fn(overrides.reveal ?? (async () => true)),
       defaultRoot: vi.fn(overrides.defaultRoot ?? (async (name: string) => ({
-        root: `/Users/wang/Library/Application Support/EverRoom/Workspace/${name.trim().toLowerCase().replace(/\s+/gu, '-')}`,
+        root: `/Users/wang/Library/Application Support/EverOffice/Workspace/${name.trim().toLowerCase().replace(/\s+/gu, '-')}`,
         slug: name.trim().toLowerCase().replace(/\s+/g, '-'),
         exists: false,
       }))),
@@ -293,6 +293,6 @@ describe('CreateWorkspaceDialog', () => {
     await flush(12, 30)
 
     expect(api.workspace.defaultRoot).toHaveBeenCalledWith('Feishu work')
-    expect(document.body.textContent).toContain('/EverRoom/Workspace/feishu-work')
+    expect(document.body.textContent).toContain('/EverOffice/Workspace/feishu-work')
   })
 })

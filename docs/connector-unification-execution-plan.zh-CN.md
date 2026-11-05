@@ -15,7 +15,7 @@
 设计 v3 的五个 seam、双链路保留、删 Nango、L0/L1/L2 阶梯全部维持，**以下三点按最新决策调整**：
 
 1. **OpenConnector 固定 SaaS 部署、默认 SaaS 模式**（原 P3「云端化」从可选升级为默认路径，且必须完成 SaaS 侧建设）；
-2. **submodule 化**：gateway 连接器模块 + connector-contract 包 + desktop supervisor 抽为独立 git 仓库，以 submodule 挂回 EverRoomMac（仅挂 Mac 仓库）；
+2. **submodule 化**：gateway 连接器模块 + connector-contract 包 + desktop supervisor 抽为独立 git 仓库，以 submodule 挂回 EverOfficeMac（仅挂 Mac 仓库）；
 3. **SaaS 侧代码落在 EverRoomSass 仓库**（oo 部署、admin 管理页、路由转发、JWT 对接），不进 submodule。
 
 **明确不做**：outlook/google-docs 增量不足时的「全量 + 指纹 diff」降级（E3，理由见 §7 风险 R3）、Nango 回滚开关（E4）、ics/feishu-wiki 直连适配器改造（E2）、connectors.sqlite 并入 drizzle 迁移体系（E5）。
@@ -34,7 +34,7 @@
                            │  桌面默认走 SaaS（EverRoomSass 域名转发）
                            │  本地模式 = OpenConnectorSupervisor 拉起（隐私兜底，打包保留）
 ┌──────────────────────────┴─────────────────────────────────────────┐
-│ EverRoomMac / gateway                                               │
+│ EverOfficeMac / gateway                                               │
 │   submodule: everroom-connectors/                                  │
 │     ├─ OpenConnectorHttpClient（唯一传输缝，HTTP 直连）              │
 │     ├─ ConnectorManager（链路A编排，pull 适配器平移到 HTTP action）   │
@@ -68,7 +68,7 @@
 
 ### 2.1 新仓库：`everroom-connectors`
 
-| 内容 | 来源（EverRoomMac 内路径） | 去向（submodule 内） |
+| 内容 | 来源（EverOfficeMac 内路径） | 去向（submodule 内） |
 |---|---|---|
 | gateway 连接器模块 | `apps/gateway/src/modules/connectors/`（全目录，含 sync-providers/、providers/、auth-channels/） | `gateway-module/` |
 | 契约包 | `packages/connector-contract/` | `connector-contract/`（保持独立 package） |
@@ -77,7 +77,7 @@
 
 **不进 submodule**（留宿主）：renderer 页面（ConnectorSyncPage/ConnectorConsolePage/SettingsPage 新区块）、agent skills（`agents/connector-sync/`）、gateway `create-server.ts` 装配代码、desktop main/index.ts。submodule 通过 exports 暴露装配函数与类型，宿主引用。
 
-### 2.2 宿主侧薄胶水（EverRoomMac 保留的接缝）
+### 2.2 宿主侧薄胶水（EverOfficeMac 保留的接缝）
 
 - gateway：`create-server.ts` 改为从 submodule 包 import（`ConnectorManager`/`ConnectorSyncService`/`OpenConnectorHttpClient`/路由注册函数）；
 - desktop：main/index.ts 保留窗口与 IPC 注册，supervisor 实例化来自 submodule `desktop-host`；
@@ -86,9 +86,9 @@
 ### 2.3 仓库操作顺序（保证可回溯）
 
 1. `git filter-repo` 或手动 `git mv` + 单独提交，保留原文件历史（优先保 history 的 mv 方式）；
-2. EverRoomMac 根 `.gitmodules` 增加 `submodules/everroom-connectors`（新路径，不复用原 nango submodule 位 `modules/connector`，E4 直接删）；
+2. EverOfficeMac 根 `.gitmodules` 增加 `submodules/everoffice-connectors`（新路径，不复用原 nango submodule 位 `modules/connector`，E4 直接删）；
 3. 宿主 tsconfig/pnpm workspace 调整：submodule 内 `gateway-module` 以源码路径或 workspace 包形式被 gateway 依赖（实现时二选一，原则：gateway 对 submodule 的 import 路径唯一且稳定）；
-4. CI：EverRoomMac 流水线增加 `submodule sync` 步骤；submodule 仓库独立跑 vitest。
+4. CI：EverOfficeMac 流水线增加 `submodule sync` 步骤；submodule 仓库独立跑 vitest。
 
 ### 2.4 submodule 与 SaaS 的关系
 
@@ -140,7 +140,7 @@ EverRoomSass 仓库内：
 3. **admin OAuth 配置页**（B3）：`apps/admin` 新增「连接器 OAuth 配置」页，直接代理 oo admin API（oo admin token 由 api 服务端持有）；页面能力：provider 列表、client id/secret 增改、连接测试；复用现有 runtime-config 的密钥脱敏交互模式；
 4. **JWT 签发对接**：按 P0-V5 结论落地（新增 token purpose/audience 或独立签发路径）。
 
-EverRoomMac 侧：
+EverOfficeMac 侧：
 
 5. **设置页「连接层模式」区块**（D1/D2）：全局开关「SaaS（默认）/ 本地」，未登录 SaaS 账号时引导登录（不回退）；展示当前模式与连接健康状态；切换时提示「已有连接需重新授权」（C3）；
 6. **默认 SaaS 接线**：`NXCORE_CLI_CONNECTOR_URL` 默认指向 EverRoomSass 转发路由；SaaS 模式下 supervisor 不拉起本地进程；本地 runtime（169M）**仍打包**（D3），体积目标 ≤400M；
@@ -165,7 +165,7 @@ submodule 位 `modules/connector`（nango fork）、`prepare-nango-runtime.mjs`�
 | 仓库/模块 | 职责 | 变更 |
 |---|---|---|
 | **submodule `everroom-connectors`** | gateway 连接器模块 + contract + supervisor + 契约夹具 | 新建（P1） |
-| EverRoomMac（宿主） | create-server 装配、renderer 页面、设置页新区块、agent skills | 薄胶水化 |
+| EverOfficeMac（宿主） | create-server 装配、renderer 页面、设置页新区块、agent skills | 薄胶水化 |
 | EverRoomSass api | oo 实例容器 + 纯转发路由 + admin 代理 + JWT 签发 | 新增模块 |
 | EverRoomSass admin | OAuth client 配置管理页 | 新增页面 |
 | oo 上游（@oomol-lab） | OAuth、action 目录、connect UI、密文存储 | 钉 commit + 契约测试 |
@@ -241,7 +241,7 @@ submodule 位 `modules/connector`（nango fork）、`prepare-nango-runtime.mjs`�
 | # | 决策 | # | 决策 |
 |---|---|---|---|
 | A1 | submodule 主体 = gateway 连接器模块 | B3 | admin 直接代理 oo admin API |
-| A2 | 仅 EverRoomMac 挂载 | C1 | per-user JWT（Sass 签发） |
+| A2 | 仅 EverOfficeMac 挂载 | C1 | per-user JWT（Sass 签发） |
 | A3 | gateway 模块+contract+supervisor 进 submodule | C2 | connectionName 规范 SaaS 定，多设备共享 |
 | B1 | oo SaaS = Node 容器 + sqlite 卷 | C3 | 切换即提示需重新授权 |
 | B2 | Sass api 纯转发到 oo 实例 | D1 | 全局单开关 |

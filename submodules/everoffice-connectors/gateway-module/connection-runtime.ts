@@ -1,7 +1,7 @@
 import type { ConnectorConnection, ConnectorProvider } from "@nxcore/connector-contract";
 import type { ConnectorActionRuntime } from "./query/types.js";
 
-/** oo service → EverRoom provider（Google 系命名不同）。 */
+/** oo service → EverOffice provider（Google 系命名不同）。 */
 const PROVIDER_OF_SERVICE: Record<string, ConnectorProvider> = {
   gmail: "gmail",
   outlook: "outlook",

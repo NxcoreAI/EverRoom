@@ -1,7 +1,7 @@
 # NxCore SaaS 后端与管理端方案
 
 状态：方案草案  
-目标：为 NxCore/Everroom 增加统一账号、设备管理、订阅、ASR 任务管理和多端数据同步能力。  
+目标：为 NxCore/Everoffice 增加统一账号、设备管理、订阅、ASR 任务管理和多端数据同步能力。  
 适用范围：桌面端、iOS 客户端和 Apple Watch 配套能力。  
 官方能力核对：2026-08-15。
 

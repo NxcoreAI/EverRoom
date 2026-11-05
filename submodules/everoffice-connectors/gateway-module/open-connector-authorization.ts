@@ -36,7 +36,7 @@ interface StoredAttempt {
   connectionName: string;
 }
 
-/** provider（EverRoom 侧）→ oo service。 */
+/** provider（EverOffice 侧）→ oo service。 */
 const SERVICE_OF_PROVIDER: Partial<Record<ConnectorProvider, string>> = {
   gmail: "gmail",
   outlook: "outlook",

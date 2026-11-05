@@ -32,12 +32,12 @@ describe("loadConfig", () => {
 
   it("reads the desktop-injected lark-cli binary and private home", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_LARK_CLI_PATH: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
-      NXCORE_LARK_CLI_HOME: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+      NXCORE_LARK_CLI_PATH: "/Applications/EverOffice.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      NXCORE_LARK_CLI_HOME: "/Users/someone/Library/Application Support/EverOffice/lark-cli/home",
     });
     expect(config.larkCli).toEqual({
-      executable: "/Applications/EverRoom.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
-      homeDirectory: "/Users/someone/Library/Application Support/EverRoom/lark-cli/home",
+      executable: "/Applications/EverOffice.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      homeDirectory: "/Users/someone/Library/Application Support/EverOffice/lark-cli/home",
     });
   });
 

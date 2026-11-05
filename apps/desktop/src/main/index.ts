@@ -85,7 +85,7 @@ import {
 import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
-import { createEverroomMaterialResolver } from './office/office-material-resolver'
+import { createEverofficeMaterialResolver } from './office/office-material-resolver'
 import { openDocumentFromSystem as runSystemOpen, OsOpenQueue, osOpenPathsFromArgv } from './office/os-open'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
@@ -796,7 +796,7 @@ let clearUserDataOnQuit = false
 const officePreviewRegistry = new OfficePreviewRegistry(
   8_000,
   // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
-  () => createEverroomMaterialResolver(() => officeFilesBridge),
+  () => createEverofficeMaterialResolver(() => officeFilesBridge),
 )
 /** 论文格式网关桥：网关就绪后赋值；pick 直传共用同一实例。 */
 let thesisFormatBridgeRef: ThesisFormatGatewayBridge | null = null
@@ -1081,7 +1081,7 @@ ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnost
 
 ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   if (id !== null && typeof id !== 'string') return false
   // TEMP DIAG：渲染端激活请求是否命中实例（查完删除）。
   const active = officePreviewRegistry.setActive(id === null ? null : id)
@@ -1091,7 +1091,7 @@ ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
 
 ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   if (typeof id !== 'string') return false
   // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
   return officePreviewRegistry.close(id)
@@ -1103,7 +1103,7 @@ ipcMain.handle('office:instance:close', async (event, id: unknown) => {
  */
 ipcMain.handle('office:chrome-toggle', (event, input: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   const value = (input ?? {}) as { fileId?: unknown; hidden?: unknown }
   const fileId = typeof value.fileId === 'string' && value.fileId ? value.fileId : 'active'
   const hidden = typeof value.hidden === 'boolean' ? value.hidden : undefined
@@ -1160,7 +1160,7 @@ function handleProtocolUrl(url: string): void {
 function notifyLoginCallbackDropped(): void {
   const options = {
     type: 'warning' as const,
-    title: 'EverRoom 登录',
+    title: 'EverOffice 登录',
     message: '浏览器授权已完成，但应用内没有正在进行的登录。',
     detail: '登录等待可能已超时或应用重启过，请回到登录页重新点击登录。',
     buttons: ['好'],
@@ -1176,7 +1176,7 @@ app.on('open-url', (event, url) => {
   handleProtocolUrl(url)
 })
 
-// 访达双击/「打开方式」→ EverRoom：open-file 可能在 ready 之前派发，先入队，
+// 访达双击/「打开方式」→ EverOffice：open-file 可能在 ready 之前派发，先入队，
 // 等文件桥就绪（启动链装处理器）再串行导入并打开内嵌预览。
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
@@ -1708,7 +1708,7 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
 }
 
 // ---- SaaS 连接层（connector-mode = 'saas'）----
-// 登录 EverRoom 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
+// 登录 EverOffice 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
 // 桌面与 gateway 均持该 token 直连 oo 数据面；连接层不再经 SaaS 转发。
 let connectorOoLoginSeen = false
 
@@ -1858,7 +1858,7 @@ function registerOpenConnectorHandlers(): void {
         gatewayState: 'unreachable' as const,
         gatewayMessage: connectorOoLoginSeen
           ? '云端连接层暂不可用，请稍后重试。'
-          : '登录 EverRoom 后将自动连接云端连接层。',
+          : '登录 EverOffice 后将自动连接云端连接层。',
         runtimeTokenConfigured: false,
         cliState: 'checking' as const,
         cliVersion: null,
@@ -2860,14 +2860,14 @@ function registerThesisFormatHandlers(
     }
   })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
-  /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverRoom/，并定位到文件。 */
+  /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverOffice/，并定位到文件。 */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
     const storagePath = await files.storagePath(fileEntryId)
     const entry = await files.catalogEntry(fileEntryId)
     const outcome = await convertOfficeFileToPdf(
       storagePath,
       entry.originalName,
-      join(app.getPath('downloads'), 'EverRoom'),
+      join(app.getPath('downloads'), 'EverOffice'),
     )
     if ('unavailable' in outcome) return { unavailable: true as const }
     shell.showItemInFolder(outcome.pdfPath)
@@ -2921,7 +2921,7 @@ async function openFileInAppPreview(
   }
 
   const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
-  if (!window) throw new Error('EverRoom 主窗口不可用。')
+  if (!window) throw new Error('EverOffice 主窗口不可用。')
   if (options?.focusWindow) {
     if (window.isMinimized()) window.restore()
     window.show()
@@ -3262,7 +3262,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
     if (!account.authenticated || !account.user) {
       return {
         enabled: false,
-        reason: '请先登录 EverRoom。',
+        reason: '请先登录 EverOffice。',
         initialized: false,
         umkId: null,
         activeVersion: null,
@@ -3282,7 +3282,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
   handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(async () => {
     const account = await client.status()
     const userId = account.authenticated ? account.user?.id : null
-    if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+    if (!account.user || !userId) throw new Error('请先登录 EverOffice。')
     return keyring.createPairingSession(client, userId)
   }))
   handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
@@ -3294,7 +3294,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
     return rateLimitAware(async () => {
       const account = await client.status()
       const userId = account.authenticated ? account.user?.id : null
-      if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+      if (!account.user || !userId) throw new Error('请先登录 EverOffice。')
       return keyring.approvePairingSession(client, userId, id)
     })
   })
@@ -3569,10 +3569,10 @@ function createWindow(): BrowserWindow {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'Everroom',
+    title: 'Everoffice',
     backgroundColor: appearanceWindowBackground(),
     // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
-    // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
+    // 由渲染端 TopBar/引导页头部绘制 EverOffice 风格的自绘窗口按钮。
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
       : { titleBarStyle: 'hidden' as const }),
@@ -4407,7 +4407,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = null
     await cursorCompletionSupervisor?.shutdown()
     cursorCompletionSupervisor = null
-    console.error('Failed to initialize Everroom desktop services', error)
+    console.error('Failed to initialize Everoffice desktop services', error)
     // 静默退出 = 用户看到白屏数分钟后应用消失且毫无提示（issue #179）。
     // 用原生错误框告知原因与日志位置，再退出。
     const failureDetail = error instanceof Error ? error.message : String(error)
@@ -4485,7 +4485,7 @@ app.on('before-quit', (event) => {
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
-  cloud?.cancelOidcLogin('EverRoom 正在退出。')
+  cloud?.cancelOidcLogin('EverOffice 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
     vaults?.shutdown(),
@@ -4498,7 +4498,7 @@ app.on('before-quit', (event) => {
       try {
         await rm(resolvedDataDirectory, { recursive: true, force: true })
       } catch (error) {
-        console.error('Failed to clear EverRoom user data', error)
+        console.error('Failed to clear EverOffice user data', error)
         clearUserDataOnQuit = false
       }
     }

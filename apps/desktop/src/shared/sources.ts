@@ -1338,7 +1338,7 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+    /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
     exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。

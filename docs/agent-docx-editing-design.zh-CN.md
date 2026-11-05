@@ -2,7 +2,7 @@
 
 > 状态：已落地（M1–M5，2026-10-30）；实现说明见 `docs/word-agent-editing-implementation.zh-CN.md`  
 > 日期：2026-10-17（设计）/ 2026-10-30（落地）  
-> 关联工程：EverRoom 主仓（网关 documents 模块、桌面 office-bridge）、genoffice 子模块（docx-engine、docs 应用）
+> 关联工程：EverOffice 主仓（网关 documents 模块、桌面 office-bridge）、genoffice 子模块（docx-engine、docs 应用）
 
 ## 1. 方案结论
 
@@ -147,7 +147,7 @@ op 词汇表由 read 响应下发，agent 不硬编码。理由：词汇演进�
 
 ### D6 版本与入库
 
-编辑产物走 files 文件库，产生新版本，不覆盖历史版本。EverRoom 已有文件版本体系，直接挂接。
+编辑产物走 files 文件库，产生新版本，不覆盖历史版本。EverOffice 已有文件版本体系，直接挂接。
 
 ## 5. 与论文排版的关系
 

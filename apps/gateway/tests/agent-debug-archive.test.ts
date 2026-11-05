@@ -33,7 +33,7 @@ function makeRun(runId: string, overrides: Partial<AgentDebugRun> = {}): AgentDe
   return {
     runId,
     agentId: "main",
-    agentName: "EverRoom",
+    agentName: "EverOffice",
     agentKind: "builtin",
     runtimeId: "pi:main",
     sessionId: "session-1",
@@ -305,7 +305,7 @@ describe("AgentDebugTraceStore archive integration", () => {
     store.beginRun({
       runId: "run-1",
       agentId: "main",
-      agentName: "EverRoom",
+      agentName: "EverOffice",
       agentKind: "builtin",
       runtimeId: "pi:main",
       sessionId: "session-1",
@@ -342,7 +342,7 @@ describe("AgentDebugTraceStore archive integration", () => {
     store.beginRun({
       runId: "run-running",
       agentId: "main",
-      agentName: "EverRoom",
+      agentName: "EverOffice",
       agentKind: "builtin",
       runtimeId: "pi:main",
       sessionId: "session-1",
@@ -379,7 +379,7 @@ describe("AgentDebugTraceStore archive integration", () => {
     store.beginRun({
       runId: "run-live",
       agentId: "main",
-      agentName: "EverRoom",
+      agentName: "EverOffice",
       agentKind: "builtin",
       runtimeId: "pi:main",
       sessionId: "session-1",
@@ -424,7 +424,7 @@ describe("AgentDebugTraceStore archive integration", () => {
     store.beginRun({
       runId: "run-1",
       agentId: "main",
-      agentName: "EverRoom",
+      agentName: "EverOffice",
       agentKind: "builtin",
       runtimeId: "pi:main",
       sessionId: "session-1",

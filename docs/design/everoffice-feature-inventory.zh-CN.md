@@ -64,7 +64,7 @@
 
 ### 2.1 左侧栏
 
-- 品牌：30px squircle “E” + `EverRoom` / `Office` 两行，纯展示（`OfficeProto.tsx:266-272`）。
+- 品牌：30px squircle “E” + `EverOffice` / `Office` 两行，纯展示（`OfficeProto.tsx:266-272`）。
 - 六个一级菜单（注释写“五/六”，实际 6 项）：最近 `recent`、项目空间 `spaces`、所有文件 `files`、Agent `agent`、知识库 `kb`、连接器 `connectors`（`OfficeProto.tsx:256-263`）；选中态系统蓝底白字（`office-proto.css:103-104`）。
 - 账户 footer：头像“王” + “王小雨” + 齿轮；原型里是**无 onClick 的按钮**，仅 hover 显示齿轮（`OfficeProto.tsx:287-293`、`office-proto.css:111-120`）。目标端已在同位置接 `SettingsView`（目标 `OfficeProto.tsx:75`）。
 - `view` 状态在 `HomeView` 内，切 tab 再回来保持上次菜单。
@@ -255,13 +255,13 @@
 
 ### 5.3 Agent 聊天面板
 
-- 复用 EverRoom `AgentChatView/AgentComposer/AgentToolbar/AgentSessionSwitcher/useAgentSession`，外面包 `LocaleProvider + DocumentOperationProvider + RoomDocumentsProvider`，数据来自 `agentChatMock` 的脚本化事件流（`AgentChatDock.tsx:38-46`、`AgentChatDock.tsx:21`）。
+- 复用 EverOffice `AgentChatView/AgentComposer/AgentToolbar/AgentSessionSwitcher/useAgentSession`，外面包 `LocaleProvider + DocumentOperationProvider + RoomDocumentsProvider`，数据来自 `agentChatMock` 的脚本化事件流（`AgentChatDock.tsx:38-46`、`AgentChatDock.tsx:21`）。
 - 会话隔离键 = `file.name`（pageLabel）；同一文件名的任务会话共享（`AgentChatDock.tsx:54`、`workspace.ts:71-76`）。
 - 工具栏：会话切换器（新建/重命名/删除/选择）、连接状态、当前标题（`AgentChatDock.tsx:103-121`）。
 - 空会话显示按文件类型预置的 3 条开场建议（`AgentChatDock.tsx:55`、`AgentChatDock.tsx:132`、`data.ts:574-580`）；点建议填入输入框不发送。
 - 输入框：Enter 发送、Shift+Enter 换行、IME 组合态保护、空态建议 Tab/Enter 采纳、斜杠选择器、模型档位（有 session 后锁定）、权限模式、排队发送、停止运行、@提及（`AgentComposer.tsx:347-425`）。
 - `onFirstSend` 只在实例首条消息触发一次，用于草稿落成任务（`AgentChatDock.tsx:57-67`、`WorkspaceView.tsx:315`）。
-- 工作空间任务 pane 里面板铺满高度但 `max-width:820` 居中，停靠栏内则铺满；EverRoom 的 toast 事件桥到外壳 toast（`office-proto.css:905-921`、`AgentChatDock.tsx:34-36`）。
+- 工作空间任务 pane 里面板铺满高度但 `max-width:820` 居中，停靠栏内则铺满；EverOffice 的 toast 事件桥到外壳 toast（`office-proto.css:905-921`、`AgentChatDock.tsx:34-36`）。
 
 ### 5.4 材料库
 

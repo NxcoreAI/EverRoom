@@ -21,7 +21,7 @@
 
 ## 1. 方案结论
 
-EverRoom 不直接接入第三方 MiniMax 开源 Skill 作为解析底座。该类 Skill 主要是脚本化的 PDF 页面渲染和 VLM 调用，不能提供 Office 原生结构、OCR 坐标、版面模型、表格结构、证据定位和可复现的解析产物。
+EverOffice 不直接接入第三方 MiniMax 开源 Skill 作为解析底座。该类 Skill 主要是脚本化的 PDF 页面渲染和 VLM 调用，不能提供 Office 原生结构、OCR 坐标、版面模型、表格结构、证据定位和可复现的解析产物。
 
 本方案采用“确定性解析管线 + 受控视觉模型 + 多模态解析子 Agent”的组合：
 
