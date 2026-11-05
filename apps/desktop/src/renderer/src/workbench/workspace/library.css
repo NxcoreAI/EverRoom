@@ -670,3 +670,56 @@
   .wb-lib-search { order: 10; width: 100%; margin-left: 0; }
   .wb-lib-grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
 }
+
+/* ───────────────── .tmp/（scratch）：只读临时文件 ───────────────── */
+
+/* 网格瓦片与列表行共用的“只读”态：非交互（不打开），仅保留 hover 底色供定位。 */
+.wb-lib-tile-static,
+.wb-lib-row-static {
+  cursor: default;
+}
+
+/* 访达定位按钮：瓦片角标 / 列表行尾，默认隐藏、悬停浮现（与行菜单同交互）。 */
+.wb-lib-scratch-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-lib-scratch-reveal:hover { color: var(--ui-text); background: var(--ui-hover); }
+.wb-lib-scratch-reveal:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 1px;
+}
+
+/* 瓦片内角标定位 */
+.wb-lib-tile-wrap .wb-lib-scratch-reveal { position: absolute; top: 4px; right: 4px; }
+.wb-lib-tile-wrap:hover .wb-lib-scratch-reveal,
+.wb-lib-tile-wrap:focus-within .wb-lib-scratch-reveal { opacity: 1; }
+
+/* 列表行尾定位：与行等高右贴 */
+.wb-lib-row > .wb-lib-scratch-reveal {
+  align-self: center;
+  margin-right: 4px;
+}
+.wb-lib-row:hover > .wb-lib-scratch-reveal,
+.wb-lib-row:focus-within > .wb-lib-scratch-reveal { opacity: 1; }
+
+/* 截断提示（scratch 清单超过网关上限时置顶说明）。 */
+.wb-lib-note {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-2, var(--ui-hover));
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}

@@ -14,6 +14,7 @@ import {
 import type { FileItemActions } from './fileItemViews'
 import { LibraryBrowser } from './LibraryBrowser'
 import { useFileLibrary } from './useFileLibrary'
+import { useScratchFiles } from './useScratchFiles'
 import { useLibraryDropZone } from './useLibraryDropZone'
 import './library.css'
 
@@ -38,8 +39,29 @@ function summarizeImport(summary: { imported: number; failed: number; skipped: n
 }
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
   const library = useFileLibrary(workspace.id)
+  const scratch = useScratchFiles(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  /**
+   * 在访达中定位 `.tmp/` 里的临时文件：scratch 清单只给相对路径，
+   * 绝对根从空间布局（layout.paths.tmp）取；reveal 由主进程 showItemInFolder 完成。
+   */
+  const revealScratch = async (relativePath: string) => {
+    const bridge = window.nxcore?.workspace
+    if (!bridge || typeof bridge.layout !== 'function' || typeof bridge.reveal !== 'function') {
+      onToast('桌面端空间能力不可用')
+      return
+    }
+    try {
+      const layout = await bridge.layout(workspace.id)
+      const absolute = `${layout.paths.tmp}/${relativePath}`
+      const ok = await bridge.reveal(absolute)
+      onToast(ok ? '已在访达中定位' : '文件已被清理，可刷新后重试')
+    } catch {
+      onToast('定位失败，请稍后重试')
+    }
+  }
 
   const openOriginal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
@@ -198,7 +220,12 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
       ) : null}
 
       {library.state === 'ready' && library.items.length > 0 ? (
-        <LibraryBrowser items={library.items} actions={actions} />
+        <LibraryBrowser
+          items={library.items}
+          actions={actions}
+          scratch={scratch.state === 'ready' ? scratch.listing : null}
+          onRevealScratch={(relativePath) => { void revealScratch(relativePath) }}
+        />
       ) : null}
 
       {/* 拖放悬停提示：只在拖着文件悬停期间出现，pointer-events:none 防抖动 */}
