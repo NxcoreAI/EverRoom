@@ -1,5 +1,7 @@
 import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { checkSemanticStoryboard, numbersInText, semanticHash, type ContentSource, type SemanticPage, type SemanticReport, type SemanticStoryboard } from "./slides-semantic-contract.js";
+import { blockNeedsFor } from "../slides-layout/tree/v2/block-needs.js";
+import { contractFromStyleParams } from "../slides-layout/tree/layout-contract.js";
 
 export const SEMANTIC_MODE = "semantic-v3";
 /** 单轮修复最多覆盖的页数：与 arrange 单批上限（12 页）对齐，不再只修前 4 页。 */
@@ -160,6 +162,26 @@ export async function assembleSemanticPlan(args: {
   }
   report.warnings.push(...identityWarnings, ...deterministicWarnings);
   const valid = pages as SemanticPage[];
+  // 容量前置：编排期按布局同一量测口径预算每页内容的最小需求（各块满宽摆放的
+  // 总高，多栏并排是它的下界）。过载页提前告警给上游（主 Agent/planner）精简或
+  // 拆页，而不是等到布局阶段反复撞墙后才暴露（第 2 页连续多轮失败的教训）。
+  const capacityContract = contractFromStyleParams(null);
+  for (const [index, page] of valid.entries()) {
+    if (["cover", "section", "closing", "quote"].includes(page.role)) continue;
+    const needById = new Map(blockNeedsFor(page, capacityContract).map(need => [need.blockId, need]));
+    let mustShowNeed = 0;
+    for (const block of page.blocks) {
+      if (!block.mustShow) continue;
+      const need = needById.get(block.id);
+      mustShowNeed += need?.kind === "text" ? (need.heightsByWidth?.at(-1)?.px ?? 0) : (need?.estimatedPx ?? 0);
+    }
+    // 内容区约 592px 高；满宽总高超过 1.5 倍说明即使多栏并排也很可能装不下。
+    if (mustShowNeed > 592 * 1.5) {
+      report.warnings.push(
+        `第 ${index + 1} 页内容密度偏高：必留内容最小需求约 ${mustShowNeed}px（单页内容区约 592px），布局阶段可能反复失败；建议精简必留内容或拆成两页`,
+      );
+    }
+  }
   const storyboard: SemanticStoryboard = { schemaVersion: "storyboard/v3", title: String(args.plan.title ?? ""), pages: valid, sources: context.sources };
   const plan = { ...args.plan, pages: planPages.map((page, i) => ({
     ...page, layoutVersion: 2, content: valid[i], role: valid[i]!.role,

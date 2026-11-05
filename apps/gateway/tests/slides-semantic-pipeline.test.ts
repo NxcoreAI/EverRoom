@@ -157,3 +157,46 @@ describe("semantic generation pipeline", () => {
     expect(() => validate({ content }, { tree: { version: 2, role: "toc", composition: "swiss", nodes: [{ type: "text", token: "h1", text: "其他标题", slot: { col: [1, 12], row: [1, 2] } }] } })).toThrow("content_invalid");
   });
 });
+
+describe("编排期容量前置告警", () => {
+  const assemble = async (pointTexts: string[]) => {
+    const sources = assignContentSources([{ title: "市场", points: pointTexts, notes: "讲稿原文" }], "doc");
+    const pointSources = sources.filter(s => s.kind.startsWith("point"));
+    const titleSource = sources.find(s => s.kind === "title")!;
+    const notesSource = sources.find(s => s.kind === "notes")!;
+    const blocks = [
+      { id: "b0", type: "text", text: "市场", sourceRefs: [titleSource.id], priority: "primary", mustShow: true },
+      ...pointTexts.map((text, i) => ({
+        id: `b${i + 1}`, type: "text" as const, text, sourceRefs: [pointSources[i]!.id], priority: "supporting" as const, mustShow: true,
+      })),
+    ];
+    return assembleSemanticPlan({
+      plan: {
+        title: "容量测试",
+        contentContext: { mode: SEMANTIC_MODE, revision: 1, sources, sourceHash: semanticHash(sources) },
+        pages: [{ title: "市场", density: "dense", role: "content", content: {
+          id: sources[0]!.pageId, sourceRefs: sources.map(s => s.id), role: "content", message: "市场", blocks,
+          relations: [], focusRefs: ["b0"], constraints: { verbatimRefs: [] }, notes: "", omissions: [
+            { sourceRef: notesSource.id, reason: "讲稿", disposition: "notes" },
+          ],
+        } }],
+      },
+      instruction: "",
+      repair: async () => { throw new Error("unexpected repair"); },
+    });
+  };
+
+  it("必留内容满宽总高超过内容区 1.5 倍时在编排期告警拆页/精简", async () => {
+    // 12 个长句 mustShow 块：每句满宽约 90px+，总高远超 592×1.5。
+    const heavy = Array.from({ length: 12 }, (_, i) =>
+      `驱动因素${i + 1}：外挂电机拓展升级便捷但对车架及轮胎宽度等要求较高，不具备平台属性，需重点评估`);
+    const result = await assemble(heavy);
+    expect(result.report.passed).toBe(true);
+    expect(result.report.warnings.some((w) => w.includes("内容密度偏高"))).toBe(true);
+  });
+
+  it("正常密度页不触发容量告警", async () => {
+    const result = await assemble(["市场规模结论一句话", "增速与驱动因素说明一句话"]);
+    expect(result.report.warnings.some((w) => w.includes("内容密度偏高"))).toBe(false);
+  });
+});

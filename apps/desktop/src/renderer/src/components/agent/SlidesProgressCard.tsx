@@ -122,8 +122,16 @@ function useDeckOpener(
       state.fileEntryId,
       state.fileName ?? title,
       undefined,
-      { editable: true },
-    ).catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
+      { editable: true, focusWindow: true },
+    )
+      .then((result) => {
+        // 实例已存在时 registry 复用并直接返回，不切视图——点了像「没反应」。
+        // 打开成功后显式激活该实例并把窗口带到前台。
+        if (result?.openedWith === 'office' && result.instanceId) {
+          void window.nxcore?.office?.setActiveInstance(result.instanceId)
+        }
+      })
+      .catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
   }
 }
 

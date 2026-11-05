@@ -1081,7 +1081,7 @@ export interface NxcoreDesktopApi {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string; focusWindow?: boolean },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
