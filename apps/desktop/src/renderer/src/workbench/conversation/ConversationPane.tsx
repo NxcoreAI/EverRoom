@@ -1,11 +1,11 @@
-import { LoaderCircle, RefreshCw } from 'lucide-react'
+import { FilePlus2, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { AgentAttachmentReference, AgentMountedDirectory, AgentNoteCard } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { buildAskBatch, type PendingAskDraft } from '@/components/agent/askDrafts'
-import { AgentComposer } from '@/components/agent/AgentComposer'
+import { AgentComposer, type AgentComposerHandle } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { onToast as onAppToast } from '@/state/toast'
 import '@/components/agent/AgentChat.css'
@@ -90,7 +90,9 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [connectingVisible, setConnectingVisible] = useState(false)
   const [connectorsOpen, setConnectorsOpen] = useState(false)
-  const composerRef = useRef<HTMLTextAreaElement>(null)
+  /** 整区拖拽：dragenter/leave 计数（经过子元素时 leave 先于 enter，布尔会闪）。 */
+  const [dragDepth, setDragDepth] = useState(0)
+  const composerRef = useRef<HTMLTextAreaElement & AgentComposerHandle>(null)
 
   /** 最新 hook：effect 里按 sessionId 调用切换方法时避免闭包拿到旧函数。 */
   const hookRef = useRef(hook)
@@ -207,6 +209,38 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
     const timer = window.setTimeout(() => setConnectingVisible(true), CONNECTING_HINT_DELAY_MS)
     return () => window.clearTimeout(timer)
   }, [hook.connected, hook.error, hook.sessionId])
+
+  /* ── 整区文件拖拽：整个对话面板都是落点，文件统一进输入区附件栏 ──
+   * 只认 Files 类型（应用内拖动卡片/文件瓦片不是文件拖放，不拦截）。
+   * drop 落在输入框上时由 composer 自己的 onDrop 消费（React 合成事件
+   * 子级先于面板），面板只处理落在消息区/hero 的文件，避免重复导入。 */
+  const dragHasFiles = (event: React.DragEvent): boolean =>
+    Array.isArray(event.dataTransfer?.types) && event.dataTransfer.types.includes('Files')
+
+  const onPaneDragOver = (event: React.DragEvent) => {
+    if (!canSend || !dragHasFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+  const onPaneDragEnter = (event: React.DragEvent) => {
+    if (!canSend || !dragHasFiles(event)) return
+    event.preventDefault()
+    setDragDepth((depth) => depth + 1)
+  }
+  const onPaneDragLeave = (event: React.DragEvent) => {
+    if (!dragHasFiles(event)) return
+    setDragDepth((depth) => Math.max(0, depth - 1))
+  }
+  const onPaneDrop = (event: React.DragEvent) => {
+    if (!canSend || !dragHasFiles(event)) return
+    event.preventDefault()
+    setDragDepth(0)
+    // 落点在 composer 上时它自己的 onDrop 已消费这批文件（子级先处理），
+    // 这里只处理落在消息区/hero 的文件，交给同一个导入链路进附件栏。
+    if ((event.target as HTMLElement).closest('.agent-composer-shell')) return
+    const files = [...(event.dataTransfer?.files ?? [])]
+    if (files.length > 0) void composerRef.current?.importFiles?.(files)
+  }
 
   /** 本工作空间的批注草稿（其它空间的留在各自对话里）。 */
   const workspaceAskDrafts = askDrafts.filter((draft) => draft.workspaceId === workspaceId)
@@ -373,7 +407,20 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       className="wb-conversation"
       data-state={loadingView ? 'loading' : conversationState ? 'active' : 'empty'}
       data-has-note-queue={workspaceAskDrafts.length > 0 ? 'true' : undefined}
+      data-file-dragging={dragDepth > 0 ? 'true' : undefined}
+      onDragOver={onPaneDragOver}
+      onDragEnter={onPaneDragEnter}
+      onDragLeave={onPaneDragLeave}
+      onDrop={onPaneDrop}
     >
+      {/* 整区拖拽提示层：文件悬停在面板任意位置时亮起（导入在 drop 后进行）。 */}
+      {dragDepth > 0 ? (
+        <div className="wb-conversation-drop-hint" aria-hidden="true">
+          <FilePlus2 aria-hidden="true" />
+          <span>松开以添加为对话附件</span>
+        </div>
+      ) : null}
+
       <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">

@@ -86,6 +86,17 @@ export interface ComposerSubmitPayload {
 }
 
 /**
+ * AgentComposer 的命令式句柄：textarea 之外，宿主还可以借它把文件
+ * 「灌」进输入区（对话区的整区拖拽落点用：文件落在消息区也进附件栏）。
+ */
+export interface AgentComposerHandle {
+  /** 弹系统选择框选文件并导入为附件（「+ → 导入文件」同链路）。 */
+  pickFiles: () => Promise<void>
+  /** 直接导入一组本机文件（拖拽落点用；导入失败会 toast 原因）。 */
+  importFiles: (files: File[]) => Promise<void>
+}
+
+/**
  * 从 IPC reject 里剥出可读原因：Electron 会把错误包成
  * "Error invoking remote method 'files:…': Error: 附件超过 10 MB：a.pdf"，
  * 用户只需要最后那句真实原因（附件超限、格式不支持等由文件引擎给出）。
@@ -228,6 +239,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** 「+」菜单开合；导入文件时禁用以免双击重复弹框。 */
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
+  const [draggingFiles, setDraggingFiles] = useState(false)
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
@@ -266,7 +278,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const overlayRef = useRef<HTMLDivElement>(null)
   const mentionHints = useRef(new Map<string, MentionedItem>())
 
-  useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
+  /**
+   * 命令式句柄：兼容旧用法（直接当 textarea 用，取 .focus() 等），
+   * 同时暴露 pickFiles / importFiles 给宿主（对话区整区拖拽落点）。
+   * 实现经 ref 中转取「最新一次渲染」的闭包，避免句柄冻结在首帧版本。
+   */
+  const importApiRef = useRef<{ pickFiles: () => Promise<void>; importFiles: (files: File[]) => Promise<void> }>({ pickFiles: async () => undefined, importFiles: async () => undefined })
+  useImperativeHandle(ref, (): HTMLTextAreaElement & AgentComposerHandle => {
+    const textarea = textareaRef.current as (HTMLTextAreaElement & AgentComposerHandle) | null
+    const handle: AgentComposerHandle = {
+      pickFiles: () => importApiRef.current.pickFiles(),
+      importFiles: (files) => importApiRef.current.importFiles(files),
+    }
+    if (!textarea) return handle as HTMLTextAreaElement & AgentComposerHandle
+    return Object.assign(textarea, handle)
+  })
 
   const resizeTextarea = () => {
     const textarea = textareaRef.current
@@ -573,6 +599,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     } finally {
       setImportingFiles(false)
     }
+  }
+
+  // 命令式句柄取最新实现（importFiles/importDroppedFiles 是每次渲染重建的闭包，
+  // 直接在 useImperativeHandle 里引用会冻结在首帧；这里每帧同步到 ref）。
+  importApiRef.current = {
+    pickFiles: () => importFiles(),
+    importFiles: (files) => importDroppedFiles(files),
   }
 
   const mentionTrigger = matchMentionTrigger(value, caret)
@@ -937,12 +970,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       data-menu-open={String(menuOpen)}
       data-lift={String(externalPickerOpen || (agentPickerOpen && mentionOptionCount > 0))}
       onSubmit={submit}
+      data-dragging={String(draggingFiles)}
       onDragOver={(event) => {
-        if (!controlsDisabled && event.dataTransfer.types.includes('Files')) event.preventDefault()
+        if (controlsDisabled || !event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+        if (!draggingFiles) setDraggingFiles(true)
+      }}
+      onDragLeave={(event) => {
+        // 离开 shell 本体（进入子元素不算）：收起高亮。dropEffect 保留默认。
+        if (draggingFiles && !event.currentTarget.contains(event.relatedTarget as Node)) setDraggingFiles(false)
       }}
       onDrop={(event) => {
         if (controlsDisabled) return
         event.preventDefault()
+        setDraggingFiles(false)
         void importDroppedFiles([...event.dataTransfer.files])
       }}
     >
