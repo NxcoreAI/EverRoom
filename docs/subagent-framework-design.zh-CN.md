@@ -219,8 +219,17 @@ policy:
   allowedCallers: [primary-agent, scheduler]
   maxConcurrency: 2
   timeoutSeconds: 300
-  maxToolCalls: 40
+  # maxToolCalls 缺省＝不设上限（见下方 policy 字段说明）
 ```
+
+`policy` 字段说明：
+
+| 字段 | 缺省 | 语义 |
+| --- | --- | --- |
+| `allowedCallers` | `["primary-agent"]` | 允许派发的调用方（primary-agent / scheduler / internal-workflow）。 |
+| `maxConcurrency` | 1 | 同一 Revision 的并发 Invocation 上限，超出即拒绝（框架不排队）。 |
+| `timeoutMs` / `timeoutSeconds` | 框架缺省 | 单次 run 墙钟上限，超时 cancel 并判 `timed_out`。 |
+| `maxToolCalls` | **不声明＝不设上限** | 单次 run 的工具调用硬上限。超限立即中止 run 并判 `failed`，已收敛的中间产物不会提交。**长任务代理不推荐声明**：硬预算中途 abort 会把已完成的工作一起丢掉。失控防护由运行时统一兜底：墙钟超时（`timeoutMs`）、输出预算（`maxTokens`）、空转守卫（连续无副作用调用即中止，`packages/agent-runtime-pi` 的 `maxNoOpToolCalls`）、上下文裁剪（`runContextGuard`）与单条工具结果截断（`maxToolResultChars`）。2026-11 起内置子 Agent 已全部不声明；确需硬边界的宿主（如计费场景）才显式设置。 |
 
 编译发布时执行以下处理：
 

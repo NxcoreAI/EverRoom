@@ -99,7 +99,6 @@ export function CreateSkillDialog({
         onOpenChange(next)
       }}
       title="新增技能"
-      description="技能就是一个文件夹 + 一份 SKILL.md。加完主 Agent 就能用它。"
       size="md"
       footer={(
         <>
@@ -126,7 +125,7 @@ export function CreateSkillDialog({
 
         {mode === 'write' ? (
           <>
-            <Field label="技能名" hint="同时是目录名：一段路径，不能含 /，最长 64 个字符。">
+            <Field label="技能名">
               <TextInput
                 value={name}
                 onChange={(event) => setName(event.target.value)}
@@ -134,14 +133,14 @@ export function CreateSkillDialog({
                 autoFocus
               />
             </Field>
-            <Field label="一句话说明" hint="列表里显示，也写进 frontmatter 的 description。">
+            <Field label="一句话说明">
               <TextInput
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 placeholder="把本周邮件与会议汇总成周报"
               />
             </Field>
-            <Field label="正文（Markdown）" hint="模型读的就是这段：适用场景、步骤、约束。">
+            <Field label="正文（Markdown）">
               <TextArea
                 className="wb-skills-body-input"
                 value={body}
@@ -151,10 +150,7 @@ export function CreateSkillDialog({
             </Field>
           </>
         ) : (
-          <HomeNote>
-            选一个含 SKILL.md 的文件夹。会复制一份到 EverOffice 的数据目录（agent/skills），
-            原文件夹不受影响；同名技能会被拒绝。
-          </HomeNote>
+          <HomeNote>选择一个包含 SKILL.md 的文件夹。</HomeNote>
         )}
 
         {error ? <p className="wb-skills-form-error" role="alert">{error}</p> : null}
@@ -192,7 +188,6 @@ export function DeleteSkillDialog({
       open={skill !== null}
       onOpenChange={(next) => { if (!next) { setError(null); onOpenChange(false) } }}
       title={skill ? `删除「${skill.name}」？` : '删除技能'}
-      description="会从 agent/skills 下删掉这个技能目录，并从主 Agent 的提示词里移除。"
       size="sm"
       footer={(
         <>

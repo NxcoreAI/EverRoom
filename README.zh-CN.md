@@ -178,7 +178,8 @@ policy:
   allowedCallers: [primary-agent]
   timeoutMs: 300000
   maxConcurrency: 1
-  maxToolCalls: 40
+  # maxToolCalls 不声明＝不设工具调用上限（长任务推荐）：run 只受 timeoutMs
+  # 与输出预算约束。确需硬边界时才显式声明，超限会中止 run 并判 failed。
 ```
 
 `mcp.server` 引用设置中已有的全局 MCP 服务器名称，子 Agent 只会看到自己绑定并通过 `includeTools` 筛选后的服务器。修改目录内容后重启 Gateway 会自动生成新的不可变 Revision；已有 Invocation 继续使用原 Revision。完整约束见 [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md)。
