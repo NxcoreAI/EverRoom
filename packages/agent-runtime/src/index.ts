@@ -18,6 +18,13 @@ export interface RuntimeEvent<T = unknown> {
   payload: T;
 }
 
+export interface AgentRoomReference {
+  id: string;
+  title: string;
+  /** legacy：Room 已下线，保留字段兼容旧载荷。 */
+  subtitle?: string | null;
+}
+
 export interface StartRuntimeRunInput {
   runId: string;
   sessionId: string;
@@ -37,6 +44,15 @@ export interface StartRuntimeRunInput {
   pageLabel: string;
   /** 会话所属工作区：Agent 产物入库时带上（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
+  /** legacy：Room 已并入工作区，恒 null；旧管线（slides/doc-writer 子代理）仍写字段。 */
+  roomId?: string | null;
+  /** legacy：Room 列表已不再注入；保留可选位以兼容旧管线赋值。 */
+  availableRooms?: AgentRoomReference[];
+  /** legacy：记忆捕获开关由网关 memory 管线接管；旧管线仍写字段。 */
+  captureMemory?: boolean;
+  recallMemory?: boolean;
+  /** 工作区展示名（与 workspaceId 同源）：注入运行期上下文，让模型知道当前处于哪个空间。 */
+  workspaceLabel?: string | null;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
   /** 用户当前正在浏览的 Office 文件页签（file_entries），工具按 fileId 读取正文。 */

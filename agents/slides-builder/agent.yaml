@@ -3,7 +3,8 @@ id: slides-builder
 name: Slides Builder
 description: 承接 EverOffice 演示文稿（PPT）的修改——按指令读取既有 deck 大纲并发编辑事务（整页重排走 set_page spec 形态），保持全篇风格一致
 mode: dispatch_only
-enabled: true
+# ppt 生成/修改已切换到主 Agent 的 pptx skill（slides_create 脚本 + slides_read/slides_edit）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 

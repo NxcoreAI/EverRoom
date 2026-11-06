@@ -125,7 +125,6 @@ describe("prefetchSlidesMaterials（按页预取）", () => {
     expect(validate({
       phase: "arrange",
       instruction: "做一份 3 页汇报",
-      roomId: "room-1",
       contentMode: "semantic-v3",
       draftPages: [{ title: "封面" }],
       sources: [{ id: "src-1", pageId: "page-1", kind: "title", value: "封面", mustShow: true }],

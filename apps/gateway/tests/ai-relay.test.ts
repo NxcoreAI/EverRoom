@@ -315,6 +315,53 @@ describe("ai relay proxy", () => {
     }
   });
 
+  it("forwards multimodal request bodies larger than Fastify's 1 MiB default", async () => {
+    // 回归：默认 bodyLimit（1 MiB）下，带 base64 图片的 LLM 请求会被网关自己 413，
+    // 表现为 agent run 以 `413 "request_error"` 失败。
+    let forwardedBytes = 0;
+    const upstream = Fastify({ bodyLimit: 16 * 1024 * 1024 });
+    upstream.post("/v1/chat/completions", (request, reply) => {
+      forwardedBytes = Buffer.byteLength(JSON.stringify(request.body));
+      return reply.send({ ok: true });
+    });
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const address = upstream.server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const sessions = new AiRelaySessionStore();
+    sessions.set({
+      baseUrl: `http://127.0.0.1:${port}`,
+      token: "sk-relay-51",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      proxyOrigin: "http://127.0.0.1:49152",
+    });
+    const app = sessionApp({ sessions });
+
+    try {
+      const payload = {
+        model: "qwen-vl",
+        messages: [{
+          role: "user",
+          content: [{
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${"A".repeat(2 * 1024 * 1024)}` },
+          }],
+        }],
+      };
+      const response = await app.inject({
+        method: "POST",
+        url: "/ai-relay/v1/chat/completions",
+        headers: { authorization: "Bearer gw-token-51" },
+        payload,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(forwardedBytes).toBeGreaterThan(1024 * 1024);
+    } finally {
+      await app.close();
+      await upstream.close();
+    }
+  });
+
   it("returns 503 while no active session", async () => {
     const app = sessionApp({ sessions: new AiRelaySessionStore() });
     try {

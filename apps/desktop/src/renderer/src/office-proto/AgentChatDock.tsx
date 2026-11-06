@@ -129,6 +129,7 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
         loading={session.loading}
         messages={session.messages}
         pendingApprovals={session.pendingApprovals}
+        onSlidesAction={(prompt) => void session.sendPrompt(prompt)}
         onRetryPrompt={(prompt, runId) => void session.sendPrompt(prompt, undefined, null, runId)}
         onOpenSessionLink={() => {}}
         onResolveApproval={(approvalId, decision, feedback) => void session.resolveApproval(approvalId, decision, feedback)}

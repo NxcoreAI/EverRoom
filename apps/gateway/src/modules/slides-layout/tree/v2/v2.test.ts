@@ -333,6 +333,26 @@ describe("layout tree v2", () => {
     expect(() => normalizeTree({ ...COVER, nodes: [{ type: "text", token: "body", text: "x", slot: { col: [1, 2], row: [1, 1] } }].map((node) => ({ ...node, token: "xxl" })) })).toThrow(/V2_INVALID/);
   });
 
+  it("组件装不下时给出可执行的最小槽位建议", () => {
+    // 小槽位塞不下的 calloutBox：真实展开失败，提示里要带"需要多大 + 多少列×行"。
+    // 字号有角色下限（结论句不低于 20pt），装不下靠扩大槽位救，不再靠缩字号硬塞。
+    const tree = normalizeTree({
+      version: 2,
+      role: "content",
+      composition: "swiss",
+      nodes: [{
+        type: "component",
+        name: "calloutBox",
+        text: "结论：先做品类验证，再扩渠道，不提前铺全国网络。",
+        slot: { col: [1, 2], row: [1, 1] },
+      }],
+    });
+    const defects = measureDefects(compileTree(tree, CONTRACT), CONTRACT, {});
+    const overflow = defects.find((defect) => defect.type === "overflow");
+    expect(overflow).toBeTruthy();
+    expect(overflow!.hint).toMatch(/该组件至少需要约 \d+×\d+px（\d+ 列 × \d+ 行(，优先(加宽|加高))?，当前 \d+×\d+px）/);
+  });
+
   it("风格卡的字号覆盖被忽略：字号只由场景决定", () => {
     // 同一份风格卡里塞不同字号，编译结果必须一致——否则同一场景下每份 deck 字号各漂各的。
     const withOverride = contractFromStyleParams({ ...STYLE, typography: { typeScale: { ...STYLE.typography.typeScale, body: 18 } } });

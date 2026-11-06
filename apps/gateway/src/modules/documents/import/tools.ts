@@ -5,7 +5,7 @@ import { ImportServiceError } from "./service.js";
 
 /**
  * Agent 侧导入工具（B-7，方案 §13）：搜索与预览经 OpenConnector 只读链路，
- * 提交（加入 Room）复用导入面板同款 commitToRoom；能力不可用/连接缺失时
+ * 提交（导入工作区文稿库）复用导入面板同款 commit 入口；能力不可用/连接缺失时
  * 返回结构化指引而不是裸错误。
  */
 export function createDocumentImportPiTools(imports: DocumentImportService): PiAgentRuntimeTool[] {
@@ -65,7 +65,7 @@ export function createDocumentImportPiTools(imports: DocumentImportService): PiA
       name: "document_import_preview",
       label: "外部文档预览",
       description:
-        "读取一篇飞书/Notion 文档生成导入预览（正文摘录、评论、告警、快照已保存）。确认内容后可用 document_import_commit 加入 Room。",
+        "读取一篇飞书/Notion 文档生成导入预览（正文摘录、评论、告警、快照已保存）。确认内容后可用 document_import_commit 导入工作区文稿库。",
       parameters: {
         type: "object",
         properties: {
@@ -84,23 +84,27 @@ export function createDocumentImportPiTools(imports: DocumentImportService): PiA
     },
     {
       name: "document_import_commit",
-      label: "外部文档导入 Room",
+      label: "外部文档导入",
       description:
-        "把 document_import_preview 产生的预览正式导入指定 Room（成为该 Room 的文档；与导入面板「加入 Room」同一条链路）。仅当用户明确要求把文档加入 Room 时调用。",
+        "把 document_import_preview 产生的预览正式导入工作区文稿库（与导入面板同一条链路；同来源重导按正文哈希去重，不变则不落新版本）。",
       parameters: {
         type: "object",
         properties: {
           runId: { type: "string", description: "document_import_preview 返回的 runId" },
-          roomId: { type: "string", description: "目标 Room id" },
+          roomId: {
+            type: "string",
+            description: "可选：旧版归属 id；省略即导入工作区文稿库（推荐省略）",
+          },
         },
-        required: ["runId", "roomId"],
+        required: ["runId"],
         additionalProperties: false,
       } as unknown as Record<string, unknown>,
       executionMode: "sequential",
       execute: async (_input, params) => {
-        const result = await imports.commitToRoom({
+        const roomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
+        const result = await imports.commit({
           runId: String(params.runId).trim(),
-          roomId: String(params.roomId).trim(),
+          ...(roomId ? { roomId } : {}),
         });
         return { content: JSON.stringify(result), details: result };
       },

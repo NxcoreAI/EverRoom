@@ -17,7 +17,7 @@ export function createDocumentAnalysisResultValidator(service: DocumentUnderstan
     if (typeof input?.fileVersionId === "string" && input.fileVersionId !== fileVersionId) {
       throw new Error("subagent_result_file_version_mismatch");
     }
-    const parsed = service.get(fileVersionId);
+    const parsed = service.get(service.resolveVersionId(fileVersionId));
     if (!parsed) throw new Error("subagent_result_artifact_not_found");
     if (resultValue.artifactId !== parsed.id) {
       throw new Error("subagent_result_artifact_mismatch");
@@ -86,7 +86,11 @@ export function createDocumentUnderstandingTools(
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
       const result = await service.parseVersion(String(params.fileEntryId), String(params.fileVersionId));
-      if (!result) throw new Error("document_format_not_supported");
+      if (!result) {
+        // 图片不在本工具支持面（仅 Office/PDF/md/txt）：描述走 workspace_files_preview，
+        // 让子代理按 blocked 收口而不是试遍 fileVersionId 变体（2026-11-06 实测三轮空转）。
+        throw new Error("document_format_not_supported：仅支持 Office/PDF/md/txt；纯图片（png/jpg 等）的视觉描述由调用方经 workspace_files_preview 获取，本工具不处理图片");
+      }
       return toolResult({
         artifactId: result.id,
         fileVersionId: result.artifact.document.fileVersionId,
@@ -111,7 +115,7 @@ export function createDocumentUnderstandingTools(
       blockLimit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const offset = Number(params.blockOffset ?? 0);
       const limit = Number(params.blockLimit ?? 50);
@@ -139,7 +143,7 @@ export function createDocumentUnderstandingTools(
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100_000 })),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const offset = Number(params.offset ?? 0);
       const limit = Number(params.limit ?? 100_000);
@@ -202,7 +206,7 @@ export function createDocumentUnderstandingTools(
       fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
-      const result = service.get(String(params.fileVersionId));
+      const result = service.get(service.resolveVersionId(String(params.fileVersionId)));
       if (!result) throw new Error("document_artifact_not_found");
       const issues: string[] = [];
       const pageNumbers = result.artifact.pages.map((page) => page.pageNo);

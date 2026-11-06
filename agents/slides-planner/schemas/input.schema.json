@@ -15,16 +15,15 @@
       "maxLength": 16000,
       "description": "User goal and requirements for this slides task, within the system and schema contract. In arrange, the confirmed draft defines the content boundary."
     },
-    "roomId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "description": "Target room id injected by the gateway; binds the read tools to the room. Required."
-    },
-    "roomTitle": {
-      "type": "string",
-      "maxLength": 120,
-      "description": "Optional room title for context framing."
+    "previousErrors": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "description": "arrange only: 上一轮网关校验给出的具体缺陷（页级/契约级）。逐条修掉，不得重复同样的来源覆盖、数字保真或 omissions 错误。"
     },
     "title": {
       "type": "string",
@@ -104,7 +103,7 @@
     "sourceDocuments": {
       "type": "array",
       "maxItems": 2,
-      "description": "draft only: gateway-prefetched Room document content referenced by the user. Use markdown directly as source text; do not call document read tools for these documentIds. truncated=true means only the first markdownTotalCharacters chars are included.",
+      "description": "draft only: gateway-prefetched workspace document content referenced by the user. Use markdown directly as source text; do not call document read tools for these documentIds. truncated=true means only the first markdownTotalCharacters chars are included.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -310,8 +309,7 @@
     }
   },
   "required": [
-    "instruction",
-    "roomId"
+    "instruction"
   ],
   "additionalProperties": false,
   "$defs": {},

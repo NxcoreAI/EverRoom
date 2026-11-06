@@ -124,7 +124,7 @@ describe("durable slides generation checkpoints", () => {
   });
 
   it("invalidates reuse when content, agent revision or model configuration changes", () => {
-    const input = { roomId: "r", draftDocumentId: "d", instruction: "generate", sourcesHash: "content-a", batchSize: 8,
+    const input = { draftDocumentId: "d", instruction: "generate", sourcesHash: "content-a", batchSize: 8,
       generation: { revisions: ["rev-a"], model: "model-a" } };
     const key = arrangeBatchCheckpointKey(input);
     expect(arrangeBatchCheckpointKey({ ...input, sourcesHash: "content-b" })).not.toBe(key);
@@ -144,4 +144,29 @@ it("accepts a structured blocked submission for semantic pages and rejects incom
   await expect(tool.execute(input, { ...result, tree: {} })).rejects.toThrow("subagent_result_schema_invalid");
   await expect(tool.execute(input, result)).resolves.toMatchObject({ details: { accepted: true } });
   expect(collector.take("rev", input.runId)).toEqual(result);
+});
+
+describe("SlidesGenerationCheckpointStore（DB 持久化）", () => {
+  it("挂 DB 的检查点跨实例存活：regenerateDeck 凭据重启后仍可读（装配漏传会退回内存 store）", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join, resolve } = await import("node:path");
+    const { createDatabase } = await import("../src/infrastructure/database/client.js");
+    const dir = mkdtempSync(join(tmpdir(), "slides-checkpoints-"));
+    try {
+      const { db } = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
+      const first = new SlidesGenerationCheckpointStore(db);
+      first.patch("slides-regenerate:doc-1", {
+        regen: {
+          plan: { title: "t", pages: [{ title: "p1" }] },
+          deck: { fileEntryId: "file-1", originalName: "a.pptx", appliedPages: [0], totalPages: 1 },
+        },
+      });
+      // 模拟重启：新 gateway 进程 → 新 store 实例、同一 DB 文件。
+      const second = new SlidesGenerationCheckpointStore(db);
+      expect(second.read("slides-regenerate:doc-1").regen?.deck.fileEntryId).toBe("file-1");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

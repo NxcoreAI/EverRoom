@@ -121,9 +121,59 @@ export function isValidBlockId(value: unknown): value is string {
  * Block index mark targets. `document` points at a same-Room document block.
  */
 export type EverofficeBlockIndexTarget = { kind: "document" } & EverofficeBlockReference;
+const MEMORY_INDEX_HOST = "memory";
 
-export function everroomBlockIndexUrl(target: EverofficeBlockIndexTarget): string {
-  return createEverofficeBlockReferenceUrl(target);
+export interface EverroomMemoryIndex {
+  roomId: string;
+  memoryId: string;
+  fallbackTitle?: string | null;
+  fallbackPreview?: string | null;
+}
+
+export function createEverroomMemoryIndexUrl(target: EverroomMemoryIndex): string {
+  const path = [target.roomId, target.memoryId]
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  const query = new URLSearchParams();
+  const title = cleanOptionalText(target.fallbackTitle);
+  const preview = cleanOptionalText(target.fallbackPreview);
+  if (title) query.set("title", title);
+  if (preview) query.set("preview", preview);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return `everroom://${MEMORY_INDEX_HOST}/${path}${suffix}`;
+}
+
+export function parseEverroomMemoryIndexUrl(value: string): EverroomMemoryIndex | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "everroom:" || url.hostname !== MEMORY_INDEX_HOST) return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  try {
+    const [roomId, memoryId] = parts.map(decodeURIComponent);
+    if (!roomId || !memoryId) return null;
+    return {
+      roomId,
+      memoryId,
+      fallbackTitle: cleanOptionalText(url.searchParams.get("title")),
+      fallbackPreview: cleanOptionalText(url.searchParams.get("preview")),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 文档与记忆两类索引目标的联合（office-editor 的链接/标记同时承载两类）。 */
+export type BlockIndexUrlTarget = EverofficeBlockIndexTarget | ({ kind: "memory" } & EverroomMemoryIndex);
+
+export function everroomBlockIndexUrl(target: BlockIndexUrlTarget): string {
+  return target.kind === "memory"
+    ? createEverroomMemoryIndexUrl(target)
+    : createEverofficeBlockReferenceUrl(target);
 }
 
 function escapeBlockIndexLabel(value: string): string {
@@ -140,7 +190,7 @@ function unescapeBlockIndexLabel(value: string): string {
  * plain markdown links and from the block-level reference tokenizer (which
  * only claims line-leading `[label](everroom://...)`).
  */
-export function formatBlockIndexMarkMarkdown(target: EverofficeBlockIndexTarget, label: string): string {
+export function formatBlockIndexMarkMarkdown(target: BlockIndexUrlTarget, label: string): string {
   const escaped = escapeBlockIndexLabel(label) || escapeBlockIndexLabel(target.fallbackTitle || "");
   // The label already carries the title; writing it into the URL query too
   // would make serialize(parse(x)) grow on every round trip.

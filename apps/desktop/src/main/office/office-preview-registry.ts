@@ -60,6 +60,7 @@ import {
   type AgentPdfFileHints,
   type AgentPdfFailureReason,
 } from './office-agent-pdf-session'
+import { AgentSlidesSessionManager } from './office-agent-slides-session'
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
@@ -178,7 +179,7 @@ export type AgentArtifactToolsOutcome =
 
 export type SlidesEditArtifactOutcome =
   | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
-  | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
+  | { ok: false; reason: 'not_open' | 'not_editable'; message?: string; open?: OpenOfficeInstanceInfo[] }
 
 /** 保存回填的 per-file 状态：独立于视图存活（导入只需要磁盘工作副本）。 */
 interface EditSyncState {
@@ -256,6 +257,11 @@ export const officePreviewKindFor = officePreviewKindForFileName
  * 同一时刻只显示渲染端激活的那个（渲染端是焦点唯一事实源，open 不自动激活）。
  * docx/pptx/xlsx 产物可编辑：保存事件去抖后按 fileEntryId 钉住条目重导入（版本链 +1）。
  */
+/** genoffice 主机级"会话丢失"错误（registry 实例在、slides session 不在）→ 按 not_open 处置。 */
+export function genofficeSessionGone(error: unknown): boolean {
+  return typeof error === 'string' && /no slides session|the slides view is gone/u.test(error);
+}
+
 export class OfficePreviewRegistry {
   private runtime: PreparedGenOfficeRuntime | null = null
   private window: BrowserWindow | null = null
@@ -273,6 +279,7 @@ export class OfficePreviewRegistry {
   private agentSheets: AgentSheetSessionManager | null = null
   /** 未打开文件的后台 PDF 编辑会话（同上；pdf embed 无 sidecar）。 */
   private agentPdfs: AgentPdfSessionManager | null = null
+  private agentSlides: AgentSlidesSessionManager | null = null
   /** Agent 后台编辑的文件解析端口（index.ts 注入文件库访问）。 */
   private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
   /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
@@ -702,6 +709,21 @@ export class OfficePreviewRegistry {
     }
     const wcId = instance?.view.webContentsId
     if (!instance || !this.runtime || typeof wcId !== 'number') {
+      // 文件未打开：page 落页转后台隐藏会话（与活会话同一条 applyAgentDeckPage 管线），
+      // 逐页生成不再依赖「用户恰好打开过这份 PPT」。read/ops 保持原 not_open 语义。
+      if (fileId !== 'active' && 'page' in req) {
+        const headless = this.ensureAgentSlides()
+        if (headless) {
+          const outcome = await headless.applyPage(fileId, req.page)
+          if (outcome.ok) return { ok: true, result: outcome.result }
+          return {
+            ok: false,
+            reason: 'not_open',
+            ...(outcome.message ? { message: outcome.message } : {}),
+            open: this.listOpenOffice(),
+          }
+        }
+      }
       return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
     }
     if (instance.descriptor.kind !== 'slides') {
@@ -716,15 +738,19 @@ export class OfficePreviewRegistry {
     if (!instance.editable) {
       return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
     }
-    return {
-      ok: true,
-      result: 'page' in req
-        ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page, this.materialResolver() ?? undefined)
-        : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
-          dryRun: req.dryRun,
-          isolation: req.isolation,
-        }),
+    const result = 'page' in req
+      ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page, this.materialResolver() ?? undefined)
+      : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
+        dryRun: req.dryRun,
+        isolation: req.isolation,
+      });
+    // registry 实例在、genoffice session 却不在（渲染端重载/初始化未完成/视图已销毁）：
+    // 两层注册表脱节。映射回 not_open 让 office-bridge 走「请渲染端重开 + 轮询重试」，
+    // 而不是把 ok:false 原样包进 ok:true 透传——后者在网关落页闸变成不可恢复的占位页。
+    if (genofficeSessionGone(result.error)) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() };
     }
+    return { ok: true, result };
   }
 
   /**
@@ -888,6 +914,36 @@ export class OfficePreviewRegistry {
     return this.agentPdfs
   }
 
+  /**
+   * 未打开的 PPT 的后台落页会话（惰性创建）：隐藏 slides 视图跑与活会话同一条
+   * applyAgentDeckPage 管线。运行时缺 createSlidesView 或没有主窗口/文件解析端口
+   * 时返回 null，调用方保持原 not_open 语义（office-bridge 再走「请渲染端打开」兜底）。
+   */
+  private ensureAgentSlides(): AgentSlidesSessionManager | null {
+    const resolver = this.agentFileResolver
+    if (!resolver) return null
+    if (this.agentSlides) return this.agentSlides
+    const window = this.window && !this.window.isDestroyed()
+      ? this.window
+      : BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+    if (!window) return null
+    this.bindWindow(window)
+    const runtime = this.ensureRuntime(window)
+    if (typeof runtime.slides.createSlidesView !== 'function') return null
+    this.agentSlides = new AgentSlidesSessionManager({
+      slides: runtime.slides,
+      getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
+      resolveFile: resolver,
+      materialResolver: () => this.materialResolver() ?? null,
+      editSync: {
+        register: (input) => this.registerAgentEditState({ ...input, kind: 'slides' }),
+        drain: (fileId) => this.drainAgentEdits(fileId),
+        release: (fileId) => this.releaseAgentEditState(fileId),
+      },
+    })
+    return this.agentSlides
+  }
+
   /** 后台会话接入既有 editStates + fileSaved 回填链（与活实例编辑同一条导入路径）。 */
   private registerAgentEditState(input: {
     fileId: string
@@ -896,8 +952,8 @@ export class OfficePreviewRegistry {
     originalName: string
     roomId: string | null
     workspaceId: string | null
-    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel（xlsx），pdf = PDF。 */
-    kind: 'docx' | 'spreadsheet' | 'pdf'
+    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel，pdf = PDF，slides = PPT。 */
+    kind: 'docx' | 'spreadsheet' | 'pdf' | 'slides'
   }): () => void {
     this.editStates.set(input.fileId, {
       filePath: input.filePath,
@@ -1082,8 +1138,7 @@ export class OfficePreviewRegistry {
    * Agent 读 Excel：已打开实例优先（读也走用户现场的会话，不拿隐藏工作簿顶替）；
    * 未打开（或 UI 没有页签）则拉起后台隐藏工作簿会话。可见但不是表格、或
    * fileId 'active' 解析不到可见实例时保持原 not_open/not_editable 语义。
-   */
-  async describeSpreadsheetArtifact(
+   */  async describeSpreadsheetArtifact(
     fileId: string,
     hints?: AgentSheetFileHints,
   ): Promise<

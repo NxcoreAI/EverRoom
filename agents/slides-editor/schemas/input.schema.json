@@ -7,12 +7,6 @@
       "maxLength": 16000,
       "description": "User instruction for this deck generation; always the highest priority."
     },
-    "roomId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "description": "Target room id injected by the gateway. Required."
-    },
     "title": {
       "type": "string",
       "maxLength": 120,
@@ -64,15 +58,15 @@
     },
     "repairPageIds": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 12,
       "items": {
         "type": "string"
       },
-      "description": "页级修复模式：允许改动的页 id。改到其它页会被网关丢弃。"
+      "description": "页级修复模式：允许改动的页 id（单轮最多 12 页，覆盖一个 arrange 批次）。改到其它页会被网关丢弃。"
     },
     "defects": {
       "type": "array",
-      "maxItems": 12,
+      "maxItems": 24,
       "items": {
         "type": "string",
         "maxLength": 300
@@ -127,7 +121,6 @@
   },
   "required": [
     "instruction",
-    "roomId",
     "draftPages",
     "contentMode",
     "sources",

@@ -29,7 +29,8 @@ export function agentDocumentExportRoutes(service: AgentDocumentExportService): 
       schema: {
         tags: ["agent-document-exports"],
         body: Type.Object({
-          roomId: Type.String(idText),
+          // 省略/null = 工作区文稿导出（落库列 NOT NULL，service 写 scope sentinel）。
+          roomId: Type.Optional(Type.Union([Type.String(idText), Type.Null()])),
           documentId: Type.String(idText),
           version: Type.Optional(Type.Integer({ minimum: 1 })),
           provider: providerSchema,

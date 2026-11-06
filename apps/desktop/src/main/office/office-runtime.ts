@@ -116,7 +116,10 @@ export interface GenOfficeDocsRuntime {
   ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
-  /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
+  /**
+   * AI 页签论文排版面板：embed 宿主接管（wcId 反查文件；payload 不带 id）。
+   * Room 已删除：本仓库不再返回 no_room，联合类型保留兼容旧契约。
+   */
   setDocsThesisPanelHook(
     hook:
       | ((

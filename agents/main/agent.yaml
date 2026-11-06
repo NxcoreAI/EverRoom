@@ -7,6 +7,7 @@ runtime: pi
 systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/document-export
+  - ./skills/pptx
 
 capabilities:
   - conversation.respond
@@ -18,11 +19,19 @@ capabilities:
   - notification.send
 
 tools:
-  - slides_draft
+  - document_list
+  - document_read
+  - document_patch_begin
+  - document_patch_hunk
+  - document_patch_commit
+  - document_patch_abort
+  - document_write_begin
+  - document_write_append
+  - document_write_commit
+  - document_write_abort
+  - document_draft
   - office_create
-  - markdown_create
   - slides_create
-  - slides_set_page
   - slides_read
   - slides_edit
   - sheets_create
@@ -35,8 +44,6 @@ tools:
   - sheets_agent_read
   - sheets_agent_edit
   - file_search
-  - library_browse
-  - file_read
   - document_export
   - connector_query
   - connector_read

@@ -35,7 +35,6 @@ export interface SlidesProgressPayload {
   title?: string
   /** 毫秒时间戳：所有载荷都带，渲染层据此做新旧单调守卫。 */
   updatedAt: number
-  roomId?: string
   documentId?: string
   styleSessionId?: string
   totalPages?: number

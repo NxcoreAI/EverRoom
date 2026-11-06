@@ -3,7 +3,9 @@
   "properties": {
     "task": {
       "type": "string",
-      "enum": ["edit"],
+      "enum": [
+        "edit"
+      ],
       "description": "The slides task to execute: modify an existing deck per the instruction."
     },
     "instruction": {
@@ -12,23 +14,15 @@
       "maxLength": 16000,
       "description": "User instruction for this slides task; always the highest priority."
     },
-    "roomId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "description": "Target room id injected by the gateway; binds the slides tools to the room. Required."
-    },
-    "roomTitle": {
-      "type": "string",
-      "maxLength": 120,
-      "description": "Optional room title for context framing."
-    },
     "fileId": {
       "type": "string",
       "maxLength": 128,
       "description": "Target deck for edit: a file entry id or \"active\" (the deck currently open on the user's desktop). Defaults to \"active\"."
     }
   },
-  "required": ["task", "instruction", "roomId"],
+  "required": [
+    "task",
+    "instruction"
+  ],
   "additionalProperties": false
 }

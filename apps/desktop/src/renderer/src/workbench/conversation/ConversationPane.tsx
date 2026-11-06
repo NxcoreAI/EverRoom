@@ -485,6 +485,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             onOpenSessionLink={() => workbenchToast('会话引用跳转暂未接入工作台')}
             onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
             onRetryError={() => hook.reload()}
+            onSlidesAction={(prompt) => void hook.sendPrompt(prompt)}
             onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, null, runId)}
             onSelectPrompt={(prompt) => {
               setDraft(prompt)

@@ -8,6 +8,7 @@ import {
   isGeometryClampScroll,
   isNestedScrollerWheel,
   isScrolledToBottom,
+  wheelDownChaseBand,
 } from './agentChatScroll'
 
 function element(geometry: { scrollHeight: number; scrollTop: number; clientHeight: number }): HTMLElement {
@@ -124,5 +125,16 @@ describe('nested scroller wheel guard', () => {
   it('needs a couple of sub-pixel wheel steps before detaching', () => {
     // 触控板慢扫 −0.5px/发：单发低于阈值，累计到 2px 才解除。
     expect(AGENT_CHAT_WHEEL_UP_DETACH_PX).toBeGreaterThan(1)
+  })
+})
+
+describe('wheelDownChaseBand（流式爆发时的下滚追赶带）', () => {
+  it('轻滚不放宽（保持 32px），随位移比例放款，上限 400px', () => {
+    expect(wheelDownChaseBand(0.5)).toBe(32)
+    expect(wheelDownChaseBand(10)).toBe(32)
+    expect(wheelDownChaseBand(40)).toBe(120)
+    expect(wheelDownChaseBand(120)).toBe(360)
+    expect(wheelDownChaseBand(500)).toBe(400)
+    expect(wheelDownChaseBand(-120)).toBe(360)
   })
 })

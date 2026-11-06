@@ -155,6 +155,35 @@ describe("bundled project Agent", () => {
       outputFormat: "structured",
     });
 
+    // 线上形态：workspace_files_list 只回 fileEntryId，模型拿它顶替 fileVersionId；
+    // 派发前应兜底解析成条目当前版本，避免解析子代理按不存在的版本空转。
+    const entryIdDispatch = vi.fn().mockResolvedValue({
+      id: "document-entry-invocation",
+      agentDefinitionId: "multimodal-document-parser",
+      status: "completed",
+      result: { text: "ok" },
+      errorMessage: null,
+    });
+    const entryIdTool = createSubagentPiTools(
+      registry,
+      { dispatch: entryIdDispatch } as unknown as SubagentOrchestrator,
+      { resolveFileCurrentVersionId: (fileEntryId) => (fileEntryId === "file-entry" ? "fver-current" : null) },
+    ).find((tool) => tool.name === "document_analysis")!;
+    await entryIdTool.execute({
+      runId: "main-entry-id-run",
+      sessionId: "main-session",
+      runtimeSessionRef: null,
+      prompt: "读下这份文件",
+      pageLabel: "Main Agent",
+      roomId: null,
+    }, {
+      fileEntryId: "file-entry",
+      fileVersionId: "file-entry",
+    });
+    expect(entryIdDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ fileEntryId: "file-entry", fileVersionId: "fver-current" }),
+    }));
+
     const proseDispatch = vi.fn().mockResolvedValue({
       id: "document-prose-invocation",
       agentDefinitionId: "multimodal-document-parser",
