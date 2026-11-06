@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Cable, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -178,6 +178,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop: () => void
   /** 提交本轮内容：文件附件（文件引擎引用）+ 挂载目录 + @ 提及。 */
   onSubmit: (payload: ComposerSubmitPayload) => void
+  /** 打开「连接器」弹窗（操作栏多一个连接器按钮；不传则不渲染该按钮）。 */
+  onOpenConnectors?: () => void
 }>(function AgentComposer({
   active,
   available,
@@ -217,6 +219,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop,
   onSubmit,
   onSelectExternalConversation,
+  onOpenConnectors,
 }, ref) {
   const { t, formatDate } = useLocale()
   const [attachments, setAttachments] = useState<AgentAttachmentReference[]>([])
@@ -1550,6 +1553,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Brain aria-hidden="true" />
               <span>{t(activeThinkingOption.labelKey)}</span>
               <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
+          {/* 连接器入口：打开连接器弹窗（选择/授权连接器），与档位钮同一 ghost 语言。 */}
+          {onOpenConnectors ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-connectors-toggle"
+              title={t('surface:agentComposer.connectorsPickerTitle')}
+              aria-label={t('surface:agentComposer.connectorsPickerTitle')}
+              aria-haspopup="dialog"
+              disabled={controlsDisabled}
+              onClick={onOpenConnectors}
+            >
+              <Cable aria-hidden="true" />
+              <span>{t('surface:agentComposer.connectorsPickerTitle')}</span>
             </button>
           ) : null}
           {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}

@@ -1281,8 +1281,7 @@ table.op-sheet td input {
 .op-drawer .op-primary-btn, .op-drawer .op-danger-btn { margin-top: auto; width: 100%; }
 
 /* 连接器抽屉 · 已连接账号列表（同源多账号，逐条可断开） */
-.op-conn-accounts { display: flex; flex-direction: column; gap: 8px; }
-.op-conn-account {
+.op-conn-accounts { display: flex; flex-direction: column; gap: 8px; }.op-conn-account {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md);
   background: var(--ui-surface-alt); font-size: var(--ui-text-sm);
@@ -1304,6 +1303,23 @@ table.op-sheet td input {
 }
 .op-conn-account-on:hover { background: var(--ui-accent-soft); }
 .op-conn-account-on:disabled { opacity: 0.45; cursor: default; }
+
+/* ───────────── 连接器弹窗形态（对话区「连接器」按钮打开的 Modal） ─────────────
+ * 复用整页版式（网格卡片 + 右侧抽屉），差异只有容器：
+ * - 页头换成一行工具条（标题由 Modal 提供）：分类筛选 + 已连接计数；
+ * - 抽屉锚定在弹窗内（position:fixed → absolute，宽度收窄），遮罩只盖弹窗。 */
+.op-conn-dialog { position: relative; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.op-conn-dialog-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid var(--ui-border-subtle);
+}
+.op-conn-dialog-toolbar .op-seg { margin: 0; }
+.op-conn-dialog-count { margin-left: auto; font-size: var(--ui-text-xs); color: var(--ui-text-3); white-space: nowrap; }
+/* 弹窗里的卡片网格：弹窗宽 720，双列即可；卡片最小宽收窄避免单列。 */
+.op-conn-dialog .op-conn-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.op-conn-dialog .op-drawer-mask,
+.op-conn-dialog .op-drawer { position: absolute; }
+.op-conn-dialog .op-drawer { width: 340px; max-width: 100%; }
 
 /* ───────────── 编辑页右侧停靠栏（Agent / 材料 / 历史记录） ───────────── */
 .op-ed-dock-row { flex: 1; display: flex; min-height: 0; min-width: 0; }

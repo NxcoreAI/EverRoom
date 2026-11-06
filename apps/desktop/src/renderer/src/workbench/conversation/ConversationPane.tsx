@@ -13,6 +13,7 @@ import '@/components/agent/AgentPanel.css'
 
 import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
+import { ConnectorsDialog } from './ConnectorsDialog'
 import { ConversationEmpty } from './ConversationEmpty'
 import { NoteQueueChip } from './NoteQueueChip'
 import './conversation.css'
@@ -88,6 +89,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [connectingVisible, setConnectingVisible] = useState(false)
+  const [connectorsOpen, setConnectorsOpen] = useState(false)
   const composerRef = useRef<HTMLTextAreaElement>(null)
 
   /** 最新 hook：effect 里按 sessionId 调用切换方法时避免闭包拿到旧函数。 */
@@ -359,6 +361,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       onClearContext={() => undefined}
       onRemoveContext={() => undefined}
       onStop={() => void hook.stop()}
+      onOpenConnectors={() => setConnectorsOpen(true)}
       onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
     />
   )
@@ -371,6 +374,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       data-state={loadingView ? 'loading' : conversationState ? 'active' : 'empty'}
       data-has-note-queue={workspaceAskDrafts.length > 0 ? 'true' : undefined}
     >
+      <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">
           {bridgeAvailable ? '工作区未就绪，暂时无法发送消息。' : '桌面端 Agent 服务未就绪，暂时无法发送消息。'}

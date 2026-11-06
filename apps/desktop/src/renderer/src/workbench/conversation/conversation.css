@@ -45,6 +45,17 @@
     radial-gradient(520px 400px at 66% 64%, var(--wb-hero-glow-peach), transparent 72%);
 }
 
+/* 连接器弹窗加载态（Modal 内骨架，与主页加载态同一文案）。 */
+.wb-conn-dialog-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 220px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
 /* ───────────── 顶部提示条（未就绪 / 错误 / 连接中） ───────────── */
 
 .wb-conversation-notice {
@@ -1062,6 +1073,9 @@
   color: var(--ui-danger-hover);
 }
 .wb-conversation .agent-model-tier-toggle:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+/* 连接器按钮：复用档位钮的 ghost 语言（类名同源），无下拉箭头，仅图标+文字。 */
+.wb-conversation .agent-connectors-toggle { color: var(--ui-text-2); }
+.wb-conversation .agent-connectors-toggle:hover:not(:disabled) { color: var(--ui-text); }
 
 .wb-conversation .agent-composer-context { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
 .wb-conversation .agent-composer-context > button { border-radius: var(--ui-radius-xs); color: var(--ui-text-3); }
