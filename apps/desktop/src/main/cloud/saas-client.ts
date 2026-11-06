@@ -229,18 +229,23 @@ export interface CreditPack {
   code: string
   name: string
   amountCents: number
+  /** 微信支付人民币价(分,如 3500=¥35);未配置人民币价的档位无此字段。 */
+  amountCnyCents?: number
   grantQuota: number
   active: boolean
   /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
   productKind?: 'credits' | 'pro_month'
 }
 
+/** 充值支付渠道:paypal 走 approval 页;wechatpay 返回 code_url(weixin://)弹窗内扫码。 */
+export type TopupChannel = 'paypal' | 'wechatpay'
+
 /** 充值下单结果（`POST /app/billing/topup`）。 */
 export interface TopupOrder {
   orderId: string
-  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议。 */
+  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议;微信为 weixin:// code_url。 */
   approvalUrl: string
-  provider: 'paypal' | 'mock'
+  provider: 'paypal' | 'mock' | 'wechatpay'
 }
 
 export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
@@ -876,10 +881,10 @@ export class SaasClient {
     return this.request<CreditPack[]>('/app/billing/packs')
   }
 
-  /** 充值下单:返回 approvalUrl(系统浏览器打开完成支付)。 */
-  async createTopup(packCode: string): Promise<TopupOrder> {
+  /** 充值下单:channel 省略=paypal(现状);wechatpay 返回 weixin:// code_url 由渲染端扫码。 */
+  async createTopup(packCode: string, channel?: TopupChannel): Promise<TopupOrder> {
     await this.initialize()
-    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode } })
+    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode, ...(channel ? { channel } : {}) } })
   }
 
   /** 充值订单状态轮询(pending 时服务端主动核对支付渠道)。 */

@@ -3751,12 +3751,14 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     if (!client) return Promise.resolve([])
     return rateLimitAware(() => client.creditPacks())
   })
-  handle(ACCOUNT_CHANNELS.billingTopup, (_event, packCode: unknown) => {
+  handle(ACCOUNT_CHANNELS.billingTopup, (_event, packCode: unknown, channel: unknown) => {
     const client = saasClient
     if (!client || typeof packCode !== 'string') return Promise.reject(new Error('尚未登录。'))
-    // mock 协议不开系统浏览器(它不是真实 URL);真 paypal 的 approval 链外部打开
+    // mock 协议不开系统浏览器(它不是真实 URL);真 paypal 的 approval 链外部打开;
+    // 微信 code_url(weixin://)不是网页,留在充值弹窗内渲染二维码扫码
+    const topupChannel = channel === 'wechatpay' ? 'wechatpay' : undefined
     return rateLimitAware(async () => {
-      const order = await client.createTopup(packCode)
+      const order = await client.createTopup(packCode, topupChannel)
       if (order.provider !== 'mock' && order.approvalUrl.startsWith('http')) {
         void shell.openExternal(order.approvalUrl)
       }
