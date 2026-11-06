@@ -152,7 +152,7 @@ export function CreateSkillDialog({
           </>
         ) : (
           <HomeNote>
-            选一个含 SKILL.md 的文件夹。会复制一份到 EverRoom 的数据目录（agent/skills），
+            选一个含 SKILL.md 的文件夹。会复制一份到 EverOffice 的数据目录（agent/skills），
             原文件夹不受影响；同名技能会被拒绝。
           </HomeNote>
         )}

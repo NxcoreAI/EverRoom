@@ -1,4 +1,4 @@
-# EverRoom PC 与手机 Agent 双向同步方案
+# EverOffice PC 与手机 Agent 双向同步方案
 
 ## 目标
 
@@ -14,18 +14,18 @@
 ## 总体架构
 
 ```text
-EverRoom App
+EverOffice App
   ├─ REST：设备与 Agent 状态快照
   └─ WSS：命令和实时事件（阶段二）
              │
              ▼
-EverRoom SaaS Control Plane
+EverOffice SaaS Control Plane
   ├─ PostgreSQL：设备、状态投影、命令、事件、审计
   ├─ Redis Streams / NATS：多实例实时路由（阶段二）
   └─ APNs / FCM：后台通知（阶段三）
              ▲
              │ PC 主动出站连接
-EverRoom Desktop
+EverOffice Desktop
   └─ Local Gateway → Agent Runtime
 ```
 

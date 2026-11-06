@@ -4,7 +4,7 @@
 
 > 状态：Implemented（2026-08-27 完成 §4 步骤 1–4；`<ForceGraphSurface>` 组件为可选后续，样板已由 `useForceGraphLayout` 吸收）
 > 日期：2026-08-27
-> 范围：EverRoom Desktop renderer 图谱内核（现位于 `apps/desktop/src/renderer/src/components/graph/`）及其三个图谱使用面
+> 范围：EverOffice Desktop renderer 图谱内核（现位于 `apps/desktop/src/renderer/src/components/graph/`）及其三个图谱使用面
 
 ## 1. 背景与问题
 

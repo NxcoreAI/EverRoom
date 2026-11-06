@@ -185,6 +185,7 @@ describe("bundled project Agent", () => {
     // 而是回填 summary=text 并标记 outputFormat:"text" + unstructured 警告。
     expect(JSON.parse(proseResult.content)).toMatchObject({
       status: "completed",
+      // 纯文本（非结构化）解析结果按 normalizeDocumentSummary 语义透传全文并标注 text。
       summary: "文档解析完成。李展萍就读于示例大学，学籍状态为在籍。",
       facts: null,
       missingFields: null,
@@ -195,7 +196,7 @@ describe("bundled project Agent", () => {
     const invocation = await orchestrator.dispatch({
       agentId: "content-analyst",
       task: "分析材料并提炼结论",
-      input: { content: "EverRoom 已把 Agent Bundle 放入项目并随应用打包。" },
+      input: { content: "EverOffice 已把 Agent Bundle 放入项目并随应用打包。" },
       idempotencyKey: "bundled-content-analyst",
       source: "primary_agent",
       parentSessionId: "main-session",

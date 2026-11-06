@@ -123,7 +123,7 @@ lark-cli 子进程环境 = **白名单继承 + 固定注入**，其余全部剥�
 
 被剥离（自然不在白名单内）：`LARK_*`（`LARK_CHANNEL` 等）、`LARKSUITE_CLI_*`、
 `FEISHU_*`、`OPENCLAW_*`、`HERMES_*`、`NODE_OPTIONS`、`ELECTRON_*`、`npm_config_*`、
-`XDG_*`、`CI` 等。这样无论 EverRoom 从 Finder、终端还是某个 Agent 宿主启动，
+`XDG_*`、`CI` 等。这样无论 EverOffice 从 Finder、终端还是某个 Agent 宿主启动，
 lark-cli 都以同一种干净环境运行，不会进入其他 Agent 的工作区，也不会加载外部注入的
 Node/Electron 选项。
 
@@ -139,10 +139,10 @@ Node/Electron 选项。
 - **升级**：新安装包整目录替换 `Resources/lark-cli/`；私有 HOME 保留，已授权状态延续。
 - **卸载（macOS）**：二进制在 `.app` 内，随应用拖入废纸篓一起消失；私有配置在
   `<userData>/lark-cli/home`，用户选择「清除本机数据」或手动删除
-  `~/Library/Application Support/EverRoom` 时清除。
+  `~/Library/Application Support/EverOffice` 时清除。
 - **卸载（Windows）**：安装器删除 `Resources/lark-cli/`；`build/installer.nsh` 的
-  `customUnInstall` 额外删除 `%APPDATA%\EverRoom\lark-cli` 与
-  `%LOCALAPPDATA%\EverRoom\lark-cli`（私有主密钥与配置）。
+  `customUnInstall` 额外删除 `%APPDATA%\EverOffice\lark-cli` 与
+  `%LOCALAPPDATA%\EverOffice\lark-cli`（私有主密钥与配置）。
   安装器要求应用已退出，应用退出时会结束自己启动的 lark-cli 子进程。
 - **凭据存储**：应用使用的 lark-cli 不写 macOS 钥匙串——主密钥与加密后的凭据都在上面的
   私有目录内，删除该目录即彻底清除（断连「注销」会调用 `lark-cli auth logout` 清除本机凭据）。

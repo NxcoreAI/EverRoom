@@ -7,7 +7,6 @@ import { useActiveTab, useWorkbenchStore } from '../state/store'
 import { cn } from '../ui/cn'
 import { ErrorBoundary } from '../ui/error-boundary'
 import { CreateWorkspaceDialog } from '../workspace/CreateWorkspaceDialog'
-import { FileTabHost } from './FileTabHost'
 import { HomeSidebar } from './HomeSidebar'
 import { TabBar } from './TabBar'
 import { CommandPalette } from './CommandPalette'
@@ -15,6 +14,7 @@ import { Toaster } from './Toaster'
 import { workbenchToast } from './toast'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { WorkspaceTabHost } from './WorkspaceTabHost'
+import { dispatchOpenAgentFile } from './openAgentFile'
 import '../ui/ui.css'
 import '../styles/workbench.css'
 
@@ -23,8 +23,9 @@ const SESSION_POLL_MS = 4000
 /**
  * 标签页工作台外壳：
  *   标签栏（窗口级）
- *   ├─ 侧栏（随激活标签互斥切换：主页侧栏 / 工作空间侧栏 / 文件标签无侧栏）
- *   └─ 内容区（主页标签 / 各工作空间标签 / 文件标签；后两者常驻挂载仅切 display）
+ *   ├─ 侧栏（随激活标签互斥切换：主页侧栏 / 工作空间侧栏）
+ *   └─ 内容区（主页标签 / 各工作空间标签；常驻挂载仅切 display。文件不占标签，
+ *      一律在归属工作空间的气泡窗里打开）
  */
 export function Workbench() {
   const boot = useWorkbenchStore((state) => state.boot)
@@ -69,7 +70,8 @@ export function Workbench() {
   }, [])
 
   // 主进程主动发起的预览（排版面板 👁 预览模版原文件等）：实例已在主进程建好，
-  // 这里开文件标签并激活。不接这条事件，原生视图会一直隐藏（「点了没反应」）。
+  // 这里在归属工作空间里打开（激活标签 + 气泡窗接管实例）。不接这条事件，
+  // 原生视图会一直隐藏（「点了没反应」）。
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office?.onPreviewRequest) return
@@ -80,7 +82,7 @@ export function Workbench() {
         const entry = catalog ? catalogToOfficeFile(catalog) : null
         if (disposed) return
         if (entry) {
-          useWorkbenchStore.getState().openFileTab(entry.file)
+          useWorkbenchStore.getState().openFileInWorkspace(entry.file)
           return
         }
         // 查不到条目（如刚被删除）：至少把已建好的实例关掉，避免泄漏隐藏视图。
@@ -94,6 +96,52 @@ export function Workbench() {
       disposed = true
       unsubscribe()
     }
+  }, [])
+
+  /**
+   * Agent 产物就绪（office:agent-file done）→ 自动展示结果：
+   * 按归属工作空间定位标签，把文件塞进该空间气泡窗（自动展开 + 打开内容）。
+   *
+   * 边界约定：
+   * - 只有产物归属的空间**已开着标签且当前激活**才自动展开——用户正在别的
+   *   空间/主页做事时，弹侧栏只会打断他；文件已入库 + 对话区有文件卡，想看
+   *   随时能看。后台空间的标签即使挂着也不响应（激活时气泡窗才可见）。
+   * - 同一 fileId 只处理一次：pptx 逐页链路可能补发多次 done，重复展开同
+   *   一份文件没有信息增量。
+   * - 事件缺 workspaceId（旧网关）→ 查 catalog 补齐；查不到就不动。
+   */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    const files = window.nxcore?.files
+    if (typeof office?.onAgentFile !== 'function' || !files?.catalogEntry) return
+    let disposed = false
+    const handled = new Set<string>()
+    return office.onAgentFile(async (event) => {
+      if (event.type !== 'done') return
+      const fileId = event.fileId
+      if (!fileId || handled.has(fileId)) return
+      handled.add(fileId)
+      try {
+        let workspaceId = event.workspaceId ?? null
+        if (!workspaceId) {
+          const catalog = await files.catalogEntry!(fileId).catch(() => null)
+          workspaceId = catalog?.workspaceId?.trim() || null
+        }
+        if (disposed || !workspaceId) return
+        const state = useWorkbenchStore.getState()
+        const tab = state.tabs.find(
+          (item) => item.kind === 'workspace' && item.workspaceId === workspaceId,
+        )
+        // 归属空间没开标签、或不处于激活态：不打扰（见上方边界约定）。
+        if (tab?.kind !== 'workspace' || state.activeTabId !== tab.id) return
+        const catalog = await files.catalogEntry!(fileId).catch(() => null)
+        const entry = catalog ? catalogToOfficeFile(catalog) : null
+        if (disposed || !entry) return
+        dispatchOpenAgentFile({ tabId: tab.id, workspaceId, file: entry.file })
+      } catch {
+        // 自动展示失败静默放弃：文件已入库，对话区文件卡仍是可靠入口。
+      }
+    })
   }, [])
 
   /**
@@ -241,13 +289,11 @@ export function Workbench() {
       <TabBar />
       <div className="wb-body">
         {/* 侧栏保持挂载、用 max-width 过渡收起：折叠/展开有明确视觉反馈，组件内部状态也不丢。 */}
-        {activeTab.kind !== 'file' ? (
-          <div className={cn('wb-sidebar-slot', sidebarCollapsed && 'is-collapsed')} aria-hidden={sidebarCollapsed}>
-            {activeTab.kind === 'workspace'
-              ? <WorkspaceSidebar tab={activeTab} />
-              : <HomeSidebar />}
-          </div>
-        ) : null}
+        <div className={cn('wb-sidebar-slot', sidebarCollapsed && 'is-collapsed')} aria-hidden={sidebarCollapsed}>
+          {activeTab.kind === 'workspace'
+            ? <WorkspaceSidebar tab={activeTab} />
+            : <HomeSidebar />}
+        </div>
         <main className="wb-content">
           {error ? (
             <div className="wb-errorbar" role="alert">
@@ -279,16 +325,7 @@ export function Workbench() {
                   </div>
                 )
               }
-              return (
-                <div key={tab.id} className={cn('wb-tabpane', active && 'is-active')} aria-hidden={!active}>
-                  {/* 原生编辑器同时只允许一个可见：只有激活的文件标签挂载宿主。 */}
-                  {active ? (
-                    <ErrorBoundary label="文件" resetKey={tab.id}>
-                      <FileTabHost tab={tab} />
-                    </ErrorBoundary>
-                  ) : null}
-                </div>
-              )
+              return null
             })}
           </div>
         </main>

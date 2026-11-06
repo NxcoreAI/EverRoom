@@ -16,7 +16,9 @@ import {
   type FileViewMode,
   type FileFilterOption,
 } from './fileBrowser'
-import { FileGrid, FileList, type FileItemActions } from './fileItemViews'
+import { type FileItemActions } from './fileItemViews'
+import { folderLabel, folderOf, type LibraryRow } from './libraryTree'
+import { LibraryGrid, LibraryList } from './LibraryViews'
 import { useFileLibrary } from './useFileLibrary'
 import './library.css'
 
@@ -26,8 +28,12 @@ type ArtifactFilter = 'all' | 'agent-generated' | 'artifact-imported'
  * 产物页：本工作空间里 `sourceKind ∈ {agent-generated, artifact-imported}` 的文件。
  *
  * Agent 生成的产物在入库时带其会话所属的 workspaceId，产物导入按当前空间归属；
- * 本页只拉 `workspace.id` 名下的产物，与资料库同一套隔离口径。
+ * 本页只拉 `workspace.id` 名下的产物，与资料同一套隔离口径。
  * 点开走注入的 onOpenFile → 气泡窗。
+ *
+ * 列表排序 UI 与资料页一致（以资料为主）：网格/列表复用 LibraryViews 的
+ * 同一套瓦片与六列表格（表头「修改时间」带倒序指示），行序同为更新时间倒序；
+ * 本页多出的只是来源筛选 chips（筛选不是排序）。
  */
 export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewWork }: WorkspacePageProps) {
   const library = useFileLibrary(workspace.id)
@@ -53,6 +59,17 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     })
   }, [artifacts, filter, query])
 
+  // 复用资料页的列表/网格：产物没有文件夹，全部行都是文件行，
+  // 位置列与资料同口径（relativePath 派生，根目录显示「资料」）。
+  const rows = useMemo(
+    () => filtered.map((item): LibraryRow => ({
+      kind: 'file',
+      item,
+      location: folderLabel(folderOf(item)),
+    })),
+    [filtered],
+  )
+
   const filters: ReadonlyArray<FileFilterOption<ArtifactFilter>> = [
     { key: 'all', label: '全部产物', count: counts.all },
     { key: 'agent-generated', label: 'Agent 生成', count: counts['agent-generated'] },
@@ -67,7 +84,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverRoom」并定位到文件管理器')
+      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
     } catch {
       onToast('导出失败，请稍后重试')
     }
@@ -108,7 +125,7 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
             disabled={library.refreshing}
           />
           <Button variant="secondary" icon={<FolderOpen size={15} />} onClick={() => onOpenPage('library')}>
-            去资料库
+            去资料
           </Button>
         </div>
       </header>
@@ -145,9 +162,9 @@ export function OutputsPage({ workspace, onOpenFile, onToast, onOpenPage, onNewW
 
       {library.state === 'ready' && filtered.length > 0 ? (
         view === 'list' ? (
-          <FileList items={filtered} actions={actions} />
+          <LibraryList rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} />
         ) : (
-          <FileGrid items={filtered} actions={actions} />
+          <LibraryGrid rows={rows} actions={actions} onEnterFolder={() => {}} onOpenFile={(item) => actions.onOpen(item)} />
         )
       ) : null}
     </div>

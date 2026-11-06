@@ -68,7 +68,7 @@ export function RecentPage() {
   const sessions = useWorkbenchStore((state) => state.sessions)
   const openHome = useWorkbenchStore((state) => state.openHome)
   const openWorkspaceTab = useWorkbenchStore((state) => state.openWorkspaceTab)
-  const openFileTab = useWorkbenchStore((state) => state.openFileTab)
+  const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
   const files = useFileLibrary(RECENT_FILE_FETCH)
 
   const accountState = useOptionalAccount()
@@ -110,8 +110,8 @@ export function RecentPage() {
 
   /**
    * 今日洞察卡的动作落地（卡片只抛 action，不自己导航）：
-   * - open-file：`file:<id>` 在文件库里查得到就按文件标签打开；查不到就静默忽略
-   *   （本页没有 toast，宁可少做也不弹错误）；
+   * - open-file：`file:<id>` 在文件库里查得到就在归属工作空间打开；查不到就静默
+   *   忽略（本页没有 toast，宁可少做也不弹错误）；
    * - ask-agent：落到最近空间的「新工作草稿」——渲染层还没有「带 prompt 起会话」的入口
    *   （`createSession` 不收 prompt），但草稿视图已经是可输入的空会话，比停在空间概览更接近意图。
    */
@@ -119,12 +119,12 @@ export function RecentPage() {
     if (action.kind === 'open-file') {
       const fileId = action.targetId.startsWith('file:') ? action.targetId.slice('file:'.length) : ''
       const item = fileId ? files.items.find((candidate) => candidate.file.id === fileId) : undefined
-      if (item) openFileTab(item.file)
+      if (item) openFileInWorkspace(item.file)
       return
     }
     const workspaceId = recentWorkspaces[0]?.id
     if (workspaceId) openWorkspaceTab(workspaceId, { kind: 'draft' })
-  }, [files.items, openFileTab, openWorkspaceTab, recentWorkspaces])
+  }, [files.items, openFileInWorkspace, openWorkspaceTab, recentWorkspaces])
 
   // 副标题只放这一屏看不到的总量；文件库没读出来就不提数字，加载态由「最近」分栏自己说。
   const summary = [
@@ -170,8 +170,8 @@ export function RecentPage() {
                   key={kind}
                   type="button"
                   className="wb-home-new-tile"
-                  title={`新建${label}`}
-                  onClick={() => openFileTab(blankFile(kind))}
+                  title={`新建${label}（在默认项目空间打开）`}
+                  onClick={() => openFileInWorkspace(blankFile(kind))}
                 >
                   <FileTypeIcon kind={kind} size={46} />
                   <span className="wb-home-new-name">{label}</span>
@@ -225,11 +225,11 @@ export function RecentPage() {
               </button>
             </div>
             {files.state === 'loading' ? (
-              <div className="wb-home-state"><Spinner /> 正在读取文件库…</div>
+              <div className="wb-home-state"><Spinner /> 正在读取资料…</div>
             ) : null}
             {files.state === 'unavailable' ? (
               <HomeNote>
-                文件库暂不可用
+                资料暂不可用
                 <Button variant="ghost" size="sm" icon={<RotateCw size={12} />} onClick={files.reload}>
                   重试
                 </Button>
@@ -238,7 +238,7 @@ export function RecentPage() {
             {files.state === 'ready' && files.items.length === 0 ? (
               <HomeNote>
                 <FileText size={14} aria-hidden="true" />
-                文件库还没有文件
+                资料还没有文件
                 <Button variant="ghost" size="sm" onClick={() => openHome('files')}>去导入</Button>
               </HomeNote>
             ) : null}
@@ -249,7 +249,7 @@ export function RecentPage() {
                     key={item.file.id}
                     item={item}
                     menu={false}
-                    actions={{ onOpen: (target) => openFileTab(target.file) }}
+                    actions={{ onOpen: (target) => openFileInWorkspace(target.file) }}
                   />
                 ))}
               </div>

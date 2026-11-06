@@ -87,7 +87,7 @@ export class AgentNotificationBridgeServer {
     try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return { status: 400, body: { message: 'Invalid JSON' } } }
     if (!validBody(parsed)) return { status: 422, body: { message: 'Invalid notification request' } }
     const client = this.client()
-    if (!client) return { status: 503, body: { message: 'EverRoom account service is not ready' } }
+    if (!client) return { status: 503, body: { message: 'EverOffice account service is not ready' } }
     // `local` 是 Gateway→Bridge 的内部标志（本机兜底通知），不透传给 SaaS。
     const { local: showLocal, ...remoteRequest } = parsed
     const result = await client.createAgentNotification(remoteRequest) as { notificationId?: unknown }

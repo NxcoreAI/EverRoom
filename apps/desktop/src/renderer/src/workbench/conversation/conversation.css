@@ -224,7 +224,50 @@
   line-height: var(--ui-leading-tight);
 }
 
-/* 大输入框：白底 + 1px 细线，聚焦青绿 ring（与 AgentComposer 同一语言）。 */
+/* 大输入框：草稿态（hero）与「已有会话」用同一个 AgentComposer 组件——
+   「智能档位」「+ → 导入文件/挂载目录」「思考档位」等底栏控件在两种形态下
+   完全一致。卡片语言（白底细线/圆角/聚焦 ring）由会话态的 .agent-prompt
+   覆盖规则统一提供，这里只把停靠栏的 absolute 吸底 shell 还原成 hero 的
+   静态卡片，并给一个更挺拔的最小高度。 */
+.wb-hero-input > .agent-composer-shell {
+  position: static;
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.wb-hero-input > .agent-composer-shell .agent-prompt {
+  min-height: 132px;
+}
+.wb-hero-input > .agent-composer-shell .agent-prompt textarea {
+  min-height: 76px;
+  max-height: 200px;
+}
+/* hero 里的弹层（模型/「+」/思考档位/@）：锚回输入框左缘，而不是主区 gutter。 */
+.wb-hero-input .agent-composer-popover {
+  left: 0;
+  right: 0;
+}
+.wb-hero-input .agent-composer-popover.agent-model-picker,
+.wb-hero-input .agent-composer-popover.agent-permission-mode-picker,
+.wb-hero-input .agent-composer-popover.agent-thinking-level-picker,
+.wb-hero-input .agent-composer-popover.agent-add-menu {
+  right: auto;
+  left: 0;
+}
+.wb-hero-input .agent-composer-popover.agent-context-breakdown {
+  left: auto;
+  right: 0;
+}
+.wb-hero-input {
+  position: relative;
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
 /* 输入框正上方的附加行（待发送批注徽章）：与输入框同宽、左对齐，不撑开 hero 布局。
    空队列时 NoteQueueChip 返回 null，这行渲染成空 <div>——margin-top 由
    .wb-hero-input 承担（两者共享 34px），:empty 判定把徽章在时的间距收紧。 */
@@ -237,87 +280,8 @@
 }
 .wb-hero-above-input:not(:empty) + .wb-hero-input { margin-top: 8px; }
 
-.wb-hero-input {
-  position: relative;
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px 16px 12px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-2xl);
-  background: var(--ui-surface);
-  text-align: left;
-  transition:
-    border-color var(--ui-duration) var(--ui-ease),
-    box-shadow var(--ui-duration) var(--ui-ease);
-}
-.wb-hero-input:hover { border-color: var(--ui-border-strong); }
-.wb-hero-input:focus-within {
-  border-color: var(--ui-accent-line);
-  box-shadow: var(--wb-focus-ring);
-}
-.wb-hero-input[data-disabled='true'] { background: var(--ui-surface-alt); }
-.wb-hero-input textarea {
-  width: 100%;
-  min-height: 76px;
-  max-height: 200px;
-  padding: 2px;
-  resize: none;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ui-text);
-  font-family: var(--ui-font-sans);
-  font-size: var(--ui-text-md);
-  line-height: 1.6;
-}
-/* 焦点框只画在卡片上（:focus-within 的青绿描边 + 柔环）。外壳兜底规则
-   `.wb-root :focus-visible` 特异性更高，会再给 textarea 叠一圈 2px 焦点环，
-   在卡片里看就是一道多余的内边框；这里显式清掉。 */
-.wb-hero-input textarea:focus,
-.wb-hero-input textarea:focus-visible {
-  outline: 0;
-  outline-offset: 0;
-}
-.wb-hero-input textarea::placeholder { color: var(--ui-text-3); }
-.wb-hero-input textarea:disabled { opacity: 0.6; cursor: default; }
-
-.wb-hero-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 0 1px;
-}
-.wb-hero-send {
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-accent-fill);
-  color: var(--ui-accent-contrast);
-  cursor: pointer;
-  transition:
-    background var(--ui-duration-fast) var(--ui-ease),
-    transform var(--ui-duration-fast) var(--ui-ease),
-    opacity var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-hero-send svg { width: 17px; height: 17px; }
-.wb-hero-send:hover:not(:disabled) { background: var(--ui-accent-fill-hover); transform: translateY(-1px); }
-.wb-hero-send:active:not(:disabled) { transform: translateY(0) scale(0.96); }
-.wb-hero-send:disabled {
-  /* 保留品牌青绿但明显减淡，避免禁用时变成一块无关的灰。 */
-  background: var(--ui-accent-fill);
-  color: var(--ui-accent-contrast);
-  cursor: default;
-  opacity: 0.32;
-}
-.wb-hero-send:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
+/* 旧的 hero 发送钮（.wb-hero-actions/.wb-hero-send）已随输入框一并换成
+   AgentComposer（发送/停止按钮由组件自带），样式删除。 */
 
 /* 建议 chips：白底细描边，悬停抬起；图标与文字同基线。 */
 .wb-hero-chips {
@@ -1273,7 +1237,6 @@
 @media (prefers-reduced-motion: reduce) {
   .wb-hero { animation: none; }
   .wb-hero-chip:hover:not(:disabled),
-  .wb-hero-send:hover:not(:disabled),
   .wb-conversation .agent-chat-quick-prompts button:hover { transform: none; }
 }
 

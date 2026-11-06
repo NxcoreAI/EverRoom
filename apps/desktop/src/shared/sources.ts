@@ -375,17 +375,71 @@ export interface CloudDevice {
 }
 
 /** 中转额度视图（`GET /app/ai-gateway/status`，按订阅周期开窗）。 */
+/** 充值档位(主进程经 SaaS /app/billing/packs 拉取)。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
+}
+
+/** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议)。 */
+export interface TopupOrder {
+  orderId: string
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+/** 套餐档位(GET /app/plans),升级弹窗动态渲染权益。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
+
 export interface AiGatewayStatus {
   configured: boolean
   subscriptionStatus: string | null
   llmCredits: number | null
   usedCredits: number
   remainingCredits: number
+  /** 周期内剩余(套餐月额度口径;旧后端无此字段时等于 remainingCredits)。 */
+  periodRemainingCredits?: number
+  /** 充值余额(旁路,长期有效;旧后端无此字段时为 0)。 */
+  topupRemainingCredits?: number
+  /** 活跃充值 grant 明细(新后端下发;无此字段时只展示充值合计行)。 */
+  /** 套餐周期额度(quota 原值,2026-11-04 后端起提供):进度条分母,与美元口径字段区分。 */
+  planPeriodQuota?: number
+  /** 额度包明细(购买+赠送):credits 字段为美元口径(quota/500000)。 */
+  grants?: Array<{ id: string; remainingCredits: number; amountCredits: number; expiresAt: string | null; source?: string }>
   periodEnd: string | null
 }
 
 /** LLM 额度换算：new-api 原生 quota 单位 ↔ 美元（QuotaPerUnit 默认 500000 = $1）。 */
 export const QUOTA_PER_USD = 500000
+
+/** 用户侧积分口径：1 积分 = $0.1 = 50000 quota(展示层换算,后端 quota 一概不动)。 */
+export const QUOTA_PER_CREDIT = 50000
+
+/** quota → 积分整数(四舍五入);全面积分化后所有面向用户的额度都走这里。 */
+export function formatCredits(quota: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(quota / QUOTA_PER_CREDIT))
+}
 
 export function formatLlmUsd(quota: number, locale: string): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(quota / QUOTA_PER_USD)
@@ -554,8 +608,8 @@ export interface OfficeWorkspaceBounds {
   height: number
 }
 
-/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
+/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf / markdown 运行时）。 */
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf' | 'markdown'
 
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
@@ -588,6 +642,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
+  if (extension === '.md' || extension === '.markdown') return 'markdown'
   return null
 }
 
@@ -899,74 +954,6 @@ export interface NxcoreDesktopApi {
     disconnect(provider: 'feishu'): Promise<AgentAuthEnvironmentStatus>
     onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
   }
-  externalDocuments: {
-    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
-    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
-     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
-    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
-    importBatch(input: {
-      provider: ExternalDocumentProvider
-      connectionName?: string
-      remoteDocumentIds: string[]
-      mode: DocumentImportBatchMode
-      roomId?: string
-      /** true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
-      forceNew?: boolean
-    }): Promise<{ batchId: string; total: number }>
-    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
-    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
-    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
-    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
-    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
-    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
-      run: DocumentImportRunView
-      roomImportId: string | null
-      relation: 'primary' | 'candidate'
-      /** 远端内容与已应用快照相同：未创建候选/记录。 */
-      noChange?: boolean
-      documentId: string
-    }>
-    importRun(runId: string): Promise<DocumentImportRunView>
-    cancelImportRun(runId: string): Promise<DocumentImportRunView>
-    importHistory(documentId: string): Promise<{
-      entries: DocumentImportHistoryEntry[]
-      commentDiff: DocumentImportCommentDiffSummary | null
-      comments: ExternalDocumentCommentView[]
-    }>
-    importDiff(roomImportId: string): Promise<{
-      candidateTitle: string
-      currentTitle: string
-      appliedVersion: number | null
-      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
-      commentsComparable: boolean
-    }>
-    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
-    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
-    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
-      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
-    }>
-    checkExternalUpdate(documentId: string): Promise<{
-      run: DocumentImportRunView
-      roomImportId: string | null
-      relation: 'primary' | 'candidate'
-      noChange?: boolean
-      documentId: string
-    }>
-    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
-    createExport(input: {
-      roomId: string
-      documentId: string
-      version?: number
-      provider: ExternalDocumentProvider
-      mode: AgentDocumentExportMode
-      target?: AgentDocumentExportTarget | null
-    }): Promise<AgentDocumentExportRunView>
-    getExport(exportId: string): Promise<AgentDocumentExportRunView>
-    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
-    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
-    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
-    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
-  }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
     saveServers(servers: import('./mcp').McpServersMutation): Promise<McpServersSnapshot>
@@ -1072,7 +1059,6 @@ export interface NxcoreDesktopApi {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
   subagents: {
-    dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
@@ -1106,6 +1092,18 @@ export interface NxcoreDesktopApi {
     /** SaaS 权威额度判定；keeper 未启动/未判定时 false。 */
     verdict(): Promise<{ quotaExhausted: boolean }>
     onEvent(listener: (event: { type: AiRelayKeeperEventType }) => void): () => void
+  }
+  billing: {
+    /** 充值档位(登录后可用)。 */
+    packs(): Promise<CreditPack[]>
+    /** 下单:真实渠道时主进程自动用系统浏览器打开 approval 页。 */
+    topup(packCode: string): Promise<TopupOrder>
+    /** 订单状态轮询(pending 时服务端主动核对渠道)。 */
+    topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }>
+    /** Mock 联调批准;真实渠道服务端 409。 */
+    topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }>
+    /** 套餐档位列表(升级弹窗)。 */
+    plans(): Promise<PlanTier[]>
   }
   notifications: {
     preferences(): Promise<NotificationPreferences>
@@ -1256,53 +1254,6 @@ export interface NxcoreDesktopApi {
     unsubscribe(workspaceId?: string): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
-  documents: {
-    list(roomId: string): Promise<RoomDocument[]>
-    listTrash(roomId: string): Promise<RoomDocument[]>
-    get(documentId: string): Promise<RoomDocument>
-    listBlocks(documentId: string): Promise<DocumentBlockList>
-    listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
-    listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
-    getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
-    getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
-    versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }>
-    listDocumentComments(documentId: string): Promise<{ items: LocalDocumentComment[] }>
-    createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
-    resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
-    deleteDocumentComment(documentId: string, commentId: string): Promise<void>
-    getOverview(documentId: string): Promise<DocumentOverviewView>
-    generateOverview(documentId: string): Promise<DocumentOverviewView>
-    getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult>
-    restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
-    resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
-    listOperations(filters?: {
-      roomId?: string
-      documentId?: string
-      sessionId?: string
-      status?: DocumentOperationStatus
-    }): Promise<DocumentOperationSummary[]>
-    startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
-    getOperation(operationId: string, context?: { roomId: string | null; sessionId: string; runId: string }): Promise<DocumentOperation>
-    executeOperationCommand(
-      operationId: string,
-      input: DocumentOperationCommandInput,
-    ): Promise<DocumentOperationCommandResult>
-    storeImage(documentId: string, input: StoreDocumentImageInput): Promise<StoredDocumentImage>
-    import(input: ImportRoomDocumentInput): Promise<RoomDocument>
-    save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
-    delete(documentId: string): Promise<void>
-    move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument>
-    moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
-    restore(documentId: string): Promise<RoomDocument>
-    deletePermanently(documentId: string): Promise<void>
-    emptyTrash(roomId: string): Promise<void>
-    exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
-    subscribe(roomId: string): Promise<void>
-    unsubscribe(roomId?: string): Promise<void>
-    onEvent(listener: (frame: DocumentEventFrame) => void): () => void
-    onOperationChanged(listener: (operationId: string) => void): () => void
-    onReady(listener: (roomId: string) => void): () => void
-  }
   sources: {
     list(): Promise<DataSourceSummary[]>
     listFiles(id: string): Promise<SourceFileSummary[]>
@@ -1338,7 +1289,7 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+    /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
     exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
@@ -1436,7 +1387,7 @@ export interface NxcoreDesktopApi {
       result?: { fileEntryId: string; originalName: string; report?: Record<string, unknown> }
       error?: string
     }>
-    /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
+    /** 导出 PDF：内置渲染引擎与 LibreOffice 均不可用时 unavailable=true（UI 需给出可执行说明）。 */
     exportPdf(workspaceId: string, fileEntryId: string): Promise<
       { unavailable: true } | { unavailable: false; path: string }
     >

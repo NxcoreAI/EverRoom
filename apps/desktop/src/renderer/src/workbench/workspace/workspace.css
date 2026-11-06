@@ -23,6 +23,10 @@
   contain: layout paint;
 }
 
+/* 面板最大化成覆盖层时，下面的功能页/对话区整块隐藏（视觉 + 焦点 + 可交互性）：
+   覆盖层不透明铺满，DOM 保留（收起后状态不丢），visibility 关闭即可让出无障碍树。 */
+.wb-ws.has-max-bubble .wb-ws-main { visibility: hidden; }
+
 .wb-ws-missing {
   display: grid;
   place-items: center;

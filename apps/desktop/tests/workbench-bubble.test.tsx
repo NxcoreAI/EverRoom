@@ -120,4 +120,24 @@ describe('气泡窗浏览态 / 文档态', () => {
     expect(api?.bubble.mode).toBe('closed')
     expect(api?.bubble.files).toHaveLength(0)
   })
+
+  it('最大化成覆盖层：切 maximized 后仍 open，还原/退场期间保留 maximized', async () => {
+    await renderProbe()
+    await act(async () => api?.openFile(file('f1')))
+    await act(async () => api?.toggleMaximize())
+    expect(api?.bubble.mode).toBe('open')
+    expect(api?.bubble.maximized).toBe(true)
+    // 最大化态点「收起」：退场动画期间保留 maximized（覆盖层淡出），
+    // 结束后才卸载；mode 在退场开始即变 minimized。
+    await act(async () => api?.minimize())
+    expect(api?.bubble.maximized).toBe(true)
+    expect(api?.bubble.mode).toBe('minimized')
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 280) }) })
+    expect(api?.visible).toBe(false)
+    // 收起（非关闭）不清文件；再展开时还原为普通停靠面板。
+    expect(api?.bubble.files).toHaveLength(1)
+    await act(async () => api?.restore())
+    expect(api?.bubble.mode).toBe('open')
+    expect(api?.bubble.maximized).toBe(true)
+  })
 })

@@ -1,13 +1,13 @@
 # Agent 调试页（独立浏览器调试台）
 
-> 状态：已交付并独立验收（2026-10-23）；2026-10-24 增补「终态 run 磁盘归档 / 历史找回」；2026-10-26 增补「离线归档来源」（EverRoom 不启动也能回看历史）
+> 状态：已交付并独立验收（2026-10-23）；2026-10-24 增补「终态 run 磁盘归档 / 历史找回」；2026-10-26 增补「离线归档来源」（EverOffice 不启动也能回看历史）
 > 日期：2026-10-23（历史归档 2026-10-24，离线归档来源 2026-10-26）
 > 范围：Gateway runtime 埋点 + 独立浏览器调试页（不进入产品导航、不落数据库）
 > 设计细案：`docs/agent-debug-persistence.zh-CN.md`、`docs/agent-debug-offline-archive.zh-CN.md`
 
 ## 1. 背景与目标
 
-EverRoom 现在同时运行多类 Agent：内置 Agent（`main`/`knowledge`/`web-search`/`transcription-summary`/`diary` 等）、dispatch-only 子 Agent（`slides-planner`/`slides-layouter`/`slides-builder`/`doc-writer` 等）以及本机 CLI Agent（`codex`/`claude`/`openclaw` 经 ACP）。排查问题时只能分别看某一处：Agent Office 只有状态摘要，主对话时间线只能看当前会话，子 Agent 事件又散在 `subagent_invocation_events` 表里。
+EverOffice 现在同时运行多类 Agent：内置 Agent（`main`/`knowledge`/`web-search`/`transcription-summary`/`diary` 等）、dispatch-only 子 Agent（`slides-planner`/`slides-layouter`/`slides-builder`/`doc-writer` 等）以及本机 CLI Agent（`codex`/`claude`/`openclaw` 经 ACP）。排查问题时只能分别看某一处：Agent Office 只有状态摘要，主对话时间线只能看当前会话，子 Agent 事件又散在 `subagent_invocation_events` 表里。
 
 目标：提供一个**独立浏览器调试页**，可以：
 
@@ -15,7 +15,7 @@ EverRoom 现在同时运行多类 Agent：内置 Agent（`main`/`knowledge`/`web
 2. 看每一次 run 的**工具调用**（参数、结果、耗时、错误）和**思考过程**（`reasoning.delta`）；
 3. 随时切换跟踪的 Agent，查看不同 Agent 的执行流与最终输出；
 4. **桌面应用重启后仍能找回历史 run**：终态 run 落盘归档，按「会话 / 时间 / 来源（本次 or 历史）」区分并回放（2026-10-24 新增）；
-5. **EverRoom 不启动也能打开调试页复盘**：dev server 直接把本机归档作为「历史归档」来源读出并回放，不依赖 Gateway 进程（2026-10-26 新增，见 §4.4）。
+5. **EverOffice 不启动也能打开调试页复盘**：dev server 直接把本机归档作为「历史归档」来源读出并回放，不依赖 Gateway 进程（2026-10-26 新增，见 §4.4）。
 
 非目标：
 
@@ -51,7 +51,7 @@ flowchart LR
     V -->|HTTP + Bearer| API
   end
 
-  M["~/Library/Application Support/EverRoom/runtime/gateway.json"] -.读取.-> V
+  M["~/Library/Application Support/EverOffice/runtime/gateway.json"] -.读取.-> V
 ```
 
 关键取舍：**只在 Gateway 的 runtime 边界埋点**。三个 runtime 创建/获取入口已经覆盖全部 Agent，业务模块无需改动：
@@ -188,7 +188,7 @@ node apps/desktop/node_modules/vite/bin/vite.js --config apps/desktop/vite.agent
 
 调试页不进入 Electron renderer 构建产物，也不参与产品打包；`vite build` 只输出到 `apps/desktop/out/agent-debug/` 供验证。
 
-> **EverRoom 未运行时也能直接用**：不需要额外命令或参数。dev server 会把本机 `<dataDir>/agent-debug/<source>/` 归档作为「历史归档」来源列出；没有可用的 live Gateway 时页面自动选中它（见 §4.4）。前提是之前跑过 Agent 任务且归档仍未被保留策略清理。
+> **EverOffice 未运行时也能直接用**：不需要额外命令或参数。dev server 会把本机 `<dataDir>/agent-debug/<source>/` 归档作为「历史归档」来源列出；没有可用的 live Gateway 时页面自动选中它（见 §4.4）。前提是之前跑过 Agent 任务且归档仍未被保留策略清理。
 
 ### 4.2 网关发现与鉴权代理
 
@@ -196,7 +196,7 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 
 - manifest 发现顺序（无效候选直接跳过，路径去重）：
   1. `EVERROOM_AGENT_DEBUG_MANIFEST`（相对路径按 cwd 解析）；
-  2. `NXCORE_DATA_DIR`（缺省为 EverRoom 平台数据目录）下 `runtime/gateway.json` 与 `cursor-completion-service/runtime/gateway.json`；
+  2. `NXCORE_DATA_DIR`（缺省为 EverOffice 平台数据目录）下 `runtime/gateway.json` 与 `cursor-completion-service/runtime/gateway.json`；
   3. NxCore 独立网关数据目录下 `runtime/gateway.json`；
   4. 仓库 `.data/runtime/gateway.json`。
 - 每次请求按 **mtime** 重读 manifest：Desktop 重启换了端口/token 会自动生效。
@@ -226,7 +226,7 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 - 左侧点选 Agent = **切换跟踪对象**；切换时 run 列表按 `agentId` 过滤，事件缓冲按 `sourceId + runId` 重置为 0 增量重新拉取；点「全部 Agent」看全局 run 流。
 - Agent 类型页签：全部 / 内置（builtin）/ 子 Agent（developer）/ 本机 Agent（local）。
 - 顶栏「范围」三态：`全部`（本次 + 历史，默认）/ `本次`（仅内存 run）/ `历史`（仅归档 run）。历史模式 snapshot 请求 `runs=300`，其它模式 150；切换即重新拉快照。归档关闭或旧 Gateway 不返回 `archive` 时显示「历史未启用」并禁用历史入口。
-- 顶栏「来源」（2026-10-26）：下拉按「可用 live → 历史归档 → 不可用 live」排序；live 标签 `<label> · v<version>`（进程不在时追加「 · 离线」），archive 标签形如「历史归档 · 主网关 · 只读」。默认选中第一个可用 live；没有可用 live 时自动落到 archive（EverRoom 退出后 15s 内自动切换）。选中 archive 时连接态显示「历史归档 · 只读」（title 给归档目录 + 无需 EverRoom 运行）、「本次」禁用、范围落到「历史」。
+- 顶栏「来源」（2026-10-26）：下拉按「可用 live → 历史归档 → 不可用 live」排序；live 标签 `<label> · v<version>`（进程不在时追加「 · 离线」），archive 标签形如「历史归档 · 主网关 · 只读」。默认选中第一个可用 live；没有可用 live 时自动落到 archive（EverOffice 退出后 15s 内自动切换）。选中 archive 时连接态显示「历史归档 · 只读」（title 给归档目录 + 无需 EverOffice 运行）、「本次」禁用、范围落到「历史」。
 - 顶栏归档概况：Gateway 在线时显示 `历史 N 条 · 保留 D 天`；离线归档来源拿不到 Gateway 的保留配置，显示 `历史 N 条 · 只读`；hover 均给字节数与最旧时间。
 - run 列表：每行显示状态、任务摘要、耗时/工具数/思考字数/事件数；历史 run 额外有「历史」文字标签与 `MM-DD HH:mm` 开始时间；会话标签显示 `sessionTitle`（回退 `pageLabel`），并始终附 `#短id`（sessionId 前 8 位），标题相同也能区分。
 - 会话筛选与分组（2026-10-24 增强）：列表头「会话」下拉的每个选项是「主名 · 首次时间 · #短id」，主名优先 `sessionTitle`、缺失时用该会话首条 run 的任务摘要（比 `Home`/`Room` 更可辨认），hover 可看完整 sessionId / 时间范围 / run 数；「全部会话」视图下 run 列表按会话分组，组头（同样带时间与短 id）可点击直接筛选到该会话；筛选后顶部有「筛选：… / 全部会话」提示条，可一键回到全部。空态区分「无本次 run / 无历史记录 / 该会话暂无 run」。
@@ -237,7 +237,7 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 - 「原始事件」页签：事件列表 + 选中事件的 JSON（列表最多渲染最近 1200 条，顶栏过滤可缩小范围；JSON 预览超过 240k 字符会截断提示）。
 - 「输出」页签：最终 assistant 文本 + `subagent_submit_result` 结构化结果（依次尝试 `tool.completed.result.content` 里的 JSON、`result` 本身、`tool.started.args`，并标注提取来源）。
 - 历史 run 的详情显示「历史归档 · 只读」、不显示「实时更新」；事件只拉取一次（终态不轮询），时间线/事件/输出页签均可回放。
-- 空态（2026-10-26）：既没有 Gateway 也没有可读的本地历史归档时，提示 EverRoom 未运行 / 先跑任务生成归档，并给出 `NXCORE_DATA_DIR`（dataDir）与 `EVERROOM_AGENT_DEBUG_MANIFEST` 用法。
+- 空态（2026-10-26）：既没有 Gateway 也没有可读的本地历史归档时，提示 EverOffice 未运行 / 先跑任务生成归档，并给出 `NXCORE_DATA_DIR`（dataDir）与 `EVERROOM_AGENT_DEBUG_MANIFEST` 用法。
 - 轮询策略：snapshot 1200ms；选中 run 运行中 400ms 增量拉事件（终态后停止）；暂停后完全停止轮询；事件按 seq upsert 合并。
 
 #### 视觉规范（浅色极简，2026-10-23 改版）
@@ -259,11 +259,11 @@ Vite 插件 `agent-debug-gateway`（`configureServer` 里在 Vite 内部中间�
 
 - 主视图（mock 数据，含思考/工具/失败态/usage/流式消息）：`screenshots/agent-debug/minimal-1680.png`；窄屏 1280×720 无横向溢出：`minimal-1280.png`。
 - 页签：`minimal-events.png`（原始事件 + JSON）、`minimal-output.png`（输出 + 结构化结果）。
-- 空态：`minimal-empty.png`；连接真实 EverRoom 主网关（17 个 Agent）：`final-real-app-agents.png`。
+- 空态：`minimal-empty.png`；连接真实 EverOffice 主网关（17 个 Agent）：`final-real-app-agents.png`。
 - 改版前的深色版本截图（`debug-page.png`、`e2e-*.png`、`live-*.png`）保留为历史验收证据，不代表当前 UI。
 
 
-### 4.4 离线归档来源（EverRoom 不启动也能回看，2026-10-26）
+### 4.4 离线归档来源（EverOffice 不启动也能回看，2026-10-26）
 
 设计细案：`docs/agent-debug-offline-archive.zh-CN.md`。
 
@@ -499,11 +499,11 @@ EVERROOM_AGENT_DEBUG_MANIFEST=$PWD/../../.tmp-pnpm/e2e-data/runtime/gateway.json
 - harness：`.tmp-inspect/agent-debug-slide-pages/`（gitignored；`node .tmp-inspect/agent-debug-slide-pages/verify.mjs --mode postfix`，`--mode baseline` 会自动用 pre-feature commit 副本重建基线，`--stop` 清理）。
 - 截图：`screenshots/agent-debug/layout-pages-agent-list.png`（左栏 Slides Layouter 行 `P1–P16`）、`layout-pages-run-list.png`（中栏每行 `P1/16…` 徽标）。
 
-### 7.10 离线归档来源 / EverRoom 不启动看历史（2026-10-26 增补，PASS）
+### 7.10 离线归档来源 / EverOffice 不启动看历史（2026-10-26 增补，PASS）
 
 环境：macOS，系统 node v22.23.1；两名并行工程师（host 读取器 / 页面 UI）+ Lead 集成验收。全部命令用 `node node_modules/...` 直跑，未 `pnpm install` / 未 `git commit`。
 
-问题：EverRoom/Gateway 未启动时 `/@agent-debug/sources` 为空（或 stale manifest 导致 502），页面无法回看已经落盘的历史 run；用户希望「平时也能打开调试页翻历史做复盘」。
+问题：EverOffice/Gateway 未启动时 `/@agent-debug/sources` 为空（或 stale manifest 导致 502），页面无法回看已经落盘的历史 run；用户希望「平时也能打开调试页翻历史做复盘」。
 
 实现：Vite dev server 增加只读 archive 来源（`apps/desktop/debug/host/archive-source.ts` + 插件 sources/代理扩展）；页面增加来源排序与默认选中、「历史归档 · 只读」连接态、「本次」禁用、离线归档概况文案（详见 §4.4 与 `docs/agent-debug-offline-archive.zh-CN.md`）。
 
@@ -515,11 +515,11 @@ EVERROOM_AGENT_DEBUG_MANIFEST=$PWD/../../.tmp-pnpm/e2e-data/runtime/gateway.json
 | typecheck | `cd apps/desktop && node node_modules/typescript/bin/tsc --noEmit` | 仍为既有 ThoughtsPane `10` 条基线，**0 新增** |
 | 调试页构建 | `node node_modules/vite/bin/vite.js build --config vite.agent-debug.config.mts` | exit 0，1594 modules → css 17.05 kB / js 197.27 kB |
 | 离线冒烟（合成归档） | `node scripts/agent-debug-offline-smoke.mjs` | **13/13 PASS**（archive/stale live 两态、archived 三态、参数边界、token 不泄漏、全程无 Gateway） |
-| 离线冒烟（真实归档） | `node scripts/agent-debug-offline-smoke.mjs --archive "$HOME/Library/Application Support/EverRoom/agent-debug/main"` | **13/13 PASS**（586 runs / 63 MB 真实归档） |
+| 离线冒烟（真实归档） | `node scripts/agent-debug-offline-smoke.mjs --archive "$HOME/Library/Application Support/EverOffice/agent-debug/main"` | **13/13 PASS**（586 runs / 63 MB 真实归档） |
 | 浏览器 e2e（合成归档） | `.tmp-inspect/agent-debug-offline-e2e/run.mjs` | **14/14 PASS**：自动选中「历史归档 · 主网关 · 只读」、stale live 显示「离线」、连接态与 title、归档概况「历史 N 条 · 只读」、run 行「历史」、时间线/工具/事件/输出回放、「本次」禁用、1280×720 无横向溢出、console error 0 |
 | 浏览器 e2e（真实归档） | `… run.mjs --archive <真实归档>` | **14/14 PASS**（300 条历史 run / 8 个 Agent，截图见下） |
-| 在线回归 | EverRoom 运行中另起 `:5411` dev server | live 来源 `available=true`、archive 来源并列、live snapshot 200（`retentionDays=7`）、live events 200、archive snapshot 200 |
-| 在线浏览器回归 | `.tmp-inspect/agent-debug-offline-e2e/online-check.mjs` | 5/5 PASS：默认选中「EverRoom 主网关」、连接态「在线」、archive 来源并列、范围「本次/历史」均可用、无未捕获异常（150 run / 18 Agent） |
+| 在线回归 | EverOffice 运行中另起 `:5411` dev server | live 来源 `available=true`、archive 来源并列、live snapshot 200（`retentionDays=7`）、live events 200、archive snapshot 200 |
+| 在线浏览器回归 | `.tmp-inspect/agent-debug-offline-e2e/online-check.mjs` | 5/5 PASS：默认选中「EverOffice 主网关」、连接态「在线」、archive 来源并列、范围「本次/历史」均可用、无未捕获异常（150 run / 18 Agent） |
 
 - 截图（本机验收，`screenshots/` 不入库）：`screenshots/agent-debug/offline-archive-1680.png`（真实 586 runs 归档，来源「历史归档 · 主网关 · 只读」）、`offline-archive-1280.png`。
 - 已知取舍见 §8（离线不补会话标题、retentionDays 未知、仍受 300 条快照上限约束）。

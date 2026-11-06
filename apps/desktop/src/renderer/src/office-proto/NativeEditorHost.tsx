@@ -5,7 +5,7 @@ import type { FileCatalogDto } from '@/shared/ingest'
 
 /**
  * GenOffice 原生编辑器宿主。原生 WebContentsView 永远画在 DOM 之上，z-index
- * 管不了它，只能靠「矩形上报 + 显隐时序」对齐（时序规则取自 EverRoom 的
+ * 管不了它，只能靠「矩形上报 + 显隐时序」对齐（时序规则取自 EverOffice 的
  * officeViewport.ts，原型去掉遮挡扫描）：
  * 1. 挂载后先 open 实例；宿主矩形非零时先 activate 再报矩形
  * 2. 宿主矩形归零（切标签/收面板）上报零尺寸隐藏
@@ -35,11 +35,13 @@ interface Bounds {
 
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
-/** 文件库内置预览可编辑的扩展名（PDF 只读；旧格式转换失败会回退系统应用）。 */
+/** 文件库内置预览可编辑的扩展名（PDF 标注随选区工具卡一并开放编辑；
+ * markdown 评论/编辑随 genoffice markdown runtime 开放；
+ * 旧格式转换失败会回退系统应用）。 */
 function isEditableName(name: string): boolean {
   const dot = name.lastIndexOf('.')
   const extension = dot >= 0 ? name.slice(dot).toLowerCase() : ''
-  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx'].includes(extension)
+  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx', '.pdf', '.md', '.markdown'].includes(extension)
 }
 
 export function NativeEditorHost({
@@ -298,7 +300,7 @@ export function NativeEditorHost({
             <div className="op-native-error-hint">
               {real
                 ? '请确认文件已成功导入且本地文件完整；可在「所有文件」重新导入后再试。'
-                : '请确认 EverRoom 仓库已执行 prepare:genoffice，或设置 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
+                : '请确认 EverOffice 仓库已执行 prepare:genoffice，或设置 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
             </div>
           </div>
         )}

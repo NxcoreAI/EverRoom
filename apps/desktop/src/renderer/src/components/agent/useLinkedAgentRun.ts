@@ -13,8 +13,6 @@ import {
   type DisplayAgentToolCall,
 } from './agentRunActivity'
 import type { DisplayAgentMessage } from './useAgentSession'
-import { useRoomDocumentsState } from '../context-room/RoomDocumentsProvider'
-import { useDocumentOperations } from '../context-room/operations'
 
 export interface LinkedAgentRunState {
   sessionId: string | null
@@ -72,7 +70,6 @@ export function buildLinkedAgentRunState(
   snapshot: AgentSessionSnapshot,
   runId: string,
   events: AgentEvent[],
-  documentPending = false,
 ): LinkedAgentRunState {
   const reduced = reduceAgentRunEvents(events)
   const savedAnswer = snapshot.messages.find((message) => (
@@ -81,13 +78,12 @@ export function buildLinkedAgentRunState(
   const activity = reduceAgentRunActivity(events, savedAnswer)
   const activeRun = snapshot.activeRun?.id === runId ? snapshot.activeRun : null
   const runStatus = terminalStatus(events) ?? activeRun?.status ?? null
-  const status = documentPending && (runStatus === null || runStatus === 'completed') ? 'running' : runStatus
   const messages: DisplayAgentMessage[] = snapshot.messages.filter((message) => (
-    message.runId === runId && (!documentPending || message.role !== 'assistant')
+    message.runId === runId
   ))
   const hasAssistantMessage = messages.some((message) => message.role === 'assistant')
 
-  if (!documentPending && !hasAssistantMessage && (reduced.messageStarted || reduced.streamingContent)) {
+  if (!hasAssistantMessage && (reduced.messageStarted || reduced.streamingContent)) {
     messages.push({
       id: `linked-stream-${runId}`,
       sessionId: snapshot.session.id,
@@ -95,22 +91,22 @@ export function buildLinkedAgentRunState(
       role: 'assistant',
       content: reduced.streamingContent,
       createdAt: reduced.startedAt ?? activeRun?.createdAt ?? snapshot.session.updatedAt,
-      streaming: !reduced.messageCompleted && (status === 'accepted' || status === 'running'),
+      streaming: !reduced.messageCompleted && (runStatus === 'accepted' || runStatus === 'running'),
     })
   }
 
   return {
     sessionId: snapshot.session.id,
-    status,
+    status: runStatus,
     messages,
     activity,
     reasoning: reduced.reasoning,
     tools: reduced.tools,
     startedAt: reduced.startedAt ?? activeRun?.startedAt ?? undefined,
-    completedAt: documentPending ? undefined : reduced.completedAt ?? activeRun?.completedAt ?? undefined,
+    completedAt: reduced.completedAt ?? activeRun?.completedAt ?? undefined,
     error: eventError(events) ?? activeRun?.error ?? null,
     loading: false,
-    documentPending,
+    documentPending: false,
   }
 }
 
@@ -138,34 +134,15 @@ function errorMessage(error: unknown): string {
 
 export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRunState {
   const api = window.nxcore?.agent
-  const { documentsByRoom } = useRoomDocumentsState()
-  const { operations, presentingOperationIds } = useDocumentOperations()
   const sourceSessionId = link?.sourceSessionId ?? null
   const sourceRunId = link?.sourceRunId ?? null
-  const documentId = link?.target.objectType === 'document' ? link.target.objectId : undefined
-  const document = documentId
-    ? Object.values(documentsByRoom).flat().find((candidate) => candidate.id === documentId)
-    : undefined
-  const documentPending = Boolean(document?.activeTransactionId || (documentId && operations.some((entry) => {
-    const operation = entry.summary
-    const draftDocumentId = entry.detail?.input.draftDocumentId
-    return operation.interactionMode === 'streaming_commit'
-      && operation.runId === sourceRunId
-      && (operation.documentId === documentId || draftDocumentId === documentId)
-      && (operation.status === 'created'
-        || operation.status === 'running'
-        || operation.status === 'applying'
-        || presentingOperationIds.has(entry.id))
-  })))
   const [state, setState] = useState<LinkedAgentRunState>(EMPTY_STATE)
   const stateRunKeyRef = useRef<string | null>(null)
-  const documentPendingRef = useRef(documentPending)
   const linkedDataRef = useRef<{
     runKey: string
     snapshot: AgentSessionSnapshot
     events: AgentEvent[]
   } | null>(null)
-  documentPendingRef.current = documentPending
 
   useEffect(() => {
     const linkedData = linkedDataRef.current
@@ -175,9 +152,8 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
       linkedData.snapshot,
       sourceRunId,
       linkedData.events,
-      documentPending,
     ))
-  }, [documentPending, sourceRunId, sourceSessionId])
+  }, [sourceRunId, sourceSessionId])
 
   useEffect(() => {
     let cancelled = false
@@ -210,7 +186,7 @@ export function useLinkedAgentRun(link: AgentSessionLink | null): LinkedAgentRun
 
         events.push(...nextEvents)
         linkedDataRef.current = { runKey, snapshot, events: [...events] }
-        const nextState = buildLinkedAgentRunState(snapshot, sourceRunId, events, documentPendingRef.current)
+        const nextState = buildLinkedAgentRunState(snapshot, sourceRunId, events)
         afterSeq = Math.max(afterSeq, ...nextEvents.map((event) => event.seq))
         const changed = linkedRunPollChanged(lastSnapshotUpdatedAt, snapshot, nextEvents)
         if (changed) lastSnapshotUpdatedAt = snapshot.session.updatedAt

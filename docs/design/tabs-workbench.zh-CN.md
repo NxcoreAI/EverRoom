@@ -37,16 +37,18 @@
 ```
 
 - **标签栏**：窗口最顶层。固定最左「主页」标签（不可关闭）；每个工作空间一个标签（打开过就复用）；
-  文件标签（从主页/工作空间页面打开真实文件时创建，可多开）；最右 `＋` 菜单（新建项目空间 / 打开最近文件）。
+  最右 `＋` 菜单（新建项目空间 / 打开最近文件）。
 - **侧栏互斥**：标签决定侧栏形态——主页标签 → 全局侧栏（品牌/一级入口/账户）；工作空间标签 →
-  空间侧栏（标题/功能菜单/工作列表）；文件标签 → 不渲染侧栏（编辑器占满）。切换标签即整条侧栏换内容。
-- **工作空间内文件**：默认在内容栏右侧以「气泡窗」打开（可拖宽/最小化/最大化/多文件标签），
-  不做全窗口文件标签；主页里打开文件才进窗口级文件标签。
+  空间侧栏（标题/功能菜单/工作列表）。切换标签即整条侧栏换内容。
+- **文件一律在项目空间打开**：窗口级文件标签已移除（2026-11 修订）。任何入口（主页最近/所有文件/
+  命令面板/主进程预览请求）打开文件都路由到归属工作空间——真实文件按目录 `workspaceId`，未归类
+  （mock/新建）落默认空间——激活该空间标签并把文件交给它的气泡窗（`openFileInWorkspace` +
+  `pendingBubbleFile` 交接，见 §2）。AI 对话只在项目空间主区（会话/草稿视图），文件旁不再挂对话停靠栏。
 - **会话订阅**：网关的 `agent:subscribe` 是「每个 WebContents 单订阅」——同一时刻只能有一个会话在订阅。
   因此会话 pane 只在「该工作空间标签激活且视图是会话/草稿」时挂载；切标签/切视图会卸载并重新拉快照
   （run 仍在网关继续），草稿输入不跨标签保留。这是与原型「pane 常驻」的有意偏差。
 - **原生编辑器**：`office:workspace-bounds` 不带实例 id、同一时刻只有一个 Office 实例可见。
-  所以文件标签只在激活时挂载；气泡窗只挂载激活文件的编辑器，切文件时先让旧宿主矩形归零、再广播 resize
+  所以气泡窗只挂载激活文件的编辑器，切文件时先让旧宿主矩形归零、再广播 resize
   让新宿主立即重报。
 
 ## 2. 标签模型（renderer 状态）
@@ -64,29 +66,30 @@ export type WorkspaceTabView =
 export type WindowTab =
   | { id: 'home'; kind: 'home'; page: HomePageKey }
   | { id: `ws:${string}`; kind: 'workspace'; workspaceId: string; view: WorkspaceTabView }
-  | { id: `file:${string}`; kind: 'file'; file: OfficeFile }
-
-export interface WindowTabsState {
-  tabs: WindowTab[]          // home 恒在 index 0
-  activeTabId: string
-}
 ```
 
 store 增删（`workbench/state/store.ts`）：
-- 新增：`tabs`、`activeTabId`、`openHome(page?)`、`openWorkspaceTab(id, view?)`、`openFileTab(file)`、
+- 新增：`tabs`、`activeTabId`、`openHome(page?)`、`openWorkspaceTab(id, view?)`、
+  `openFileInWorkspace(file)`、`consumePendingBubbleFile(tabId)`、
   `activateTab(id)`、`closeTab(id)`、`setHomePage(page)`、`setWorkspaceView(tabId, view)`。
 - 保留：`workspaces`、`sessions`、`boot/refresh/refreshSessions`、workspace/session CRUD、`toggleSidebar`。
 - 移除：旧 `view`/`activeSessionId`/`artifactScopes`/`openPage`/`showConversation`/`openArtifact` 系列
-  （右侧产物面板由「文件标签 + 工作空间气泡窗」取代；`workbench/artifacts/*` 删除）。
+  （右侧产物面板由「工作空间气泡窗」取代；`workbench/artifacts/*` 删除）；窗口级文件标签
+  （`FileTab`/`openFileTab`）与文件标签宿主 `FileTabHost`（2026-11 修订）。
 - 草稿落成会话：`syncActiveSession(session)` 把对应工作空间标签的 `view` 从 `draft` 切到
   `{kind:'session',sessionId}`，并 upsert 进 `sessions`。
-- 标签持久化：只把「打开的工作空间标签 + 激活标签」写 localStorage，重启恢复；文件标签不恢复。
+- 标签持久化：只把「打开的工作空间标签 + 激活标签」写 localStorage，重启恢复。
+- 文件路由与交接：`openFileInWorkspace(file)` 解析目标空间（`file.realCatalog?.workspaceId`
+  校验存在，否则 `defaultWorkspaceOf` 回落链；清单未加载时注入兜底默认空间）→
+  `openWorkspaceTab(target)` → 写 `pendingBubbleFile = { tabId, workspaceId, file }`；
+  目标标签的 `WorkspaceTabHost` 挂载/激活时用 `consumePendingBubbleFile(tabId)` 取走
+  （消费即置空，别的标签取不到）并交给 `bubble.openFile`。
 
 ## 3. 侧栏规格
 
 | 区域 | 内容 | 行为 |
 | --- | --- | --- |
-| 全局侧栏（240px） | 品牌区（app 图标 + EverRoom / 副标题）；一级入口：最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置；底部账户行（头像/名称/套餐） | 点入口 = 激活主页标签并切页；选中态用白卡浮起；账户行点开是账号菜单（账号与同步 / 退出登录），不再承担页面跳转 |
+| 全局侧栏（240px） | 品牌区（app 图标 + EverOffice / 副标题）；一级入口：最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置；底部账户行（头像/名称/套餐） | 点入口 = 激活主页标签并切页；选中态用白卡浮起；账户行点开是账号菜单（账号与同步 / 退出登录），不再承担页面跳转 |
 | 工作空间侧栏（248px） | 空间名（可点开重命名）；菜单：概览 / 新建工作 / 资料库 / 产物 / 计划；「工作 N」列表（= 该空间 sessions，运行中状态点 + 标题 + 相对时间，行悬停菜单：重命名/删除）；底部「在 <空间> 新建工作」按钮 | 点菜单切 `view`；点工作切到该 session；新建工作进草稿会话；列表 hover 出操作菜单 |
 | 文件标签 | 无侧栏 | — |
 
@@ -371,6 +374,30 @@ pageLabel 是 `'Agent'` 而非分区键；修改后绿：含重挂恢复、改�
 - 右侧只留搜索与 Windows 自绘窗口按钮。
 - 截图：`23-sidebar-toggle-left.png`。
 
+### 2026-11-05 第六轮：最大化改为「覆盖整个对话区」的悬浮层
+
+用户反馈：最大化时面板应该**完全盖住 AI 对话区**（对话区不可见），而不是和对话区并排分栏。
+第四轮的「布局内展宽」（`width: clamp(320px, calc(100% - 336px), 1040px)`）只挤压不遮盖，
+本轮回退到绝对定位覆盖层方案，并解决当初放弃它的两个根因（闪烁与退场不可动画）：
+
+- **覆盖层定位**：`.wb-bubble.is-maximized` 改为 `position:absolute; inset:0; z-index:20`，
+  铺满 `.wb-ws`（含 8px 内边距区域），去圆角去边框去阴影，像一个全屏查看模式。
+- **对话区整块隐藏**：`.wb-ws` 上挂 `has-max-bubble`（宿主按
+  `maximized && visible && !exitKind` 计算），`.wb-ws-main { visibility:hidden }`——
+  DOM 保留（收起/还原后状态不丢），但视觉、焦点与无障碍树都让位给覆盖层；
+  退场一开始就摘掉，对话区随覆盖层 220ms 淡出逐渐显现。
+- **入场 = 覆盖层专属淡入**：`.is-maximized` 用更高特异性压过基类的 `wb-bubble-in`
+  （基类 `from{width:0}` 与 `width:auto` 不可插值，会闪半帧零宽），切换为
+  `wb-bubble-max-in` 160ms 淡入 + 0.995 缩放；停靠 ↔ 最大化之间的 absolute/static
+  切换本身不可插值，不做逐帧动画（与系统全屏应用的切换感受一致）。
+- **退场 = 整体淡出**：最大化态关闭/收起不再走「宽度收到 0」（`width:auto` 不可插值），
+  用 `wb-bubble-max-out` 220ms 淡出；`useBubble` 依旧在退场期间保留 `maximized`，
+  避免覆盖层提前变回停靠宽度导致起点跳变。
+- **冻结宽度逻辑简化**：最大化即解冻（内层跟随 100% 宽），停靠态展开/还原仍冻结到
+  `bubble.width`；退场时最大化分支直接解冻而非量宽度。
+- 原生编辑器（WebContentsView）随 ResizeObserver 立即重报全屏矩形，最大化切换无迟滞；
+  退场期间 `.op-native-wrap` 仍按既有 `is-closing/is-minimizing` 规则隐藏。
+
 ### 运行/验收提示
 
 - 新迁移与新字段需要**重启 dev 的 gateway 进程**后生效（`pnpm --filter @nxcore/desktop dev` 会拉起）。
@@ -398,3 +425,33 @@ pageLabel 是 `'Agent'` 而非分区键；修改后绿：含重挂恢复、改�
 - **不受影响**：legacy 外壳 `office-proto/pages/AgentView.tsx`（只读原型，未挂在产品路由上）、
   `agent.discoverLocalAgents / getStatus / getUsage`、`mcp.listServers` 桥接口，
   以及主页「Agent」页。
+
+## 13. 变更：移除窗口级文件标签，文件一律在项目空间打开（2026-11-05）
+
+文件不再有独立的窗口标签形态（全宽编辑器 + 右侧 AI 对话停靠栏）。所有入口打开/新建文件都路由到
+项目空间标签内，由该标签的气泡窗承载编辑器；AI 对话只在项目空间主区（会话/草稿视图）。
+
+- **标签模型**：`WindowTab` 收窄为 `HomeTab | WorkspaceTab`；删除 `FileTab`、`fileTabId`、
+  `tabIconKind`（TabBar 只渲染 LayoutGrid 图标）。`requestCloseTab` 删除 file 分支
+  （工作空间标签的气泡窗脏关闭守卫本就经 `registerTabCloser` 覆盖）。
+- **打开路由**：`store.openFileInWorkspace(file)` 解析目标空间——真实文件按
+  `file.realCatalog?.workspaceId`（校验在 `workspaces` 中存在），未归类（mock/新建瓦片）走
+  `defaultWorkspaceOf` 回落链（kind=default → id='default' → 首个 → 兜底常量）；目标空间不在
+  清单（网关未加载完）时注入 `FALLBACK_DEFAULT_WORKSPACE` 保证标签能建出来（boot() 同款容错）。
+- **store → 气泡窗交接**：`pendingBubbleFile: { tabId, workspaceId, file }` 暂存在 store，
+  目标工作空间标签的 `WorkspaceTabHost` 挂载/激活时 `consumePendingBubbleFile(tabId)` 取走
+  （消费即置空，别的标签取不到）并交给 `bubble.openFile`。与 `OPEN_AGENT_FILE_EVENT` 窗口事件
+  并存：事件用于 Agent 产物就绪的即时展示，store 载荷用于跨标签路由（标签可能尚未挂载）。
+- **入口重定向**：主页最近页（洞察卡/最近文件行/新建文件瓦片）、所有文件页（行/瓦片）、
+  ⌘K 命令面板、主进程 `onPreviewRequest`（排版面板 👁 预览）全部改调 `openFileInWorkspace`。
+- **删除**：`shell/FileTabHost.tsx`、`Workbench.tsx` 的文件标签渲染分支与
+  `activeTab.kind !== 'file'` 侧栏特判、`.wb-filetab` CSS。顶栏侧栏按钮恒渲染
+  （主页/工作空间标签都有侧栏）。
+- **AI 对话停靠栏（SideDock）**：产品路径只剩气泡窗的 `EditorView hideSideDock`，
+  文件旁停靠栏不再产品可达；`office-proto/{SideDock,AgentChatDock,MaterialsPanel,HistoryPanel}`
+  暂留——`OfficeProto` legacy 外壳（测试专用，`main.tsx` 渲染 `Workbench`）与其测试仍依赖。
+- **测试**：`workbench-tabs.test.ts` 文件标签用例改为路由/交接断言（含「目录指向不存在空间
+  回落默认」「载荷只被目标标签消费一次」）；`workbench-home.test.tsx` 三处 `file:*` 断言改为
+  `ws:default` + `pendingBubbleFile`；`workbench-tabbar.test.tsx` 删「文件标签无死按钮」用例；
+  `ai-panel-thesis.test.ts` 源码断言改 `openFileInWorkspace(entry.file)`。
+  全量 125 文件 / 966 用例通过，`tsc --noEmit` 0 错误。

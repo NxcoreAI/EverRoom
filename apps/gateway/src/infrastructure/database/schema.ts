@@ -559,7 +559,7 @@ export const documents = sqliteTable("documents", {
   contentSchemaVersion: integer("content_schema_version").notNull().default(1),
   version: integer("version").notNull().default(0),
   status: text("status", { enum: ["draft", "active"] }).notNull().default("draft"),
-  /** native=用户在 EverRoom 创建（产物）；import=外部导入（工作资料）。 */
+  /** native=用户在 EverOffice 创建（产物）；import=外部导入（工作资料）。 */
   origin: text("origin", { enum: ["native", "import"] }).notNull().default("native"),
   activeTransactionId: text("active_transaction_id"),
   deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
@@ -1234,7 +1234,7 @@ export const fileEntries = sqliteTable(
     connectionId: text("connection_id"),
     localSourceId: text("local_source_id"),
     localItemId: text("local_item_id"),
-    /** 本地文件只引用用户磁盘上的原路径，不在 EverRoom 对象库保留原始字节镜像。 */
+    /** 本地文件只引用用户磁盘上的原路径，不在 EverOffice 对象库保留原始字节镜像。 */
     sourcePath: text("source_path"),
     /** 归属工作区（资料库/产物库按空间隔离）；NULL 按服务层归一为 default。 */
     workspaceId: text("workspace_id"),

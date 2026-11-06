@@ -370,6 +370,70 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   line-height: 14px;
 }
 
+/* ── 本轮产生的文件（DSH 产物卡语义：assistant 正文下方的文件条） ── */
+
+.agent-turn-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-turn-file {
+  display: flex;
+  max-width: 100%;
+  width: fit-content;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px 7px 8px;
+  border: 1px solid #e5e8ed;
+  border-radius: 10px;
+  background: #fbfcfd;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.agent-turn-file:hover {
+  border-color: #c9d2df;
+  background: #f4f7fb;
+}
+
+.agent-turn-file:active {
+  border-color: #b6c3d4;
+}
+
+.agent-turn-file-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-turn-file-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-turn-file-copy strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #303640;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-turn-file-copy small {
+  color: #8a929d;
+  font-size: 10px;
+  line-height: 14px;
+}
+
 .agent-navigation-status {
   display: inline-flex;
   width: fit-content;

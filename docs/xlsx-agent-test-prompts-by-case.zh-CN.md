@@ -408,7 +408,7 @@
 ### XL-V-05 · 插入图片（位图 + SVG） `P2`
 
 ```
-把 /Users/nxcore/EverRoom/everroom.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。
+把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。
 ```
 
 - 验收：解包能同时看到 `xl/media/*.svg` 与回退 `*.png`；Excel 里可见且放大不失真（矢量）；旧版 Excel / 预览 / 导出 PDF 仍有图（走回退）
@@ -519,7 +519,7 @@
 把那份财报「部门汇总」的人数合计补到「编制说明」最后一行。
 ```
 
-- 前置：重启 EverRoom，不打开该文件
+- 前置：重启 EverOffice，不打开该文件
 - 验收：版本号单调递增；数据正确
 
 ### XL-H-04 · 只读打开时拒绝写入 `P0`

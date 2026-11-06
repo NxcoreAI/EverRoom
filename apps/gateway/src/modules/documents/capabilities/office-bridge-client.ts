@@ -1,6 +1,6 @@
 import type { GatewayConfig } from "../../../config.js";
 
-export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx";
+export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx" | "md";
 
 export interface OfficeSheetBridgeInput {
   name: string | null;
@@ -17,6 +17,8 @@ export interface OfficeGenerateInput {
   pages?: string[] | null;
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
+  /** md：Markdown 正文（桌面端纯文本落盘，无渲染引擎）。 */
+  markdown?: string | null;
   roomId: string | null;
   /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
@@ -32,6 +34,8 @@ export interface OfficeCompleteInput {
   title: string;
   originalName?: string;
   roomId?: string | null;
+  /** 产物归属工作区（done 广播带上，桌面渲染层按空间定向自动展示成品）。 */
+  workspaceId?: string | null;
   completed: boolean;
   appliedPages: number;
   totalPages: number;
@@ -485,8 +489,9 @@ export class OfficeBridgeClient {
   }
 
   /**
-   * /v1/office-export-pdf：桌面端用 LibreOffice 把文件库里的 .docx 转成 PDF，
-   * 并作为新文件入库（返回新 fileId/文件名）。网关不搬字节，只传目标与归属。
+   * /v1/office-export-pdf：桌面端用内置渲染引擎（genoffice，老运行时回退
+   * LibreOffice）把文件库里的 .docx 转成 PDF，并作为新文件入库（返回新
+   * fileId/文件名）。网关不搬字节，只传目标与归属。
    */
   async exportPdf(input: OfficeExportPdfInput): Promise<OfficeExportPdfResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-export-pdf`, {
@@ -497,7 +502,7 @@ export class OfficeBridgeClient {
         Accept: "application/json",
       },
       body: JSON.stringify(input),
-      // LibreOffice 转换 + PDF 入库整链路；大文档可到分钟级。
+      // 渲染引擎导出（分页+分组打印+合并）+ PDF 入库整链路；大文档可到分钟级。
       signal: AbortSignal.timeout(5 * 60_000),
     });
     const parsed = await response.json().catch(() => ({})) as {

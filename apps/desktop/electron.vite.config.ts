@@ -36,7 +36,7 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        '@nxcore/desktop-connector-host': resolve(__dirname, '../../submodules/everroom-connectors/desktop-host/open-connector'),
+        '@nxcore/desktop-connector-host': resolve(__dirname, '../../submodules/everoffice-connectors/desktop-host/open-connector'),
       },
     },
     plugins: sentryPlugins(),

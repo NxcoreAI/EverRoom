@@ -1,12 +1,12 @@
-# EverRoom 桌面端子 Agent 框架架构与设计方案
+# EverOffice 桌面端子 Agent 框架架构与设计方案
 
 > 状态：Implemented（统一 Agent Resolver + 文件驱动子 Agent）
 > 日期：2026-08-20
-> 范围：EverRoom Desktop、NxCore Gateway、`agent-contract`、`agent-runtime`、Pi Runtime、MCP 与 Skill 管理
+> 范围：EverOffice Desktop、NxCore Gateway、`agent-contract`、`agent-runtime`、Pi Runtime、MCP 与 Skill 管理
 
 ## 1. 背景
 
-EverRoom 当前已经具备一条完整的主 Agent 链路：Renderer 通过 Electron IPC 调用 Gateway，Gateway 的 `AgentService` 持久化会话、Run、消息和事件，再通过 `AgentRuntime` 接口驱动 Pi Runtime。Pi Runtime 已支持自定义工具、Memory、Knowledge 和 `pi-mcp-adapter`。
+EverOffice 当前已经具备一条完整的主 Agent 链路：Renderer 通过 Electron IPC 调用 Gateway，Gateway 的 `AgentService` 持久化会话、Run、消息和事件，再通过 `AgentRuntime` 接口驱动 Pi Runtime。Pi Runtime 已支持自定义工具、Memory、Knowledge 和 `pi-mcp-adapter`。
 
 本文件前半部分保留了最初用于指导子 Agent 框架落地的设计约束。当前实现已经进一步把 Gateway 内所有生成式模型场景收口到统一 Agent Resolver，不再是“单一主 Agent 配置”。
 
@@ -115,7 +115,7 @@ Gateway 业务模块不能自行选择模型端点或调用生成式模型 API�
 最终系统提示词按以下顺序组成：
 
 ```text
-EverRoom 不可覆盖策略
+EverOffice 不可覆盖策略
 + 子 Agent 身份与调度协议
 + Agent Revision 的开发者系统提示词
 + 当前 Skill 索引与能力说明
@@ -128,7 +128,7 @@ EverRoom 不可覆盖策略
 
 ```mermaid
 flowchart TB
-  subgraph Desktop["EverRoom Desktop"]
+  subgraph Desktop["EverOffice Desktop"]
     Chat["主 Agent UI"]
     Monitor["执行监控"]
   end

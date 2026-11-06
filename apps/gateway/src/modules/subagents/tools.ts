@@ -8,15 +8,15 @@ import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
 import { roomScopeId } from "../documents/room-scope.js";
-import {
-  DOC_WRITER_AGENT_ID,
-  DOC_WRITER_TASK_LABELS,
-  DOCUMENT_MARKDOWN_MAX_CHARS,
-  splitIntoAppendChunks,
-  type DocWriterTask,
-  type DocumentDraftSnapshot,
-} from "./document-draft.js";
-import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
+/** documentMarkdown 组装预算（开放问题⑦的初值；随文稿工具链收缩保留 slides 取数语义）。 */
+const DOCUMENT_MARKDOWN_MAX_CHARS = 200_000;
+
+/** 幻灯片方案代理的文档取数快照（正文 + block 概览）。 */
+interface DocumentDraftSnapshot {
+  document: { id: string; title: string; version: number; roomId: string | null };
+  blocks: Array<{ blockId: string; type: string; ordinal: number; depth: number; textPreview: string }>;
+  markdown: string;
+}
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 import {
@@ -749,23 +749,6 @@ export function createSubagentPiTools(
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
-    /**
-     * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用工作区文稿、
-     * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
-     */
-    inferMaterialSources?: (
-      runId: string,
-      material: string,
-    ) => Array<{ documentId: string; blockId: string; label?: string; textPreview?: string }>;
-    /** 代发读凭证（§5.3）：与 document_read 同构地以主 run 名义签发 receipt。 */
-    issueDraftReadReceipt?: (
-      context: { agentSessionId: string; runId: string; roomId: string | null },
-      documentId: string,
-      version: number,
-      blockIds: string[],
-    ) => { readReceipt: string; expiresAt: string };
-    /** dispatch 期"agent 修改中"软租约：占用文档（编辑器只读、保存被拒），patch_begin 接管前清除。 */
-    setDocumentModificationLease?: (documentId: string, value: string | null) => void;
     /** PPT 逐页进度上报器：slides_draft generate 布进度，set_page 落页后广播快照（无决策无挂起）。 */
     slidesProgress?: SlidesProgressTracker | null;
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
@@ -998,357 +981,9 @@ export function createSubagentPiTools(
       },
     });
   }
-  const docWriter = registry.get(DOC_WRITER_AGENT_ID);
-  if (docWriter) {
-    tools.push({
-      name: "document_draft",
-      label: "Draft document content",
-      description: "调度 doc-writer 子 Agent 产出文档正文内容（起草、修改提案、续写、选区改写）。"
-        + "draft-edit 与 draft-continue 只传 documentId（网关读取权威文档组装素材），返回 baseVersion 与修改项摘要，"
-        + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title。"
-        + "落库方式：write_append 传返回的 invocationId 与 chunkIndex（0 起）、patch_hunk 传 invocationId 与 itemIndex（0 起），"
-        + "正文由服务端从 doc-writer 结果转交，不得在工具参数中复写正文；write_begin 的 title 使用返回值。"
-        + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
-        + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
-        + "doc-writer 会基于上一稿增量修改而非从头重写。"
-        + "materialSources（draft-create / draft-edit 可选）：引用了工作区文稿块的素材来源列表（documentId/blockId 取自 document_read 的 blocks），"
-        + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
-        + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
-        + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
-        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
-        + "禁止在 instruction 中手写 everroom:// 链接或 blockId（截短的 id 会被网关拒绝）；"
-        + "来源块一律经 materialSources 传递，id 完整照抄 document_read 的 blocks，doc-writer 自会生成标记语法。"
-        + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
-      parameters: Type.Object({
-        task: Type.Union([
-          Type.Literal("draft-create"),
-          Type.Literal("draft-edit"),
-          Type.Literal("draft-continue"),
-          Type.Literal("rewrite"),
-        ]),
-        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
-        documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        material: Type.Optional(Type.String({ maxLength: 100_000 })),
-        materialSources: Type.Optional(Type.Array(Type.Object({
-          documentId: Type.String({ minLength: 1, maxLength: 128 }),
-          blockId: Type.String({ minLength: 1, maxLength: 128 }),
-          label: Type.Optional(Type.String({ maxLength: 200 })),
-          textPreview: Type.Optional(Type.String({ maxLength: 400 })),
-        }, { additionalProperties: false }), { maxItems: 50 })),
-        selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
-        contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
-        contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
-        blockType: Type.Optional(Type.String({ maxLength: 64 })),
-        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-      }, { additionalProperties: false }),
-      execute: async (run, params, signal) => {
-        const task = String(params.task ?? "") as DocWriterTask;
-        const instruction = String(params.instruction ?? "").trim();
-        if (!DOC_WRITER_TASK_LABELS[task]) throw new Error("document_draft_task_invalid");
-        const material = typeof params.material === "string" && params.material.trim() ? params.material : null;
-        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
-          ? params.responseLanguage.trim()
-          : null;
-
-        let snapshot: DocumentDraftSnapshot | null = null;
-        if (task === "draft-edit" || task === "draft-continue") {
-          const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
-          if (!documentId) throw new Error("document_draft_document_id_required");
-          if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
-          try {
-            snapshot = options.resolveDocumentForDraft(documentId);
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            const code = (error as { code?: string } | null)?.code;
-            throw new Error(`document_draft_document_unavailable: ${code ?? ""} ${detail}`.trim());
-          }
-        }
-
-        // 块索引标记（blockIndexMark）：主 Agent 从 document_read 拿到的来源块透传给
-        // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
-        const materialSources = Array.isArray(params.materialSources)
-          ? params.materialSources.flatMap((item) => {
-            const documentId = String(item.documentId ?? "").trim();
-            const blockId = String(item.blockId ?? "").trim();
-            if (!documentId || !blockId) return [];
-            return [{
-              documentId,
-              blockId,
-              ...(typeof item.label === "string" && item.label.trim()
-                ? { label: item.label.trim().slice(0, 200) }
-                : {}),
-              ...(typeof item.textPreview === "string" && item.textPreview.trim()
-                ? { textPreview: item.textPreview.trim().slice(0, 400) }
-                : {}),
-            }];
-          }).slice(0, 50)
-          : [];
-        // 兜底（blockIndexMark）：主 agent 读了文档当素材却没传 materialSources 时，
-        // 从本 run 的读取台账确定性推断；显式传入的来源优先，不做覆盖。
-        const materialText = typeof params.material === "string" ? params.material : "";
-        const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
-          ? options.inferMaterialSources(run.runId, materialText)
-          : [];
-        const resolvedMaterialSources = [
-          ...materialSources,
-          ...inferredSources.flatMap((item) => [{
-            documentId: item.documentId,
-            blockId: item.blockId,
-            ...(item.label ? { label: item.label.slice(0, 200) } : {}),
-            ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
-          }]),
-        ].slice(0, 50);
-
-        const topLevelBlocks = snapshot
-          ? snapshot.blocks.filter((block) => block.depth === 0)
-          : [];
-        const documentTruncated = snapshot !== null && snapshot.markdown.length > DOCUMENT_MARKDOWN_MAX_CHARS;
-        // 增量迭代：previousInvocationId 回读本会话内上一次 doc-writer 产出注入，
-        // "再简洁一点"类跟进指令在上一稿上修改而非从头重写（doc-writer 方案 §4 占位落地）。
-        const previousInvocationId = typeof params.previousInvocationId === "string"
-          ? params.previousInvocationId.trim()
-          : "";
-        let previousDraft: string | null = null;
-        if (previousInvocationId) {
-          const prior = orchestrator.getInvocation(previousInvocationId);
-          const priorStructured = prior?.result?.structuredOutput;
-          const normalized = prior
-            && prior.agentDefinitionId === DOC_WRITER_AGENT_ID
-            && prior.source === "primary_agent"
-            && prior.parentSessionId === run.sessionId
-            && prior.status === "completed"
-            && priorStructured !== null
-            && typeof priorStructured === "object"
-            && !Array.isArray(priorStructured)
-            ? docWriterDraftFromStructuredOutput(priorStructured as Record<string, unknown>)
-            : null;
-          if (normalized) {
-            const body = normalized.kind === "draft-edit"
-              ? normalized.items.map((item, index) =>
-                `${index + 1}. [${item.operation}] ${JSON.stringify(item.target)}\n${item.markdown}`).join("\n\n")
-              : normalized.chunks.join("");
-            if (body.trim()) {
-              previousDraft = (normalized.title ? `【上一稿标题】${normalized.title}\n\n` : "") + body;
-              if (previousDraft.length > 50_000) previousDraft = `${previousDraft.slice(0, 50_000)}\n…（超长截断）`;
-            }
-          }
-        }
-        const input = {
-          task,
-          instruction,
-          // 块索引 URI 的 scope 段（冻结语法 everroom://room/{scope}/...）：
-          // Phase 2i 后文稿一律工作区级，scope 统一由网关注入为工作区频道常量。
-          blockIndexScope: roomScopeId(snapshot?.document.roomId ?? null),
-          ...(material ? { material } : {}),
-          ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
-          ...(snapshot
-            ? {
-              documentId: snapshot.document.id,
-              documentName: snapshot.document.title.slice(0, 200),
-              documentMarkdown: documentTruncated
-                ? snapshot.markdown.slice(0, DOCUMENT_MARKDOWN_MAX_CHARS)
-                : snapshot.markdown,
-              ...(documentTruncated ? { documentTruncated: true } : {}),
-              blockIndex: topLevelBlocks.slice(0, 2_000).map((block) => ({
-                blockId: block.blockId,
-                type: block.type.slice(0, 64),
-                ordinal: block.ordinal,
-                ...(block.textPreview ? { textPreview: block.textPreview.slice(0, 400) } : {}),
-              })),
-              outline: topLevelBlocks
-                .filter((block) => block.type.toLowerCase().includes("heading") && block.textPreview)
-                .slice(0, 100)
-                .map((block) => block.textPreview.slice(0, 300)),
-              baseVersion: snapshot.document.version,
-            }
-            : {}),
-          ...(typeof params.selectedText === "string" && params.selectedText
-            ? { selectedText: params.selectedText }
-            : {}),
-          ...(typeof params.contextBefore === "string" && params.contextBefore.trim()
-            ? { contextBefore: params.contextBefore }
-            : {}),
-          ...(typeof params.contextAfter === "string" && params.contextAfter.trim()
-            ? { contextAfter: params.contextAfter }
-            : {}),
-          ...(typeof params.blockType === "string" && params.blockType.trim()
-            ? { blockType: params.blockType.trim() }
-            : {}),
-          ...(responseLanguage ? { responseLanguage } : {}),
-          ...(previousDraft ? { previousInvocationId, previousDraft } : {}),
-        };
-        if (task === "rewrite" && typeof input.selectedText !== "string") {
-          throw new Error("document_draft_selected_text_required");
-        }
-        const taskLabel = DOC_WRITER_TASK_LABELS[task];
-
-        // dispatch 期软租约（用户决策：agent 修改中文档不可编辑）：占用文档期间
-        // 编辑器 writing 态只读、手动保存被拒；patch_begin 接管前必须清除
-        //（Kernel 租约获取要求 NULL），失败路径同样在 finally 清除。
-        const leaseValue = snapshot ? `agent-modification:${run.runId}` : null;
-        if (leaseValue) options.setDocumentModificationLease?.(snapshot!.document.id, leaseValue);
-
-        let invocation;
-        try {
-          invocation = await orchestrator.dispatch({
-            agentId: DOC_WRITER_AGENT_ID,
-            task: taskLabel,
-            input,
-            idempotencyKey: dispatchKey(run.runId, DOC_WRITER_AGENT_ID, taskLabel, input),
-            source: "primary_agent",
-            parentSessionId: run.sessionId,
-            parentRunId: run.runId,
-            ...(signal ? { signal } : {}),
-          });
-        } catch (error) {
-          const errorCode = error instanceof Error ? error.message : String(error);
-          const retryable = errorCode === "subagent_concurrency_limit"
-            || errorCode === "subagent_global_concurrency_limit";
-          return {
-            content: JSON.stringify({
-              status: "failed",
-              errorCode,
-              retryable,
-              message: retryable
-                ? "doc-writer 调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行改写正文。"
-                : "doc-writer 调度失败；如实告知用户，禁止自行改写正文。",
-            }),
-            details: { errorCode },
-          };
-        } finally {
-          if (leaseValue && snapshot) options.setDocumentModificationLease?.(snapshot.document.id, null);
-        }
-        if (invocation.status !== "completed") {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: invocation.status,
-              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
-              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
-              message: `doc-writer 未完成（${invocation.status}）；如实告知用户，禁止自行改写正文。`,
-            }),
-            details: invocation,
-          };
-        }
-        const structured = invocation.result?.structuredOutput !== null
-          && typeof invocation.result?.structuredOutput === "object"
-          && !Array.isArray(invocation.result.structuredOutput)
-          ? invocation.result.structuredOutput as Record<string, unknown>
-          : extractJsonObject(invocation.result?.text ?? "");
-        if (!structured || typeof structured.kind !== "string" || structured.kind !== task) {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: "completed",
-              errorCode: "doc_writer_result_invalid",
-              retryable: true,
-              message: "doc-writer 未提交匹配任务的结构化结果；可调整 instruction 后重新调用 document_draft。",
-            }),
-            details: invocation,
-          };
-        }
-
-        let title: string | null = null;
-        let chunks: string[] | null = null;
-        if (task === "draft-create" || task === "draft-continue") {
-          if (typeof structured.title === "string" && structured.title.trim()) {
-            title = structured.title.trim();
-          }
-          if (Array.isArray(structured.appendChunks)) {
-            chunks = structured.appendChunks.map((chunk) => String(chunk));
-          } else if (typeof structured.contentMarkdown === "string" && structured.contentMarkdown) {
-            chunks = splitIntoAppendChunks(structured.contentMarkdown);
-          }
-        }
-        const hunks = Array.isArray(structured.hunks)
-          ? structured.hunks.filter((hunk): hunk is Record<string, unknown> =>
-            hunk !== null && typeof hunk === "object" && !Array.isArray(hunk))
-          : null;
-
-        // 版本复核 + 代发读凭证（§5.3）：与 document_read 同构，主 Agent 无需读全文即可 patch_begin。
-        let readReceiptExpiresAt: string | null = null;
-        if (snapshot) {
-          let fresh: DocumentDraftSnapshot | null = null;
-          try {
-            fresh = options.resolveDocumentForDraft
-              ? options.resolveDocumentForDraft(snapshot.document.id)
-              : null;
-          } catch {
-            fresh = null;
-          }
-          if (!fresh || fresh.document.version !== snapshot.document.version) {
-            return {
-              content: JSON.stringify({
-                invocationId: invocation.id,
-                status: "conflict",
-                errorCode: "DOCUMENT_CONFLICT",
-                retryable: true,
-                message: "文档在生成期间发生变化；请重新调用 document_draft 获取基于最新版本的提案。",
-                expectedVersion: snapshot.document.version,
-                currentVersion: fresh?.document.version ?? null,
-              }),
-              details: invocation,
-            };
-          }
-          if (options.issueDraftReadReceipt) {
-            const receipt = options.issueDraftReadReceipt(
-              // 与主 run 文档工具同 scope（Phase 2i 后无 Room 维度，一律 null），
-              // document_patch_begin 的 requireLatest 才能直接复用本凭证。
-              { agentSessionId: run.sessionId, runId: run.runId, roomId: null },
-              snapshot.document.id,
-              snapshot.document.version,
-              fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),
-            );
-            readReceiptExpiresAt = receipt.expiresAt;
-          }
-        }
-
-        return {
-          content: JSON.stringify({
-            invocationId: invocation.id,
-            agentId: invocation.agentDefinitionId,
-            status: "completed",
-            kind: task,
-            ...(title ? { title } : {}),
-            // M3/V2 摘要回传：文档路径正文不进主 Agent 上下文，
-            // 由 write_append/patch_hunk 凭 invocationId 服务端转交。
-            ...(chunks
-              ? {
-                chunkCount: chunks.length,
-                appendChunkBytes: chunks.reduce(
-                  (sum, chunk) => sum + Buffer.byteLength(chunk, "utf8"),
-                  0,
-                ),
-              }
-              : {}),
-            ...(hunks
-              ? {
-                hunkCount: hunks.length,
-                hunksSummary: hunks.map((hunk) => ({
-                  operation: typeof hunk.operation === "string" ? hunk.operation : null,
-                  target: hunk.target ?? null,
-                })),
-              }
-              : {}),
-            // 对话内划词改写需逐字呈现片段，保留全文；落库走 patch 引用路径。
-            ...(task === "rewrite" && typeof structured.replacementText === "string"
-              ? { replacementText: structured.replacementText }
-              : {}),
-            ...(snapshot
-              ? {
-                baseVersion: snapshot.document.version,
-                documentId: snapshot.document.id,
-              }
-              : {}),
-            ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
-            ...(previousInvocationId ? { previousDraftApplied: Boolean(previousDraft) } : {}),
-            digest: structured.digest ?? null,
-          }),
-          details: invocation,
-        };
-      },
-    });
-  }
+// document_draft（doc-writer 调度工具）已随 Markdown 文稿工具链下线（2026-11）：
+// 新 workbench 无文稿列表/编辑 UI，draft-edit/draft-continue 的产物用户不可达。
+// doc-writer 子代理保留定义（划词改写等服务端内部链路仍可调度），但不再向主 Agent 暴露工具。
   const slidesBuilder = registry.get("slides-builder");
   if (slidesBuilder) {
     const slidesDraftTool: PiAgentRuntimeTool = {
@@ -1995,6 +1630,8 @@ export function createSubagentPiTools(
               },
               {
                 roomId,
+                // done 广播带归属工作区：桌面渲染层按空间定向自动展示成品。
+                workspaceId: run.workspaceId ?? null,
                 sessionId: run.sessionId,
                 runId: run.runId,
                 parentRunId,
@@ -2303,6 +1940,8 @@ export function createSubagentPiTools(
               const stream = createSlidePageStream();
               const tail = runLayouterTail(layouterDepsFor(streamingOffice), {
                 roomId,
+                // done 广播带归属工作区：桌面渲染层按空间定向自动展示成品。
+                workspaceId: run.workspaceId ?? null,
                 sessionId: run.sessionId,
                 runId: run.runId,
                 parentRunId: null,

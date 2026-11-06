@@ -70,7 +70,7 @@ export function UpdateSection() {
         <span><RefreshCw aria-hidden="true" /></span>
         <div>
           <h2 id="update-settings-title">软件更新</h2>
-          <p>检查并安装 EverRoom 桌面端新版本</p>
+          <p>检查并安装 EverOffice 桌面端新版本</p>
         </div>
       </header>
       <div className="reality-setting-row">

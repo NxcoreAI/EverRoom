@@ -93,6 +93,72 @@ describe('SaasClient connector oo session contract', () => {
   })
 })
 
+describe('SaasClient agent status heartbeat contract', () => {
+  function buildClient(request: ReturnType<typeof vi.fn>): SaasClient {
+    const client = Object.create(SaasClient.prototype) as SaasClient
+    Object.defineProperty(client, 'initialize', { value: vi.fn(async () => undefined) })
+    Object.defineProperty(client, 'request', { value: request })
+    return client
+  }
+
+  function buildSession(overrides: Partial<Parameters<SaasClient['reportAgentStatus']>[0]['sessions'] extends (infer S)[] ? S : never> = {}) {
+    return {
+      id: 'session-1',
+      workspaceId: 'ws-1',
+      roomId: null,
+      pageLabel: 'work',
+      runtimeId: 'runtime-1',
+      activeAgentId: 'agent-1',
+      modelPreference: 'balanced',
+      channelAgentId: null,
+      thinkingLevel: null,
+      title: '计划',
+      status: 'idle',
+      createdAt: '2026-11-05T06:00:00.000Z',
+      updatedAt: '2026-11-05T06:00:00.000Z',
+      messages: [
+        {
+          id: 'message-8',
+          sessionId: 'session-1',
+          runId: 'run-1',
+          role: 'user',
+          authorAgentId: null,
+          content: '合并文案',
+          createdAt: '2026-11-05T06:00:00.000Z',
+          noteCards: [{ excerpt: '原文', note: '批注' }],
+          displayContent: '',
+        },
+      ],
+      activeRun: null,
+      lastEventSeq: 3,
+      ...overrides,
+    }
+  }
+
+  function buildClient(request: ReturnType<typeof vi.fn>): SaasClient {
+    const client = Object.create(SaasClient.prototype) as SaasClient
+    Object.defineProperty(client, 'initialize', { value: vi.fn(async () => undefined) })
+    Object.defineProperty(client, 'request', { value: request })
+    Object.defineProperty(client, 'account', { value: {} })
+    Object.defineProperty(client, 'accessToken', { value: 'token' })
+    return client
+  }
+
+  it('strips noteCards and displayContent from heartbeat messages (SaaS 422)', async () => {
+    const request = vi.fn(async () => undefined)
+    const client = buildClient(request)
+
+    await client.reportAgentStatus({ state: 'idle', sessions: [buildSession()] })
+
+    const payload = request.mock.calls[0][1].data
+    const message = payload.sessions[0].messages[0]
+    expect(message).not.toHaveProperty('noteCards')
+    expect(message).not.toHaveProperty('displayContent')
+    // 保留 SaaS 认识的字段
+    expect(message).toMatchObject({ id: 'message-8', role: 'user', content: '合并文案' })
+  })
+})
+
 describe('SaasClient connector authorization contract', () => {
   function buildClient(request: ReturnType<typeof vi.fn>): SaasClient {
     const client = Object.create(SaasClient.prototype) as SaasClient

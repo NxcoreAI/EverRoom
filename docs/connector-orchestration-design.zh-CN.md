@@ -4,7 +4,7 @@
 
 状态：Proposal
 
-适用范围：EverRoom Desktop、NxCore Gateway、Pi Agent Runtime、OpenConnector、`oo-cli`
+适用范围：EverOffice Desktop、NxCore Gateway、Pi Agent Runtime、OpenConnector、`oo-cli`
 
 ## 1. 背景
 
@@ -343,7 +343,7 @@ approval.resolved
 - `connector_execute(planId)` 对同一 Plan 只能从 `ready` 成功进入一次 `executing`。
 - 并发或重复调用返回同一个状态，不重复执行 Provider Action。
 - Provider 支持原生 Idempotency Key 时由 Adapter 注入。
-- Provider 不支持幂等时，本地状态只能防止 EverRoom 重复提交，不能消除网络边界上的不确定性。
+- Provider 不支持幂等时，本地状态只能防止 EverOffice 重复提交，不能消除网络边界上的不确定性。
 - Mutation 请求发生连接中断或超时时进入 `indeterminate`，不自动生成新 Plan 重试。
 
 ## 13. Provider Adapter

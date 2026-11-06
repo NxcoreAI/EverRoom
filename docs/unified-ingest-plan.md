@@ -181,7 +181,7 @@ md 内容即归一化输入（标题 = 显式 `title` > 文件名去扩展名，
 
 | jsonType | data 结构 | md 组装 |
 | --- | --- | --- |
-| `tiptap` | EverRoom 文档 contentJson（`{type:"doc",content:[…]}`） | 复用 `tiptap-markdown.ts` 导出器（与 everroom-doc 同一套，表格/列表覆盖一致） |
+| `tiptap` | EverOffice 文档 contentJson（`{type:"doc",content:[…]}`） | 复用 `tiptap-markdown.ts` 导出器（与 everroom-doc 同一套，表格/列表覆盖一致） |
 | `meeting-minutes` | `{title?, occurredAt?, participants?[], summary?, decisions?[{title,detail}], actionItems?[{owner,task,due}], transcript?[{speaker,text,at}]}` | 模板组装：标题 → 与会人 → 摘要 → 决议列表 → 行动项表 → 逐字稿（说话人+时间轴；超长截断走消费端上限） |
 | `generic` | `{title?, text}` 或 `{title?, sections:[{heading, body}]}` | 纯映射（sections → ATX 标题层级） |
 
@@ -218,7 +218,7 @@ md 内容即归一化输入（标题 = 显式 `title` > 文件名去扩展名，
 | 层 | 文件 | 谁改 | 何时生效 |
 | --- | --- | --- | --- |
 | ① 工程默认 | `apps/gateway/ingest-policy-defaults.json`（随仓库进 git；打包时拷入 dist） | **工程师**（改默认策略不动 TS 代码） | 提交后随版本发布；本地改完重启 |
-| ② 部署覆盖 | `<dataDir>/ingest-policies.json`（桌面版 = `%APPDATA%/EverRoom/`） | 运行环境/运维（不动代码仓库） | 改完重启 |
+| ② 部署覆盖 | `<dataDir>/ingest-policies.json`（桌面版 = `%APPDATA%/EverOffice/`） | 运行环境/运维（不动代码仓库） | 改完重启 |
 | 兜底 | `modules/ingest/types.ts` 的 DATA_TYPES defaults | 工程师（识别规则与兜底值，改动需过测试） | 随代码 |
 
 两层文件同格式（`$comment` 等元信息键忽略）：

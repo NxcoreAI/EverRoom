@@ -14,7 +14,7 @@ import type { DocumentExecutionContext } from "../documents/capabilities/types.j
 import { documentToolErrorPayload } from "../documents/mcp-host.js";
 
 /**
- * 渠道会话（Claude Code / Codex 整段锁定）的 EverRoom 工具 MCP host。
+ * 渠道会话（Claude Code / Codex 整段锁定）的 EverOffice 工具 MCP host。
  *
  * 网关为每个渠道 agentSession 签发一个不可猜的 token，挂在
  * POST /v1/mcp/everroom/:token 上，把 DocumentMcpHost 的全部

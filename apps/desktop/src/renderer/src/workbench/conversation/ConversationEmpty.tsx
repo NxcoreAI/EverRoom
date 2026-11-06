@@ -1,5 +1,5 @@
-import { ArrowUp, ClipboardList, FileText, LineChart, Presentation } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { ClipboardList, FileText, LineChart, Presentation } from 'lucide-react'
 
 import { BrandRibbon } from '@/components/ui/BrandRibbon'
 
@@ -7,18 +7,17 @@ import { BrandRibbon } from '@/components/ui/BrandRibbon'
  * 主区空态 hero（品牌时刻）：缎带 + 问候 + 大输入框 + 建议 chips。
  *
  * 纯展示组件：输入内容由 ConversationPane 持有（首条发送走 useAgentSession.sendPrompt，
- * 网关侧自动建会话）。会话态改用 AgentComposer，所以这里保持一个简洁 textarea。
+ * 网关侧自动建会话）。输入框本体已换成 AgentComposer（与会话态同一组件），因此
+ * 「智能档位」「+」等底栏控件在草稿态同样可用——这里只保留 hero 版式（缎带/标题/
+ * 批注徽章/建议 chips），输入框通过 children 插槽注入。
  */
 export interface ConversationEmptyProps {
-  draft: string
-  /** 连接中/未就绪时禁用发送。 */
-  disabled: boolean
-  onDraftChange: (value: string) => void
-  onSubmit: () => void
+  /** hero 版式内渲染的大输入框（AgentComposer + 批注徽章）。 */
+  children: ReactNode
   /** 渲染在大输入框正上方的附加行（待发送批注徽章）：hero 垂直居中，外挂会飘到很上面。 */
   aboveInput?: ReactNode
-  /** 有待发送批注时空输入也允许发送（批注等价于一条消息）。 */
-  hasPendingNotes?: boolean
+  /** 点建议 chip：把建议文案填进输入框（由 ConversationPane 持有草稿）。 */
+  onSuggestion?: (prompt: string) => void
 }
 
 interface HeroSuggestion {
@@ -34,47 +33,7 @@ const HERO_SUGGESTIONS: HeroSuggestion[] = [
   { label: '整理会议纪要', prompt: '帮我整理会议纪要，提炼结论和待办事项', Icon: ClipboardList },
 ]
 
-const HERO_PLACEHOLDER = '今天帮你做些什么？'
-const TEXTAREA_MIN_HEIGHT = 76
-const TEXTAREA_MAX_HEIGHT = 200
-
-export function ConversationEmpty({
-  draft,
-  disabled,
-  onDraftChange,
-  onSubmit,
-  aboveInput,
-  hasPendingNotes = false,
-}: ConversationEmptyProps) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    textareaRef.current?.focus()
-  }, [])
-
-  // 随内容长高，最多 200px 后内部滚动。
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(TEXTAREA_MAX_HEIGHT, Math.max(TEXTAREA_MIN_HEIGHT, textarea.scrollHeight))}px`
-  }, [draft])
-
-  const canSubmit = !disabled && (Boolean(draft.trim()) || hasPendingNotes)
-
-  const submit = () => {
-    if (!canSubmit) return
-    onSubmit()
-  }
-
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter' || event.shiftKey) return
-    // 中文输入法候选词的回车不能当成发送。
-    if (event.nativeEvent.isComposing) return
-    event.preventDefault()
-    submit()
-  }
-
+export function ConversationEmpty({ children, aboveInput, onSuggestion }: ConversationEmptyProps) {
   return (
     <div className="wb-conversation-hero">
       <div className="wb-hero">
@@ -82,34 +41,11 @@ export function ConversationEmpty({
           <BrandRibbon size={44} animated />
         </div>
 
-        <h1 className="wb-hero-title">EverRoom，我帮你</h1>
+        <h1 className="wb-hero-title">EverOffice，我帮你</h1>
 
         {aboveInput ? <div className="wb-hero-above-input">{aboveInput}</div> : null}
 
-        <div className="wb-hero-input" data-disabled={disabled ? 'true' : undefined}>
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={draft}
-            placeholder={HERO_PLACEHOLDER}
-            aria-label="输入任务"
-            disabled={disabled}
-            onChange={(event) => onDraftChange(event.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          <div className="wb-hero-actions">
-            <button
-              type="button"
-              className="wb-hero-send"
-              title="发送"
-              aria-label="发送"
-              disabled={!canSubmit}
-              onClick={submit}
-            >
-              <ArrowUp />
-            </button>
-          </div>
-        </div>
+        <div className="wb-hero-input">{children}</div>
 
         <div className="wb-hero-chips" aria-label="建议任务">
           {HERO_SUGGESTIONS.map(({ label, prompt, Icon }) => (
@@ -117,11 +53,7 @@ export function ConversationEmpty({
               key={label}
               type="button"
               className="wb-hero-chip"
-              disabled={disabled}
-              onClick={() => {
-                onDraftChange(prompt)
-                textareaRef.current?.focus()
-              }}
+              onClick={() => onSuggestion?.(prompt)}
             >
               <Icon aria-hidden="true" />
               {label}

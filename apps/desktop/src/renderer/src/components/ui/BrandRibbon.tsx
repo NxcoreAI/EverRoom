@@ -1,7 +1,7 @@
 import './BrandRibbon.css'
 
 /**
- * 品牌缎带（Brand Ribbon）——EverRoom 图标里三段错位的色块：
+ * 品牌缎带（Brand Ribbon）——EverOffice 图标里三段错位的色块：
  * 青绿 / 墨青 / 蜜桃。它是应用唯一允许“做动作”的视觉签名，只出现在
  * 品牌时刻（hero、登录门、空态、启动页），不参与正文装饰。
  */

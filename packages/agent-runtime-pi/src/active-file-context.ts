@@ -40,7 +40,7 @@ export function buildActiveFileContext(activeFile?: AgentActiveFileContext | nul
     "改 Word/Excel 不要求文件已经打开：任何已入库 .docx / .xlsx 都能按 fileId 由后台编辑器读取和编辑（headless 打开、不占页签）。"
       + "用户说的是“另一份/之前生成的那份”或没给 fileId 时，先用 file_search 按文件名找到 fileId，再 word_agent_read → word_agent_edit/word_agent_ops"
       + "（Excel 用 sheets_agent_read → sheets_agent_edit）。",
-    "EverRoom 内嵌的 Word 编辑器可能只显示正文、操作区（Ribbon/工具栏/菜单入口）被隐藏："
+    "EverOffice 内嵌的 Word 编辑器可能只显示正文、操作区（Ribbon/工具栏/菜单入口）被隐藏："
       + "用户的排版、插入、页面设置、批注、引用、审阅等操作一律由你用 word_agent_edit / word_agent_ops 直接完成；"
       + "不要说“点工具栏/菜单”，也不要让用户自己去找按钮——隐藏操作区不影响你的能力。",
     "Word 里的图片/样式类口语请求：用户说“刚上传的/之前生成的图”时先用 file_search 找图片 fileId，图片入参直接传 fileId（网关取字节，不要找磁盘路径、不要内联 base64）；"

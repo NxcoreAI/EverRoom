@@ -56,9 +56,9 @@ describe('Document Pi tool routing', () => {
     })
   })
 
-  it('allows document tools when EverRoom is the explicit destination', async () => {
+  it('allows document tools when EverOffice is the explicit destination', async () => {
     const { callTool, tool } = harness()
-    const input = runtimeInput('把 Notion 页面内容保存到 EverRoom Context Room 文档。')
+    const input = runtimeInput('把 Notion 页面内容保存到 EverOffice Context Room 文档。')
 
     await expect(tool.execute(input, {})).resolves.toMatchObject({
       details: { rooms: [] },

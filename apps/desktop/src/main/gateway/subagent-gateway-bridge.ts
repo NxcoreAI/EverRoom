@@ -16,12 +16,6 @@ export class SubagentGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   /** 划词改写：派发 doc-writer 的 rewrite task，立即返回 invocationId（不等待终态）。 */
-  dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }> {
-    return this.request('/v1/documents/selection-rewrite', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
-  }
 
   getSubagentInvocation(invocationId: string): Promise<SubagentInvocation> {
     return this.request(`/v1/subagent-invocations/${encodeURIComponent(invocationId)}`)

@@ -1,6 +1,6 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
@@ -103,10 +103,10 @@
   },
   "build": {
     "appId": "ai.nxcore.everoffice",
-    "productName": "EverRoom",
+    "productName": "EverOffice",
     "protocols": [
       {
-        "name": "EverRoom sign-in callback",
+        "name": "EverOffice sign-in callback",
         "schemes": [
           "everroom"
         ]
@@ -247,10 +247,10 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
-        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
-        "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
-        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "NSMicrophoneUsageDescription": "EverOffice needs microphone access to record and transcribe your voice.",
+        "NSAudioCaptureUsageDescription": "EverOffice needs system audio access to record and transcribe audio playing on this Mac.",
+        "NSDocumentsFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
+        "NSDesktopFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
         "CFBundleDocumentTypes": [
           {
             "CFBundleTypeName": "Word Document",
@@ -289,6 +289,18 @@
             "LSItemContentTypes": [
               "org.openxmlformats.presentationml.presentation",
               "com.microsoft.powerpoint.ppt"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "markdown",
+              "md"
+            ],
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown"
             ]
           }
         ]
@@ -359,6 +371,15 @@
             "ppt"
           ],
           "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "md",
+            "markdown"
+          ],
+          "name": "Markdown Document",
           "role": "Editor",
           "rank": "Alternate"
         }

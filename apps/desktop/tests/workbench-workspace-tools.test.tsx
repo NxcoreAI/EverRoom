@@ -226,9 +226,9 @@ describe('计划看板', () => {
     expect(counts).toEqual(['1', '1', '1', '1'])
     expect(bodyText()).toContain('对比供应商')
     expect(bodyText()).toContain('写发布计划')
-    // 待认领 / Agent 负责人都要能看见
-    expect(bodyText()).toContain('待认领')
-    expect(bodyText()).toContain('Agent main')
+    // 不区分负责人：卡片上没有「我 / Agent / 待认领」标签
+    expect(bodyText()).not.toContain('待认领')
+    expect(bodyText()).not.toContain('Agent main')
   })
 
   it('点卡片打开详情抽屉（不再跳会话）', async () => {
@@ -248,14 +248,19 @@ describe('计划看板', () => {
     expect(onOpenSession).not.toHaveBeenCalled()
   })
 
-  it('空计划显示空态，并保留「新建工作」入口', async () => {
+  it('空计划也渲染四列，并保留「新建工作」入口', async () => {
     const onNewWork = vi.fn()
     installNxcore({ listPlanItems: async () => ({ items: [] }) })
     render(<PlanPage {...pageProps({ onNewWork })} />)
     await flush()
 
-    expect(bodyText()).toContain('还没有任务')
-    expect(document.querySelector('.wb-plan-board')).toBeNull()
+    // 四列常显：没有任务时不再用空态整页替换看板
+    const labels = Array.from(document.querySelectorAll('.wb-plan-col-head strong')).map((node) => node.textContent)
+    expect(labels).toEqual(['待开始', '进行中', '已完成', '已取消'])
+    expect(bodyText()).not.toContain('还没有任务')
+    // 空列各自保留新建入口
+    const empties = document.querySelectorAll('.wb-plan-empty')
+    expect(empties).toHaveLength(4)
     await click(buttonByText('新建工作'))
     expect(onNewWork).toHaveBeenCalledTimes(1)
   })

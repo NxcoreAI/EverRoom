@@ -4,8 +4,8 @@
 > 日期：2026-10-26
 > 范围：`apps/desktop`（内嵌预览 `office-preview-registry` 及三个 view manager）、`apps/gateway`（格式注册表 / 论文模板 / 参考 PPTX）、`apps/desktop/vendor/genoffice`（子模块既有能力）
 > 触发：用户打开 `.doc/.xls/.ppt` 时提示「已用系统默认应用打开 —— 需要本机安装 LibreOffice」（`files.legacyPreviewFallbackMessage`）
-> 前置阅读：`docs/unified-ingest-plan.md` §5.3（旧格式走本机 LibreOffice 的既有决策）、`docs/genoffice-everroom-integration-plan.zh-CN.md`
-> **落地更新（2026-10-26 晚）**：`submodules/everroom-connectors/gateway-module/legacy-office.ts` 已实现 `.doc/.xls/.ppt/.rtf/.odt/.ods/.odp` 的进程内文本抽取，网关入库/索引不再调用 LibreOffice（§2 的「网关导入」一行已下线）；桌面内嵌预览仍按需用 soffice 渲染，不受影响。
+> 前置阅读：`docs/unified-ingest-plan.md` §5.3（旧格式走本机 LibreOffice 的既有决策）、`docs/genoffice-everoffice-integration-plan.zh-CN.md`
+> **落地更新（2026-10-26 晚）**：`submodules/everoffice-connectors/gateway-module/legacy-office.ts` 已实现 `.doc/.xls/.ppt/.rtf/.odt/.ods/.odp` 的进程内文本抽取，网关入库/索引不再调用 LibreOffice（§2 的「网关导入」一行已下线）；桌面内嵌预览仍按需用 soffice 渲染，不受影响。
 
 ## 1. 结论摘要
 
@@ -19,7 +19,7 @@
 
 三条关键判断：
 
-1. **EverRoom 现在对 `.xls` 是"多做了一层"**：上游 sheets 应用已能用 Rust 侧车把 `.xls` 转成 xlsx 再打开（`packages/.../xlsx-engine/src/convert.rs`），而 EverRoom 在 `prepareSpreadsheet` 里先用 LibreOffice 转一遍，等于把一个已有的能力外包给了外部依赖。
+1. **EverOffice 现在对 `.xls` 是"多做了一层"**：上游 sheets 应用已能用 Rust 侧车把 `.xls` 转成 xlsx 再打开（`packages/.../xlsx-engine/src/convert.rs`），而 EverOffice 在 `prepareSpreadsheet` 里先用 LibreOffice 转一遍，等于把一个已有的能力外包给了外部依赖。
 2. **全保真的唯一省事路径是随包 LibreOffice**：官方 macOS aarch64 dmg 实测 298,845,477 B（285 MiB，TDF 26.8.1），安装后 GB 级；许可 MPL-2.0 允许随专有应用分发，但签名/公证/CI 体积成本是真实的。
 3. **先埋点再投入**：仓库里 `.doc/.xls/.ppt` 的真实样本只有 genoffice 自带的 2 个 fixture（`legacy-sample.doc` / `legacy-sample.ppt`，无 `.xls`）。没有语料就无法验收任何转换器，P0 必须先建语料库 + 统计真实占比。
 
@@ -97,7 +97,7 @@
 
 `extraResources` 随包 `/Applications/LibreOffice.app`（或 Windows MSI 解包），`prepare-libreoffice-runtime.mjs` 沿用 `prepare-genoffice-runtime.mjs` 的下载+SHA256+缓存模式。
 - 覆盖：`.doc/.xls/.ppt/.rtf/.odt/.ods/.odp` 全部，保真最高，行为与用户自装 LO 完全一致
-- 体积：官方 macOS aarch64 dmg **285 MiB**（实测），安装后 GB 级；当前 `EverRoom-0.1.9-arm64.dmg` 为 496 MB
+- 体积：官方 macOS aarch64 dmg **285 MiB**（实测），安装后 GB 级；当前 `EverOffice-0.1.9-arm64.dmg` 为 496 MB
 - 许可：MPL-2.0，可随专有应用分发；需第三方便利清单（仓库已有 `THIRD-PARTY-NOTICES` 机制）+ 商标使用规范
 - 成本：2–3 周（双平台打包、嵌套签名、公证、CI 下载缓存、冷启动与并发 profile 隔离）
 - 风险：macOS 公证对嵌套 Mach-O 逐个签名；裁剪模块（去掉 help/gallery/dict/java）收益有限且易踩坏过滤器，建议**不裁剪**
@@ -181,7 +181,7 @@
 | 项 | 值 | 方式 |
 | --- | --- | --- |
 | LibreOffice 26.8.1 macOS aarch64 dmg | 298,845,477 B（285 MiB） | TDF 镜像 HTTP `content-length`，2026-10-26 |
-| EverRoom 当前发行包 | `EverRoom-0.1.9-arm64.dmg` 496 MB | `du -sh release/*` |
+| EverOffice 当前发行包 | `EverOffice-0.1.9-arm64.dmg` 496 MB | `du -sh release/*` |
 | genoffice 运行时 | 95 MB | `du -sh apps/desktop/build/genoffice-runtime` |
 | 本机 LibreOffice | 未安装（`/Applications` 与 PATH 均无） | `ls` / `command -v` |
 | textutil 产出可被引擎解析 | 4 blocks，保留字体/字号/加粗 | `parseDocx(textutil 产出)` 实跑 |

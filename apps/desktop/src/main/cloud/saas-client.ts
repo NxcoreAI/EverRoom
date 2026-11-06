@@ -34,7 +34,7 @@ import type {
 } from '../../shared/notifications'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
-import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
+import everroomFullLogo from '../../renderer/src/assets/everoffice-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -167,6 +167,22 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+/** 套餐档位（`GET /app/plans`），升级弹窗动态渲染权益列表。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
 export interface KeyringDevicePackage {
   algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
   ephemeralPublicKey: string
@@ -206,6 +222,28 @@ export interface AiGatewayToken {
   /** 套餐场景模型；套餐未配置时为 null（客户端沿用内置默认模型）。 */
   models?: AiPlanModels | null
 }
+
+/** 充值档位（`GET /app/billing/packs`）。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  grantQuota: number
+  active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
+}
+
+/** 充值下单结果（`POST /app/billing/topup`）。 */
+export interface TopupOrder {
+  orderId: string
+  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议。 */
+  approvalUrl: string
+  provider: 'paypal' | 'mock'
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
 
 
 /**
@@ -379,7 +417,7 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EverRoom · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
+  <title>EverOffice · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
   <style>
     :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
@@ -396,14 +434,14 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <body>
   <main>
     <div class="brand">
-      <img src="${everroomFullLogo}" alt="EverRoom">
+      <img src="${everroomFullLogo}" alt="EverOffice">
     </div>
     <div class="status" aria-hidden="true">${failed ? '!' : '&#10003;'}</div>
     <h1>${failed ? 'Sign-in incomplete' : 'You are signed in'}</h1>
-    <p>${failed ? 'Return to EverRoom and try signing in again.' : 'Your account is connected. You can continue in EverRoom.'}</p>
+    <p>${failed ? 'Return to EverOffice and try signing in again.' : 'Your account is connected. You can continue in EverOffice.'}</p>
     ${failed
-      ? '<div class="hint">Return to EverRoom to try again</div>'
-      : '<div class="hint">Redirecting to the EverRoom website in <span id="redirect-countdown">5</span> seconds</div>'}
+      ? '<div class="hint">Return to EverOffice to try again</div>'
+      : '<div class="hint">Redirecting to the EverOffice website in <span id="redirect-countdown">5</span> seconds</div>'}
   </main>
   ${failed ? '' : `<script>
     (() => {
@@ -505,7 +543,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 type SaasCompatibleSession = Omit<AgentSession, 'workspaceId'>
   & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>
 
-/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区字段，避免 strict 校验整包 422。 */
+/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区 / 批注卡片字段，避免 strict 校验整包 422。 */
 function saasCompatibleSession(
   session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
 ): SaasCompatibleSession {
@@ -517,7 +555,14 @@ function saasCompatibleSession(
   } = session
   return {
     ...rest,
-    messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),
+    // noteCards / displayContent 是批注卡片的本地展示扩展（agent-contract），
+    // 服务端消息 schema 拒收未知属性（422: "property noteCards should not exist"）。
+    messages: session.messages.map(({
+      authorAgentId: _authorAgentId,
+      noteCards: _noteCards,
+      displayContent: _displayContent,
+      ...message
+    }) => message),
   }
 }
 
@@ -560,9 +605,9 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
-    // 保证扫码登录的环境校验在两端默认配置下直接通过。
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
+    // 打包默认指向生产 SaaS API；dev 由 .env 的 NXCORE_SAAS_API_URL 覆盖连内网，
+    // 手机 App 扫码登录的环境校验只在 dev 内网场景关心 origin 一致性。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'https://api.everoffice.vyitec.com/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
   }
@@ -721,7 +766,7 @@ export class SaasClient {
 
   /**
    * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
-   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   * 未登录时抛错；oo token 与 EverOffice 会话生命周期解耦（持久稳定），无需缓存。
    */
   async connectorOoSession(): Promise<ConnectorOoSession> {
     await this.initialize()
@@ -830,6 +875,36 @@ export class SaasClient {
   async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
     await this.initialize()
     return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
+  }
+
+  /** 充值档位列表。 */
+  async creditPacks(): Promise<CreditPack[]> {
+    await this.initialize()
+    return this.request<CreditPack[]>('/app/billing/packs')
+  }
+
+  /** 充值下单:返回 approvalUrl(系统浏览器打开完成支付)。 */
+  async createTopup(packCode: string): Promise<TopupOrder> {
+    await this.initialize()
+    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode } })
+  }
+
+  /** 充值订单状态轮询(pending 时服务端主动核对支付渠道)。 */
+  async topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: TopupStatus; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/status`)
+  }
+
+  /** Mock 模式联调:模拟买家批准。真 paypal 模式服务端 409。 */
+  async topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: 'completed'; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/mock-approve`, { method: 'POST' })
+  }
+
+  /** 套餐档位列表(升级弹窗渲染)。 */
+  async planTiers(): Promise<PlanTier[]> {
+    await this.initialize()
+    return this.request<PlanTier[]>('/app/plans')
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
@@ -1538,7 +1613,7 @@ export class SaasClient {
         }
         // 网络（或服务端 5xx）耗尽重试：凭据仍在，标记「网络受阻」而非未登录。
         this.authBlockedReason = 'network'
-        console.warn('Unable to restore EverRoom SaaS session; keeping the refresh token for retry.')
+        console.warn('Unable to restore EverOffice SaaS session; keeping the refresh token for retry.')
       }
     }
   }
@@ -1763,7 +1838,7 @@ export class SaasClient {
   }> {
     return {
       deviceKey: await this.deviceKey(),
-      deviceName: hostname() || 'EverRoom Desktop',
+      deviceName: hostname() || 'EverOffice Desktop',
       platform: process.platform === 'win32' ? 'Windows' : 'macOS',
       appVersion: this.electronApp.getVersion(),
     }
@@ -1850,7 +1925,7 @@ export class SaasClient {
 
   private requireLogin(): void {
     if (!this.accessToken || !this.account) {
-      throw new Error('请先登录 EverRoom，或切换为本地自有配置。')
+      throw new Error('请先登录 EverOffice，或切换为本地自有配置。')
     }
   }
 

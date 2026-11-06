@@ -81,7 +81,7 @@ export function SetupWizard({ workspace, onDone }: {
     setImportError(null)
     try {
       const bridge = window.nxcore?.files
-      if (!bridge?.pickAndImport) throw new Error('桌面服务文件接口未就绪，请重启 EverRoom')
+      if (!bridge?.pickAndImport) throw new Error('桌面服务文件接口未就绪，请重启 EverOffice')
       // 引导发生在本空间内：导入即归属本空间（资料库按空间隔离）。
       const raw = await bridge.pickAndImport({ workspaceId: workspace.id })
       const outcomes = normalizeImportOutcomes(raw)
@@ -109,7 +109,7 @@ export function SetupWizard({ workspace, onDone }: {
     }
     const bridge = window.nxcore?.agent
     if (!bridge?.createSession) {
-      setWorkError('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+      setWorkError('桌面服务 Agent 接口未就绪，请重启 EverOffice')
       return
     }
     setCreatingWork(true)

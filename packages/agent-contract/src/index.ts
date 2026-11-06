@@ -1591,7 +1591,7 @@ export interface AgentActiveDocumentContext {
 }
 
 /** 内嵌 Office 视图的文件形态（与桌面端 OfficePreviewKind 同构）。 */
-export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf";
+export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf" | "markdown";
 
 /** 用户当前正在浏览的 Office 文件（页签）：Agent 感知“这份文档”指谁的最小事实。 */
 export interface AgentActiveFileContext {
@@ -2092,7 +2092,7 @@ export interface ImportRoomDocumentInput {
   roomId: string | null;
   title: string;
   contentJson: TiptapJsonContent;
-  /** 省略时按外部导入（import）落库；EverRoom 内新建（含本地 Markdown 导入）传 native，产物库只列 native。 */
+  /** 省略时按外部导入（import）落库；EverOffice 内新建（含本地 Markdown 导入）传 native，产物库只列 native。 */
   origin?: 'native' | 'import';
 }
 

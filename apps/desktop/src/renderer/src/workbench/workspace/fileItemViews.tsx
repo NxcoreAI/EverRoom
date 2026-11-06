@@ -8,12 +8,12 @@ import {
 } from 'lucide-react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
-import { FileTypeIcon } from '@/office-proto/pages/parts'
 
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 
 /**
- * 产物页的行 / 卡片及其操作菜单（资料库改用 LibraryViews 的网格/列表）。
+ * 文件行内的操作菜单（资料/产物两页共用；网格与列表本体在 LibraryViews.tsx，
+ * 产物页与资料页复用同一套视图）。
  *
  * 只做纯展示 + 点开回调；打开文件一律通过 `FileItemActions.onOpen`
  * （页面转交 WorkspacePageProps.onOpenFile → 气泡窗），本模块不碰任何 IPC。
@@ -86,78 +86,7 @@ export function FileItemMenu({ item, actions, align = 'end' }: {
   )
 }
 
-/* ───────────────── 列表 ───────────────── */
-
-function FileRow({ item, actions }: { item: RealOfficeFile; actions: FileItemActions }) {
-  const path = item.catalog.relativePath
-  return (
-    <li className="wb-file-row">
-      <button
-        type="button"
-        className="wb-file-row-main"
-        title={path ? `${item.file.name}\n${path}` : item.file.name}
-        onClick={() => actions.onOpen(item)}
-      >
-        <FileTypeIcon kind={item.file.kind} size={26} />
-        <span className="wb-file-row-name">
-          <span className="wb-file-row-title">{item.file.name}</span>
-          <span className="wb-file-row-path">{path || '文件库根目录'}</span>
-        </span>
-        <span className="wb-file-row-source">{item.catalog.sourceLabel}</span>
-        <span className="wb-file-row-time">{item.file.updatedLabel}</span>
-        <span className="wb-file-row-size">{item.file.sizeLabel}</span>
-      </button>
-      <FileItemMenu item={item} actions={actions} />
-    </li>
-  )
-}
-
-export function FileList({ items, actions }: {
-  items: readonly RealOfficeFile[]
-  actions: FileItemActions
-}) {
-  return (
-    <div className="wb-file-list">
-      <ul className="wb-file-rows">
-        {items.map((item) => <FileRow key={item.file.id} item={item} actions={actions} />)}
-      </ul>
-    </div>
-  )
-}
-
-/* ───────────────── 网格 ───────────────── */
-
-function FileCard({ item, actions }: { item: RealOfficeFile; actions: FileItemActions }) {
-  const path = item.catalog.relativePath
-  return (
-    <li className="wb-file-card">
-      <button
-        type="button"
-        className="wb-file-card-main"
-        title={path ? `${item.file.name}\n${path}` : item.file.name}
-        onClick={() => actions.onOpen(item)}
-      >
-        <FileTypeIcon kind={item.file.kind} size={32} />
-        <span className="wb-file-card-name">{item.file.name}</span>
-        <span className="wb-file-card-path">{path || '文件库根目录'}</span>
-        <span className="wb-file-card-meta">
-          <span>{item.catalog.sourceLabel}</span>
-          <span>{item.file.updatedLabel}</span>
-          <span>{item.file.sizeLabel}</span>
-        </span>
-      </button>
-      <FileItemMenu item={item} actions={actions} align="start" />
-    </li>
-  )
-}
-
-export function FileGrid({ items, actions }: {
-  items: readonly RealOfficeFile[]
-  actions: FileItemActions
-}) {
-  return (
-    <ul className="wb-file-grid">
-      {items.map((item) => <FileCard key={item.file.id} item={item} actions={actions} />)}
-    </ul>
-  )
-}
+/* ───────────────── 列表 / 网格视图 ─────────────────
+ * 产物页原本自带一套行/卡片（wb-file-row / wb-file-card），与资料页的
+ * 六列表格、Finder 瓦片不一致；已改为直接复用 LibraryViews（以资料为主），
+ * 本文件只保留共用的行内操作菜单。 */

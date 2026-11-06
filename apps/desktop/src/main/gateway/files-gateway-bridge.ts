@@ -386,11 +386,11 @@ export class FilesGatewayBridge {
     if (error) throw new Error(error)
   }
 
-  /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+  /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
   async exportReveal(fileId: string, originalName: string): Promise<void> {
     const storagePath = await this.storagePath(fileId)
     const safeName = originalName.replace(/[/\\]/g, '_').trim() || 'export.bin'
-    const dir = join(app.getPath('downloads'), 'EverRoom')
+    const dir = join(app.getPath('downloads'), 'EverOffice')
     await mkdir(dir, { recursive: true })
     const target = join(dir, safeName)
     await copyFile(storagePath, target)

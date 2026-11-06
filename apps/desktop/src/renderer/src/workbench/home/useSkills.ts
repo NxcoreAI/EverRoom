@@ -140,7 +140,7 @@ export function useSkills(): {
 
   const setEnabled = useCallback(async (skillId: string, enabled: boolean) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.setSkillEnabled) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.setSkillEnabled) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     setPending((current) => (current.includes(skillId) ? current : [...current, skillId]))
     // 先改界面再等网关：开关是幂等的布尔写入，失败时会回滚。
     setState((current) => current.status === 'ready'
@@ -166,7 +166,7 @@ export function useSkills(): {
 
   const createSkill = useCallback(async (input: CreateSkillInput) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.createSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.createSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     await bridge.createSkill(input)
     reload()
   }, [reload])
@@ -174,7 +174,7 @@ export function useSkills(): {
   const importDirectory = useCallback(async (): Promise<boolean> => {
     const bridge = window.nxcore?.agent
     if (!bridge?.pickSkillDirectory || !bridge.importSkillDirectory) {
-      throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+      throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     }
     const directory = await bridge.pickSkillDirectory()
     if (!directory) return false
@@ -185,7 +185,7 @@ export function useSkills(): {
 
   const removeSkill = useCallback(async (skillId: string) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.deleteSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.deleteSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     await bridge.deleteSkill(skillId)
     reload()
   }, [reload])

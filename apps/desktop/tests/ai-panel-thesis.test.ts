@@ -292,9 +292,9 @@ describe('预览可见性：主进程建好实例后必须通知渲染端', () =
     expect(block.slice(0, block.indexOf('if (card.sourceFileEntryId)'))).toContain('notifyPreviewRequested(request)')
   })
 
-  it('渲染端收到通知就开文件标签并激活（矩形上报沿用文件编辑视口）', () => {
+  it('渲染端收到通知就在归属工作空间打开（矩形上报沿用气泡窗编辑视口）', () => {
     expect(workbench).toContain('office.onPreviewRequest(')
-    expect(workbench).toContain('openFileTab(entry.file)')
+    expect(workbench).toContain('openFileInWorkspace(entry.file)')
   })
 
   it('preload 暴露 onPreviewRequest，通道名两端一致', () => {

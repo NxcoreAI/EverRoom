@@ -4,7 +4,7 @@ import type { PlanItem } from '@nxcore/agent-contract'
 
 import { relativeTimeLabel } from '../../types'
 import { Badge } from '../../ui/primitives'
-import { isPlanOverdue, planOwnerLabel } from './planDrag'
+import { isPlanOverdue } from './planDrag'
 
 const PRIORITY_LABEL: Record<PlanItem['priority'], string> = {
   low: '低',
@@ -30,8 +30,8 @@ export interface PlanCardProps {
 /**
  * 看板卡片：一行标题 + 一行 meta + 关联会话。
  *
- * meta 里只放"扫一眼就要知道"的东西：优先级、负责人、截止、材料数、检查项进度。
- * 其余（背景/验收/时间线）都在详情抽屉里，卡片不堆字。
+ * meta 里只放"扫一眼就要知道"的东西：截止、材料数、检查项进度、高优先级。
+ * 不区分任务是谁的（用户/Agent 共用同一个待办池），其余信息在详情抽屉里。
  */
 export function PlanCard({
   item,
@@ -76,7 +76,7 @@ export function PlanCard({
           onOpen()
         }
       }}
-      aria-label={`${item.title}（${PRIORITY_LABEL[item.priority]}优先级，${planOwnerLabel(item)}）`}
+      aria-label={item.title}
     >
       <header className="wb-plan-task-head">
         {selectMode ? (
@@ -92,13 +92,9 @@ export function PlanCard({
           <span className={`wb-plan-priority is-${item.priority}`} aria-hidden="true" />
         )}
         <span className="wb-plan-card-title">{item.title}</span>
-        {item.createdBy === 'agent' ? (
-          <span className="wb-plan-ai-tag" title="这条任务由 Agent 创建">AI</span>
-        ) : null}
       </header>
 
       <div className="wb-plan-task-meta">
-        <span className="wb-plan-task-owner">{planOwnerLabel(item)}</span>
         {item.dueAt ? (
           <span className={`wb-plan-task-chip ${overdue ? 'is-overdue' : ''}`}>
             <CalendarDays size={11} aria-hidden="true" />
