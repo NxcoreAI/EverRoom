@@ -1,93 +1,31 @@
-import type { LucideIcon } from 'lucide-react'
-import {
-  BookOpen,
-  BookOpenText,
-  Brain,
-  Building2,
-  FileText,
-  FolderOpen,
-  FolderSync,
-  Home,
-  AudioLines,
-  NotebookPen,
-  ListTodo,
-  PlugZap,
-  Settings,
-  FilePenLine,
-} from 'lucide-react'
+/**
+ * 旧版主导航的数据残留（2026-11 收敛）。
+ *
+ * workbench 改版后侧栏/页面结构由 `workbench/types.ts` 的 WORKSPACE_PAGES 与
+ * HomePage 定义；本文件只剩两个仍被 Agent 链路引用的符号：
+ * - `PageId`：agentNavigation 的目标页面联合类型（历史会话链接里仍可能出现旧值，
+ *   故保留全量字面量，解析失败自然回退 home）。
+ * - `pageLabelKey`：旧中文/英文页面名 → i18n key 的映射（历史会话的 sourcePageLabel
+ *   是裸字符串，渲染时经它翻译；查不到原样返回，由调用方兜底显示）。
+ */
 
-export type PageId = 'home' | 'office' | 'office-document' | 'rooms' | 'docs' | 'recording' | 'sources' | 'files' | 'inspiration' | 'memory' | 'wiki' | 'diary' | 'schedules' | 'agent-connections' | 'settings'
+export type PageId =
+  | 'home'
+  | 'office'
+  | 'office-document'
+  | 'rooms'
+  | 'docs'
+  | 'recording'
+  | 'sources'
+  | 'files'
+  | 'inspiration'
+  | 'wiki'
+  | 'diary'
+  | 'schedules'
+  | 'agent-connections'
+  | 'settings'
 
-export interface NavigationItem {
-  id: PageId
-  label: string
-  icon: LucideIcon
-  tone: 'blue' | 'cyan' | 'green' | 'indigo' | 'orange' | 'slate'
-}
-
-export interface NavigationSection {
-  id: string
-  label: string
-  items: NavigationItem[]
-}
-
-export const navigationSections: NavigationSection[] = [
-  {
-    id: 'core',
-    label: 'surface:navigation.coreWork',
-    items: [
-      { id: 'home', label: 'surface:navigation.home', icon: Home, tone: 'slate' },
-      { id: 'rooms', label: 'surface:navigation.contextRoom', icon: BookOpen, tone: 'blue' },
-      { id: 'docs', label: 'surface:navigation.documents', icon: FileText, tone: 'indigo' },
-      { id: 'recording', label: 'surface:navigation.realityPerception', icon: AudioLines, tone: 'cyan' },
-    ],
-  },
-  {
-    id: 'context',
-    label: 'surface:navigation.context',
-    items: [
-      { id: 'sources', label: 'surface:navigation.sources', icon: FolderSync, tone: 'cyan' },
-      { id: 'files', label: 'surface:navigation.files', icon: FolderOpen, tone: 'green' },
-      { id: 'memory', label: 'surface:navigation.memory', icon: Brain, tone: 'orange' },
-      { id: 'wiki', label: 'surface:navigation.wiki', icon: BookOpenText, tone: 'indigo' },
-    ],
-  },
-  {
-    id: 'execution',
-    label: 'surface:navigation.execution',
-    items: [
-      { id: 'office', label: 'surface:navigation.office', icon: Building2, tone: 'blue' },
-      { id: 'diary', label: 'surface:navigation.diary', icon: NotebookPen, tone: 'blue' },
-      { id: 'schedules', label: 'surface:navigation.schedules', icon: ListTodo, tone: 'orange' },
-      { id: 'agent-connections', label: 'surface:navigation.agentConnections', icon: PlugZap, tone: 'indigo' },
-    ],
-  },
-  {
-    id: 'system',
-    label: 'surface:navigation.system',
-    items: [
-      { id: 'settings', label: 'surface:navigation.settings', icon: Settings, tone: 'slate' },
-    ],
-  },
-]
-
-const officeDocumentItem: NavigationItem = {
-  id: 'office-document',
-  label: 'surface:navigation.officeDocument',
-  icon: FilePenLine,
-  tone: 'indigo',
-}
-
-export const pageLabels: Record<PageId, string> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
-    .map((item) => [item.id, item.label])
-) as Record<PageId, string>
-
-export const pageIcons: Record<PageId, LucideIcon> = Object.fromEntries(
-  [...navigationSections.flatMap((section) => section.items), officeDocumentItem]
-    .map((item) => [item.id, item.icon])
-) as Record<PageId, LucideIcon>
-
+/** 旧版页面名（历史数据里的裸字符串）→ i18n key。 */
 const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   '首页': 'surface:navigation.home',
   'Home': 'surface:navigation.home',
@@ -102,8 +40,6 @@ const LEGACY_PAGE_LABEL_KEYS: Record<string, string> = {
   'Files': 'surface:navigation.files',
   '灵感': 'surface:navigation.inspiration',
   'Inspiration': 'surface:navigation.inspiration',
-  '记忆': 'surface:navigation.memory',
-  'Memory': 'surface:navigation.memory',
   'Wiki': 'surface:navigation.wiki',
   '办公室': 'surface:navigation.office',
   'Office': 'surface:navigation.office',

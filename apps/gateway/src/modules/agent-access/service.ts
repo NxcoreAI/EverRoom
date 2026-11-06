@@ -383,8 +383,8 @@ export class AgentAccessService {
           objectType: "citation_record",
         };
       }
-      // candidate：三路治理（PRD 6.3.6）接入前统一 pending_review 暂存，
-      // 不自动写记忆——宁可保守，不可重复污染（发布门槛 G3）。
+      // candidate：治理链路（PRD 6.3.6）接入前统一 pending_review 暂存，
+      // 不自动入库——宁可保守，不可重复污染（发布门槛 G3）。
       const candidate = item as Extract<AgentSubmissionItem, { kind: "candidate" }>;
       if (!candidate.content?.trim()) {
         return { ...base, status: "rejected", error: "candidate_content_required" };

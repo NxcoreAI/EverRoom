@@ -1,5 +1,5 @@
 import { Loader2, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { catalogToOfficeFile } from '@/office-proto/data'
 import { HomePageHost } from '../home/HomePageHost'
@@ -7,13 +7,14 @@ import { useActiveTab, useWorkbenchStore } from '../state/store'
 import { cn } from '../ui/cn'
 import { ErrorBoundary } from '../ui/error-boundary'
 import { CreateWorkspaceDialog } from '../workspace/CreateWorkspaceDialog'
-import { FileTabHost } from './FileTabHost'
 import { HomeSidebar } from './HomeSidebar'
 import { TabBar } from './TabBar'
 import { CommandPalette } from './CommandPalette'
 import { Toaster } from './Toaster'
+import { workbenchToast } from './toast'
 import { WorkspaceSidebar } from './WorkspaceSidebar'
 import { WorkspaceTabHost } from './WorkspaceTabHost'
+import { dispatchOpenAgentFile } from './openAgentFile'
 import '../ui/ui.css'
 import '../styles/workbench.css'
 
@@ -22,8 +23,9 @@ const SESSION_POLL_MS = 4000
 /**
  * 标签页工作台外壳：
  *   标签栏（窗口级）
- *   ├─ 侧栏（随激活标签互斥切换：主页侧栏 / 工作空间侧栏 / 文件标签无侧栏）
- *   └─ 内容区（主页标签 / 各工作空间标签 / 文件标签；后两者常驻挂载仅切 display）
+ *   ├─ 侧栏（随激活标签互斥切换：主页侧栏 / 工作空间侧栏）
+ *   └─ 内容区（主页标签 / 各工作空间标签；常驻挂载仅切 display。文件不占标签，
+ *      一律在归属工作空间的气泡窗里打开）
  */
 export function Workbench() {
   const boot = useWorkbenchStore((state) => state.boot)
@@ -68,7 +70,8 @@ export function Workbench() {
   }, [])
 
   // 主进程主动发起的预览（排版面板 👁 预览模版原文件等）：实例已在主进程建好，
-  // 这里开文件标签并激活。不接这条事件，原生视图会一直隐藏（「点了没反应」）。
+  // 这里在归属工作空间里打开（激活标签 + 气泡窗接管实例）。不接这条事件，
+  // 原生视图会一直隐藏（「点了没反应」）。
   useEffect(() => {
     const office = window.nxcore?.office
     if (!office?.onPreviewRequest) return
@@ -79,7 +82,7 @@ export function Workbench() {
         const entry = catalog ? catalogToOfficeFile(catalog) : null
         if (disposed) return
         if (entry) {
-          useWorkbenchStore.getState().openFileTab(entry.file)
+          useWorkbenchStore.getState().openFileInWorkspace(entry.file)
           return
         }
         // 查不到条目（如刚被删除）：至少把已建好的实例关掉，避免泄漏隐藏视图。
@@ -106,6 +109,154 @@ export function Workbench() {
       void window.nxcore?.files
         ?.openOriginal(event.fileId, event.originalName ?? event.title, undefined, { editable: true })
         .catch(() => undefined)
+    })
+  }, [])
+
+  /**
+   * Agent 产物就绪（office:agent-file done）→ 自动展示结果：
+   * 按归属工作空间定位标签，把文件塞进该空间气泡窗（自动展开 + 打开内容）。
+   *
+   * 边界约定：
+   * - 只有产物归属的空间**已开着标签且当前激活**才自动展开——用户正在别的
+   *   空间/主页做事时，弹侧栏只会打断他；文件已入库 + 对话区有文件卡，想看
+   *   随时能看。后台空间的标签即使挂着也不响应（激活时气泡窗才可见）。
+   * - 同一 fileId 只处理一次：pptx 逐页链路可能补发多次 done，重复展开同
+   *   一份文件没有信息增量。
+   * - 事件缺 workspaceId（旧网关）→ 查 catalog 补齐；查不到就不动。
+   */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    const files = window.nxcore?.files
+    if (typeof office?.onAgentFile !== 'function' || !files?.catalogEntry) return
+    let disposed = false
+    const handled = new Set<string>()
+    return office.onAgentFile(async (event) => {
+      if (event.type !== 'done') return
+      const fileId = event.fileId
+      if (!fileId || handled.has(fileId)) return
+      handled.add(fileId)
+      try {
+        let workspaceId = event.workspaceId ?? null
+        if (!workspaceId) {
+          const catalog = await files.catalogEntry!(fileId).catch(() => null)
+          workspaceId = catalog?.workspaceId?.trim() || null
+        }
+        if (disposed || !workspaceId) return
+        const state = useWorkbenchStore.getState()
+        const tab = state.tabs.find(
+          (item) => item.kind === 'workspace' && item.workspaceId === workspaceId,
+        )
+        // 归属空间没开标签、或不处于激活态：不打扰（见上方边界约定）。
+        if (tab?.kind !== 'workspace' || state.activeTabId !== tab.id) return
+        const catalog = await files.catalogEntry!(fileId).catch(() => null)
+        const entry = catalog ? catalogToOfficeFile(catalog) : null
+        if (disposed || !entry) return
+        dispatchOpenAgentFile({ tabId: tab.id, workspaceId, file: entry.file })
+      } catch {
+        // 自动展示失败静默放弃：文件已入库，对话区文件卡仍是可靠入口。
+      }
+    })
+  }, [])
+
+  /**
+   * Office「AI 修改」浮层转发（Word 选区浮层 / slides 弹层共用通道）：
+   * 主进程已按 webContents id 反查出所属工作空间，这里激活该空间标签（没有
+   * 对话视图时切到新工作草稿），再把消息放进 store 由对话面板挂载后消费。
+   */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAgentAsk) return
+    return office.onAgentAsk((event) => {
+      const workspaceId = event.workspaceId ?? event.roomId ?? null
+      if (!workspaceId) {
+        workbenchToast('这条批注没有归属工作空间，无法发送给 Agent')
+        return
+      }
+      const state = useWorkbenchStore.getState()
+      if (!state.workspaces.some((workspace) => workspace.id === workspaceId)) {
+        workbenchToast('该文件所属的工作空间还没同步到工作台，请稍后重试')
+        return
+      }
+      if (event.mode === 'queue') {
+        // 攒批注不抢焦点：用户还在文档里挑下一处，跳标签会打断他。
+        // 可见性交给对话输入框上方的批注徽章（NoteQueueChip），这里不再 toast。
+        state.addAskDraft({
+          id: crypto.randomUUID(),
+          workspaceId,
+          ...(event.fileId ? { fileId: event.fileId } : {}),
+          ...(event.title ? { title: event.title } : {}),
+          ...(event.instruction ? { instruction: event.instruction } : {}),
+          ...(event.excerpt ? { excerpt: event.excerpt } : {}),
+          ...(event.anchor ? { anchor: event.anchor } : {}),
+          message: event.message,
+          ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
+          createdAt: new Date().toISOString(),
+        })
+        return
+      }
+      const tab = state.tabs.find(
+        (item) => item.kind === 'workspace' && item.workspaceId === workspaceId,
+      )
+      const keepsConversation = tab?.kind === 'workspace'
+        && (tab.view.kind === 'session' || tab.view.kind === 'draft')
+      // 已有对话视图就保留（不打断正在跑的 run），否则切到新工作草稿。
+      state.openWorkspaceTab(workspaceId, keepsConversation ? undefined : { kind: 'draft' })
+      state.setPendingAgentAsk({
+        id: crypto.randomUUID(),
+        workspaceId,
+        message: event.message,
+        ...(event.displayMessage ? { displayMessage: event.displayMessage } : {}),
+      })
+    })
+  }, [])
+
+  /** 批注队列快照同步：宿主队列（事实）→ 主进程 → 对应编辑器视图（文档内锚点）。 */
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
+  const syncedAskQueues = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.syncAskQueue) return
+    const grouped = new Map<string, typeof askDrafts>()
+    for (const draft of askDrafts) {
+      if (!draft.fileId) continue
+      grouped.set(draft.fileId, [...(grouped.get(draft.fileId) ?? []), draft])
+    }
+    const fileIds = new Set([...grouped.keys(), ...syncedAskQueues.current.keys()])
+    for (const fileId of fileIds) {
+      const items = (grouped.get(fileId) ?? []).map((draft) => ({
+        id: draft.id,
+        instruction: draft.instruction ?? draft.displayMessage ?? draft.message,
+        ...(draft.excerpt ? { excerpt: draft.excerpt } : {}),
+        ...(draft.anchor ? { anchor: draft.anchor } : {}),
+      }))
+      const signature = JSON.stringify(items)
+      if (syncedAskQueues.current.get(fileId) === signature) continue
+      syncedAskQueues.current.set(fileId, signature)
+      office.syncAskQueue({ fileId, items })
+    }
+  }, [askDrafts])
+
+  /** 文档内批注面板的动作：移除 / 改写一条 / 全部发送（后者先激活对话标签再触发一次发送）。 */
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAskQueueAction) return
+    return office.onAskQueueAction((event) => {
+      const state = useWorkbenchStore.getState()
+      if (event.action.kind === 'remove') {
+        state.removeAskDraft(event.action.draftId)
+        return
+      }
+      if (event.action.kind === 'update') {
+        state.updateAskDraft(event.action.draftId, event.action.instruction)
+        return
+      }
+      const tab = state.tabs.find(
+        (item) => item.kind === 'workspace' && item.workspaceId === event.workspaceId,
+      )
+      const keepsConversation = tab?.kind === 'workspace'
+        && (tab.view.kind === 'session' || tab.view.kind === 'draft')
+      state.openWorkspaceTab(event.workspaceId, keepsConversation ? undefined : { kind: 'draft' })
+      state.requestAskQueueSend()
     })
   }, [])
 
@@ -152,13 +303,11 @@ export function Workbench() {
       <TabBar />
       <div className="wb-body">
         {/* 侧栏保持挂载、用 max-width 过渡收起：折叠/展开有明确视觉反馈，组件内部状态也不丢。 */}
-        {activeTab.kind !== 'file' ? (
-          <div className={cn('wb-sidebar-slot', sidebarCollapsed && 'is-collapsed')} aria-hidden={sidebarCollapsed}>
-            {activeTab.kind === 'workspace'
-              ? <WorkspaceSidebar tab={activeTab} />
-              : <HomeSidebar />}
-          </div>
-        ) : null}
+        <div className={cn('wb-sidebar-slot', sidebarCollapsed && 'is-collapsed')} aria-hidden={sidebarCollapsed}>
+          {activeTab.kind === 'workspace'
+            ? <WorkspaceSidebar tab={activeTab} />
+            : <HomeSidebar />}
+        </div>
         <main className="wb-content">
           {error ? (
             <div className="wb-errorbar" role="alert">
@@ -190,16 +339,7 @@ export function Workbench() {
                   </div>
                 )
               }
-              return (
-                <div key={tab.id} className={cn('wb-tabpane', active && 'is-active')} aria-hidden={!active}>
-                  {/* 原生编辑器同时只允许一个可见：只有激活的文件标签挂载宿主。 */}
-                  {active ? (
-                    <ErrorBoundary label="文件" resetKey={tab.id}>
-                      <FileTabHost tab={tab} />
-                    </ErrorBoundary>
-                  ) : null}
-                </div>
-              )
+              return null
             })}
           </div>
         </main>

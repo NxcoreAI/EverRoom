@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FolderOpen, History, LoaderCircle, Lock, MessagesSquare, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentContextUsage, AgentModelPreference, AgentPermissionMode, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentContextUsage, AgentModelPreference, AgentMountedDirectory, AgentPermissionMode, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '@/shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -27,9 +27,10 @@ import {
 import { ContextUsageRing, formatContextPercent, formatContextTokens } from './contextUsageRing'
 import { THINKING_LEVEL_OPTIONS, thinkingLevelOption } from './agentThinkingLevel'
 
-const ATTACHMENT_PATTERN = /\.(txt|md|csv|json|pdf|docx|xlsx|pptx)$/i
+/** 一轮对话最多附带的文件数（与文件引擎 importAgentAttachments 的上限一致）。 */
 const MAX_ATTACHMENTS = 5
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024
+/** 一轮对话最多挂载的本地目录数（与网关校验上限一致）。 */
+const MAX_MOUNTED_DIRECTORIES = 8
 const TEXTAREA_MIN_HEIGHT = 42
 const TEXTAREA_MAX_HEIGHT = 180
 
@@ -77,11 +78,23 @@ function mergeMentionConversations(
     .slice(0, MENTION_CONVERSATION_LIMIT)
 }
 
-interface LocalAttachment {
-  id: string
-  file: File
-  name: string
-  size: number
+/** 输入区提交给上层的内容：文件附件 + 挂载目录 + @ 提及。 */
+export interface ComposerSubmitPayload {
+  attachments: AgentAttachmentReference[]
+  mountedDirectories: AgentMountedDirectory[]
+  mentioned: MentionedItem[]
+}
+
+/**
+ * 从 IPC reject 里剥出可读原因：Electron 会把错误包成
+ * "Error invoking remote method 'files:…': Error: 附件超过 10 MB：a.pdf"，
+ * 用户只需要最后那句真实原因（附件超限、格式不支持等由文件引擎给出）。
+ */
+function ipcErrorMessage(error: unknown): string | null {
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  if (!raw.trim()) return null
+  const marker = raw.lastIndexOf('Error: ')
+  return (marker >= 0 ? raw.slice(marker + 'Error: '.length) : raw).trim() || null
 }
 
 function formatFileSize(size: number): string {
@@ -153,6 +166,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion?: string | null
   onAcceptGhost?: () => void
   onDismissGhost?: () => void
+  /** 自定义空输入占位文案（如工作台 hero 的「今天帮你做些什么？」）；缺省用档位/同步提示。 */
+  placeholder?: string
   /** run 进行中排队的消息（run 终态后自动逐条发出）；空数组不渲染。 */
   queuedSubmissions?: Array<{ id: string; prompt: string }>
   onRemoveQueuedSubmission?: (id: string) => void
@@ -161,7 +176,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onClearContext: () => void
   onRemoveContext: (id: string) => void
   onStop: () => void
-  onSubmit: (files: File[], mentioned: MentionedItem[]) => void
+  /** 提交本轮内容：文件附件（文件引擎引用）+ 挂载目录 + @ 提及。 */
+  onSubmit: (payload: ComposerSubmitPayload) => void
 }>(function AgentComposer({
   active,
   available,
@@ -191,6 +207,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   ghostSuggestion = null,
   onAcceptGhost,
   onDismissGhost,
+  placeholder,
   queuedSubmissions = [],
   onRemoveQueuedSubmission,
   value,
@@ -202,12 +219,18 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectExternalConversation,
 }, ref) {
   const { t, formatDate } = useLocale()
-  const [attachments, setAttachments] = useState<LocalAttachment[]>([])
+  const [attachments, setAttachments] = useState<AgentAttachmentReference[]>([])
+  /** 「+ → 挂载目录」：显式授权的本地目录，随本轮运行上下文下发。 */
+  const [mountedDirectories, setMountedDirectories] = useState<AgentMountedDirectory[]>([])
+  /** 「+」菜单开合；导入文件时禁用以免双击重复弹框。 */
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [importingFiles, setImportingFiles] = useState(false)
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
   const agentResultsRef = useRef<HTMLDivElement>(null)
   const modelPickerRef = useRef<HTMLElement | null>(null)
+  const addMenuRef = useRef<HTMLElement | null>(null)
   const contextPanelRef = useRef<HTMLElement | null>(null)
   const mountedRef = useRef(true)
   const composingRef = useRef(false)
@@ -297,6 +320,10 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
 
   useEffect(() => {
     setAttachments([])
+    // 挂载目录是「本轮授权」：换会话/新对话一律清空，避免旧目录被静默继续授权。
+    setMountedDirectories([])
+    setAddMenuOpen(false)
+    setImportingFiles(false)
     setSlashPickerDismissed(false)
     setExternalPickerOpen(false)
     externalRequestRef.current += 1
@@ -310,12 +337,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen && !thinkingLevelOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen && !thinkingLevelOpen && !addMenuOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target as Element
       if (shellRef.current?.contains(target)) {
         // 壳内点击默认交给组件自身逻辑；但模型/上下文弹层覆盖在输入区上，
         // 点到弹层和触发钮之外（如输入框）视为失去焦点，直接收起。
+        if (addMenuOpen && !addMenuRef.current?.contains(target) && !target.closest('.agent-add-button')) setAddMenuOpen(false)
         if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
         if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
         if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
@@ -323,6 +351,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         return
       }
       externalRequestRef.current += 1
+      setAddMenuOpen(false)
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
       setModelPickerOpen(false)
@@ -332,18 +361,35 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen, thinkingLevelOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen, thinkingLevelOpen, addMenuOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
   const ghostActive = !active && available && value === '' && Boolean(ghostSuggestion?.trim())
 
+  /** 提交本轮：文件附件与挂载目录一并交给上层；附件 chip 先清空，目录由 resetKey 统一清。 */
+  const submitComposer = () => {
+    if (!available) return
+    const payload: ComposerSubmitPayload = {
+      attachments,
+      mountedDirectories,
+      mentioned: submitMentions(),
+    }
+    setAttachments([])
+    onSubmit(payload)
+  }
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
+    submitComposer()
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape' && addMenuOpen) {
+      event.preventDefault()
+      setAddMenuOpen(false)
+      return
+    }
     if (event.key === 'Escape' && contextPanelOpen) {
       event.preventDefault()
       setContextPanelOpen(false)
@@ -425,23 +471,105 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
-      if (available) onSubmit(attachments.map(({ file }) => file), submitMentions())
+      submitComposer()
     }
   }
 
-  const addDroppedAttachments = (files: File[]) => {
-    const known = new Set(attachments.map((file) => file.id))
-    const candidates = files
-      .filter((file) => ATTACHMENT_PATTERN.test(file.name) && file.size <= MAX_ATTACHMENT_SIZE)
-      .map((file) => ({ id: `${file.name}:${file.size}:${file.lastModified}`, file, name: file.name, size: file.size }))
-      .filter((file) => !known.has(file.id))
-    const accepted = candidates.slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
-    if (accepted.length === 0) return
-    setAttachments((current) => [...current, ...accepted])
+  /**
+   * 附件合并：按 fileId 去重、守住 MAX_ATTACHMENTS 上限（白名单与体积由 main 侧
+   * 文件引擎统一校验，渲染层不再重复判断扩展名）。返回实际加入的数量。
+   */
+  const mergeAttachments = (incoming: AgentAttachmentReference[]): number => {
+    const known = new Set(attachments.map((item) => item.fileId))
+    const accepted = incoming
+      .filter((item) => item.fileId && !known.has(item.fileId))
+      .slice(0, Math.max(0, MAX_ATTACHMENTS - attachments.length))
+    if (accepted.length === 0) return 0
+    setAttachments([...attachments, ...accepted])
+    return accepted.length
+  }
+
+  const notifyFilesUnavailable = () => {
     showToast({
-      title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
-      message: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+      title: t('surface:agentComposer.filesServiceUnavailable'),
+      message: t('surface:agentComposer.filesServiceUnavailable'),
     })
+  }
+
+  /** 「+ → 导入文件」：系统选择框选文件 → 文件引擎导入 → 作为本轮附件（Agent 可读正文）。 */
+  const importFiles = async () => {
+    setAddMenuOpen(false)
+    const api = window.nxcore?.files
+    if (!api?.pickAgentAttachments) {
+      notifyFilesUnavailable()
+      return
+    }
+    setImportingFiles(true)
+    try {
+      const picked = await api.pickAgentAttachments()
+      if (mergeAttachments((Array.isArray(picked) ? picked : []).filter(Boolean)) > 0) {
+        showToast({
+          title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+          message: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+        })
+      }
+    } catch (error) {
+      // 文件引擎的限额/格式拒绝会以 IPC reject 回来，原因必须原样透出。
+      showToast({
+        title: t('surface:agentComposer.someFilesFailedToImport'),
+        message: ipcErrorMessage(error) ?? t('surface:agentComposer.someFilesFailedToImport'),
+      })
+    } finally {
+      setImportingFiles(false)
+    }
+  }
+
+  /** 「+ → 挂载目录」：系统选择框选本地目录，路径进本轮运行上下文，Agent 直接读。 */
+  const mountDirectory = async () => {
+    setAddMenuOpen(false)
+    let picked: string | null | undefined
+    try {
+      picked = await window.nxcore?.agent?.pickMountDirectory?.()
+    } catch (error) {
+      showToast({
+        title: t('surface:agentComposer.mountDirectoryFailed'),
+        message: ipcErrorMessage(error) ?? t('surface:agentComposer.mountDirectoryFailed'),
+      })
+      return
+    }
+    const path = typeof picked === 'string' ? picked.trim().replace(/[\\/]+$/u, '') : ''
+    if (!path) return
+    const name = path.split(/[\\/]/u).filter(Boolean).pop() ?? path
+    if (mountedDirectories.some((item) => item.path === path)) return
+    if (mountedDirectories.length >= MAX_MOUNTED_DIRECTORIES) return
+    setMountedDirectories([...mountedDirectories, { path, name }])
+  }
+
+  /** 拖拽进输入区的文件同样走文件引擎导入（渲染层 File 在 main 侧换成本机路径）。 */
+  const importDroppedFiles = async (files: File[]) => {
+    if (files.length === 0) return
+    const api = window.nxcore?.files
+    if (!api?.importAgentAttachments) {
+      notifyFilesUnavailable()
+      return
+    }
+    setImportingFiles(true)
+    try {
+      const imported = await api.importAgentAttachments(files)
+      if (mergeAttachments((Array.isArray(imported) ? imported : []).filter(Boolean)) > 0) {
+        showToast({
+          title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+          message: t('surface:agentComposer.attachmentsAddedToTheComposer'),
+        })
+      }
+    } catch (error) {
+      showToast({
+        title: t('surface:agentComposer.someFilesFailedToImport'),
+        message: ipcErrorMessage(error) ?? t('surface:agentComposer.someFilesFailedToImport'),
+      })
+    } finally {
+      setImportingFiles(false)
+    }
   }
 
   const mentionTrigger = matchMentionTrigger(value, caret)
@@ -768,7 +896,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
-  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || thinkingLevelOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || thinkingLevelOpen || addMenuOpen || (agentPickerOpen && mentionOptionCount > 0)
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
@@ -812,7 +940,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       onDrop={(event) => {
         if (controlsDisabled) return
         event.preventDefault()
-        addDroppedAttachments([...event.dataTransfer.files])
+        void importDroppedFiles([...event.dataTransfer.files])
       }}
     >
       {slashPickerOpen ? (
@@ -1213,7 +1341,31 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           )}
         </section>
       ) : null}
-      <div className="agent-prompt" data-has-attachments={String(attachments.length > 0)}>
+      {addMenuOpen ? (
+        <section
+          ref={addMenuRef}
+          className="agent-composer-popover agent-add-menu"
+          id="agent-composer-menu"
+          role="menu"
+          aria-label={t('surface:agentComposer.addMenuTitle')}
+        >
+          <button type="button" role="menuitem" className="agent-add-menu-item" disabled={importingFiles} onClick={() => void importFiles()}>
+            <FilePlus2 aria-hidden="true" />
+            <span>
+              <strong>{t('surface:agentComposer.addMenuFiles')}</strong>
+              <small>{t('surface:agentComposer.addMenuFilesHint')}</small>
+            </span>
+          </button>
+          <button type="button" role="menuitem" className="agent-add-menu-item" onClick={() => void mountDirectory()}>
+            <FolderPlus aria-hidden="true" />
+            <span>
+              <strong>{t('surface:agentComposer.addMenuMount')}</strong>
+              <small>{t('surface:agentComposer.addMenuMountHint')}</small>
+            </span>
+          </button>
+        </section>
+      ) : null}
+      <div className="agent-prompt" data-has-attachments={String(attachments.length > 0 || mountedDirectories.length > 0)}>
         {selectedExternalConversation ? <div className="agent-external-selection"><span><History />{t('surface:agentComposer.referencedConversation')} · {selectedExternalConversation.title}</span><button type="button" title={t('surface:agentComposer.removeExternalConversation')} aria-label={t('surface:agentComposer.removeExternalConversation')} onClick={() => onSelectExternalConversation(null)}><X /></button></div> : null}
         {contextItems.length > 0 ? (
           <div className="agent-context-citations" aria-label={t('surface:agentComposer.referencedRoomContent')}>
@@ -1258,13 +1410,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           <textarea
             ref={textareaRef}
             aria-label={t('surface:agentComposer.desktopAiWorkspaceInput')}
-            placeholder={active
+            placeholder={placeholder ?? (active
               ? t('surface:agentComposer.queueHint')
               : ghostActive
                 ? ghostSuggestion ?? undefined
                 : available
                   ? t('surface:agentComposer.askAboutThisPageOrDescribeAnAction')
-                  : t('surface:agentComposer.syncingRoomData')}
+                  : t('surface:agentComposer.syncingRoomData'))}
             rows={2}
             value={value}
             aria-controls={menuOpen ? 'agent-composer-menu' : undefined}
@@ -1284,18 +1436,36 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             onKeyDown={handleKeyDown}
           />
         </div>
+        {mountedDirectories.length > 0 ? (
+          <div className="agent-attachments agent-mounts" aria-label={t('surface:agentComposer.mountedDirectories')}>
+            {mountedDirectories.map((directory) => (
+              <span key={directory.path} className="agent-attachment agent-mount" title={directory.path}>
+                <Folder aria-hidden="true" />
+                <span>{directory.name}</span>
+                <button
+                  type="button"
+                  aria-label={t('surface:agentComposer.removeMountName', { name: directory.name })}
+                  title={t('surface:agentComposer.removeMount')}
+                  onClick={() => setMountedDirectories((current) => current.filter((item) => item.path !== directory.path))}
+                >
+                  <X aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
         {attachments.length > 0 ? (
           <div className="agent-attachments" aria-label={t('surface:agentComposer.localAttachments')}>
             {attachments.map((file) => (
-              <span key={file.id} className="agent-attachment">
+              <span key={file.fileId} className="agent-attachment">
                 <FileText aria-hidden="true" />
-                <span title={file.name}>{file.name}</span>
+                <span title={file.filename}>{file.filename}</span>
                 <small>{formatFileSize(file.size)}</small>
                 <button
                   type="button"
-                  aria-label={t('surface:agentComposer.removeName', { name: file.name })}
+                  aria-label={t('surface:agentComposer.removeName', { name: file.filename })}
                   title={t('surface:agentComposer.removeAttachment')}
-                  onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))}
+                  onClick={() => setAttachments((current) => current.filter((item) => item.fileId !== file.fileId))}
                 >
                   <X aria-hidden="true" />
                 </button>
@@ -1304,6 +1474,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           </div>
         ) : null}
         <div className="agent-prompt-actions">
+          <button
+            type="button"
+            className="agent-add-button"
+            aria-haspopup="menu"
+            aria-expanded={addMenuOpen}
+            title={t('surface:agentComposer.addMenuTitle')}
+            aria-label={t('surface:agentComposer.addMenuTitle')}
+            disabled={controlsDisabled || importingFiles}
+            onClick={() => {
+              // 「+」与档位弹层互斥：它们锚在同一位置，同时打开会重叠。
+              setModelPickerOpen(false)
+              setPermissionModeOpen(false)
+              setThinkingLevelOpen(false)
+              setAddMenuOpen((open) => !open)
+            }}
+          >
+            {importingFiles ? <LoaderCircle aria-hidden="true" className="agent-add-button-spinner" /> : <Plus aria-hidden="true" />}
+          </button>
           <button
             type="button"
             className="agent-model-tier-toggle"

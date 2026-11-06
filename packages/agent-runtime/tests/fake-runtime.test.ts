@@ -10,7 +10,6 @@ describe("FakeAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "测试消息",
       pageLabel: "首页",
-      roomId: null,
     });
     const events = [];
     for await (const event of run.events) events.push(event);
@@ -28,7 +27,6 @@ describe("FakeAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "停止测试",
       pageLabel: "首页",
-      roomId: null,
     });
     await runtime.cancel(run.runId);
     const events = [];

@@ -1,4 +1,4 @@
-# EverRoom 本机 Agent 发现、`@` 历史会话引用与上下文查询简案
+# EverOffice 本机 Agent 发现、`@` 历史会话引用与上下文查询简案
 
 > 状态：Proposal
 > 日期：2026-08-25
@@ -6,7 +6,7 @@
 
 ## 1. 结论
 
-1. Codex、Claude Code、OpenCode 不应作为新的聊天后端直接接管 EverRoom 会话。用户始终与 Main Agent 对话；本机 Agent 的历史会话作为只读上下文子 Agent 被 Main 查询。
+1. Codex、Claude Code、OpenCode 不应作为新的聊天后端直接接管 EverOffice 会话。用户始终与 Main Agent 对话；本机 Agent 的历史会话作为只读上下文子 Agent 被 Main 查询。
 2. Composer 行首输入 `@` 用于搜索并引用一段已导入的 Agent 历史会话。Renderer 提交结构化 `referencedConversationId`；它不修改 `targetAgentId`、不切换 `activeAgentId`，也不 resume 被引用 Agent 的原生线程。
 3. 上下文按“最小必要、结构化快照、显式授权”注入。默认只给任务正文、当前工作区、最近对话摘要和用户当前选中的文档/附件，不复制全部主会话，也不自动注入其他已导入聊天。
 4. 本机聊天记录可以自动发现和建立只读索引，但“导入用于浏览”和“授权给某次调用”是两件事。只有当前映射会话或用户明确选择的历史才进入上下文。
@@ -97,8 +97,8 @@ interface LocalAgentAdapter {
 每次引用只作用于当前 Main run：
 
 - `referencedConversationId` 不写入会话的 `activeAgentId`，不改变标题，也不建立原生 thread 映射。
-- 同一个 EverRoom 会话可在不同轮次引用不同历史；每轮工具只能访问该轮显式选择的 thread。
-- 引用条在消息发送或切换 EverRoom 会话后清除，避免后续消息意外继承。
+- 同一个 EverOffice 会话可在不同轮次引用不同历史；每轮工具只能访问该轮显式选择的 thread。
+- 引用条在消息发送或切换 EverOffice 会话后清除，避免后续消息意外继承。
 
 ## 5. 上下文如何自动注入
 
@@ -137,7 +137,7 @@ interface ContextBundle {
 4. 编码 Agent 才注入当前 workspace root、仓库和分支；不自动暴露其他目录。
 5. 仅注入本次 `ContextGrant` 允许的内容。历史消息里的路径或资源 ID 不构成授权。
 
-不要默认注入全部 EverRoom 会话、Memory、Knowledge 或所有外部聊天历史。相关内容应由 Gateway 先检索，再把少量带来源片段加入 `resources`。
+不要默认注入全部 EverOffice 会话、Memory、Knowledge 或所有外部聊天历史。相关内容应由 Gateway 先检索，再把少量带来源片段加入 `resources`。
 
 ### 5.2 Fresh 与 Resume
 
@@ -150,7 +150,7 @@ interface ContextBundle {
 
 ## 6. 聊天记录导入
 
-导入采用“只读镜像 + 增量同步”，不把外部消息伪装成 EverRoom 原生消息：
+导入采用“只读镜像 + 增量同步”，不把外部消息伪装成 EverOffice 原生消息：
 
 ```text
 external_agent_threads
@@ -165,7 +165,7 @@ external_agent_messages
 1. 优先调用 Provider 的线程列表和读取 API。
 2. 没有 API 时，使用按 provider 版本维护的只读 importer；解析失败只标记该记录，不阻塞启动。
 3. 以 `(installationId, externalThreadId, externalMessageId)` 幂等写入；没有稳定 message ID 时使用内容摘要去重。
-4. 删除 EverRoom 镜像不删除 Provider 原始历史；外部记录消失时标记 `unavailable`，不立即级联删除。
+4. 删除 EverOffice 镜像不删除 Provider 原始历史；外部记录消失时标记 `unavailable`，不立即级联删除。
 5. 初次扫描只导入元数据和摘要，用户打开时再分页读取正文，避免启动时读取大量私密内容。
 6. 设置中提供按 Provider 的导入开关、目录说明、最近同步时间和“清除本地索引”。
 
@@ -203,7 +203,7 @@ external_agent_messages
 
 - `@` 选择后请求仍必定路由到 Main，`activeAgentId` 保持 `main`。
 - Main 的查询工具只能读取本轮显式选择的稳定 thread ID。
-- 同一 EverRoom 会话可逐轮更换引用，历史不会永久绑定或串线。
+- 同一 EverOffice 会话可逐轮更换引用，历史不会永久绑定或串线。
 - Run 可复现任务、引用 ID、查询和最终结果。
 - 未获授权的 Room、文档、目录及其他外部历史不会进入 Prompt 或可读范围。
 - 导入和清除索引不会修改或删除 Provider 原始聊天记录。

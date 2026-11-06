@@ -1,15 +1,15 @@
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import type { Editor } from '@tiptap/react'
 import {
+  BlockIndexUrlTarget,
   parseBlockIndexMarkMarkdown,
-  parseEverroomBlockReferenceUrl,
+  parseEverofficeBlockReferenceUrl,
   parseEverroomMemoryIndexUrl,
-  type EverroomBlockIndexTarget,
 } from '@nxcore/document-model'
 
 export const BLOCK_INDEX_MARK_NODE = 'blockIndexMark'
 
-export type BlockIndexTarget = EverroomBlockIndexTarget
+export type BlockIndexTarget = BlockIndexUrlTarget
 
 export interface BlockIndexMarkNodeAttrs {
   kind: 'document' | 'memory'
@@ -93,7 +93,7 @@ export function blockIndexTargetFromClipboardText(text: string): BlockIndexTarge
 }
 
 function indexTargetFromUrl(url: string): BlockIndexTarget | null {
-  const reference = parseEverroomBlockReferenceUrl(url)
+  const reference = parseEverofficeBlockReferenceUrl(url)
   if (reference) return { kind: 'document', ...reference }
   const memory = parseEverroomMemoryIndexUrl(url)
   if (memory) return { kind: 'memory', ...memory }

@@ -1,7 +1,7 @@
-# EverRoom Agents
+# EverOffice Agents
 
-This directory contains the Agent bundles shipped with EverRoom. The Gateway
-build copies it to `apps/gateway/dist/agents`, and EverRoom packages that
+This directory contains the Agent bundles shipped with EverOffice. The Gateway
+build copies it to `apps/gateway/dist/agents`, and EverOffice packages that
 directory.
 
 There are two bundle kinds:

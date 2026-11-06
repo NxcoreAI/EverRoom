@@ -13,7 +13,7 @@
 
 - 桌面端启动时幂等引导**一个全局 wiki**（`everroom-wiki`，`apps/desktop/src/main/knowledge/knowledge-supervisor.ts:35`），wiki_id 通过 `NXCORE_KNOWLEDGE_WIKI_ID` 注入 gateway。
 - pi runtime 以**固定 wikiId** 构造 `KnowledgeServiceClient`（`packages/agent-runtime-pi/src/knowledge/client.ts:44`），所有 Room 的 agent 共用同一个 wiki。
-- EverRoom 的文档模型本身就是 Room 级的：`RoomDocument` 自带 `roomId`（`packages/agent-contract/src/index.ts:106`），另有 `room_doc_links`、`doc_transactions` 两张关联表。
+- EverOffice 的文档模型本身就是 Room 级的：`RoomDocument` 自带 `roomId`（`packages/agent-contract/src/index.ts:106`），另有 `room_doc_links`、`doc_transactions` 两张关联表。
 
 ### 1.2 问题
 
@@ -288,7 +288,7 @@ interface DocEnvelope {
   │
   ① 入口确定性（decidedBy=entry，confidence=1.0）【决策层】
   │   RoomDocument.roomId 存在 → 主 Room 即源 Room。
-  │   ※ EverRoom 内创建/导入的文档天然带 roomId，本级命中率极高；
+  │   ※ EverOffice 内创建/导入的文档天然带 roomId，本级命中率极高；
   │     自动归类的真正主战场是未来的外部采集源（会议纪要/邮件/云盘
   │     同步进来无 roomId 的信封，连接器直接从 ② 起步）。
   ▼
@@ -348,7 +348,7 @@ confidence < 0.6 → status=awaiting_review（待归类队列，reason 作为给
 
 **M1 阶段的过渡形态**：⑤ 尚未上线时，③④ 的候选结果连同证据直接落待归类队列，**人工就是仲裁者**（确认时看到"实体匹配建议 Room A、向量建议 Room A/B"）。M2 上线⑤后 LLM 接管大部分判决，人只处理低置信的尾部。
 
-**成本边界**：LLM 仲裁只发生在"①② 未命中"的文档上——EverRoom 内部文档（绝大多数流量）在①零成本出结果；真正花 LLM 的是外部采集源的增量，量级可控（每天几十份纪要/邮件）。若未来量涨到需要优化，预留开关：超高置信（如 ③④ 双料 ≥0.9 且一致）可直通——**默认关闭**，符合"宁可多花一次仲裁，不要静默错分"的取向。
+**成本边界**：LLM 仲裁只发生在"①② 未命中"的文档上——EverOffice 内部文档（绝大多数流量）在①零成本出结果；真正花 LLM 的是外部采集源的增量，量级可控（每天几十份纪要/邮件）。若未来量涨到需要优化，预留开关：超高置信（如 ③④ 双料 ≥0.9 且一致）可直通——**默认关闭**，符合"宁可多花一次仲裁，不要静默错分"的取向。
 
 ### 5.3 决策执行（ingest-worker）
 

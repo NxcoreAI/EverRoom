@@ -259,14 +259,23 @@
 .wb-ov-insight-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-strong);
-  font-size: var(--ui-text-2xs);
+  gap: 9px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-md);
   font-weight: 650;
-  letter-spacing: 0.04em;
+}
+
+/* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
+.wb-ov-insight-ai {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 26%;
+  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
 }
 
 .wb-ov-insight-text {
@@ -289,6 +298,183 @@
   line-height: var(--ui-leading-normal);
 }
 
+/* 洞察卡：状态机各态的视觉（骨架 / 更新中 / 空态 / 错误 / 来源 / 证据 / 落款） */
+
+.wb-ov-insight {
+  position: relative;
+}
+
+.wb-ov-insight-badge {
+  flex: none;
+}
+
+.wb-ov-insight-updating {
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-3);
+}
+
+.wb-ov-insight-refresh {
+  margin-left: auto;
+  flex: none;
+}
+
+.wb-ov-insight-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--ui-accent);
+  vertical-align: -0.15em;
+  animation: wb-ov-insight-caret-blink 0.9s steps(1) infinite;
+}
+
+@keyframes wb-ov-insight-caret-blink {
+  50% { opacity: 0; }
+}
+
+.wb-ov-insight-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 2px;
+}
+
+.wb-ov-insight-skeleton span {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--ui-hover);
+}
+
+.wb-ov-insight-skeleton span:nth-child(1) { width: 100%; }
+.wb-ov-insight-skeleton span:nth-child(2) { width: 92%; }
+.wb-ov-insight-skeleton span:nth-child(3) { width: 64%; }
+
+.wb-ov-insight-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+
+.wb-ov-insight-empty-title {
+  margin: 0;
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  color: var(--ui-text);
+}
+
+.wb-ov-insight-empty-desc {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-3);
+}
+
+.wb-ov-insight-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text-3);
+}
+
+.wb-ov-insight-source {
+  position: relative;
+}
+
+.wb-ov-insight-source-btn {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+  color: var(--ui-text-3);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-ov-insight-source-btn:hover {
+  color: var(--ui-text-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wb-ov-insight-evidence {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 240px;
+  max-width: 360px;
+  padding: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+}
+
+.wb-ov-insight-evidence-title {
+  margin: 0 0 6px;
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ui-text-3);
+}
+
+.wb-ov-insight-evidence-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: none;
+  color: var(--ui-text-2);
+  font: inherit;
+  font-size: var(--ui-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-ov-insight-evidence-row:hover {
+  background: var(--ui-hover);
+}
+
+.wb-ov-insight-evidence-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-ov-insight-evidence-time {
+  flex: none;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+}
+
+.wb-ov-insight-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 10px;
+}
+
+.wb-ov-insight-speaker {
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-ov-insight-caret { animation: none; }
+}
+
 /* ───────────── 动态时间线 ───────────── */
 
 .wb-ov-timeline {
@@ -300,26 +486,19 @@
 }
 .wb-ov-timeline li + li { border-top: 1px solid var(--ui-border-subtle); }
 
+/* 行是容器不是按钮：一行可能带多个引用，每个引用各自可聚焦（按钮不能嵌套）。 */
 .wb-ov-activity {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
   padding: 8px 6px;
-  border: 0;
   border-radius: var(--ui-radius-sm);
-  background: transparent;
-  color: var(--ui-text);
-  font-family: inherit;
+  color: var(--ui-text-2);
   font-size: var(--ui-text-sm);
-  text-align: left;
-  cursor: pointer;
+  line-height: var(--ui-leading-normal);
 }
 .wb-ov-activity:hover { background: var(--ui-hover); }
-.wb-ov-activity:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: -2px;
-}
 
 .wb-ov-activity-icon {
   display: inline-flex;
@@ -340,17 +519,46 @@
   background: var(--ui-running-soft);
   color: var(--ui-running);
 }
+.wb-ov-activity-icon.is-warning {
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
+}
+.wb-ov-activity-icon.is-success {
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+}
+.wb-ov-activity-icon.is-muted {
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+}
 
+/* 文案允许换行：一行里可能既有工作引用又有文件引用，截断会丢掉半个句子。 */
 .wb-ov-activity-label {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* 引用：只存 id、名字实时解析，样式与正文区分（强调色 + 600 字重 + 悬停下划线）。 */
+.wb-ov-activity-ref {
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--ui-accent-strong);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.wb-ov-activity-ref:hover { text-decoration: underline; text-underline-offset: 2px; }
+.wb-ov-activity-ref:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 .wb-ov-activity-time {
   flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   font-size: var(--ui-text-2xs);
   color: var(--ui-text-3);
 }
@@ -367,6 +575,17 @@
   font-size: var(--ui-text-xs);
   font-weight: 600;
   cursor: pointer;
+}
+/* 展开后可能同时有「继续加载」与「收起」，并排一行。 */
+.wb-ov-more-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-space-2);
+  align-self: flex-start;
+}
+.wb-ov-more[disabled] {
+  color: var(--ui-text-3);
+  cursor: default;
 }
 .wb-ov-more:hover { background: var(--ui-accent-softer); }
 .wb-ov-more:focus-visible {

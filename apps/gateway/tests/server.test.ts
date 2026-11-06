@@ -40,6 +40,35 @@ afterEach(async () => {
 });
 
 describe("gateway server", () => {
+  it("serves the skill catalog and applies enable/disable", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const listed = await app.inject({ method: "GET", url: "/v1/skills", headers });
+    expect(listed.statusCode).toBe(200);
+    const catalog = listed.json() as {
+      skills: Array<{ id: string; enabled: boolean; ownerKind: string }>;
+      counts: { total: number; enabled: number };
+    };
+    // 内置 bundle 的技能在清单里；子 Agent 的技能也并进同一份清单。
+    expect(catalog.skills.some((skill) => skill.id === "builtin:main:document-export")).toBe(true);
+    expect(catalog.skills.some((skill) => skill.ownerKind === "subagent")).toBe(true);
+    expect(catalog.counts.enabled).toBe(catalog.counts.total);
+
+    const skillId = encodeURIComponent("builtin:main:document-export");
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `/v1/skills/${skillId}`,
+      headers,
+      payload: { enabled: false },
+    });
+    await app.close();
+
+    expect(patched.statusCode).toBe(200);
+    expect((patched.json() as { enabled: boolean }).enabled).toBe(false);
+  });
+
   it("reports liveness without authentication", async () => {
     const app = await createServer(await testConfig());
     const response = await app.inject({ method: "GET", url: "/v1/health/live" });
@@ -368,20 +397,9 @@ describe("gateway server", () => {
     expect(initialize.statusCode).toBe(200);
     expect(initialize.json()).toMatchObject({ jsonrpc: "2.0", id: 1 });
     expect(initialized.statusCode).toBe(202);
-    expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-      "document_list",
-      "document_read",
-      "document_patch_begin",
-      "document_patch_hunk",
-      "document_patch_commit",
-      "document_patch_abort",
-      "document_write_begin",
-      "document_write_append",
-      "document_write_commit",
-      "document_write_abort",
-      "document_comment_add",
-      "document_delete",
-    ]);
+    // Markdown 文稿工具链已下线（2026-11）；无 officeBridge 的测试配置下能力注册表为空，
+    // 这里只验证 MCP 协议通路（initialize → initialized → tools/list 正常返回数组）。
+    expect(Array.isArray(tools.json().result.tools)).toBe(true);
   });
 
   it("is compatible with the official Streamable HTTP MCP client", async () => {
@@ -423,20 +441,8 @@ describe("gateway server", () => {
     try {
       await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
       const listed = await client.listTools();
-      expect(listed.tools.map((tool) => tool.name)).toEqual([
-        "document_list",
-        "document_read",
-        "document_patch_begin",
-        "document_patch_hunk",
-        "document_patch_commit",
-        "document_patch_abort",
-        "document_write_begin",
-        "document_write_append",
-        "document_write_commit",
-        "document_write_abort",
-        "document_comment_add",
-        "document_delete",
-      ]);
+      // 同上：工具面依赖 officeBridge，协议兼容性以 tools/list 正常应答为准。
+      expect(Array.isArray(listed.tools)).toBe(true);
     } finally {
       await client.close();
       await app.close();

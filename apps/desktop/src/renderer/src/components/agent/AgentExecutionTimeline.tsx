@@ -1,7 +1,6 @@
 import {
   AlertCircle,
   Bot,
-  Brain,
   CalendarDays,
   Check,
   ChevronRight,
@@ -25,6 +24,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
 import { ReasoningBlock } from './ReasoningBlock'
+import { noOpCommandSummary } from './noopToolCall'
 import {
   agentToolCommand,
   agentToolKind,
@@ -103,7 +103,6 @@ function ToolIcon({ kind }: { kind: ToolKind }) {
     email: Mail,
     file: FileText,
     image: ImageIcon,
-    memory: Brain,
     other: Wrench,
     schema: FileJson,
     search: Search,
@@ -140,26 +139,8 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查看操作要求': 'surface:agentExecutionTimeline.operationRequirementsViewed',
     '查找可用操作': 'surface:agentExecutionTimeline.searchAvailableOperations',
     '已查找可用操作': 'surface:agentExecutionTimeline.availableOperationsFound',
-    '准备创建选项': 'surface:agentExecutionTimeline.prepareCreationOptions',
-    '已准备创建选项': 'surface:agentExecutionTimeline.creationOptionsPrepared',
-    '获取文档列表': 'surface:agentExecutionTimeline.getDocumentList',
-    '已获取文档列表': 'surface:agentExecutionTimeline.documentListRetrieved',
-    '读取文档': 'surface:agentExecutionTimeline.readDocument',
-    '已读取文档': 'surface:agentExecutionTimeline.documentRead',
     '获取 Room 列表': 'surface:agentExecutionTimeline.getRoomList',
     '已获取 Room 列表': 'surface:agentExecutionTimeline.roomListRetrieved',
-    '准备文档修改': 'surface:agentExecutionTimeline.prepareDocumentChanges',
-    '已准备文档修改': 'surface:agentExecutionTimeline.documentChangesPrepared',
-    '提交文档修改': 'surface:agentExecutionTimeline.commitDocumentChanges',
-    '已提交文档修改': 'surface:agentExecutionTimeline.documentChangesCommitted',
-    '生成文档修改': 'surface:agentExecutionTimeline.generateDocumentChanges',
-    '已生成文档修改': 'surface:agentExecutionTimeline.documentChangesGenerated',
-    '写入文档内容': 'surface:agentExecutionTimeline.writeDocumentContent',
-    '已写入文档内容': 'surface:agentExecutionTimeline.documentContentWritten',
-    '开始创建文档': 'surface:agentExecutionTimeline.startDocumentCreation',
-    '已开始创建文档': 'surface:agentExecutionTimeline.documentCreationStarted',
-    '提交新文档': 'surface:agentExecutionTimeline.commitNewDocument',
-    '已提交新文档': 'surface:agentExecutionTimeline.newDocumentCommitted',
     '选择所需工具': 'surface:agentExecutionTimeline.selectRequiredTool',
     '已选择所需工具': 'surface:agentExecutionTimeline.requiredToolSelected',
     '查看图像': 'surface:agentExecutionTimeline.viewImage',
@@ -170,8 +151,6 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查询日历': 'surface:agentExecutionTimeline.calendarQueried',
     '处理定时任务': 'surface:agentExecutionTimeline.handleScheduledTask',
     '已处理定时任务': 'surface:agentExecutionTimeline.scheduledTaskHandled',
-    '查询个人记忆': 'surface:agentExecutionTimeline.queryMemory',
-    '已查询个人记忆': 'surface:agentExecutionTimeline.memoryQueried',
     '同步邮件': 'surface:agentExecutionTimeline.syncEmail',
     '已同步邮件': 'surface:agentExecutionTimeline.emailSynced',
     '查询邮件': 'surface:agentExecutionTimeline.queryEmail',
@@ -199,27 +178,6 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   }
   const exactKey = exactKeys[value]
   if (exactKey) return t(exactKey)
-  const documentRead = /^《(.+)》当前有 (\d+) 个可编辑内容块，基于版本 (\d+) 处理。$/.exec(value)
-  if (documentRead) {
-    return t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', {
-      title: documentRead[1]!, count: documentRead[2]!, version: documentRead[3]!,
-    })
-  }
-  const changeScope = /^修改范围已确定：(.+?)[。！!？?]?$/.exec(value)
-  if (changeScope) return t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary: changeScope[1]! })
-  const itemChange = /^第 (\d+) 项为(新增内容|替换内容|删除内容|文档修改)(?:，建议内容 (\d+) 字)?。$/.exec(value)
-  if (itemChange) {
-    const actionKeys: Record<string, string> = {
-      新增内容: 'surface:agentExecutionTimeline.insertContent',
-      替换内容: 'surface:agentExecutionTimeline.replaceContent',
-      删除内容: 'surface:agentExecutionTimeline.deleteContent',
-      文档修改: 'surface:agentExecutionTimeline.documentChange',
-    }
-    const action = t(actionKeys[itemChange[2]!] ?? 'surface:agentExecutionTimeline.documentChange')
-    return itemChange[3]
-      ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence: itemChange[1]!, action, count: itemChange[3]! })
-      : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence: itemChange[1]!, action })
-  }
   if (value === '工具调用失败' || value === '工具调用失败。') return t('surface:agentExecutionTimeline.failed')
   if (value === '操作已停止。' || value === '操作已停止') return t('surface:agentExecutionTimeline.stopped')
   const resultCount = /^获得 (\d+) 条结果$/.exec(value)
@@ -402,6 +360,7 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   continuing = false,
   continuationLabel = 'surface:agentExecutionTimeline.continuing',
   sessionId,
+  failedRunIds,
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
@@ -409,6 +368,8 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   continuing?: boolean
   continuationLabel?: string
   sessionId?: string | null
+  /** 网关判定为 run.failed 的 runId 集合：权威的失败口径（不传则退回"最后一步是否报错"）。 */
+  failedRunIds?: ReadonlySet<string> | undefined
 }) {
   const { t } = useLocale()
   const tools = activity.steps.map((step) => step.tool)
@@ -466,11 +427,13 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
 
   if (!activity.hasTools) return null
 
-  // 汇总态只看结果有没有产出：单个工具失败但 run 拿到 finalAnswer（代理自恢复、
-  // 重试该页成功）仍算已处理——工具级失败保留在展开行里看，不把整单标成
-  // 「处理失败」误导用户以为产品不可用。
-  const producedAnswer = Boolean(activity.pendingAnswer || activity.finalAnswer)
-  const failed = !producedAnswer && tools.some((tool) => tool.status === 'error')
+  // 失败口径以 run 的终态为准：run.failed 才算处理失败。中途的失败重试（工具参数
+  // 校验、工作表名猜错后改对…）后续步骤已经补齐，不能把整轮标成失败——那会和
+  // run 的 completed 状态、以及助手的最终结论自相矛盾。没有 run 终态信息时退回
+  // "最后一步是否报错"的近似判断。失败明细仍留在展开后的时间线里。
+  const failed = failedRunIds
+    ? runId !== undefined && failedRunIds.has(runId)
+    : tools.length > 0 && tools[tools.length - 1]!.status === 'error'
   const stopped = tools.some((tool) => tool.status === 'stopped')
   const summary = continuing && !running
     ? t(continuationLabel)
@@ -510,6 +473,21 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
             {rows.map((row) => {
               if (row.kind === 'subagent') {
                 return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
+              }
+              if (row.kind === 'noop') {
+                // 空转折叠行：默认一行摘要，展开才看每次打点的命令（原生 details，无需状态）。
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.noopFolded', { count: row.count })}
+                    </summary>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}><code>{noOpCommandSummary(step.tool.args)}</code></li>
+                      ))}
+                    </ul>
+                  </details>
+                )
               }
               const step = row.step
               const beforeText = localizeAgentActivityText(step.beforeText, t)

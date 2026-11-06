@@ -231,15 +231,15 @@ describe("filesystem subagent framework", () => {
     await expect(orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "invalid-caller",
       source: "scheduler",
     })).rejects.toThrow("subagent_caller_not_allowed");
 
     const invocation = await orchestrator.dispatch({
       agentId: "researcher",
-      task: "Research the EverRoom architecture",
-      input: { topic: "EverRoom" },
+      task: "Research the EverOffice architecture",
+      input: { topic: "EverOffice" },
       idempotencyKey: "valid-dispatch",
       source: "primary_agent",
       parentSessionId: "session-1",
@@ -257,8 +257,8 @@ describe("filesystem subagent framework", () => {
 
     const duplicate = await orchestrator.dispatch({
       agentId: "researcher",
-      task: "Research the EverRoom architecture",
-      input: { topic: "EverRoom" },
+      task: "Research the EverOffice architecture",
+      input: { topic: "EverOffice" },
       idempotencyKey: "valid-dispatch",
       source: "primary_agent",
       parentSessionId: "session-1",
@@ -298,7 +298,7 @@ describe("filesystem subagent framework", () => {
     const parent = await orchestrator.dispatch({
       agentId: "researcher",
       task: "Parent task",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "tree-parent",
       source: "primary_agent",
       parentSessionId: "session-tree",
@@ -307,7 +307,7 @@ describe("filesystem subagent framework", () => {
     const child = await orchestrator.dispatch({
       agentId: "researcher",
       task: "Child task",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "tree-child",
       source: "primary_agent",
       parentSessionId: "session-tree",
@@ -340,7 +340,7 @@ describe("filesystem subagent framework", () => {
     const parent = await orchestrator.dispatch({
       agentId: "researcher",
       task: "Parent task",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "usage-parent",
       source: "primary_agent",
       parentSessionId: "session-usage",
@@ -349,7 +349,7 @@ describe("filesystem subagent framework", () => {
     const child = await orchestrator.dispatch({
       agentId: "researcher",
       task: "Child task",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "usage-child",
       source: "primary_agent",
       parentSessionId: "session-usage",
@@ -412,7 +412,7 @@ describe("filesystem subagent framework", () => {
           runtimeSessionRef: `fake-${runId}`,
           events: (async function* generate(): AsyncGenerator<RuntimeEvent> {
             yield { type: "run.started", payload: {} };
-            yield { type: "tool.requested", payload: { toolCallId: "call-1", name: "wiki_search", args: { query: "EverRoom" } } };
+            yield { type: "tool.requested", payload: { toolCallId: "call-1", name: "wiki_search", args: { query: "EverOffice" } } };
             yield { type: "tool.completed", payload: { toolCallId: "call-1", name: "wiki_search", result: { results: [1, 2, 3] } } };
             yield { type: "message.completed", payload: { role: "assistant", content: "完成。" } };
             yield { type: "run.completed", payload: {} };
@@ -443,7 +443,7 @@ describe("filesystem subagent framework", () => {
     const invocation = await orchestrator.dispatch({
       agentId: "researcher",
       task: "Emit tool events",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "events-dispatch",
       source: "primary_agent",
       parentSessionId: "session-events",
@@ -459,7 +459,7 @@ describe("filesystem subagent framework", () => {
       "message.completed",
       "run.completed",
     ]);
-    expect(all[1]!.payload).toMatchObject({ toolCallId: "call-1", name: "wiki_search", args: { query: "EverRoom" } });
+    expect(all[1]!.payload).toMatchObject({ toolCallId: "call-1", name: "wiki_search", args: { query: "EverOffice" } });
 
     const later = orchestrator.listInvocationEvents(invocation.id, all[1]!.seq);
     expect(later.map((event) => event.type)).toEqual(["tool.completed", "message.completed", "run.completed"]);
@@ -469,7 +469,7 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
-  it("子 run 不再绑定 Room：dispatch input 的 roomId 不再透传到 runtime.start", async () => {
+  it("dispatch input 以 runtimeMetadata 透传给 runtime.start（Phase 2i 后无 roomId 字段）", async () => {
     const fixture = await createFixture();
     await fixture.registry.initialize();
 
@@ -500,29 +500,30 @@ describe("filesystem subagent framework", () => {
     await orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom", roomId: "room-9" },
+      input: { topic: "EverOffice", roomId: "room-9" },
       idempotencyKey: "room-passthrough",
       source: "primary_agent",
       parentRunId: "run-room",
     });
-    // 去 Room：即使调用方仍带历史 roomId 字段，子 run 也不再绑定房间（文档工具走工作区）。
-    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
-    // 结构化输入同时以 runtimeMetadata 交给工具（planner 据此区分 draft/arrange）。
-    // 原始 input 原样保留在元数据里，只是不再解读 roomId。
+    // Phase 2i：runtime.start 不再携带 roomId；结构化输入（含 legacy roomId 字段）
+    // 只作为不透明数据经 runtimeMetadata 交给工具。
     expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
       subagentAgentId: "researcher",
-      subagentInput: { topic: "EverRoom", roomId: "room-9" },
+      subagentInput: { topic: "EverOffice", roomId: "room-9" },
     });
 
     await orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "room-absent",
       source: "primary_agent",
       parentRunId: "run-noroom",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
+    expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
+      subagentAgentId: "researcher",
+      subagentInput: { topic: "EverOffice" },
+    });
 
     await orchestrator.dispose();
     fixture.database.sqlite.close();

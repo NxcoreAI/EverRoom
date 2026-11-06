@@ -11,11 +11,11 @@ import {
 } from "./mcp-host.js";
 
 const EXTERNAL_SERVICE_REQUEST = /(?:Gmail|GitHub|Notion|Google\s*Drive|Slack|Dropbox|Outlook|日历|邮件|邮箱|云盘|第三方服务|OAuth)/iu;
-const EXPLICIT_EVERROOM_DOCUMENT_TARGET = /(?:(?:EverRoom|NxCore|Context\s*Room|ContextRoom|某个\s*Room|指定\s*Room|Room|房间).{0,24}(?:文档|文件|页面)|(?:文档|文件|页面).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间)|(?:保存|写入|存入|落盘|创建).{0,24}(?:EverRoom|NxCore|Context\s*Room|ContextRoom|Room|房间))/iu;
+const EXPLICIT_EVERROOM_DOCUMENT_TARGET = /(?:(?:EverOffice|NxCore|Context\s*Room|ContextRoom|某个\s*Room|指定\s*Room|Room|房间).{0,24}(?:文档|文件|页面)|(?:文档|文件|页面).{0,24}(?:EverOffice|NxCore|Context\s*Room|ContextRoom|Room|房间)|(?:保存|写入|存入|落盘|创建).{0,24}(?:EverOffice|NxCore|Context\s*Room|ContextRoom|Room|房间))/iu;
 const DOCUMENT_ROUTE_MISMATCH = "Document tool route mismatch";
 class DocumentRouteMismatchError extends Error {
   constructor() {
-    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not create or edit EverRoom documents.`);
+    super(`${DOCUMENT_ROUTE_MISMATCH}: the user explicitly requested an external connected service. Use connector_search and the connector workflow; do not create or edit EverOffice documents.`);
     this.name = "DocumentRouteMismatchError";
   }
 }
@@ -28,10 +28,10 @@ function toPiResult(result: DocumentMcpToolResult): PiAgentRuntimeToolResult {
 }
 
 /**
- * 文档工具面（P0-4）：不再为每个 run 粘滞「已绑定 Room」。
+ * 文档工具面（P0-4 → Phase 2i）：文稿一律工作区级，无 Room 概念。
  *
- * 归属只来自本次调用的 `params.roomId` 或 run 级 `input.roomId`；
- * 都没有即工作区级文稿（roomId 为 null），不再强求从 available_rooms 里选房。
+ * 工具 schema 不暴露 roomId 参数，run 上下文也不再携带归属；
+ * 模型传进来的同名参数不影响任何行为。
  */
 export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool[] {
   return host.listTools().map((definition) => ({
@@ -48,17 +48,13 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         throw new DocumentRouteMismatchError();
       }
       try {
-        const requestedRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
-        const roomId = input.roomId ?? (requestedRoomId || null);
         const result = await host.callTool(
           definition.name,
           params,
           {
             agentSessionId: input.sessionId,
             runId: input.runId,
-            roomId,
             workspaceId: input.workspaceId ?? null,
-            availableRooms: input.availableRooms ?? [],
             ...(input.activeDocument ? { activeDocument: input.activeDocument } : {}),
             ...(input.activeFile ? { activeFile: input.activeFile } : {}),
           },
@@ -88,7 +84,7 @@ export function createDocumentPiTools(host: DocumentMcpHost): PiAgentRuntimeTool
         category: "route_mismatch",
         recoverable: true,
         recommendedTool: "connector_search",
-        instruction: "Use the external service named in the original user request. Do not call document or office tools unless the user explicitly asks to create or edit an EverRoom document.",
+        instruction: "Use the external service named in the original user request. Do not call document or office tools unless the user explicitly asks to create or edit an EverOffice document.",
         retryKey: "external-service-to-context-room",
         maxAttempts: 1,
       };

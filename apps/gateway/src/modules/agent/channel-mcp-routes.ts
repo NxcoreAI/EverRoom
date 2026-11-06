@@ -11,7 +11,7 @@ const JsonRpcMessage = Type.Object({
 }, { additionalProperties: true });
 
 /**
- * 渠道会话的 EverRoom 工具 MCP 端点。token 本身即凭证
+ * 渠道会话的 EverOffice 工具 MCP 端点。token 本身即凭证
  * （channel-mcp-host 签发、auth 插件对 /v1/mcp/everroom/ 免全局 bearer）。
  */
 export function channelMcpRoutes(host: ChannelMcpHost): FastifyPluginAsyncTypebox {

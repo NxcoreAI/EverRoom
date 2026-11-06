@@ -85,6 +85,8 @@ export type AgentDocFailureReason =
   | 'unsaved'
   | 'save_failed'
   | 'error'
+  /** 运行时能力缺失（老 genoffice 构建）：调用方回退外部转换路径。 */
+  | 'unsupported'
 
 export type AgentDocFailure = {
   ok: false
@@ -158,6 +160,33 @@ export class AgentDocSessionManager {
       return { ok: true as const, describe: described }
     })
     return run
+  }
+
+  /**
+   * 进程内导出 PDF：复用隐藏编辑会话装载 docx，再让渲染层走完整导出
+   * 编排（分页预览/分组打印/合并）写到 outPath。导出不改文档，无需
+   * 版本回填。运行时缺 exportDocsPdf（老 genoffice 构建）时返回
+   * 'unsupported'，调用方回退 LibreOffice 路径。
+   */
+  async exportPdf(
+    fileId: string,
+    outPath: string,
+    hints?: AgentDocFileHints,
+  ): Promise<{ ok: true; path: string } | AgentDocFailure> {
+    const docs = this.options.docs
+    if (typeof docs.exportDocsPdf !== 'function') {
+      return failure('unsupported', '当前 GenOffice 运行时不支持进程内 PDF 导出')
+    }
+    return this.runExclusive(fileId, async () => {
+      const ensured = await this.ensure(fileId, hints)
+      if (!ensured.ok) return ensured
+      const { session } = ensured
+      const exported = await docs.exportDocsPdf!(session.contents, outPath)
+      if ('error' in exported) {
+        return failure('error', exported.error)
+      }
+      return { ok: true as const, path: exported.path }
+    })
   }
 
   /** 执行一批 docs AI 工具调用；返回前把去抖中的版本回填排空。 */

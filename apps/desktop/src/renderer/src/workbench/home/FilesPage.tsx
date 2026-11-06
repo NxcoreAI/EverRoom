@@ -1,61 +1,57 @@
-import { FolderOpen, LayoutGrid, List, RotateCw, Upload } from 'lucide-react'
+import { FolderOpen, LayoutGrid, List, RotateCw, Search, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { type FileKind, type RealOfficeFile, kindMeta } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
 
 import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
 import { cn } from '../ui/cn'
-import { Button, EmptyState, PageHeader, Segmented } from '../ui/primitives'
+import { ConfirmModal } from '../ui/modal'
+import { Button, EmptyState, PageHeader } from '../ui/primitives'
+import { FileTableHead, FileTableRow, type FileRowActions } from './fileTable'
 import { HomeSkeleton } from './parts'
 import { useFileLibrary } from './useFileLibrary'
 
 type ViewMode = 'list' | 'grid'
+type KindFilter = 'all' | FileKind
 
-interface SourceFilter {
-  key: string
-  label: string
-  count: number
-}
+const ALL_KINDS = 'all'
+/** 一次装载的目录条数上限（`files.list` 的分页大小）：超出时页面会说明只列最近这些。 */
+const LOAD_LIMIT = 200
 
-const ALL_SOURCES = 'all'
+/** 类型筛选标签的顺序与原型 `FileTable` 一致：全部 / 文档 / 表格 / 演示 / PDF / Markdown。 */
+const KIND_ORDER: readonly FileKind[] = ['docx', 'xlsx', 'pptx', 'pdf', 'md']
 
-/** 所有文件页：真实文件库（一页 200 条）+ 搜索 + 来源筛选 + 列表/网格切换 + 导入。 */
+/**
+ * 所有文件页，布局照 everoffice 原型 `pages/AllFilesView.tsx` + `FileTable`：
+ *
+ * 页头（标题 + 「共 N 个文件」+ 导入）→ 工具行（类型标签 / 文件名搜索 / 列表·网格切换）
+ * → 无外框平铺表格（表头 + 文件行：图标 / 文件名 / 修改时间 / 大小 / 操作）。
+ *
+ * 原型里「网格视图暂未开放」和行尾「⋯」只弹 toast；这里两者都是真功能：
+ * 网格是文件瓦片，行菜单能打开原应用、导出定位、删除。
+ * 来源筛选标签是本端曾有的扩展，原型没有这一行，已按原型去除。
+ */
 export function FilesPage() {
-  const openFileTab = useWorkbenchStore((state) => state.openFileTab)
-  const files = useFileLibrary(200)
+  const openFileInWorkspace = useWorkbenchStore((state) => state.openFileInWorkspace)
+  const files = useFileLibrary(LOAD_LIMIT)
   const [query, setQuery] = useState('')
-  const [source, setSource] = useState<string>(ALL_SOURCES)
+  const [kind, setKind] = useState<KindFilter>(ALL_KINDS)
   const [view, setView] = useState<ViewMode>('list')
   const [importing, setImporting] = useState(false)
-
-  const sources = useMemo<SourceFilter[]>(() => {
-    const byKind = new Map<string, SourceFilter>()
-    for (const item of files.items) {
-      const key = item.catalog.sourceKind
-      const existing = byKind.get(key)
-      if (existing) {
-        existing.count += 1
-        continue
-      }
-      byKind.set(key, { key, label: item.catalog.sourceLabel || '其他来源', count: 1 })
-    }
-    return [...byKind.values()].sort((left, right) => right.count - left.count)
-  }, [files.items])
-
-  // 刷新后来源消失时回落「全部」，避免筛选到空集。
-  const activeSource = source === ALL_SOURCES || sources.some((item) => item.key === source) ? source : ALL_SOURCES
+  const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase()
     return files.items.filter((item) => {
-      if (activeSource !== ALL_SOURCES && item.catalog.sourceKind !== activeSource) return false
+      if (kind !== ALL_KINDS && item.file.kind !== kind) return false
       return !keyword || item.file.name.toLowerCase().includes(keyword)
     })
-  }, [activeSource, files.items, query])
+  }, [files.items, kind, query])
 
   const canImport = typeof window.nxcore?.files?.pickAndImport === 'function'
-  const filtering = query.trim().length > 0 || activeSource !== ALL_SOURCES
 
   const handleImport = async () => {
     if (importing || !canImport) return
@@ -74,18 +70,82 @@ export function FilesPage() {
     }
   }
 
+  /** 交给系统默认应用打开（不受支持/旧格式转换失败时的兜底）。 */
+  const openOriginal = async (item: RealOfficeFile) => {
+    const api = window.nxcore?.files
+    if (!api || typeof api.openOriginal !== 'function') {
+      workbenchToast('桌面端文件能力不可用')
+      return
+    }
+    try {
+      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash)
+      workbenchToast(result.openedWith === 'office' ? `已打开「${item.file.name}」` : '已用系统默认应用打开')
+    } catch {
+      workbenchToast('打开失败，请稍后重试')
+    }
+  }
+
+  const exportReveal = async (item: RealOfficeFile) => {
+    const api = window.nxcore?.files
+    if (!api || typeof api.exportReveal !== 'function') {
+      workbenchToast('桌面端文件能力不可用')
+      return
+    }
+    try {
+      await api.exportReveal(item.catalog.id, item.catalog.originalName)
+      workbenchToast('已导出到「下载/EverOffice」并定位到文件管理器')
+    } catch {
+      workbenchToast('导出失败，请稍后重试')
+    }
+  }
+
+  const confirmDelete = async () => {
+    const target = pendingDelete
+    if (!target) return
+    const api = window.nxcore?.files
+    if (!api || typeof api.delete !== 'function') {
+      workbenchToast('桌面端文件能力不可用')
+      setPendingDelete(null)
+      return
+    }
+    setDeleting(true)
+    try {
+      await api.delete(target.catalog.id)
+      workbenchToast(`已删除「${target.file.name}」`)
+      setPendingDelete(null)
+      files.reload()
+    } catch {
+      workbenchToast('删除失败，请稍后重试')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const rowActions: FileRowActions = {
+    onOpen: (item) => openFileInWorkspace(item.file),
+    onOpenOriginal: (item) => { void openOriginal(item) },
+    onExportReveal: (item) => { void exportReveal(item) },
+    onDelete: (item) => setPendingDelete(item),
+  }
+
+  // 页头副标题与原型同款句式：只说「共 N 个文件」（见 PageHead hint）。
   const subtitle = files.state === 'ready'
-    ? files.total > 0
-      ? `文件库共 ${files.total} 个文件；可打开文档按最近更新排序。`
-      : '文件库还没有文件，导入后会出现在这里。'
+    ? files.total > files.items.length
+      ? `共 ${files.total} 个文件，其中 ${files.items.length} 个可在此打开（按最近更新排序）。`
+      : `共 ${files.items.length} 个文件`
     : files.state === 'loading'
-      ? '正在读取文件库…'
-      : '文件库暂不可用。'
+      ? '正在读取资料…'
+      : '资料暂不可用。'
+
+  /** 工具行左侧的类型标签（原型 `Seg`：胶囊裸标签，不带计数徽标）。 */
+  const kindTabs: Array<{ key: KindFilter; label: string }> = [
+    { key: ALL_KINDS, label: '全部' },
+    ...KIND_ORDER.map((item) => ({ key: item as KindFilter, label: kindMeta[item].label })),
+  ]
 
   return (
     <div className="wb-home-scroll">
       <PageHeader
-        eyebrow="文件库"
         title="所有文件"
         subtitle={subtitle}
         actions={(
@@ -101,67 +161,13 @@ export function FilesPage() {
         )}
       />
 
-      <div className="wb-home-toolbar">
-        <label className="wb-home-search">
-          <input
-            className="ui-input"
-            type="search"
-            aria-label="搜索文件"
-            placeholder="搜索文件名"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
-        {files.state === 'ready' && sources.length > 0 ? (
-          <div className="wb-home-chips" role="group" aria-label="按来源筛选">
-            <button
-              type="button"
-              className={cn('wb-chip', activeSource === ALL_SOURCES && 'is-active')}
-              aria-pressed={activeSource === ALL_SOURCES}
-              onClick={() => setSource(ALL_SOURCES)}
-            >
-              全部
-              <span className="wb-chip-count">{files.items.length}</span>
-            </button>
-            {sources.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={cn('wb-chip', activeSource === item.key && 'is-active')}
-                aria-pressed={activeSource === item.key}
-                onClick={() => setSource(item.key)}
-              >
-                {item.label}
-                <span className="wb-chip-count">{item.count}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <div className="wb-home-toolbar-right">
-          {files.state === 'ready' ? (
-            <span className="wb-home-toolbar-meta">
-              {filtering ? `匹配 ${filtered.length} / ${files.items.length}` : `${files.items.length} 个可打开文档`}
-            </span>
-          ) : null}
-          <Segmented<ViewMode>
-            ariaLabel="文件视图"
-            value={view}
-            onChange={setView}
-            items={[
-              { key: 'list', label: '列表', icon: <List size={13} /> },
-              { key: 'grid', label: '网格', icon: <LayoutGrid size={13} /> },
-            ]}
-          />
-        </div>
-      </div>
-
       {files.state === 'loading' ? <HomeSkeleton rows={5} /> : null}
 
       {files.state === 'unavailable' ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="文件库暂不可用"
-          description="当前无法连接桌面文件服务（浏览器预览或网关未就绪时属预期）。"
+          title="资料暂不可用"
+          description="桌面文件服务没有响应。重试一次；仍然失败请重启 EverOffice。"
           action={<Button variant="secondary" size="sm" icon={<RotateCw size={13} />} onClick={files.reload}>重试</Button>}
         />
       ) : null}
@@ -169,8 +175,8 @@ export function FilesPage() {
       {files.state === 'ready' && files.items.length === 0 ? (
         <EmptyState
           icon={<FolderOpen size={18} />}
-          title="文件库还没有文件"
-          description="导入本地文档或从连接器同步资料，之后就能在这里打开。"
+          title="资料还没有文件"
+          description="导入本地文档，或从连接器同步资料，之后就能在这里打开。"
           action={canImport ? (
             <Button variant="primary" size="sm" icon={<Upload size={13} />} onClick={() => { void handleImport() }}>
               导入文件
@@ -179,62 +185,116 @@ export function FilesPage() {
         />
       ) : null}
 
-      {files.state === 'ready' && files.items.length > 0 && filtered.length === 0 ? (
-        <div className="wb-home-empty">没有匹配的文件 · 换个关键词或来源试试。</div>
-      ) : null}
+      {files.state === 'ready' && files.items.length > 0 ? (
+        <div className="wb-home-filetbl">
+          <div className="wb-home-filetbl-bar">
+            <div className="wb-home-ft-seg" role="tablist" aria-label="按类型筛选">
+              {kindTabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={kind === tab.key}
+                  className={cn('wb-home-ft-seg-btn', kind === tab.key && 'active')}
+                  onClick={() => setKind(tab.key)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="wb-home-ft-search">
+              <Search size={14} aria-hidden="true" />
+              <input
+                type="search"
+                aria-label="搜索文件"
+                placeholder="搜索文件名…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {query ? (
+                <button
+                  className="wb-home-ft-search-clear"
+                  type="button"
+                  title="清空"
+                  aria-label="清空搜索"
+                  onClick={() => setQuery('')}
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+            <div className="wb-home-ft-views" role="group" aria-label="文件视图">
+              <button
+                type="button"
+                className={cn(view === 'list' && 'active')}
+                title="列表视图"
+                aria-pressed={view === 'list'}
+                onClick={() => setView('list')}
+              >
+                <List size={15} />
+              </button>
+              <button
+                type="button"
+                className={cn(view === 'grid' && 'active')}
+                title="网格视图"
+                aria-pressed={view === 'grid'}
+                onClick={() => setView('grid')}
+              >
+                <LayoutGrid size={15} />
+              </button>
+            </div>
+          </div>
 
-      {files.state === 'ready' && filtered.length > 0 && view === 'list' ? (
-        <div className="wb-home-list">
-          {filtered.map((item) => (
-            <button
-              key={item.file.id}
-              type="button"
-              className="wb-home-row"
-              title={item.file.name}
-              onClick={() => openFileTab(item.file)}
-            >
-              <FileTypeIcon kind={item.file.kind} size={28} />
-              <span className="wb-home-row-main">
-                <span className="wb-home-row-title">
-                  <span className="wb-home-truncate">{item.file.name}</span>
-                </span>
-                <span className="wb-home-row-sub">
-                  {[item.catalog.sourceLabel, item.file.updatedLabel, item.file.sizeLabel]
-                    .filter((part) => part && part !== '—')
-                    .join(' · ')}
-                </span>
-              </span>
-              <span className="wb-home-row-meta">{item.file.kind.toUpperCase()}</span>
-            </button>
-          ))}
+          {filtered.length === 0 ? (
+            <div className="wb-home-filetbl-empty">没有匹配的文件。</div>
+          ) : view === 'list' ? (
+            <>
+              <FileTableHead />
+              {filtered.map((item) => (
+                <FileTableRow key={item.file.id} item={item} actions={rowActions} iconSize={36} />
+              ))}
+            </>
+          ) : (
+            <div className="wb-home-filetbl-grid">
+              <div className="wb-home-file-grid">
+                {filtered.map((item) => (
+                  <button
+                    key={item.file.id}
+                    type="button"
+                    className="wb-home-file-tile"
+                    title={item.file.name}
+                    onClick={() => openFileInWorkspace(item.file)}
+                  >
+                    <FileTypeIcon kind={item.file.kind} size={38} />
+                    <span className="wb-home-file-tile-name">{item.file.name}</span>
+                    <span className="wb-home-file-tile-meta">
+                      {[item.catalog.sourceLabel, item.file.updatedLabel].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
-      {files.state === 'ready' && filtered.length > 0 && view === 'grid' ? (
-        <div className="wb-home-file-grid">
-          {filtered.map((item) => (
-            <button
-              key={item.file.id}
-              type="button"
-              className="wb-home-file-tile"
-              title={item.file.name}
-              onClick={() => openFileTab(item.file)}
-            >
-              <FileTypeIcon kind={item.file.kind} size={38} />
-              <span className="wb-home-file-tile-name">{item.file.name}</span>
-              <span className="wb-home-file-tile-meta">
-                {[item.catalog.sourceLabel, item.file.updatedLabel].filter(Boolean).join(' · ')}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {files.state === 'ready' && filtered.length > 0 && files.total > files.items.length ? (
+      {files.state === 'ready' && files.total > LOAD_LIMIT ? (
         <p className="wb-home-footnote">
-          当前加载最近 {files.items.length} 个可打开文档（文件库共 {files.total} 个条目）。
+          文件较多，这里只列出最近的 {LOAD_LIMIT} 个。
         </p>
       ) : null}
+
+      <ConfirmModal
+        open={pendingDelete !== null}
+        onOpenChange={(next) => { if (!next) setPendingDelete(null) }}
+        title="删除文件？"
+        description={pendingDelete
+          ? `「${pendingDelete.file.name}」会从资料移除，相关项目空间里也不再可见。`
+          : undefined}
+        confirmLabel={deleting ? '删除中…' : '删除'}
+        busy={deleting}
+        onConfirm={() => { void confirmDelete() }}
+      />
     </div>
   )
 }

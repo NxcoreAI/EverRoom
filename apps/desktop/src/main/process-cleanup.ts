@@ -3,11 +3,11 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 /**
- * 受管子进程（gateway / memory-core / knowledge）的 pid 登记与回收兜底。
+ * 受管子进程（gateway / knowledge）的 pid 登记与回收兜底。
  *
  * Windows 上父进程被强杀/崩溃时没有任何机制连带回收子进程树（无 PDEATHSIG、
  * 无 Job Object），残留进程会锁住 SQLite/端口，导致"重启也不行"（issue #179）：
- * 残留 gateway 让新实例 waitUntilReady 超时，残留 memory-core/knowledge 被
+ * 残留 gateway 让新实例 waitUntilReady 超时，残留 knowledge 被
  * start() 的 probe 误判为「可复用外部实例」并带着不匹配的 apiKey 静默 401。
  *
  * 这里提供三层兜底：

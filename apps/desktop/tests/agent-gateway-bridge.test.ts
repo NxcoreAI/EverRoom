@@ -91,6 +91,32 @@ describe('AgentGatewayBridge requests', () => {
     expect(ensureConnection).toHaveBeenCalledTimes(4)
   })
 
+  it('passes workspaceId through to the sessions query（按空间列会话）', async () => {
+    const requests: string[] = []
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '')
+      json(response, 200, [])
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+
+    await bridge.listSessions(undefined, undefined, 'ws-9')
+    await bridge.listSessions('Agent', null)
+
+    expect(requests).toEqual([
+      '/v1/agent/sessions?workspaceId=ws-9',
+      '/v1/agent/sessions?pageLabel=Agent&roomId=',
+    ])
+  })
+
   it('refreshes a stale gateway connection and retries the request once', async () => {
     const staleServer = createServer((_request, response) => json(response, 200, {}))
     const stalePort = await listen(staleServer)
@@ -319,5 +345,54 @@ describe('AgentGatewayBridge requests', () => {
       idempotencyKey: 'idem-4',
       context: { pageLabel: '首页' },
     })
+  })
+})
+
+describe('AgentGatewayBridge plan stream（SSE → plan:changed）', () => {
+  /** 回归（2026-11-05）：ready 帧（无 item）曾被原样转发成 plan:changed，
+   *  渲染层 upsert undefined 进看板数组，点「计划」即崩（reading 'status'）。 */
+  it('forwards only plan frames and drops ready/ping frames without an item', async () => {
+    const change: unknown = { workspaceId: 'ws-1', event: 'updated', item: { id: 'item-1', status: 'todo' } }
+    const server = createServer((request, response) => {
+      if (!request.url?.startsWith('/v1/plan/stream')) return json(response, 404, {})
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      // 与 gateway routes.ts 的真实帧序一致：ready → plan → ping →（拆两块发的 plan）。
+      response.write(`event: ready\ndata: {"workspaceId":"ws-1"}\n\n`)
+      response.write(`event: plan\ndata: ${JSON.stringify(change)}\n\n`)
+      response.write(`: ping\n\n`)
+      // 半包：data 行被 TCP 分段切断也要能拼回完整 JSON。
+      const split = `event: plan\ndata: ${JSON.stringify({ ...change, item: { id: 'item-2', status: 'doing' } })}\n\n`
+      response.write(split.slice(0, Math.floor(split.length / 2)))
+      response.write(split.slice(Math.floor(split.length / 2)))
+      setTimeout(() => response.end(), 50)
+    })
+    const port = await listen(server)
+    const supervisor = {
+      ensureConnection: async () => ({
+        pid: 1,
+        baseUrl: `http://127.0.0.1:${String(port)}`,
+        token: 'test-token',
+        version: 'test',
+      }),
+    } as unknown as GatewaySupervisor
+    const bridge = new AgentGatewayBridge(supervisor)
+    const forwarded: unknown[] = []
+    const contents = {
+      id: 101,
+      isDestroyed: () => false,
+      once: () => undefined,
+      send: (_channel: string, payload: unknown) => forwarded.push(payload),
+    }
+    bridge.subscribePlanEvents(contents as unknown as import('electron').WebContents, 'ws-1')
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    } finally {
+      bridge.unsubscribePlanEvents(contents as unknown as import('electron').WebContents)
+    }
+
+    expect(forwarded).toEqual([
+      change,
+      { workspaceId: 'ws-1', event: 'updated', item: { id: 'item-2', status: 'doing' } },
+    ])
   })
 })

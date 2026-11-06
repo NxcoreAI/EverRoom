@@ -1,5 +1,5 @@
 /* ──────────────────────────────────────────────────────────────────────────
-   EverRoom 设计系统 · 唯一 token 源
+   EverOffice 设计系统 · 唯一 token 源
    ──────────────────────────────────────────────────────────────────────────
    品牌来自 app 图标与 splash：暖纸底色 + 墨青文字 + 青绿主色 + 蜜桃点缀。
    这一层定义三套命名：
@@ -62,6 +62,26 @@
   --ui-warm: #e9a06a;
   --ui-warm-strong: #a25e2f; /* 暖色文字用（对白底 4.8:1） */
   --ui-warm-soft: rgba(233, 160, 106, 0.16);
+
+  /* ── 交互手势（各主题可调：暖纸保守，原型 iWork 强调按下/抬升/毛玻璃） ──
+     这里放的是「动效与层叠」语义，不是色值：组件按 token 取值，主题决定幅度。
+     默认值刻意等于暖纸现在的手感，其它主题不会因为新增 token 而变形。 */
+  --ui-press-scale: 1; /* 按钮按下时的缩放（1 = 不缩放，0.98 = 轻微内收） */
+  --ui-card-lift: -2px; /* 大瓦片（新建文件）悬停抬升 */
+  --ui-card-lift-sm: -1px; /* 小卡片（空间 / 文件网格）悬停抬升 */
+  --ui-glass-blur: 0px; /* 侧栏 / 顶栏毛玻璃模糊半径（0 = 纯色不透明） */
+  --ui-glass-saturate: 1; /* 毛玻璃饱和度增益 */
+  --ui-focus-ring-width: 2px;
+  --ui-focus-ring-color: var(--ui-accent-line);
+  --ui-focus-ring-offset: 2px;
+
+  /* ── 侧栏导航选中态（两套语言，由主题决定） ────────────────────────────
+     暖纸：暖纸底上「白色浮起卡片」；原型 iWork：系统蓝实底白字（Finder 惯例）。 */
+  --ui-nav-active-bg: var(--ui-surface);
+  --ui-nav-active-border: var(--ui-border);
+  --ui-nav-active-color: var(--ui-text);
+  --ui-nav-active-icon: var(--ui-accent-strong);
+  --ui-nav-active-shadow: var(--ui-shadow-sm);
 
   /* ── 浮层 / 滚动条（深色主题需要整体换色） ───────────────────────────── */
   --ui-overlay: rgba(22, 47, 55, 0.28);

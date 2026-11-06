@@ -95,7 +95,6 @@ function context(
   const base: DocumentExecutionContext = {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: "room-9",
     workspaceId: "ws-7",
     ...overrides,
   };
@@ -127,7 +126,8 @@ describe("sheets_agent_read：元数据级目标解析（headless 读取）", ()
     expect(payload).toMatchObject({
       kind: "spreadsheet",
       fileId: "fe-sheet",
-      roomId: "room-9",
+      // Phase 2i 后无 Room 维度：不再向桌面端透传 roomId。
+      roomId: null,
       workspaceId: "ws-7",
     });
     expect(result.structuredContent).toMatchObject({
@@ -214,7 +214,8 @@ describe("sheets_agent_edit：活工作簿工具调用（headless 编辑）", ()
     expect(payload).toMatchObject({
       kind: "spreadsheet",
       fileId: "fe-sheet",
-      roomId: "room-9",
+      // Phase 2i 后无 Room 维度：不再向桌面端透传 roomId。
+      roomId: null,
       workspaceId: "ws-7",
       calls,
     });

@@ -4,7 +4,7 @@ import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { join } from "node:path";
 import { inArray } from "drizzle-orm";
-import type { GatewayConfig } from "../config.js";
+import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { agentSessions } from "../infrastructure/database/schema.js";
 import { AgentDebugArchive } from "../modules/agent-debug/archive.js";
@@ -13,6 +13,8 @@ import { agentDebugTraceRoutes, debugAgentsFromResolver } from "../modules/agent
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
 import { agentRoutes } from "../modules/agent/routes.js";
 import { createAgentResolver, registerCursorCompletionAgent } from "../modules/agent/runtime-factory.js";
+import { AgentSkillStateStore } from "../modules/skills/state-store.js";
+import { SkillService } from "../modules/skills/service.js";
 import { BUILTIN_AGENT_IDS } from "../modules/agent/resolver.js";
 import { AgentService } from "../modules/agent/service.js";
 import { auth } from "./auth.js";
@@ -94,6 +96,14 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
   };
   const agentResolver = createAgentResolver(config, agentDebugStore);
   registerCursorCompletionAgent(agentResolver, config);
+  // 补全技能也走「技能」页的启停：本进程在启动时读一次状态（补全网关是独立进程，
+  // 主网关改状态不会通知到这里，下一次启动生效）。
+  const skillService = new SkillService({
+    store: new AgentSkillStateStore(db),
+    definitionsDir: bundledAgentDefinitionsDir(),
+    logger: { warn: (fields, message) => app.log.warn(fields, message) },
+  });
+  registerCursorCompletionAgent(agentResolver, config, skillService);
   const runtime = agentResolver.resolve(BUILTIN_AGENT_IDS.cursorCompletion);
   app.log.info(
     {
@@ -114,7 +124,6 @@ export async function createCursorCompletionServer(config: GatewayConfig) {
     runtime,
     new AgentEventBroker(),
     app.log,
-    undefined,
     undefined,
     undefined,
     false,

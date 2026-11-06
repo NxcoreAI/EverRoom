@@ -1,6 +1,6 @@
 import type { GatewayConfig } from "../../../config.js";
 
-export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx";
+export type OfficeGenerateFormat = "docx" | "pptx" | "xlsx" | "md";
 
 export interface OfficeSheetBridgeInput {
   name: string | null;
@@ -21,6 +21,8 @@ export interface OfficeGenerateInput {
   applyThemeJs?: string | null;
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
+  /** md：Markdown 正文（桌面端纯文本落盘，无渲染引擎）。 */
+  markdown?: string | null;
   roomId: string | null;
   /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
@@ -36,6 +38,8 @@ export interface OfficeCompleteInput {
   title: string;
   originalName?: string;
   roomId?: string | null;
+  /** 产物归属工作区（done 广播带上，桌面渲染层按空间定向自动展示成品）。 */
+  workspaceId?: string | null;
   completed: boolean;
   appliedPages: number;
   totalPages: number;
@@ -275,10 +279,10 @@ export class OfficeBridgeClient {
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
-  /** 活 Word/Excel describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
+  /** 活 Word/Excel/PDF describe：上下文 + 工具词汇表 + 指南（fileId 'active' = 当前打开的那个）。 */
   async describeAgentArtifact(
     input: {
-      kind: "docx" | "spreadsheet";
+      kind: "docx" | "spreadsheet" | "pdf";
       fileId: string;
       /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
       roomId?: string | null;
@@ -315,10 +319,10 @@ export class OfficeBridgeClient {
     return result;
   }
 
-  /** 活 Word/Excel apply：渲染层执行 docs/sheets AI 工具调用（编辑实时重绘，随后静默保存）。 */
+  /** 活 Word/Excel/PDF apply：渲染层执行 AI 工具调用（编辑实时重绘，随后静默保存）。 */
   async applyAgentArtifactTools(
     input: {
-      kind: "docx" | "spreadsheet";
+      kind: "docx" | "spreadsheet" | "pdf";
       fileId: string;
       calls: OfficeAgentToolCall[];
       /** 会话所属 Room/工作区：桌面端为 headless 编辑补齐实例归属（可选，旧端忽略）。 */
@@ -491,8 +495,9 @@ export class OfficeBridgeClient {
   }
 
   /**
-   * /v1/office-export-pdf：桌面端用 LibreOffice 把文件库里的 .docx 转成 PDF，
-   * 并作为新文件入库（返回新 fileId/文件名）。网关不搬字节，只传目标与归属。
+   * /v1/office-export-pdf：桌面端用内置渲染引擎（genoffice，老运行时回退
+   * LibreOffice）把文件库里的 .docx 转成 PDF，并作为新文件入库（返回新
+   * fileId/文件名）。网关不搬字节，只传目标与归属。
    */
   async exportPdf(input: OfficeExportPdfInput): Promise<OfficeExportPdfResult> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-export-pdf`, {
@@ -503,7 +508,7 @@ export class OfficeBridgeClient {
         Accept: "application/json",
       },
       body: JSON.stringify(input),
-      // LibreOffice 转换 + PDF 入库整链路；大文档可到分钟级。
+      // 渲染引擎导出（分页+分组打印+合并）+ PDF 入库整链路；大文档可到分钟级。
       signal: AbortSignal.timeout(5 * 60_000),
     });
     const parsed = await response.json().catch(() => ({})) as {

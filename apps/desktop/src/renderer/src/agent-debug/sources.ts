@@ -8,7 +8,7 @@
  */
 import type { DebugSource } from './api'
 
-/** archive 来源的连接态文案：只读、与 EverRoom 是否运行无关。 */
+/** archive 来源的连接态文案：只读、与 EverOffice 是否运行无关。 */
 export const ARCHIVE_CONNECTION_LABEL = '历史归档 · 只读'
 
 /** 标签里「历史归档」前缀只出现一次（host 的 label 可能已经带上了）。 */
@@ -46,7 +46,7 @@ export function sourceTitle(source: DebugSource): string {
 
 /**
  * 来源排序：可用 live（发现顺序）→ archive（发现顺序）→ 不可用 live。
- * 不可用的 live 沉底，避免 EverRoom 退出后默认落在死来源上。
+ * 不可用的 live 沉底，避免 EverOffice 退出后默认落在死来源上。
  */
 export function orderDebugSources(sources: readonly DebugSource[]): DebugSource[] {
   const availableLive: DebugSource[] = []
@@ -69,7 +69,7 @@ export function orderDebugSources(sources: readonly DebugSource[]): DebugSource[
  * 选中来源的决策（初始加载与 15s 刷新都走这里）：
  * 1. 当前来源仍在列表里且可用 → 保持（不打断用户选择）；
  * 2. 否则取 {@link orderDebugSources} 第一个（第一个可用 live → 第一个 archive → 第一个来源）。
- * 当前 live 来源变不可用时，这里会自动落到可用的 archive（EverRoom 退出 → 历史归档）。
+ * 当前 live 来源变不可用时，这里会自动落到可用的 archive（EverOffice 退出 → 历史归档）。
  * 列表为空返回 null。
  */
 export function pickSourceId(
@@ -88,9 +88,9 @@ export function sourceConnectionLabel(source: DebugSource | null | undefined): s
   return isArchiveSource(source) ? ARCHIVE_CONNECTION_LABEL : null
 }
 
-/** archive 来源的连接态 hover title（归档目录 + 无需 EverRoom 运行）；live 返回 null。 */
+/** archive 来源的连接态 hover title（归档目录 + 无需 EverOffice 运行）；live 返回 null。 */
 export function sourceConnectionTitle(source: DebugSource | null | undefined): string | null {
   if (!isArchiveSource(source)) return null
   const dir = source?.archiveDir?.trim() || '未知目录'
-  return `归档目录 ${dir} · 直接读取本机归档，无需 EverRoom 运行`
+  return `归档目录 ${dir} · 直接读取本机归档，无需 EverOffice 运行`
 }

@@ -1,12 +1,12 @@
 // @vitest-environment happy-dom
 /**
- * 回归：文件标签右侧 Agent 停靠栏的会话必须「读写的分区键一致」。
+ * 回归：文件停靠栏（AgentChatDock，现仅原型外壳使用）会话必须「读写的分区键一致」。
  *
  * 停靠栏以 `useAgentSession(file.name, …, { sessionKey: file.id })` 列会话；网关
  * `GET /v1/agent/sessions` 对 pageLabel 做**精确匹配**（apps/gateway/src/modules/agent/service.ts:1125）。
  * 若 `createSession` 里写死 pageLabel: 'Agent'，停靠栏新建的会话就没有一个能被自己
- * 列出来：首次打开下拉为空；离开标签再回来（FileTabHost 只在激活时挂载 → 组件重挂
- * → 重新 listSessions）会话从下拉里消失，形成「对话记录找不到」。
+ * 列出来：首次打开下拉为空；离开视图再回来（宿主组件重挂 → 重新 listSessions）
+ * 会话从下拉里消失，形成「对话记录找不到」。
  *
  * 分区键用文件的稳定 id（不是文件名：改名/同名/超长都会把历史落进另一个分区）。
  * 这里用一个与网关同语义的假网关（pageLabel 精确过滤 + 120 字符上限）驱动真实 hook。
@@ -117,7 +117,7 @@ type Hook = ReturnType<typeof useAgentSession>
 function harness(pageLabel: string, options: Parameters<typeof useAgentSession>[3] = {}) {
   let current: Hook | null = null
   function Probe({ label }: { label: string }) {
-    current = useAgentSession(label, null, [], options)
+    current = useAgentSession(label, options)
     return <div data-testid="probe" />
   }
   return {
@@ -160,7 +160,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-/** 卸载再挂载：模拟文件标签切走再切回（FileTabHost 只在激活时挂载）。 */
+/** 卸载再挂载：模拟视图切走再切回（宿主组件卸载重挂）。 */
 async function remount(probe: { Probe: React.ComponentType<{ label: string }> }, label: string): Promise<void> {
   await act(async () => {
     root.unmount()

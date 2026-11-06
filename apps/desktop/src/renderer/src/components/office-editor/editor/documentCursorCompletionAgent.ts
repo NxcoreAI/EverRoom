@@ -759,15 +759,8 @@ export async function streamDocumentCursorCompletion(
           ),
           idempotencyKey: crypto.randomUUID(),
           responseLanguage: options.responseLanguage,
-          captureMemory: false,
-          recallMemory: false,
           toolsEnabled: false,
           context: {
-            selectedRoomId: input.roomId,
-            rooms: [{
-              id: input.roomId,
-              title: input.roomTitle?.trim() || input.documentName,
-            }],
           },
         })
         break

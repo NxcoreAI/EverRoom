@@ -28,9 +28,9 @@ export function readAppearanceTheme(): AppearanceThemeId {
     const parsed = JSON.parse(readFileSync(appearanceFile(), 'utf8')) as { theme?: unknown }
     if (isAppearanceThemeId(parsed.theme)) return parsed.theme
   } catch {
-    // 首次启动 / 文件损坏：回落到默认暖纸。
+    // 首次启动 / 文件损坏：回落到默认外观（素白）。
   }
-  return 'paper'
+  return 'plain'
 }
 
 export function applyNativeTheme(theme: AppearanceThemeId): void {
@@ -50,7 +50,7 @@ export function writeAppearanceTheme(theme: AppearanceThemeId): void {
   applyNativeTheme(theme)
 }
 
-/** 建窗底色：读不到偏好时用暖纸默认值。 */
+/** 建窗底色：读不到偏好时用默认外观（素白）的底色。 */
 export function appearanceWindowBackground(): string {
   return APPEARANCE_THEME_BACKGROUND[readAppearanceTheme()]
 }

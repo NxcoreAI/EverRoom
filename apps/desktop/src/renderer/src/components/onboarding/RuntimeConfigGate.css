@@ -780,7 +780,7 @@
   line-height: var(--ui-leading-tight);
 }
 
-/* 登录卡内的品牌时刻：一处缎带，说明“这是 EverRoom”，不做别的装饰。 */
+/* 登录卡内的品牌时刻：一处缎带，说明“这是 EverOffice”，不做别的装饰。 */
 .runtime-config-gate-ribbon {
   display: flex;
   align-items: center;

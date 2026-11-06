@@ -13,9 +13,9 @@ const packageVersion = JSON.parse(readFileSync(join(desktopRoot, 'package.json')
 // 由 workflow 注入；本地打包无此变量时回退 package.json 版本。
 const version = process.env.EVERROOM_FULL_VERSION ?? packageVersion
 const unpackedRoot = join(releaseRoot, 'win-unpacked')
-const appRoot = join(unpackedRoot, 'EverRoom.exe')
+const appRoot = join(unpackedRoot, 'EverOffice.exe')
 const resourcesRoot = join(unpackedRoot, 'resources')
-const installerPath = join(releaseRoot, `EverRoom-${version}-windows-x64.exe`)
+const installerPath = join(releaseRoot, `EverOffice-${version}-windows-x64.exe`)
 
 const failures = []
 const checked = []
@@ -49,7 +49,7 @@ if (existsSync(installerPath)) {
   const header = readFileSync(installerPath).subarray(0, 2).toString('latin1')
   if (header !== 'MZ') fail(`Installer is not a PE executable: ${relative(releaseRoot, installerPath)}`)
 }
-expectFile(appRoot, 'win-unpacked EverRoom.exe')
+expectFile(appRoot, 'win-unpacked EverOffice.exe')
 expectFile(join(resourcesRoot, 'packaged-env.json'), 'packaged-env.json')
 expectFile(join(resourcesRoot, 'app.asar'), 'app.asar')
 
@@ -101,7 +101,7 @@ expectFile(join(resourcesRoot, 'open-connector', 'dist', 'web', 'index.html'), '
 const ooExe = join(resourcesRoot, 'oo', 'win32-x64', 'oo.exe')
 expectFile(ooExe, 'oo CLI win32-x64')
 expectFile(join(resourcesRoot, 'genoffice', 'native', 'xlsx-sidecar.exe'), 'genoffice xlsx-sidecar.exe')
-for (const app of ['docs', 'sheets', 'slides', 'pdf']) {
+for (const app of ['docs', 'sheets', 'slides', 'pdf', 'markdown']) {
   expectFile(join(resourcesRoot, 'genoffice', app, 'main', 'embed.js'), `genoffice ${app} embed entry`)
 }
 

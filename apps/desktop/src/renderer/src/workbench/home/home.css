@@ -1,4 +1,4 @@
-/* 主页标签六个页面（最近 / 项目空间 / 所有文件 / Agent / 连接器 / 设置）的样式。
+/* 主页标签的七个页面（最近 / 项目空间 / 所有文件 / Agent / 技能 / 连接器 / 设置）的样式。
  *
  * 约定：
  * - 只用 tokens.css 的 --ui-* token（四套主题自动生效），不引第三套色板。
@@ -26,11 +26,12 @@
   margin-inline: auto;
 }
 
-/* 嵌入型页面（连接器）：复用原型组件的页头，只补外边距。 */
-.wb-home-scroll.is-embed { padding-top: 22px; gap: 18px; }
+/* 嵌入型页面（连接器）：复用原型组件的页头，只把它的起点与其它页面的页头对齐。 */
+.wb-home-scroll.is-embed { padding-top: 34px; gap: 26px; }
 .wb-home-embed-inner { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 
-/* 整页复用型页面（设置）：组件自带页头与内部滚动，宿主只负责撑满内容区。 */
+/* 整页复用型页面（设置）：组件负责分区导航与滚动，宿主只负责撑满内容区。
+ * 页头由组件隐藏（hideHeader），所以顶部留白与其它主页面的页头起点对齐（8 + 26）。 */
 .wb-home-embed {
   display: flex;
   flex-direction: column;
@@ -42,12 +43,12 @@
 .wb-home-embed > .page {
   flex: 1;
   width: 100%;
-  max-width: 1200px;
+  max-width: none;
   height: auto;
   min-height: 0;
-  margin: 0 auto;
+  margin: 0;
   overflow-y: auto;
-  padding: 24px 36px 48px;
+  padding: 34px 36px 64px;
 }
 .wb-home-embed > .ui-empty { flex: 1; }
 .wb-home-embed > .wb-home-state { padding: 24px 32px; }
@@ -55,8 +56,8 @@
 /* 主页按钮统一可见 focus（输入框有 ui.css 自己的 focus ring）。 */
 .wb-home-scroll button:focus-visible,
 .wb-home-embed button:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 2px;
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: var(--ui-focus-ring-offset);
 }
 
 /* 单行省略：flex 行里文字太长时用（外层 min-width:0 才能真正收缩）。 */
@@ -178,39 +179,84 @@
 .wb-home-skeleton-line.is-short { width: 24%; opacity: 0.7; }
 @keyframes wb-home-shimmer { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
 
-/* ───────────────── 卡片网格（最近空间 / Agent） ───────────────── */
+/* ───────────────── 分栏（最近页「新建」/「最近」两节，照原型 op-split） ───────────────── */
 
-.wb-home-card-grid {
+.wb-home-split {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 10px;
+  /* minmax(0,·)：两节各自成网格，列宽必须严格对半且不被内容 min-content 撑歪，
+     「新建」与「最近」两节的分栏线才能上下对齐 */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
 }
-
-.wb-home-space-card {
+.wb-home-split-col { display: flex; flex-direction: column; min-width: 0; }
+.wb-home-split-label {
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-width: 0;
-  padding: 14px 16px;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+  color: var(--ui-text-3);
+}
+.wb-home-split-label svg { flex: none; }
+.wb-home-split-link {
+  margin-left: auto;
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ui-radius-xs);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-split-link:hover { background: var(--ui-hover); color: var(--ui-text); }
+
+/* ───────────────── 新建瓦片（空白空间 + 四类文件，照原型 op-create-tile） ───────────────── */
+
+.wb-home-new-row { display: flex; gap: 10px; }
+.wb-home-new-tile {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 150px;
+  padding: 16px 8px 12px;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
   color: var(--ui-text);
-  text-align: left;
   cursor: pointer;
   transition:
+    transform var(--ui-duration-fast) var(--ui-ease),
     border-color var(--ui-duration-fast) var(--ui-ease),
-    box-shadow var(--ui-duration-fast) var(--ui-ease),
-    background var(--ui-duration-fast) var(--ui-ease);
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
 }
-.wb-home-space-card:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
-.wb-home-space-card.is-new {
-  border-style: dashed;
-  color: var(--ui-text-2);
-  background: var(--ui-surface-alt);
+.wb-home-new-tile:hover {
+  transform: translateY(var(--ui-card-lift));
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
 }
-.wb-home-space-card.is-new:hover { color: var(--ui-text); }
+.wb-home-new-tile:active { transform: translateY(0); box-shadow: var(--ui-shadow-sm); }
+/* 新建瓦片内图标浮起投影（原型 op-create-tile .op-ft-icon 同款） */
+.wb-home-new-tile .op-ft-icon { filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.18)); }
+.wb-home-new-glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  /* 原型 op-space-glyph：主题 accent → 紫的 135° 渐变 + 白色图标 */
+  background: linear-gradient(135deg, var(--ui-accent-fill), #7a4dff);
+  color: #fff;
+}
+.wb-home-new-name { font-size: var(--ui-text-xs); font-weight: 600; }
 
 .wb-home-space-icon {
   display: grid;
@@ -250,14 +296,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wb-home-space-side {
+/* 「最近」分栏里的一行项目空间（照原型 op-mem-row）：图标 + 名称/「时间 · N 项工作」+「打开」。 */
+.wb-home-space-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex: none;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text);
+  text-align: left;
+  cursor: pointer;
 }
-.wb-home-space-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); white-space: nowrap; }
+.wb-home-space-row:hover { background: var(--ui-hover); }
+.wb-home-space-row:active { background: var(--ui-hover-strong); }
+.wb-home-space-row-open {
+  flex: none;
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+  color: var(--ui-accent-strong);
+}
 
 /* ───────────────── 项目空间页（卡片 + 行内操作） ───────────────── */
 
@@ -276,10 +335,15 @@
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
   transition:
+    transform var(--ui-duration-fast) var(--ui-ease),
     border-color var(--ui-duration-fast) var(--ui-ease),
     box-shadow var(--ui-duration-fast) var(--ui-ease);
 }
-.wb-home-space-tile:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
+.wb-home-space-tile:hover {
+  transform: translateY(var(--ui-card-lift-sm));
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
+}
 .wb-home-space-tile.is-renaming { border-color: var(--ui-accent); box-shadow: 0 0 0 3px var(--ui-accent-softer); }
 .wb-home-space-tile.is-new {
   justify-content: center;
@@ -354,6 +418,7 @@
   cursor: pointer;
 }
 .wb-home-row:hover { background: var(--ui-hover); }
+.wb-home-row:active { background: var(--ui-hover-strong); }
 .wb-home-row.is-static { cursor: default; }
 .wb-home-row.is-static:hover { background: transparent; }
 .wb-home-row-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
@@ -400,37 +465,223 @@
 .wb-home-search .ui-input { height: 32px; }
 
 .wb-home-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.wb-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-surface);
-  color: var(--ui-text-2);
-  font-size: var(--ui-text-xs);
-  font-weight: 550;
-  cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+/* wb-chip（来源筛选小圆片）已随来源筛选标签一并移除，页面不再使用。 */
+
+/* ───────────────── 文件表（最近 / 所有文件共用：表头 + 行） ─────────────────
+ * 所有文件页照 everoffice 原型 `FileTable` 做「无外框的 WPS 式平铺表格」：
+ * 工具行裸贴在页头下，表头与行之间只有发丝线，整行悬停高亮。
+ * 「最近」分栏里的行（.wb-home-list 内的 .wb-home-filerow）不在
+ * .wb-home-filetbl 作用域内，保持原来的紧凑 48px 行高。 */
+
+/* 平铺容器：无描边、无底色，表格直接躺在页面画布上（原型 op-file-list）。 */
+.wb-home-filetbl {
+  display: flex;
+  flex-direction: column;
 }
-.wb-chip:hover { background: var(--ui-hover); color: var(--ui-text); }
-.wb-chip.is-active { background: var(--ui-accent-soft); border-color: transparent; color: var(--ui-accent-strong); }
-.wb-chip-count {
+.wb-home-filetbl .op-ft-icon { filter: drop-shadow(0 1px 2.5px rgba(0, 0, 0, 0.16)); }
+
+/* 工具行：类型标签在左，搜索 + 视图切换在右，同一行（原型 op-ft-bar）。 */
+.wb-home-filetbl-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
+}
+.wb-home-ft-seg {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+  width: fit-content;
+  padding: 3px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+}
+/* 原型 op-seg-btn：胶囊裸标签，选中态白底浮起，不带计数徽标。 */
+.wb-home-ft-seg-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-ft-seg-btn:hover { color: var(--ui-text); }
+.wb-home-ft-seg-btn.active {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+/* 搜索框（原型 op-ft-search）：无边框灰底，聚焦时白底 + 中性细边。 */
+.wb-home-ft-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 240px;
+  height: 32px;
+  margin-left: auto;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-ft-search:focus-within {
+  background: var(--ui-surface);
+  border-color: var(--ui-border-strong);
+}
+/* 注意：input 不能设显式 height —— Chromium 的光标会撑满内容高度，变成一根超高的竖线 */
+.wb-home-ft-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-size: var(--ui-text-sm);
+  padding: 6px 0;
+  margin: 0;
+  color: var(--ui-text);
+  caret-color: var(--ui-accent);
+}
+.wb-home-ft-search input::placeholder { color: var(--ui-text-3); }
+.wb-home-ft-search input::-webkit-search-cancel-button { display: none; }
+.wb-home-ft-search-clear {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: var(--ui-hover-strong);
+  color: var(--ui-text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.wb-home-ft-search-clear:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+/* 视图切换（原型 op-ft-views）：两个裸图标按钮。 */
+.wb-home-ft-views {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.wb-home-ft-views button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-3);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-ft-views button:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-home-ft-views button.active { background: var(--ui-hover); color: var(--ui-text); }
+/* 「最近」分栏里的紧凑行变体（.wb-home-list 内）：列窄行矮，与分栏卡内边距对齐。 */
+.wb-home-list .wb-home-filerow {
+  display: grid;
+  grid-template-columns: 26px minmax(120px, 1fr) 96px 68px 26px;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  height: 48px;
+  padding: 0 14px;
+}
+.wb-home-list .wb-home-filerow + .wb-home-filerow { border-top: 1px solid var(--ui-border-subtle); }
+.wb-home-list .wb-home-filerow-name { font-size: var(--ui-text-sm); font-weight: 550; }
+.wb-home-list .wb-home-filerow-time,
+.wb-home-list .wb-home-filerow-size { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+/* 表头与行共用同一份 grid 模板（原型 op-file-grid：36px 图标 + 220px 起步的
+ * 文件名列 + 150px 时间 + 100px 大小 + 30px 操作）；改列宽要两处一起改。 */
+.wb-home-filetbl-head,
+.wb-home-filetbl .wb-home-filerow {
+  display: grid;
+  grid-template-columns: 36px minmax(220px, 1fr) 150px 100px 30px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+}
+.wb-home-filetbl-head {
+  height: 40px;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: var(--ui-text-xs);
+  font-weight: 500;
+  color: var(--ui-text-3);
+}
+/* 「修改时间」列的排序指示（原型 op-file-sort：强调色 + 下箭头）。 */
+.wb-home-filetbl-sort {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-hover);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-2xs);
+  gap: 2px;
+  color: var(--ui-accent-strong);
+}
+/* 行（原型 op-file-row）：64px 宽行，行间发丝线，末行无线，悬停整行高亮。 */
+.wb-home-filetbl .wb-home-filerow {
+  position: relative;
+  height: 64px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.wb-home-filetbl .wb-home-filerow:last-child { border-bottom: none; }
+.wb-home-filetbl .wb-home-filerow:hover { background: var(--ui-hover); }
+.wb-home-filetbl .wb-home-filerow:active { background: var(--ui-hover-strong); }
+.wb-home-filerow-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-base);
   font-weight: 600;
 }
-.wb-chip.is-active .wb-chip-count { background: var(--ui-selected-strong); color: var(--ui-accent-strong); }
+.wb-home-filerow-time,
+.wb-home-filerow-size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text-2);
+  font-variant-numeric: tabular-nums;
+}
+/* 覆盖整行的透明按钮：整行可点，又不把行尾菜单按钮嵌进另一个可点区域里。 */
+.wb-home-filerow-open {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.wb-home-filerow-open:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: -2px; }
+.wb-home-filerow-actions { position: relative; z-index: 1; display: flex; justify-content: flex-end; }
+.wb-home-filerow-actions > * {
+  opacity: 0;
+  transition: opacity var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-filerow:hover .wb-home-filerow-actions > *,
+.wb-home-filerow:focus-within .wb-home-filerow-actions > * { opacity: 1; }
+.wb-home-filetbl-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+.wb-home-filetbl-grid { padding: 12px; }
 
 /* ───────────────── 所有文件：网格视图 ───────────────── */
 
@@ -453,10 +704,15 @@
   text-align: left;
   cursor: pointer;
   transition:
+    transform var(--ui-duration-fast) var(--ui-ease),
     border-color var(--ui-duration-fast) var(--ui-ease),
     box-shadow var(--ui-duration-fast) var(--ui-ease);
 }
-.wb-home-file-tile:hover { border-color: var(--ui-border-strong); box-shadow: var(--ui-shadow-sm); }
+.wb-home-file-tile:hover {
+  transform: translateY(var(--ui-card-lift-sm));
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-shadow-sm);
+}
 .wb-home-file-tile-name {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -477,76 +733,38 @@
   color: var(--ui-text-3);
 }
 
-/* ───────────────── Agent 页：统计 / 卡片 ───────────────── */
+/* ───────────────── Agent 页宿主 ─────────────────
+   页面本体（页头 / Hero / 分段控件 / .op-info-card 卡片）**直接复用原型
+   `office-proto/pages/AgentView.tsx` 的代码与 `office-proto.css` 的样式**，
+   这里只声明宿主容器：原型页面靠自身 margin 控节奏（`.op-page-head` 下距 20、
+   `.op-seg` 上下 18/16），所以把主页宿主的 `gap` 归零，避免叠加成双倍留白；
+   内容列按原型用 1120（其它主页是 1080，这页跟随原型的版心）。 */
+.wb-home-agent-host {
+  padding-top: 30px;
+  gap: 0;
+}
+.wb-home-agent-host > * {
+  max-width: 1120px;
+}
+/* 主页宿主把直接子元素拉成 width:100%，而原型的 `.op-seg` 是 fit-content 的小标签条
+   （原型里它挂在 flex 容器里，没有这条约束）。这里只把宽度还给它。 */
+.wb-home-agent-host > .op-seg {
+  width: fit-content;
+  margin-inline: 0;   /* 宿主把子元素居中（margin-inline:auto），原型里它是左对齐的小标签条 */
+}
+.wb-home-agent-host .wb-home-exp-meta {
+  display: block;
+  margin-top: 3px;
+}
 
-.wb-home-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
-}
-.wb-home-stat-grid.is-compact { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
-.wb-home-stat {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px 14px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface-alt);
-}
-.wb-home-stat-value {
-  font-family: var(--ui-font-display);
-  font-size: var(--ui-text-xl);
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: var(--ui-tracking-tight);
-  color: var(--ui-text);
-}
-.wb-home-stat-grid.is-compact .wb-home-stat-value { font-size: var(--ui-text-lg); }
-.wb-home-stat-value.is-running { color: var(--ui-running); }
-.wb-home-stat-value.is-danger { color: var(--ui-danger); }
-.wb-home-stat-label { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
-
-.wb-home-agent-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface);
-}
-.wb-home-agent-avatar {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-strong);
-}
-.wb-home-agent-main { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
-.wb-home-agent-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
-  font-size: var(--ui-text-base);
-}
-.wb-home-agent-title strong { font-weight: 600; letter-spacing: var(--ui-tracking-tight); }
-.wb-home-agent-desc {
-  font-size: var(--ui-text-xs);
+.wb-home-exp { display: flex; flex-direction: column; gap: 4px; }
+.wb-home-exp + .wb-home-exp { padding-top: 12px; border-top: 1px solid var(--ui-border-subtle); }
+.wb-home-exp p {
+  margin: 0;
+  font-size: var(--ui-text-sm);
   line-height: var(--ui-leading-normal);
-  color: var(--ui-text-2);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
-.wb-home-agent-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+.wb-home-exp-meta { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
 
 /* ───────────────── 窄窗兜底（窗口最小 1080，这里防逐级压缩破版） ───────────────── */
 
@@ -554,7 +772,8 @@
   .wb-home-scroll { padding: 4px 24px 48px; gap: 22px; }
   .wb-home-scroll .ui-pagehead { flex-wrap: wrap; }
   .wb-home-scroll .ui-pagehead-actions { margin-left: 0; }
-  .wb-home-card-grid { grid-template-columns: 1fr; }
+  .op-profile-grid { grid-template-columns: 1fr; }
+  .wb-home-split { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .wb-home-space-grid { grid-template-columns: 1fr; }
   .wb-home-toolbar-right { margin-left: 0; width: 100%; justify-content: flex-start; }
   .wb-home-search { flex: 1 1 100%; max-width: none; }
@@ -562,7 +781,214 @@
   .wb-home-scroll.is-embed { padding: 16px 24px 40px; }
 }
 
-/* 触控/无 hover 设备上，卡片操作不能被 hover 藏住。 */
+/* 触控/无 hover 设备上，卡片/行操作不能被 hover 藏住。 */
 @media (hover: none) {
   .wb-home-space-tile-actions { opacity: 1; }
+  .wb-home-filerow-actions > * { opacity: 1; }
+}
+
+/* ───────────────── 今日洞察卡（最近页顶部；数据来自 window.nxcore.journal） ─────────────────
+ * 外观与「新建 / 最近」两节同一条内容列（`.wb-home-scroll > *` 已给 1080 上限），
+ * 卡片本体照 workspace/overview.css 的 `.wb-ov-card` 语言：1px hairline + surface 底 + lg 圆角 + 16/18 内距。
+ * 只有强调处用 --ui-accent-* token，不引新色板、不引新字体。
+ */
+
+.wb-journal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+}
+
+/* 头部：✨ +「今日洞察」/ 副标题 + 右侧刷新 */
+.wb-journal-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wb-journal-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 26%;
+  /* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
+  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
+}
+.wb-journal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wb-journal-name {
+  margin: 0;
+  color: var(--ui-text);
+  font-size: var(--ui-text-md);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+  line-height: var(--ui-leading-snug);
+}
+.wb-journal-sub {
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-snug);
+  overflow-wrap: anywhere;
+}
+.wb-journal-refresh { flex: none; margin-left: auto; }
+
+/* 正文：headline 一行加粗 + summary 逐字（打字机） */
+.wb-journal-headline {
+  margin: 2px 0 0;
+  color: var(--ui-text);
+  font-size: var(--ui-text-base);
+  font-weight: 650;
+  letter-spacing: var(--ui-tracking-tight);
+  line-height: var(--ui-leading-snug);
+}
+.wb-journal-body {
+  margin: 0;
+  max-width: 78ch;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  animation: wb-journal-caret 1s steps(1, end) infinite;
+}
+@keyframes wb-journal-caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* 建议列表：总结之外的可执行项，前缀「建议」小签以区分要点 */
+.wb-journal-advice {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-journal-advice li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-advice-tag {
+  flex: none;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+}
+
+/* 要点列表：每条前一个小圆点（不用 list-style，避免主题下的 marker 颜色失控） */
+.wb-journal-bullets {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-journal-bullets li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-bullet-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 7px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent);
+}
+
+/* 状态：加载 / 不可用 / 失败 / 空 —— 都只占一行，别把卡片撑成一块大空白 */
+.wb-journal-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+.wb-journal-skel {
+  flex: none;
+  width: 148px;
+  height: 9px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-hover);
+  animation: wb-home-shimmer 1.4s var(--ui-ease) infinite;
+}
+.wb-journal-empty {
+  margin: 2px 0 0;
+  max-width: 78ch;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  line-height: var(--ui-leading-normal);
+}
+/* 重写失败的一行弱化提示：比正文更轻，不抢眼但看得见。 */
+.wb-journal-hint {
+  margin: 0;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  line-height: var(--ui-leading-normal);
+}
+
+/* 底部：左侧动作按钮（可无），右下角助理署名 */
+.wb-journal-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.wb-journal-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.wb-journal-act {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-2xs);
+  font-weight: 600;
+  transition: background 0.16s var(--ui-ease), border-color 0.16s var(--ui-ease), color 0.16s var(--ui-ease);
+}
+.wb-journal-act:hover {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+  color: var(--ui-accent-strong);
+}
+.wb-journal-sign {
+  margin-left: auto;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-2xs);
+  opacity: 0.72;
+}
+
+/* 减弱动效：摘要直接全文（JS 侧已跳过打字机），这里只兜底 caret 闪烁与骨架呼吸。 */
+@media (prefers-reduced-motion: reduce) {
+  .wb-journal-caret { animation: none; opacity: 0; }
+  .wb-journal-skel { animation: none; }
+  .wb-journal-act { transition: none; }
+}
+
+@media (max-width: 980px) {
+  .wb-journal-card { padding: 14px 14px; }
 }

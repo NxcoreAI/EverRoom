@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Agent 调试台「离线归档来源」冒烟脚本：不启动 Gateway / EverRoom，验证 Vite dev server
+// Agent 调试台「离线归档来源」冒烟脚本：不启动 Gateway / EverOffice，验证 Vite dev server
 // 直接读 <dataDir>/agent-debug/<source>/ 并返回与 Gateway 相同形状的数据。
 //
 // 用法：

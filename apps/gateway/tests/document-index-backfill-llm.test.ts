@@ -9,7 +9,6 @@ import {
   filterVerifyVerdicts,
   IndexBackfillLlm,
   IndexBackfillLlmError,
-  JUDGE_CONFIDENCE_THRESHOLD,
   parseJudgeResponse,
   parseJudgeSourceId,
   parseVerifyResponse,
@@ -23,9 +22,6 @@ const INPUT = {
   documents: [
     { blockId: "block-1", documentTitle: "来源甲", textPreview: "动态计算图与自动求导的介绍" },
     { blockId: "block-2", documentTitle: "来源乙", textPreview: "张量系统介绍" },
-  ],
-  memories: [
-    { memoryId: "room-1-memory-1", type: "事实", content: "用户偏好中文技术文档" },
   ],
 };
 
@@ -60,21 +56,13 @@ describe("index backfill llm", () => {
         documentTitle: "标题",
         textPreview: "预".repeat(20),
       })),
-      memories: Array.from({ length: 30 }, (_, index) => ({
-        memoryId: `room-1-memory-${index}`,
-        type: "事实",
-        content: "记".repeat(20),
-      })),
     });
     expect(prompt).toContain("不可信数据");
     expect(prompt).toContain("宁缺毋滥");
     expect(prompt).toContain("【候选来源块】");
-    expect(prompt).toContain("【候选记忆项】");
-    // 预算裁剪：来源块 40、记忆项 24 封顶。
+    // 预算裁剪：来源块 40 封顶。
     expect(prompt).toContain("sourceId=doc:block-39");
     expect(prompt).not.toContain("sourceId=doc:block-40");
-    expect(prompt).toContain("sourceId=mem:room-1-memory-23");
-    expect(prompt).not.toContain("sourceId=mem:room-1-memory-24");
     expect(prompt.length).toBeLessThanOrEqual(16_000);
     expect(prompt).toContain("paragraphOrdinal");
   });
@@ -82,24 +70,21 @@ describe("index backfill llm", () => {
   it("parses fenced and prose-wrapped arrays and validates fields", () => {
     expect(parseJudgeResponse('[{"paragraphOrdinal":0,"sourceId":"doc:b","confidence":0.9}]'))
       .toEqual([{ paragraphOrdinal: 0, sourceId: "doc:b", confidence: 0.9 }]);
-    expect(parseJudgeResponse('好的，结果如下：\n```json\n[{"paragraphOrdinal":0,"sourceId":"mem:m","confidence":1.7}]\n```'))
-      .toEqual([{ paragraphOrdinal: 0, sourceId: "mem:m", confidence: 1 }]);
+    expect(parseJudgeResponse('好的，结果如下：\n```json\n[{"paragraphOrdinal":0,"sourceId":"doc:m","confidence":1.7}]\n```'))
+      .toEqual([{ paragraphOrdinal: 0, sourceId: "doc:m", confidence: 1 }]);
     expect(parseJudgeResponse('[{"paragraphOrdinal":0.5,"sourceId":"doc:b","confidence":1},2,{"sourceId":"doc:x"}]')).toEqual([]);
     expect(() => parseJudgeResponse("没有数组")).toThrow(IndexBackfillLlmError);
   });
 
   it("parses sourceId into kind-aware references and rejects malformed prefixes", () => {
     expect(parseJudgeSourceId("doc:block-7")).toEqual({ kind: "document", blockId: "block-7" });
-    expect(parseJudgeSourceId("mem:room-1-memory-3")).toEqual({ kind: "memory", memoryId: "room-1-memory-3" });
     expect(parseJudgeSourceId("block-7")).toBeNull();
     expect(parseJudgeSourceId("doc:")).toBeNull();
-    expect(parseJudgeSourceId("mem:")).toBeNull();
   });
 
   it("filters verdicts: threshold, sourceId whitelist across both kinds, ordinal scope, first-wins", () => {
     const verdicts = parseJudgeResponse(JSON.stringify([
       { paragraphOrdinal: 0, sourceId: "doc:block-1", confidence: 0.9 },
-      { paragraphOrdinal: 3, sourceId: "mem:room-1-memory-1", confidence: JUDGE_CONFIDENCE_THRESHOLD },
       { paragraphOrdinal: 0, sourceId: "doc:block-2", confidence: 0.99 },
       { paragraphOrdinal: 0, sourceId: "doc:block-1", confidence: 0.5 },
       { paragraphOrdinal: 9, sourceId: "doc:block-1", confidence: 0.99 },
@@ -109,7 +94,6 @@ describe("index backfill llm", () => {
     const filtered = filterJudgeVerdicts(verdicts, INPUT);
     expect(filtered).toEqual([
       { paragraphOrdinal: 0, sourceId: "doc:block-1", confidence: 0.9 },
-      { paragraphOrdinal: 3, sourceId: "mem:room-1-memory-1", confidence: JUDGE_CONFIDENCE_THRESHOLD },
     ]);
   });
 
@@ -134,7 +118,7 @@ describe("index backfill llm", () => {
 describe("index backfill verify", () => {
   const ENTRIES = [
     { index: 0, paragraph: "PyTorch 支持动态计算图与自动求导的改写表述。", sourceKind: "document" as const, sourceLabel: "来源甲", sourcePreview: "动态计算图与自动求导" },
-    { index: 1, paragraph: "完全无关的新段落，讨论烹饪与旅行。", sourceKind: "memory" as const, sourceLabel: "事实", sourcePreview: "用户偏好中文技术文档" },
+    { index: 1, paragraph: "完全无关的新段落，讨论烹饪与旅行。", sourceKind: "document" as const, sourceLabel: "来源乙", sourcePreview: "张量系统介绍" },
   ];
 
   it("builds a verify prompt with per-entry sources, caps, and the untrusted-data warning", () => {

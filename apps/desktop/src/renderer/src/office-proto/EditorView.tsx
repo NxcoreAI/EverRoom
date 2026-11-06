@@ -14,8 +14,9 @@ import { SideDock } from './SideDock'
 interface EditorViewProps {
   file: OfficeFile
   onToast: (msg: string) => void
-  /** 复用场景（如 WorkBuddy 式右侧产物面板）：不渲染 Agent/材料/历史记录停靠栏，
-   *  对话已在主区。默认 false，保持旧调用（OfficeProto 标签页）行为不变。 */
+  /** 工作台气泡窗等复用场景：不渲染 Agent/材料/历史记录停靠栏，编辑区占满整行
+   *  （工作台的 AI 对话在项目空间主区，不再挂文件旁的停靠栏）。
+   *  默认 false 仅供原型外壳（OfficeProto，测试用）保持旧行为。 */
   hideSideDock?: boolean
 }
 
@@ -52,7 +53,7 @@ function nativeSpec(file: OfficeFile): NativeSpec {
  *  SideDock，Agent 面直接用主窗口 preload 的真实网关桥。GenOffice 自带的对话区/侧栏
  *  已从 vendor 源码删除（见 genoffice/bridge.ts），停靠栏只由外壳提供。
  *  真实文件库文件用 realCatalog 打开文件库内置预览，mock 文件才构造原型 spec。
- *  hideSideDock 由复用方（产物面板）传入，此时编辑区占满整行。 */
+ *  hideSideDock 由工作台（气泡窗）传入；原型外壳（OfficeProto）仍渲染停靠栏。 */
 function NativeFileView({
   file, onToast, hideSideDock,
 }: {

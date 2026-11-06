@@ -27,10 +27,12 @@
   transition:
     background var(--ui-duration-fast) var(--ui-ease),
     border-color var(--ui-duration-fast) var(--ui-ease),
-    color var(--ui-duration-fast) var(--ui-ease);
+    color var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
 }
 .ui-btn:hover { background: var(--ui-hover); border-color: var(--ui-border-strong); }
-.ui-btn:active { background: var(--ui-hover-strong); }
+/* 按下：底色深一档 + 内收 scale(--ui-press-scale)（原型 iWork 的 .op-primary-btn:active）。 */
+.ui-btn:active:not(:disabled) { background: var(--ui-hover-strong); transform: scale(var(--ui-press-scale)); }
 .ui-btn:disabled { opacity: 0.5; cursor: default; }
 .ui-btn:disabled:hover { background: var(--ui-surface); border-color: var(--ui-border); }
 .ui-btn--sm { height: 28px; padding: 0 10px; font-size: var(--ui-text-xs); border-radius: var(--ui-radius-sm); }
@@ -47,7 +49,7 @@
   font-weight: 600;
 }
 .ui-btn--primary:hover { background: var(--ui-accent-fill-hover); border-color: var(--ui-accent-fill-hover); }
-.ui-btn--primary:active { background: var(--ui-accent-strong); }
+.ui-btn--primary:active:not(:disabled) { background: var(--ui-accent-strong); transform: scale(var(--ui-press-scale)); }
 .ui-btn--primary:disabled:hover { background: var(--ui-accent-fill); border-color: var(--ui-accent-fill); }
 
 .ui-btn--soft {
@@ -78,9 +80,13 @@
   background: transparent;
   color: var(--ui-text-2);
   cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    transform var(--ui-duration-fast) var(--ui-ease);
 }
 .ui-iconbtn:hover { background: var(--ui-hover); color: var(--ui-text); }
+.ui-iconbtn:active:not(:disabled) { background: var(--ui-hover-strong); transform: scale(var(--ui-press-scale)); }
 .ui-iconbtn--sm { width: 26px; height: 26px; border-radius: var(--ui-radius-xs); }
 .ui-iconbtn.is-active { background: var(--ui-accent-soft); color: var(--ui-accent-strong); }
 .ui-iconbtn.is-danger:hover { background: var(--ui-danger-soft); color: var(--ui-danger); }
@@ -131,6 +137,38 @@
 .ui-badge--running { background: var(--ui-running-soft); color: var(--ui-running); }
 .ui-badge--running .ui-badge-dot { animation: ui-pulse 1.6s var(--ui-ease) infinite; }
 @keyframes ui-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ───────────────── 开关（Toggle） ───────────────── */
+
+.ui-toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface-sunken);
+  cursor: pointer;
+  transition: background var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease);
+}
+.ui-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  transition: transform var(--ui-duration-fast) var(--ui-ease);
+}
+.ui-toggle.is-on { background: var(--ui-accent-fill); border-color: var(--ui-accent-fill); }
+.ui-toggle.is-on .ui-toggle-knob { transform: translateX(14px); background: var(--ui-accent-contrast); }
+.ui-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
+.ui-toggle.is-busy { cursor: progress; }
+.ui-toggle:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 
 .ui-empty {
   display: flex;

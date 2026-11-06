@@ -3,7 +3,7 @@
  *
  * Gateway 运行期间会把终态 run 写到
  * `<dataDir>/agent-debug/<source>/{index.json,runs/<YYYYMMDD>/<runId>.ndjson}`
- * （见 gateway 的 `agent-debug/archive.ts`）。EverRoom/Gateway 没起来时，调试页
+ * （见 gateway 的 `agent-debug/archive.ts`）。EverOffice/Gateway 没起来时，调试页
  * 通过本模块直接读这些文件，返回与 Gateway 相同形状的 `AgentDebugSnapshot` /
  * `AgentDebugRunEvents`，让页面无需任何改动就能回看历史。
  *

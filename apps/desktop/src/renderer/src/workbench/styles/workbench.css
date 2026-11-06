@@ -1,9 +1,13 @@
 /* 标签页工作台外壳：窗口级标签栏 + 互斥侧栏 + 内容区。
  *
- * 视觉语言（沿用 styles/tokens.css 的暖纸/四主题）：
- *   - 外壳/侧栏 = --ui-chrome 暖纸；内容画布 = --ui-bg；卡片/编辑器 = --ui-surface。
+ * 视觉语言（沿用 styles/tokens.css，四套主题自动生效）：
+ *   - 外壳/侧栏 = --ui-chrome；内容画布 = --ui-bg；卡片/编辑器 = --ui-surface。
+ *     素白主题的 --ui-chrome 是半透明的，所以侧栏/顶栏在这里额外挂
+ *     backdrop-filter（--ui-glass-blur / --ui-glass-saturate）：暖纸下模糊为 0，
+ *     等于纯色；素白下就是原型的毛玻璃窗口。
  *   - 层次靠 1px hairline + 底色分层；只有浮层（菜单/弹窗/toast）用阴影。
- *   - 选中态：暖纸底上用「白色浮起卡片」，白色表面上用「青绿 10% 淡底」。
+ *   - 选中态由主题决定（--ui-nav-active-*）：暖纸是「白色浮起卡片」，
+ *     素白是原型的「系统蓝实底白字」。
  *   - 顶部标签栏整条可拖拽；macOS 红绿灯在左，Windows 自绘按钮在右。 */
 
 .wb-root {
@@ -32,8 +36,8 @@
 .wb-root input,
 .wb-root textarea { font-family: inherit; }
 .wb-root :focus-visible {
-  outline: 2px solid var(--ui-accent-line);
-  outline-offset: 2px;
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: var(--ui-focus-ring-offset);
 }
 .wb-root ::-webkit-scrollbar { width: 9px; height: 9px; }
 .wb-root ::-webkit-scrollbar-thumb {
@@ -55,6 +59,22 @@
   }
 }
 
+/* ───────────────── 无障碍工具 ───────────────── */
+
+/* 视觉隐藏但读屏可读（打字机动画期间提供完整洞察正文）。 */
+.wb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ───────────────── 标签栏 ───────────────── */
 
 .wb-tabbar {
@@ -65,6 +85,8 @@
   height: 44px;
   padding: 0 10px;
   background: var(--ui-chrome);
+  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
   border-bottom: 1px solid var(--ui-border);
   -webkit-app-region: drag;
   user-select: none;
@@ -115,6 +137,7 @@
   transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-tab:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-tab:active { background: var(--ui-hover-strong); }
 
 /* 主页标签：图标 + 文字，像一个小房子按钮 */
 .wb-tab--home { padding: 0 12px; }
@@ -151,6 +174,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 待发送批注角标：工作空间标签上的小数字（对话区批注条的另一处提示）。 */
+.wb-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-strong);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .wb-tab-close {
   display: grid;
   place-items: center;
@@ -257,6 +297,9 @@
   min-height: 0;
   padding: 0 10px 10px;
   background: var(--ui-chrome);
+  /* 素白主题的半透明外框 + 20px 模糊（毛玻璃侧栏）；暖纸下 --ui-glass-blur 为 0，等于纯色。 */
+  backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--ui-glass-blur)) saturate(var(--ui-glass-saturate));
   border-right: 1px solid var(--ui-border);
 }
 
@@ -303,19 +346,25 @@
   text-align: left;
   transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
 }
+/* 悬停/按下：原型里导航行是「浅灰底 + 按下一档更深」，没有位移。 */
 .wb-nav-item:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-nav-item:active { background: var(--ui-hover-strong); }
+/* 选中态交给主题：暖纸 = 白色浮起卡片，素白 = 系统蓝实底白字（--ui-nav-active-*）。 */
 .wb-nav-item.is-active {
-  background: var(--ui-surface);
-  border-color: var(--ui-border);
-  color: var(--ui-text);
+  background: var(--ui-nav-active-bg);
+  border-color: var(--ui-nav-active-border);
+  color: var(--ui-nav-active-color);
   font-weight: 600;
-  box-shadow: var(--ui-shadow-sm);
+  box-shadow: var(--ui-nav-active-shadow);
 }
-.wb-nav-item.is-active .wb-nav-icon { color: var(--ui-accent-strong); }
+.wb-nav-item.is-active .wb-nav-icon { color: var(--ui-nav-active-icon); }
 .wb-nav-icon { display: grid; place-items: center; flex: none; width: 18px; }
 .wb-nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .wb-sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin-top: auto;
   padding-top: 8px;
   border-top: 1px solid var(--ui-border);
@@ -334,7 +383,7 @@
   transition: background var(--ui-duration-fast) var(--ui-ease);
 }
 .wb-account:hover { background: var(--ui-hover); }
-.wb-account.is-active { background: var(--ui-surface); border-color: var(--ui-border); box-shadow: var(--ui-shadow-sm); }
+.wb-account:active { background: var(--ui-hover-strong); }
 .wb-account-avatar {
   display: grid;
   place-items: center;
@@ -362,9 +411,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wb-account-gear { flex: none; color: var(--ui-text-3); opacity: 0; transition: opacity var(--ui-duration-fast) var(--ui-ease); }
-.wb-account:hover .wb-account-gear,
-.wb-account.is-active .wb-account-gear { opacity: 1; }
+.wb-account[data-state='open'] { background: var(--ui-surface); border-color: var(--ui-border); box-shadow: var(--ui-shadow-sm); }
+/* 账号行是菜单触发器：常驻一个上下箭头，提示「点开还有东西」。 */
+.wb-account-chevron { flex: none; color: var(--ui-text-3); }
+
+/* 账号菜单：与侧栏同宽，贴着底部弹出。 */
+.wb-account-menu { min-width: 184px; }
 
 /* ───────────────── 工作空间侧栏 ───────────────── */
 
@@ -488,16 +540,6 @@
 .wb-ws-work-row.is-draft .wb-ws-work-title { font-style: italic; }
 .wb-ws-work-row.is-renaming { padding: 2px 4px; }
 .wb-ws-work-rename { height: 28px; font-size: var(--ui-text-xs); }
-
-/* ───────────────── 文件标签 ───────────────── */
-
-.wb-filetab {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  background: var(--ui-surface);
-}
 
 /* ───────────────── 新建空间弹窗表单 ───────────────── */
 
@@ -637,7 +679,7 @@
   font-size: var(--ui-text-sm);
 }
 
-/* 标签栏左侧：侧栏开关（固定占位，文件标签时隐藏按钮但不改变标签位置）。 */
+/* 标签栏左侧：侧栏开关（固定占位，避免标签横跳）。 */
 .wb-tabbar-left {
   display: flex;
   align-items: center;
@@ -652,3 +694,112 @@
   height: 30px;
   flex: none;
 }
+
+/* ===== 升级弹窗(PlanUpgradeModal)与头像菜单账户区 ===== */
+
+/* 头像菜单顶部:档位行(Free/Pro + 升级)与积分余额行 */
+.wb-account-plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+}
+.wb-account-plan strong { flex: 1; font-size: 12.5px; color: var(--ui-text, #1d1d1f); }
+.wb-account-plan-upgrade {
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--ui-text, #1d1d1f);
+  color: var(--ui-surface, #fff);
+  cursor: pointer;
+}
+.wb-account-plan-upgrade:hover { opacity: 0.85; }
+.wb-account-credits {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+.wb-account-credits:hover { background: var(--ui-hover, rgba(0,0,0,0.05)); border-radius: 6px; }
+.wb-account-credits strong { flex: 1; font-size: 12.5px; color: var(--ui-text, #1d1d1f); }
+.wb-account-credits-value { font-variant-numeric: tabular-nums; }
+.wb-account-credits ChevronRight { flex: none; }
+
+/* 升级弹窗档位卡片 */
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 12px;
+  background: var(--ui-surface, #fff);
+}
+.plan-card[data-current='true'] {
+  border-color: var(--ui-accent, #0071e3);
+  box-shadow: 0 0 0 1px var(--ui-accent, #0071e3);
+}
+.plan-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.plan-card-head strong { font-size: 15px; }
+.plan-card-price { font-size: 13px; font-weight: 600; color: var(--ui-text-muted, #666); font-variant-numeric: tabular-nums; }
+.plan-card-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ui-text-muted, #555);
+  flex: 1;
+}
+.plan-card-features li { display: flex; gap: 6px; align-items: baseline; }
+.plan-card-features li::before { content: '✓'; color: var(--ui-accent, #0071e3); font-size: 11px; }
+/* 充值弹窗卡片:积分档位说明行 */
+.plan-card-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-text-muted, #666);
+  flex: 1;
+}
+.plan-card-cta {
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text-muted, #666);
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.plan-card-cta.is-primary {
+  background: var(--ui-text, #1d1d1f);
+  color: var(--ui-surface, #fff);
+  border-color: var(--ui-text, #1d1d1f);
+  cursor: pointer;
+}
+.plan-card-cta.is-primary:hover:not(:disabled) { opacity: 0.85; }
+.plan-card-cta:disabled { opacity: 0.6; cursor: default; }
+.plan-purchase-message { display: block; margin-top: 10px; font-size: 12px; color: var(--ui-text-muted, #666); }
+.plan-purchase-message[data-phase='failed'] { color: var(--ui-danger, #c4320e); }
+.plan-purchase-done { margin: 8px 0 0; font-size: 12.5px; color: var(--ui-accent, #0071e3); }

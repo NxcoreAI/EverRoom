@@ -1,0 +1,239 @@
+/* 看板骨架：顶栏 → 左轨道 + 主区（摘要 / 关键数字 / 执行带 / 分页 / 面板）。
+   层级靠留白和字号区分：区段之间 16–24px，卡片内部统一 12–16px。 */
+@import './tokens.css';
+
+.db-shell {
+  display: grid;
+  grid-template-rows: var(--header-height) minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+/* ── 顶栏：只放「看谁的数据」相关的开关 ─────────────────────────────────── */
+.db-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.db-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.db-brand-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.db-brand-sub {
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.db-header-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* 控件统一高度 28px、同一描线，避免「一堆不同形状的东西」 */
+.db-control {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.db-control:hover {
+  border-color: var(--line-strong);
+}
+
+.db-control-label {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.db-select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  max-width: 220px;
+  padding-right: 2px;
+  cursor: pointer;
+}
+
+.db-segmented {
+  display: flex;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.db-segment {
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+  border-right: 1px solid var(--line-soft);
+  white-space: nowrap;
+}
+
+.db-segment:last-child {
+  border-right: 0;
+}
+
+.db-segment:hover {
+  color: var(--ink);
+}
+
+.db-segment.is-on {
+  background: var(--surface-3);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.db-conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.db-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  flex: 0 0 auto;
+}
+
+.db-dot[data-state='live'] { background: var(--ok); }
+.db-dot[data-state='error'] { background: var(--err); }
+.db-dot[data-state='readonly'] { background: var(--ctx); }
+.db-dot[data-state='pending'] { background: var(--warn); }
+
+/* ── 主体：左轨道 + 主区 ─────────────────────────────────────────────────── */
+.db-body {
+  display: grid;
+  grid-template-columns: var(--rail-width) minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.db-main {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--paper);
+}
+
+.db-panel-area {
+  min-height: 0;
+  overflow: auto;
+}
+
+.db-panel-scroll {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  align-content: start;
+  max-width: 1320px;
+}
+
+/* ── 卡片：看板里唯一的容器样式（标题 + 结论 + 折叠明细） ──────────────── */
+.db-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.db-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.db-card-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.db-card-sub {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-card-hint {
+  margin-left: auto;
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.db-card-body {
+  padding: var(--sp-4);
+}
+
+/* ── 空态 ────────────────────────────────────────────────────────────────── */
+.db-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--sp-2);
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: var(--fs-body);
+  height: 100%;
+}
+
+.db-empty-title {
+  color: var(--ink);
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+
+.db-empty-hint {
+  font-size: var(--fs-small);
+  color: var(--ink-3);
+  max-width: 460px;
+  line-height: 1.8;
+}
+
+/* 语义文字色 */
+.is-error { color: var(--err); }
+.is-warn { color: var(--warn); }
+.is-ok { color: var(--ok); }
+.is-muted { color: var(--ink-3); }

@@ -1,0 +1,137 @@
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.panel-inner {
+  border: 0;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4) 0;
+}
+
+.panel-inner .panel-head {
+  padding: var(--sp-2) var(--sp-3) 0;
+}
+
+.panel-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.panel-meta {
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.panel-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+.panel-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.panel-toggle-caret {
+  font-size: 9px;
+  color: var(--ink-4);
+  transition: transform 0.12s ease;
+}
+
+.panel-toggle-caret[data-open] {
+  transform: rotate(180deg);
+}
+
+.panel-conclusion {
+  margin: var(--sp-1) var(--sp-4) 0;
+  font-size: var(--fs-lead);
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.panel-inner .panel-conclusion {
+  margin: var(--sp-1) var(--sp-3) 0;
+}
+
+.panel-conclusion b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.panel-body {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+}
+
+.panel-inner .panel-body {
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+}
+
+/* 指标格子 */
+.metric {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.metric-label {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.metric-value {
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.metric-value[data-tone='error'] { color: var(--err); }
+.metric-value[data-tone='warn'] { color: var(--warn); }
+.metric-value[data-tone='cost'] { color: var(--cost); }
+.metric-value[data-tone='ok'] { color: var(--ok); }
+
+.metric-hint {
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

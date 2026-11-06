@@ -103,14 +103,10 @@ export async function runDocumentAiReview(
     prompt: buildDocumentAiReviewPrompt({ documentTitle: input.documentTitle }, input.responseLanguage),
     idempotencyKey: crypto.randomUUID(),
     responseLanguage: input.responseLanguage,
-    captureMemory: false,
     // Room 记忆随 context.selectedRoomId 注入：审阅建议结合记忆里的用户背景、目标与事实。
-    recallMemory: true,
     // 不传 toolsEnabled（默认 true）：审阅需要文档读取与评论工具。
     context: {
-      selectedRoomId: input.roomId,
       activeDocument: {
-        roomId: input.roomId,
         documentId: input.documentId,
         title: input.documentTitle,
         version: input.version,

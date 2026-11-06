@@ -1,11 +1,11 @@
 {
   "name": "@nxcore/gateway",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "OpenNxCore local gateway service",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.16"
   },
   "scripts": {
     "dev": "tsx watch src/bin/serve.ts",
@@ -13,7 +13,7 @@
     "build": "tsup && node scripts/copy-migrations.mjs",
     "start": "node dist/serve.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --exclude tests/memory-doc-pipeline.test.ts --exclude tests/memory-office-pdf-pipeline.test.ts && vitest run tests/memory-doc-pipeline.test.ts tests/memory-office-pdf-pipeline.test.ts && vitest run --dir ../../submodules/everroom-connectors/gateway-module",
+    "test": "vitest run && vitest run --dir ../../submodules/everoffice-connectors/gateway-module",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/bin/migrate.ts"
@@ -26,6 +26,7 @@
     "@fastify/websocket": "^11.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/canvas": "^0.1.100",
+    "@node-rs/jieba": "^2.0.4",
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/agent-runtime": "workspace:*",
     "@nxcore/agent-runtime-pi": "workspace:*",
@@ -55,6 +56,7 @@
     "fastify": "^5.11.3",
     "fastify-plugin": "^6.0.0",
     "happy-dom": "^20.11.2",
+    "hippo-memory": "2.2.0",
     "html-to-text": "^10.0.0",
     "jsonata": "^2.2.2",
     "jszip": "^3.10.1",

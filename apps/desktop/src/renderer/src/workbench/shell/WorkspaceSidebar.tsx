@@ -22,10 +22,12 @@ import {
   sessionDisplayTitle,
   workSessionStatus,
 } from '../types'
+import { workbenchApi } from '../api'
 import { useWorkbenchStore, useWorkspace, useWorkspaceSessions } from '../state/store'
 import { Hint, IconButton } from '../ui/primitives'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 import { ConfirmModal } from '../ui/modal'
+import { workbenchToast } from './toast'
 import { cn } from '../ui/cn'
 
 const PAGE_ICONS: Record<string, React.ReactNode> = {
@@ -87,6 +89,21 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
     if (!existingDraft) setWorkspaceView(tab.id, { kind: 'draft' })
   }
 
+  /** 在访达中打开空间目录（原概览「空间目录」卡的能力，卡删除后收进这里）。 */
+  const revealInFinder = async () => {
+    if (!workspace.path) {
+      workbenchToast('这个空间还没有绑定本地目录')
+      return
+    }
+    try {
+      const layout = await workbenchApi.spaceLayout(workspace.id).catch(() => null)
+      const ok = await workbenchApi.revealDirectory(layout?.paths.root ?? workspace.path)
+      if (!ok) workbenchToast('目录不存在或已被移动')
+    } catch {
+      workbenchToast('目录不存在或已被移动')
+    }
+  }
+
   return (
     <aside className="wb-sidebar wb-ws-sidebar" aria-label="工作空间导航">
       <div className="wb-sidebar-titlebar" aria-hidden="true" />
@@ -116,6 +133,9 @@ export function WorkspaceSidebar({ tab }: { tab: WorkspaceTab }) {
           </MenuTrigger>
           <MenuContent align="end">
             <MenuItem icon={<Pencil size={14} />} onSelect={beginRenameWorkspace}>重命名空间</MenuItem>
+            <MenuItem icon={<FolderOpen size={14} />} onSelect={() => { void revealInFinder() }}>
+              在访达中打开
+            </MenuItem>
             <MenuSeparator />
             <MenuItem
               icon={<Trash2 size={14} />}

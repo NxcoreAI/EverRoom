@@ -32,7 +32,7 @@ apps/desktop/build/packaged-env.json
 !.env.example
 .env1
 .env2
-# 本地独立部署的 MemoryCore 克隆(仅本机联调用);EverRoom 通过 pnpm git 依赖
+# 本地独立部署的 MemoryCore 克隆(仅本机联调用);EverOffice 通过 pnpm git 依赖
 # 引用 NxcoreAI/memory-tencentdb-core,不直接依赖此目录。
 TencentDB-Agent-Memory/
 
@@ -45,6 +45,9 @@ materials/ppt-style-experiments/
 
 # 本地调试截图 / 临时检查产物（UI 迁移验证等），不入库
 .tmp-inspect/
+.tmp-preview/
+.tmp-proto/
+.tmp-pdf-audit/
 
 # 本地工具 / 调试产物（不入库）
 # DeepSeek Harness 的 office 渲染临时目录（随机后缀，每次运行不同）

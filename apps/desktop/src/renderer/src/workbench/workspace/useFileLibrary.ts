@@ -35,6 +35,11 @@ export interface FileLibrary {
    * 导入调用本身异常时抛出，由页面转成 toast。
    */
   importFiles(): Promise<FileImportSummary | null>
+  /**
+   * 从访达拖进来的文件（渲染层 File[]）直接导入本空间，完成后自动刷新。
+   * 返回 null 与异常语义同 importFiles；空数组也返回 null（没有可导入的东西）。
+   */
+  importDroppedFiles(files: File[]): Promise<FileImportSummary | null>
 }
 
 function sortByUpdatedDesc(items: readonly RealOfficeFile[]): RealOfficeFile[] {
@@ -46,12 +51,38 @@ function sortByUpdatedDesc(items: readonly RealOfficeFile[]): RealOfficeFile[] {
   })
 }
 
+/** pickAndImport / importDropped 的返回值归一成数组（主进程异常时可能是 undefined）。 */
+async function normalizeOutcomes(outcomes: unknown): Promise<unknown[]> {
+  return Array.isArray(outcomes) ? outcomes.filter(Boolean) : []
+}
+
+/** 逐文件结果 → 导入摘要，并重拉一页让新文件立刻出现（排序本来就是最近更新在前）。 */
+async function summarizeAndReload(
+  list: unknown[],
+  load: (initial: boolean) => Promise<void>,
+): Promise<FileImportSummary> {
+  let imported = 0
+  let failed = 0
+  let skipped = 0
+  for (const outcome of list) {
+    const entry = outcome as { error?: unknown; fileId?: unknown }
+    if (entry.error) failed += 1
+    else if (entry.fileId) imported += 1
+    else skipped += 1
+  }
+  await load(false)
+  return list.length === 0 ? { kind: 'cancelled' } : { kind: 'done', imported, failed, skipped }
+}
+
 /**
  * 真实文件库数据源：读 `window.nxcore.files.list`。
  * workspaceId = 按工作空间过滤（资料库/产物库独立）；未传/为空拉全库
  * （主页「所有文件」等全局入口用）。工作空间变化时自动重拉。
+ *
+ * options.limit 给「只要最近几条」的页面用（概览动态只合并最近 20 条），
+ * 缺省仍拉满一页（200），避免资料库/产物页行为变化。
  */
-export function useFileLibrary(workspaceId?: string): FileLibrary {
+export function useFileLibrary(workspaceId?: string, options?: { limit?: number }): FileLibrary {
   const [state, setState] = useState<FileLibraryState>('loading')
   const [items, setItems] = useState<RealOfficeFile[]>([])
   const [total, setTotal] = useState(0)
@@ -60,13 +91,14 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
   const requestSeq = useRef(0)
   // 以 workspaceId 为请求键：切换空间时旧响应直接作废，不回写新空间列表。
   const scope = workspaceId?.trim() || null
+  const limit = options?.limit ?? FILE_LIBRARY_LIMIT
 
   const load = useCallback(async (initial: boolean) => {
     const seq = requestSeq.current + 1
     requestSeq.current = seq
     if (initial) setState('loading')
     else setRefreshing(true)
-    const result = await fetchRealFiles(FILE_LIBRARY_LIMIT, scope ? { workspaceId: scope } : undefined)
+    const result = await fetchRealFiles(limit, scope ? { workspaceId: scope } : undefined)
     // 并发刷新时只认最后一次请求，避免旧响应回写。
     if (seq !== requestSeq.current) return
     if (!result) {
@@ -79,7 +111,7 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
       setState('ready')
     }
     setRefreshing(false)
-  }, [scope])
+  }, [limit, scope])
 
   useEffect(() => {
     void load(true)
@@ -109,23 +141,26 @@ export function useFileLibrary(workspaceId?: string): FileLibrary {
     setImporting(true)
     try {
       const outcomes = await api.pickAndImport(scope ? { workspaceId: scope } : undefined)
-      const list = Array.isArray(outcomes) ? outcomes : []
-      if (list.length === 0) return { kind: 'cancelled' }
-      let imported = 0
-      let failed = 0
-      let skipped = 0
-      for (const outcome of list) {
-        if (outcome.error) failed += 1
-        else if (outcome.fileId) imported += 1
-        else skipped += 1
-      }
-      // 导入后重新拉一页，让新文件立刻出现（排序本来就是最近更新在前）。
-      await load(false)
-      return { kind: 'done', imported, failed, skipped }
+      return summarizeAndReload(await normalizeOutcomes(outcomes), load)
     } finally {
       setImporting(false)
     }
   }, [load, scope])
 
-  return { state, items, total, refreshing, importing, refresh, importFiles }
+  // 访达拖拽导入：复用 pickAndImport 的逐文件结果口径（webUtils.getPathForFile
+  // 在 preload 里把渲染层 File 换成本机绝对路径，主进程走同一条 importPathsOnce）。
+  const importDroppedFiles = useCallback(async (files: File[]): Promise<FileImportSummary | null> => {
+    const api = window.nxcore?.files
+    if (!api?.importDropped) return null
+    if (files.length === 0) return null
+    setImporting(true)
+    try {
+      const outcomes = await api.importDropped(files, scope ? { workspaceId: scope } : undefined)
+      return summarizeAndReload(await normalizeOutcomes(outcomes), load)
+    } finally {
+      setImporting(false)
+    }
+  }, [load, scope])
+
+  return { state, items, total, refreshing, importing, refresh, importFiles, importDroppedFiles }
 }

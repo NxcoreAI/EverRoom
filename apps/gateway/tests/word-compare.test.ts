@@ -63,7 +63,6 @@ function context(activeFileId?: string): DocumentExecutionContext {
   return {
     agentSessionId: "session-1",
     runId: "run-1",
-    roomId: "room-9",
     workspaceId: "ws-7",
     ...(activeFileId
       ? { activeFile: { fileId: activeFileId, title: "基准.docx", kind: "docx" } }

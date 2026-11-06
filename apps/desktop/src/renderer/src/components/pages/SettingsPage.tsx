@@ -10,15 +10,17 @@ import {
   Palette,
   Plug,
   RefreshCw,
+  Rocket,
   ShieldCheck,
   ShieldAlert,
   Sparkles,
   Smartphone,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
+import { useTranslation } from 'react-i18next'
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { UpdateSection } from '@/components/settings/UpdateSection'
@@ -34,7 +36,7 @@ import {
 } from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import { formatCredits, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -45,20 +47,25 @@ import { AppearanceSettingsSection } from '@/components/settings/AppearanceSetti
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
+import { PlanUpgradeModal } from '@/workbench/shell/PlanUpgradeModal'
+import { TopupModal } from '@/workbench/shell/TopupModal'
+
 import './SettingsPage.css'
 
 type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
 
+/** 分区顺序：先「你是谁」，再「套餐与积分」，再「界面长什么样」，然后是能力（连接 / 模型 / 用量），最后是维护动作。 */
 const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
+  { id: 'settings-plan', label: 'surface:settings.navigationPlan', icon: WalletCards },
+  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', icon: Plug },
   { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
   { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
   { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
-  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Sparkles },
-  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
-  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
-  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Rocket },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
@@ -100,7 +107,17 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
+export function SettingsPage({
+  onStartFullOnboarding,
+  hideHeader = false,
+  section = null,
+}: {
+  onStartFullOnboarding?: () => void
+  /** 嵌进工作台主页时由外壳提供导航，隐藏组件自带的页头（避免与侧栏/分区导航重复）。 */
+  hideHeader?: boolean
+  /** 外部指定要打开的分区（如账号菜单直达「账号与同步」）。 */
+  section?: string | null
+}) {
   const { locale, preference, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [pending, setPending] = useState<PendingAction>(null)
@@ -113,10 +130,17 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingError, setPairingError] = useState<string | null>(null)
-  const [activeSetting, setActiveSetting] = useState<string>(SETTINGS_NAV[0].id)
+  const [activeSetting, setActiveSetting] = useState<string>(section ?? SETTINGS_NAV[0].id)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
+  const refreshAiRelay = useRef<(() => void) | null>(null)
   const redeemCode = useRedeemCode()
   const [qrActive, setQrActive] = useState(false)
+  const [planModalOpen, setPlanModalOpen] = useState(false)
+  const [topupModalOpen, setTopupModalOpen] = useState(false)
+
+  useEffect(() => {
+    if (section) setActiveSetting(section)
+  }, [section])
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -157,16 +181,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       return
     }
     let cancelled = false
-    const refresh = () => {
+    refreshAiRelay.current = () => {
       void window.nxcore?.aiRelay.status()
         .then((status) => { if (!cancelled) setAiRelayStatus(status) })
         .catch(() => undefined)
     }
-    refresh()
+    refreshAiRelay.current()
     const removeListener = window.nxcore.aiRelay.onEvent((event) => {
-      if (event.type === 'quota-exhausted') refresh()
+      if (event.type === 'quota-exhausted') refreshAiRelay.current?.()
     })
-    return () => { cancelled = true; removeListener() }
+    return () => { cancelled = true; refreshAiRelay.current = null; removeListener() }
   }, [account?.authenticated, account?.user?.id])
 
   useEffect(() => {
@@ -250,7 +274,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         redeemCode.reset()
       }
       try {
-        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
       } catch {
         // Session storage is optional; mounted gates still receive the event.
@@ -261,28 +284,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       // The preload request interceptor reports the error globally.
     } finally {
       setPending(null)
-    }
-  }
-
-  // 已登录直接兑换：一次请求完成核验+升级，无效码/已用码标 invalid，成功后刷新订阅展示
-  const redeemNow = async () => {
-    if (!window.nxcore) return
-    const code = redeemCode.code.trim().toUpperCase()
-    if (!code) return
-    try {
-      const result = await window.nxcore.account.redeemInvitationCode(code)
-      if (result.applied) {
-        redeemCode.markDone('applied')
-        await refreshAccountStatus()
-        // 兑换即恢复额度：立即触发一次续签回灌槽位（relayReady 内含
-        // renewNow），不等 keeper 的 20min 周期；失败静默，周期兜底。
-        void window.nxcore.runtimeConfig?.relayReady().catch(() => undefined)
-      } else {
-        redeemCode.markDone('already-pro')
-      }
-    } catch (error) {
-      if (error instanceof Error && /invitation code/i.test(error.message)) redeemCode.markInvalid()
-      else redeemCode.markError()
     }
   }
 
@@ -336,8 +337,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     .find(value => value !== accountName) ?? null
 
   return (
-    <div className="page settings-page">
-      <PageHeader title={t('surface:settings.settings')} />
+    <div className={hideHeader ? 'page settings-page is-embedded' : 'page settings-page'}>
+      {hideHeader ? null : <PageHeader title={t('surface:settings.settings')} />}
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
@@ -496,69 +497,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </div>
             ) : null}
 
-            {account.subscription ? (
-              <div className="cloud-subscription">
-                <div className="cloud-subscription-plan">
-                  <span><WalletCards aria-hidden="true" />{t('surface:settings.currentPlan')}</span>
-                  <strong>{account.subscription.planName}</strong>
-                  <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
-                </div>
-                <div className="cloud-subscription-quota">
-                  <div>
-                    <span>{t('surface:settings.transcriptionRemaining')}</span>
-                    <strong>{formatMinutes(account.subscription.remainingSeconds, locale, t, 'up')}</strong>
-                  </div>
-                  <progress
-                    aria-label={t('surface:settings.transcriptionRemainingThisPeriod')}
-                    max={Math.max(1, account.subscription.quotaSeconds)}
-                    value={Math.min(
-                      Math.max(0, account.subscription.remainingSeconds),
-                      account.subscription.quotaSeconds,
-                    )}
-                  />
-                  <small>
-                    {t('surface:settings.usedUsedTotalTotal', {
-                      used: formatMinutes(account.subscription.usedSeconds, locale, t),
-                      total: formatMinutes(account.subscription.quotaSeconds, locale, t),
-                    })}
-                  </small>
-                </div>
-                {aiRelayStatus?.configured && aiRelayStatus.llmCredits ? (
-                  <div className="cloud-subscription-quota">
-                    <div>
-                      <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
-                    </div>
-                    <progress
-                      aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, aiRelayStatus.llmCredits)}
-                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
-                    />
-                    <small>
-                      {aiRelayStatus.remainingCredits <= 0
-                        ? t('surface:settings.llmQuotaExhausted')
-                        : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatLlmUsd(aiRelayStatus.usedCredits ?? 0, locale),
-                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
-                          })}
-                    </small>
-                  </div>
-                ) : null}
-                <div className="cloud-subscription-period">
-                  <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
-                  <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
-                </div>
-              </div>
-            ) : null}
-
-            {!(account.subscription?.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)) ? (
-              <RedeemCodeField
-                value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy}
-                actionLabel={t('surface:settings.redeemCodeRedeem')}
-                onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}
-                onVerify={()=>{void redeemNow()}}
-              />
-            ) : null}
 
             <div className="cloud-devices" aria-label={t('surface:settings.connectedDevices')}>
               <div className="cloud-devices-heading">
@@ -647,6 +585,160 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             />
           </div>
         )}
+      </section>
+
+      <section id="settings-plan" className="reality-settings-section settings-anchor-section" aria-labelledby="plan-credits-title">
+        <header>
+          <span><WalletCards aria-hidden="true" /></span>
+          <div>
+            <h2 id="plan-credits-title">{t('surface:settings.navigationPlan')}</h2>
+          </div>
+        </header>
+        {account?.authenticated && account.subscription ? (() => {
+          const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
+          /* 字段单位(2026-11-04 后端 87ef144 起):quotaStatus 所有 *Credits
+             字段一律 quota 原值(500000 quota=$1),formatCredits 统一 ÷50000
+             出积分——前端不做任何还原换算。 */
+          const periodRemaining = aiRelayStatus?.planPeriodQuota != null
+            ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
+            : (aiRelayStatus?.periodRemainingCredits ?? 0)
+          const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
+          const usedQuota = aiRelayStatus?.usedCredits ?? 0
+          const grants = aiRelayStatus?.grants ?? []
+          // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
+          const grantRows = grants.length
+            ? grants
+            : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
+              ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
+              : []
+          const totalRemaining = aiRelayStatus?.remainingCredits ?? 0
+          // 注册赠送独立成行(用完不显示——后端只返回 remaining≠0 的 grant)
+          const signupGrant = grantRows.find((grant) => grant.source === 'signup_bonus') ?? null
+          const purchaseGrants = grantRows.filter((grant) => grant.source !== 'signup_bonus')
+          // 永不过期的充值包合成一行合计;有到期日的各自一行
+          const perpetualGrants = purchaseGrants.filter((grant) => !grant.expiresAt)
+          const expiringGrants = purchaseGrants.filter((grant) => grant.expiresAt)
+          return (
+          <>
+            <div className="reality-setting-row plan-summary-row">
+              <div>
+                <strong>{account.subscription.planName} · {subscriptionStatusLabel(account.subscription.status, t)}</strong>
+                <small>{t('surface:settings.planOverviewTotal', { credits: aiRelayStatus?.configured ? formatCredits(totalRemaining, locale) : '—' })}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}</small>
+              </div>
+              <div className="plan-summary-actions">
+                {aiRelayStatus?.configured ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
+                    {t('surface:settings.topupBuy')}
+                  </button>
+                ) : null}
+                {!isProActive ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
+                    {t('surface:plans.buyPro')}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {aiRelayStatus?.configured ? (
+            <>
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBuiltin')}</span>
+                  <strong>{formatCredits(periodRemaining, locale)} / {formatCredits(planPeriodQuota, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBuiltin')}
+                  max={Math.max(1, planPeriodQuota)}
+                  value={Math.min(Math.max(0, periodRemaining), Math.max(1, planPeriodQuota))}
+                />
+                <small>
+                  {(aiRelayStatus.remainingCredits ?? 0) <= 0
+                    ? t('surface:settings.llmQuotaExhausted')
+                    : t('surface:settings.usedUsedTotalTotal', {
+                      used: formatCredits(usedQuota, locale),
+                      total: formatCredits(planPeriodQuota, locale),
+                    })}
+                </small>
+              </div>
+            </div>
+            {signupGrant ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBonus')}</span>
+                  <strong>{formatCredits(signupGrant.remainingCredits, locale)} / {formatCredits(signupGrant.amountCredits, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBonus')}
+                  max={Math.max(1, signupGrant.amountCredits)}
+                  value={Math.min(Math.max(0, signupGrant.remainingCredits), Math.max(1, signupGrant.amountCredits))}
+                />
+                <small>
+                  {signupGrant.expiresAt
+                    ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(signupGrant.expiresAt, locale) })
+                    : t('surface:settings.topupBalanceNote')}
+                </small>
+              </div>
+            </div>
+            ) : null}
+            {purchaseGrants.length ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewPurchased')}</span>
+                  <strong>{formatCredits(purchaseGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)}</strong>
+                </div>
+                {perpetualGrants.length ? (
+                  <div className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)} / {formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0), locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                      value={Math.min(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                    />
+                    <small>{t('surface:settings.topupBalanceNote')}</small>
+                  </div>
+                ) : null}
+                {expiringGrants.map((grant) => (
+                  <div key={grant.id} className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(grant.remainingCredits, locale)} / {formatCredits(grant.amountCredits, locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, grant.amountCredits)}
+                      value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
+                    />
+                    <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+            ) : null}
+            </>
+            ) : null}
+          </>
+          )
+        })() : (
+          <div className="reality-setting-row">
+            <div><strong>{t('surface:settings.signedOut')}</strong></div>
+          </div>
+        )}
+        <PlanUpgradeModal
+          open={planModalOpen}
+          onOpenChange={setPlanModalOpen}
+          currentPlanCode={account?.subscription?.planCode ?? null}
+          onSettled={() => { void refreshAccountStatus(); refreshAiRelay.current?.() }}
+        />
+        <TopupModal
+          open={topupModalOpen}
+          onOpenChange={setTopupModalOpen}
+          onSettled={() => refreshAiRelay.current?.()}
+        />
       </section>
 
       <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">

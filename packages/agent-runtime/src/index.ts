@@ -3,10 +3,10 @@ import type {
   AgentActiveDocumentContext,
   AgentActiveFileContext,
   AgentEventType,
+  AgentLibraryInventory,
   AgentOpenFileContext,
   LocalAgentDelegationContext,
   LocalAgentInvocationTarget,
-  AgentRoomReference,
   RuntimeCapabilities,
 } from "@nxcore/agent-contract";
 
@@ -18,6 +18,13 @@ export interface RuntimeEvent<T = unknown> {
   payload: T;
 }
 
+export interface AgentRoomReference {
+  id: string;
+  title: string;
+  /** legacy：Room 已下线，保留字段兼容旧载荷。 */
+  subtitle?: string | null;
+}
+
 export interface StartRuntimeRunInput {
   runId: string;
   sessionId: string;
@@ -26,24 +33,38 @@ export interface StartRuntimeRunInput {
   originalPrompt?: string;
   /** Current UI locale; injected into the runtime system prompt for this run. */
   responseLanguage?: string;
+  /**
+   * 用户画像文本（网关按运行装配，来自长期记忆的画像聚合）。
+   * 注入 system prompt：只改变模型的先验认知，不进用户可见的 prompt，
+   * 也不占对话历史；为空/缺省时不注入。
+   */
+  userProfilePrompt?: string;
   prompt: string;
   attachments?: RuntimeAttachment[];
   pageLabel: string;
-  roomId: string | null;
   /** 会话所属工作区：Agent 产物入库时带上（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null;
-  /** 工作区展示名（与 workspaceId 同源）：注入运行期上下文，让模型知道当前处于哪个空间。 */
-  workspaceLabel?: string | null;
+  /** legacy：Room 已并入工作区，恒 null；旧管线（slides/doc-writer 子代理）仍写字段。 */
+  roomId?: string | null;
+  /** legacy：Room 列表已不再注入；保留可选位以兼容旧管线赋值。 */
   availableRooms?: AgentRoomReference[];
-  roomSelectionRequired?: boolean;
+  /** legacy：记忆捕获开关由网关 memory 管线接管；旧管线仍写字段。 */
   captureMemory?: boolean;
   recallMemory?: boolean;
+  /** 工作区展示名（与 workspaceId 同源）：注入运行期上下文，让模型知道当前处于哪个空间。 */
+  workspaceLabel?: string | null;
   toolsEnabled?: boolean;
   activeDocument?: AgentActiveDocumentContext;
   /** 用户当前正在浏览的 Office 文件页签（file_entries），工具按 fileId 读取正文。 */
   activeFile?: AgentActiveFileContext;
   /** 工作区当前打开的全部 Office 页签（含 active 标记），供 Agent 感知“一共开了哪些文件”。 */
   openFiles?: AgentOpenFileContext[];
+  /**
+   * 工作区文件库的规模（资料库/产物各多少份，不含条目）。
+   * 让没有页签、没有附件的新会话也知道「库里有东西」，条目由 Agent 自己
+   * 用 library_browse / file_search 分页取，避免用抽样快照冒充全库。
+   */
+  libraryInventory?: AgentLibraryInventory;
   /** Prior Agent chat made available to Main as an on-demand, read-only context source. */
   referencedConversationId?: string;
   /** @ mentioned local CLI Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */

@@ -122,7 +122,7 @@ describe("Agent runtime isolation", () => {
       agentDirectory: join(root, "config"),
     }));
 
-    await expect(invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, "EverRoom", {
+    await expect(invokeAgent(resolver, BUILTIN_AGENT_IDS.webSearch, "EverOffice", {
       pageLabel: "search",
     })).resolves.toBe("search result");
     expect(fetchMock).toHaveBeenCalledWith(
@@ -160,7 +160,6 @@ describe("Agent runtime isolation", () => {
       prompt: "User-authored request",
       responseLanguage: "de-DE",
       pageLabel: "Agent",
-      roomId: null,
     });
     for await (const _event of run.events) {
       // Drain the runtime so the mocked request completes.

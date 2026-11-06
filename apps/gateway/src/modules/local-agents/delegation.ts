@@ -26,7 +26,6 @@ export interface LocalAgentDelegationSource {
   attachments: Array<{ filename: string; mimeType: string; kind: AgentAttachmentKind; text?: string }>;
   promptAttachments: Array<{ fileName: string; content?: string }>;
   selectedText?: string;
-  rooms: Array<{ id: string }>;
   activeDocument?: AgentActiveDocumentContext;
   workingDirectory: string;
   permissionProfile: AgentWorkspacePermissionProfile;
@@ -50,7 +49,7 @@ export function buildLocalAgentDelegationPayload(
     include?: LocalAgentDelegationInclude;
   } & LocalAgentDelegationSource,
 ): Omit<LocalAgentDelegationContext, "provenance"> {
-  const { pageLabel, priorMessages, attachments, promptAttachments, rooms, activeDocument } = input;
+  const { pageLabel, priorMessages, attachments, promptAttachments, activeDocument } = input;
   const include = {
     conversation: true,
     selection: true,
@@ -103,10 +102,9 @@ export function buildLocalAgentDelegationPayload(
       : [],
     resources: {
       workspaceRoot: input.workingDirectory,
-      roomIds: rooms.map((room) => room.id),
+      // Phase 2i 后无 Room 维度：delegation 资源不再携带 roomIds。
       ...(include.activeDocument && activeDocument ? {
         activeDocument: {
-          roomId: activeDocument.roomId,
           documentId: activeDocument.documentId,
           title: activeDocument.title,
           version: activeDocument.version,

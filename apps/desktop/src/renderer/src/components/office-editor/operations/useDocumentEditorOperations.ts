@@ -358,9 +358,7 @@ export function useDocumentEditorOperations(documentId: string): DocumentEditorO
         idempotencyKey: `continuation-revision:${continuationEntry.id}:${crypto.randomUUID()}`,
         responseLanguage: locale,
         context: {
-          selectedRoomId: continuationEntry.summary.roomId,
           activeDocument: {
-            roomId: continuationEntry.summary.roomId,
             documentId,
             title: continuationEntry.summary.documentTitle,
             version: closed.baseVersion ?? continuationReview.baseVersion,

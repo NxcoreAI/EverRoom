@@ -301,7 +301,7 @@ describe('未登录启动 gate', () => {
 
     // 登录入口：标题 + Apple/Google OIDC 按钮 + 真实 QrLoginPanel 的手机扫码入口。
     expect(container.querySelector('.runtime-config-gate-login-heading')!.textContent)
-      .toContain('登录 EverRoom 账号')
+      .toContain('登录 EverOffice 账号')
     expect(container.querySelector('.runtime-config-gate-apple-login')!.textContent)
       .toContain('通过 Apple 登录')
     expect(container.querySelector('.runtime-config-gate-google-login')!.textContent)

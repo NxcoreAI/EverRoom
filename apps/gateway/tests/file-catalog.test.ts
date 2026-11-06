@@ -63,6 +63,42 @@ describe("unified file catalog", () => {
     expect(test.service.findBySourcePath(join(test.dataDir, "other.md"), hash)).toBeNull();
   });
 
+  it("keeps updatedAt when a local-folder rescan finds unchanged content", async () => {
+    const test = await catalogForTest();
+    const buffer = Buffer.from("# stable", "utf8");
+    const sourcePath = join(test.dataDir, "stable.md");
+    await writeFile(sourcePath, buffer);
+    const input = {
+      sourceKind: "local-folder" as const,
+      sourceKey: "local:source:stable",
+      originalName: "stable.md",
+      sourcePath,
+      contentHash: createHash("sha256").update(buffer).digest("hex"),
+      byteSize: buffer.byteLength,
+      localSourceId: "source",
+      localItemId: "stable",
+    };
+    const imported = await test.service.importLocalFileReference(input);
+    // 模拟上一次扫描留下的旧时间戳：重扫不该把它顶到现在。
+    test.sqlite.prepare("UPDATE file_entries SET updated_at = 1000 WHERE id = ?").run(imported.fileEntryId);
+    const seenBefore = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    const again = await test.service.importLocalFileReference(input);
+
+    expect(again.fileEntryId).toBe(imported.fileEntryId);
+    expect(test.sqlite
+      .prepare("SELECT updated_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId)).toMatchObject({ updated_at: 1000 });
+    const seenAfter = test.sqlite
+      .prepare("SELECT last_seen_at FROM file_entries WHERE id = ?")
+      .get(imported.fileEntryId) as { last_seen_at: number | null };
+    expect(seenAfter.last_seen_at ?? 0).toBeGreaterThan(seenBefore.last_seen_at ?? 0);
+    test.sqlite.close();
+  });
+
   it("references local files without retaining an internal original mirror", async () => {
     const test = await catalogForTest();
     const buffer = Buffer.from("# shared", "utf8");
@@ -147,11 +183,9 @@ describe("unified file catalog", () => {
     expect(extensions).toContain(".ppt");
     expect(extensions).toContain(".pptm");
     expect(extensions).toContain(".pdf");
-    expect(extensions).not.toContain(".odt");
+    // .odt 自 958bd342 起重新入库（legacy-word-text 解析，供 Agent 读当前阅览文档），
+    // 这里只保留「真正不该进库」的 JSON 守卫。
     expect(extensions).not.toContain(".json");
-    await expect(test.service.importFile({
-      sourceKind: "manual-upload", sourceKey: "manual:odt", originalName: "unsupported.odt", buffer: Buffer.from("odt"),
-    })).rejects.toThrow("不支持的文件格式");
     await expect(test.service.importFile({
       sourceKind: "manual-upload", sourceKey: "manual:json", originalName: "ignored.json", buffer: Buffer.from("{}"),
     })).rejects.toThrow("JSON 文件不会进入文件库");
@@ -229,7 +263,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 stub")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(imported.fileEntryId).toBeTruthy();
     // 目录回读带出来源与标签（产物导入），渲染端产物库按该 kind 分流。
@@ -243,7 +277,7 @@ describe("unified file catalog", () => {
       sourceKind: "artifact-imported", sourceKey: "artifact:path:case1", originalName: "方案.docx",
       stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      roomId: "room-1", pipelines: { room: true, wiki: false, memory: true },
+      roomId: "room-1", pipelines: { room: true, wiki: false },
     });
     expect(again.fileEntryId).toBe(imported.fileEntryId);
     expect(again.versionDeduped).toBe(false);

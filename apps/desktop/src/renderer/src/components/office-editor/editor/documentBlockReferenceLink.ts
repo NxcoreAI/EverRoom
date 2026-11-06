@@ -4,8 +4,8 @@ import type {
   DocumentBlockResolutionStatus,
 } from '@nxcore/agent-contract'
 import {
-  createEverroomBlockReferenceUrl as createSharedBlockReferenceUrl,
-  parseEverroomBlockReferenceUrl as parseSharedBlockReferenceUrl,
+  createEverofficeBlockReferenceUrl as createSharedBlockReferenceUrl,
+  parseEverofficeBlockReferenceUrl as parseSharedBlockReferenceUrl,
 } from '@nxcore/document-model'
 import i18n from '@/i18n/i18next'
 
@@ -58,13 +58,13 @@ function cleanOptionalText(value: string | null | undefined): string | null {
   return text ? text : null
 }
 
-export function createEverroomBlockReferenceUrl(
+export function createEverofficeBlockReferenceUrl(
   reference: DocumentBlockReferenceAttrs,
 ): string {
   return createSharedBlockReferenceUrl({ ...reference, roomId: reference.roomId ?? '' })
 }
 
-export function parseEverroomBlockReferenceUrl(
+export function parseEverofficeBlockReferenceUrl(
   value: string,
 ): DocumentBlockReferenceAttrs | null {
   return parseSharedBlockReferenceUrl(value)
@@ -83,7 +83,7 @@ export function documentBlockReferenceToMarkdown(
 ): string {
   const fallbackLabel = i18n.t('contextRoom:documentBlockReference.referencedDocument') as string
   const label = escapeMarkdownLabel(reference.fallbackTitle || fallbackLabel) || fallbackLabel
-  return `[${label}](${createEverroomBlockReferenceUrl(reference)})`
+  return `[${label}](${createEverofficeBlockReferenceUrl(reference)})`
 }
 
 export function parseDocumentBlockReferenceMarkdown(
@@ -93,7 +93,7 @@ export function parseDocumentBlockReferenceMarkdown(
     /^\s*\[((?:\\.|[^\]])*)\]\((everroom:\/\/[^\s)]+)(?:\s+["'][^)]*["'])?\)\s*(?:\r?\n|$)/,
   )
   if (!match) return null
-  const reference = parseEverroomBlockReferenceUrl(match[2])
+  const reference = parseEverofficeBlockReferenceUrl(match[2])
   if (!reference) return null
   return {
     ...reference,
@@ -112,7 +112,7 @@ export function parseSameRoomBlockReferenceLink(
   value: string,
   sourceRoomId: string,
 ): DocumentBlockReferenceAttrs | null {
-  const reference = parseEverroomBlockReferenceUrl(value)
+  const reference = parseEverofficeBlockReferenceUrl(value)
   return reference && isSameRoomBlockReference(sourceRoomId, reference) ? reference : null
 }
 

@@ -5,7 +5,8 @@
  * 覆盖：
  * 1) 主页标签恒在最左，且不可关闭；
  * 2) 同一工作空间只开一个标签，重复打开只更新视图并激活；
- * 3) 文件标签可多开、可关闭，关闭后激活相邻标签；
+ * 3) 文件在工作空间里打开：按 realCatalog.workspaceId 路由，未归类落默认空间，
+ *    交接载荷 pendingBubbleFile 只被目标标签消费一次；
  * 4) 删除工作空间会移除它的标签与会话；
  * 5) 标签持久化 + 启动恢复（只恢复仍存在的工作空间）；
  * 6) 标签标题/状态映射等纯函数。
@@ -17,7 +18,6 @@ import { useWorkbenchStore } from '../src/renderer/src/workbench/state/store'
 import type { OfficeFile } from '../src/renderer/src/office-proto/data'
 import {
   HOME_TAB_ID,
-  fileTabId,
   relativeTimeLabel,
   sessionDisplayTitle,
   sortWorkbenchSessions,
@@ -54,7 +54,7 @@ function session(over: Partial<AgentSession> & { id: string }): AgentSession {
   }
 }
 
-function officeFile(id: string, name = `${id}.docx`): OfficeFile {
+function officeFile(id: string, name = `${id}.docx`, workspaceId?: string): OfficeFile {
   return {
     id,
     name,
@@ -64,6 +64,9 @@ function officeFile(id: string, name = `${id}.docx`): OfficeFile {
     sizeLabel: '1 KB',
     memoryCount: 0,
     content: { type: 'md', source: '' },
+    ...(workspaceId
+      ? { realCatalog: { id: id.replace(/^real:/, ''), workspaceId } as OfficeFile['realCatalog'] }
+      : {}),
   }
 }
 
@@ -81,6 +84,7 @@ function resetStore(): void {
     activeTabId: HOME_TAB_ID,
     sidebarCollapsed: false,
     pendingSetupWorkspaceId: null,
+    pendingBubbleFile: null,
   })
 }
 
@@ -112,19 +116,48 @@ describe('标签页状态机', () => {
     expect(state.activeTabId).toBe(workspaceTabId('ws-1'))
   })
 
-  it('文件标签可多开，关闭后激活相邻标签', async () => {
+  it('文件在工作空间里打开：按目录归属路由并交接给气泡窗', () => {
     const store = useWorkbenchStore.getState()
-    store.openFileTab(officeFile('f1'))
-    store.openFileTab(officeFile('f2'))
+    // 归属 ws-2 的真实文件 → 激活 ws-2 标签，交接载荷指向该标签。
+    store.openFileInWorkspace(officeFile('real:f1', '周报.docx', 'ws-2'))
     let state = useWorkbenchStore.getState()
-    expect(state.tabs.map((tab) => tab.id)).toEqual([HOME_TAB_ID, fileTabId('f1'), fileTabId('f2')])
-    expect(state.activeTabId).toBe(fileTabId('f2'))
+    expect(state.tabs.map((tab) => tab.id)).toEqual([HOME_TAB_ID, workspaceTabId('ws-2')])
+    expect(state.activeTabId).toBe(workspaceTabId('ws-2'))
+    expect(state.pendingBubbleFile).toMatchObject({ tabId: workspaceTabId('ws-2'), workspaceId: 'ws-2' })
 
-    const closed = await state.requestCloseTab(fileTabId('f2'))
+    // 未归类文件（mock/新建）→ 落默认空间；workspaceId 缺失时按 default 回落链。
+    store.openFileInWorkspace(officeFile('f-blank', '未命名文档.docx'))
+    state = useWorkbenchStore.getState()
+    expect(state.activeTabId).toBe(workspaceTabId('ws-1')) // WS1 是第一个，充当默认
+    expect(state.pendingBubbleFile).toMatchObject({ workspaceId: 'ws-1' })
+
+    // 交接载荷只被目标标签消费一次；别的标签取不到。
+    expect(state.consumePendingBubbleFile(workspaceTabId('ws-2'))).toBeNull()
+    const file = state.consumePendingBubbleFile(workspaceTabId('ws-1'))
+    expect(file?.id).toBe('f-blank')
+    expect(useWorkbenchStore.getState().pendingBubbleFile).toBeNull()
+    expect(useWorkbenchStore.getState().consumePendingBubbleFile(workspaceTabId('ws-1'))).toBeNull()
+  })
+
+  it('目录指向不存在的工作空间时回落默认空间', () => {
+    useWorkbenchStore.getState().openFileInWorkspace(officeFile('real:f2', '报价.xlsx', 'ws-gone'))
+    const state = useWorkbenchStore.getState()
+    expect(state.activeTabId).toBe(workspaceTabId('ws-1'))
+    expect(state.pendingBubbleFile).toMatchObject({ workspaceId: 'ws-1' })
+  })
+
+  it('关闭工作空间标签后激活相邻标签', async () => {
+    const store = useWorkbenchStore.getState()
+    store.openWorkspaceTab('ws-1')
+    store.openWorkspaceTab('ws-2')
+    let state = useWorkbenchStore.getState()
+    expect(state.activeTabId).toBe(workspaceTabId('ws-2'))
+
+    const closed = await state.requestCloseTab(workspaceTabId('ws-2'))
     expect(closed).toBe(true)
     state = useWorkbenchStore.getState()
-    expect(state.tabs.map((tab) => tab.id)).toEqual([HOME_TAB_ID, fileTabId('f1')])
-    expect(state.activeTabId).toBe(fileTabId('f1'))
+    expect(state.tabs.map((tab) => tab.id)).toEqual([HOME_TAB_ID, workspaceTabId('ws-1')])
+    expect(state.activeTabId).toBe(workspaceTabId('ws-1'))
   })
 
   it('删除工作空间会移除它的标签和名下会话', async () => {
@@ -163,10 +196,9 @@ describe('标签页状态机', () => {
 })
 
 describe('纯函数', () => {
-  it('标签标题按类型取空间名/文件名', () => {
+  it('标签标题按类型取空间名', () => {
     expect(tabTitle({ id: 'home', kind: 'home', page: 'recent' }, [WS1])).toBe('主页')
     expect(tabTitle({ id: workspaceTabId('ws-1'), kind: 'workspace', workspaceId: 'ws-1', view: { kind: 'page', page: 'overview' } }, [WS1])).toBe('连接器项目')
-    expect(tabTitle({ id: 'file:f1', kind: 'file', file: officeFile('f1', '周报.docx') }, [WS1])).toBe('周报.docx')
   })
 
   it('会话状态归一：running→进行中，closed/interrupted→已结束，其余→待开始', () => {

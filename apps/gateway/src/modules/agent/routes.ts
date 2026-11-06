@@ -127,6 +127,17 @@ function workspaceValidationErrorPayload(error: unknown): { error: string; messa
         error: "invalid_workspace_description",
         message: "Workspace description must be at most 2000 characters",
       };
+    // 项目空间目录（modules/workspace-layout）：目录落盘失败要能被客户端分辨。
+    case "space_marker_conflict":
+      return {
+        error: "space_marker_conflict",
+        message: "The target directory already belongs to another project space",
+      };
+    case "space_marker_exists":
+      return {
+        error: "space_marker_exists",
+        message: "The target directory is already a project space (.everoffice/space.json)",
+      };
     case "agent_workspace_goals_invalid":
     case "agent_workspace_goals_too_many":
     case "agent_workspace_goal_empty":
@@ -144,6 +155,8 @@ function workspaceValidationErrorPayload(error: unknown): { error: string; messa
 const WorkspaceMetaSchema = {
   description: Type.Optional(Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()])),
   goals: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 12 })),
+  /** 目录归属模式：缺省按 path 是否给出推断（有 path=external，无=managed）。 */
+  rootMode: Type.Optional(Type.Union([Type.Literal("managed"), Type.Literal("external")])),
 };
 
 export function agentRoutes(
@@ -157,6 +170,21 @@ export function agentRoutes(
         "/v1/agent/status",
         { schema: { tags: ["agent"] } },
         async () => statusService.snapshot(),
+      );
+      // 「智能体」页人格段：内置 Agent 的名称/简介/系统提示词/技能清单。
+      app.get(
+        "/v1/agent/definition/:agentId",
+        {
+          schema: {
+            tags: ["agent"],
+            params: Type.Object({ agentId: Type.String({ minLength: 1, maxLength: 64 }) }),
+          },
+        },
+        async (request, reply) => {
+          const persona = statusService.persona(request.params.agentId);
+          if (!persona) return reply.code(404).send({ message: "agent_not_found" });
+          return persona;
+        },
       );
     }
     app.get(
@@ -270,14 +298,12 @@ export function agentRoutes(
           tags: ["agent"],
           querystring: Type.Object({
             pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             workspaceId: Type.Optional(Type.String({ maxLength: 100 })),
           }),
         },
       },
       async (request) => service.listSessions(
         request.query.pageLabel,
-        request.query.roomId,
         request.query.workspaceId,
       ),
     );
@@ -290,7 +316,6 @@ export function agentRoutes(
           body: Type.Object({
             pageLabel: Type.String({ minLength: 1, maxLength: 120 }),
             workspaceId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
-            roomId: Type.Optional(Type.Union([Type.String({ maxLength: 100 }), Type.Null()])),
             modelPreference: Type.Optional(Type.Union([
               Type.Literal("smart"),
               Type.Literal("primary"),
@@ -522,6 +547,14 @@ export function agentRoutes(
             prompt: Type.String({ maxLength: 20_000 }),
             /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
             displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。 */
+            displayContent: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+            noteCards: Type.Optional(Type.Array(Type.Object({
+              excerpt: Type.String({ minLength: 1, maxLength: 2_000 }),
+              note: Type.String({ minLength: 1, maxLength: 2_000 }),
+              title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+            }), { maxItems: 20 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
             invocationMode: Type.Optional(Type.Union([
@@ -540,23 +573,11 @@ export function agentRoutes(
             }), { maxItems: 5 })),
             replaceRunId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
             responseLanguage: Type.Optional(ResponseLanguage),
-            captureMemory: Type.Optional(Type.Boolean()),
-            recallMemory: Type.Optional(Type.Boolean()),
             toolsEnabled: Type.Optional(Type.Boolean()),
             context: Type.Optional(Type.Object({
               pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
               selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
-              rooms: Type.Optional(Type.Array(Type.Object({
-                id: Type.String({ minLength: 1, maxLength: 100 }),
-                title: Type.String({ minLength: 1, maxLength: 120 }),
-                kind: Type.Optional(Type.String({ minLength: 1, maxLength: 40 })),
-              }), { maxItems: 200 })),
-              selectedRoomId: Type.Optional(Type.Union([
-                Type.String({ minLength: 1, maxLength: 100 }),
-                Type.Null(),
-              ])),
               activeDocument: Type.Optional(Type.Object({
-                roomId: Type.String({ minLength: 1, maxLength: 128 }),
                 documentId: Type.String({ minLength: 1, maxLength: 128 }),
                 title: Type.String({ minLength: 1, maxLength: 120 }),
                 version: Type.Integer({ minimum: 0 }),
@@ -594,6 +615,12 @@ export function agentRoutes(
                 editable: Type.Optional(Type.Boolean()),
                 active: Type.Boolean(),
               }, { additionalProperties: false }), { maxItems: 20 })),
+              // 输入区「+ → 挂载目录」：桌面端系统选择框里由用户显式授权的本地目录，
+              // 本轮 Agent 可直接 read / ls / grep，改文件仍走权限确认。
+              mountedDirectories: Type.Optional(Type.Array(Type.Object({
+                path: Type.String({ minLength: 1, maxLength: 1024 }),
+                name: Type.String({ minLength: 1, maxLength: 200 }),
+              }, { additionalProperties: false }), { maxItems: 8 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -634,14 +661,6 @@ export function agentRoutes(
           }
           if (error instanceof Error && error.message === "agent_replace_run_active") {
             return reply.code(409).send({ error: "replace_run_active", message: "An active Agent run cannot be regenerated" });
-          }
-          if (error instanceof Error && error.message === "agent_room_not_available") {
-            const roomId = (error as Error & { roomId?: string }).roomId;
-            return reply.code(409).send({
-              error: "room_not_available",
-              message: "The selected Context Room is no longer available",
-              ...(roomId ? { roomId } : {}),
-            });
           }
           // 引用/目标校验类：客户端组合出网关不支持的运行形态（如渠道会话里
           // @ 其他 Agent 或引用其他对话）——语义错误用 422，而不是裸 500。
@@ -734,7 +753,6 @@ export function agentRoutes(
           tags: ["agent"],
           params: IntentParams,
           body: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 100 }),
             documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             responseLanguage: Type.Optional(ResponseLanguage),
@@ -783,7 +801,6 @@ export function agentRoutes(
           body: Type.Object({
             agentSessionId: Type.String({ minLength: 1, maxLength: 128 }),
             runId: Type.String({ minLength: 1, maxLength: 128 }),
-            roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           }),
         },
       },
@@ -792,7 +809,6 @@ export function agentRoutes(
           return reply.code(201).send(service.createTrustedMcpSession(
             request.body.agentSessionId,
             request.body.runId,
-            request.body.roomId,
           ));
         } catch (error) {
           const code = error instanceof Error ? error.message : "";
@@ -800,8 +816,7 @@ export function agentRoutes(
             return reply.code(404).send({ error: "not_found", message: "Agent MCP context not found" });
           }
           if (
-            code === "mcp_agent_room_not_available"
-            || code === "mcp_agent_context_mismatch"
+            code === "mcp_agent_context_mismatch"
             || code === "mcp_agent_context_not_active"
           ) {
             return reply.code(409).send({ error: code, message: "Agent MCP context is not valid" });

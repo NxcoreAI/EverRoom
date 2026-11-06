@@ -522,11 +522,11 @@ describe("LocalAgentRuntimeRegistry", () => {
       env: undefined,
     });
     expect(acpAdapterCommand("claude", "/usr/bin/claude", {
-      command: "/Applications/EverRoom.app/Contents/MacOS/EverRoom",
+      command: "/Applications/EverOffice.app/Contents/MacOS/EverOffice",
       args: ["/entry.js"],
       env: { ELECTRON_RUN_AS_NODE: "1" },
     })).toEqual({
-      command: "/Applications/EverRoom.app/Contents/MacOS/EverRoom",
+      command: "/Applications/EverOffice.app/Contents/MacOS/EverOffice",
       args: ["/entry.js"],
       env: { ELECTRON_RUN_AS_NODE: "1" },
     });

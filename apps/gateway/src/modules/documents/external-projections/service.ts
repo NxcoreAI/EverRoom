@@ -212,7 +212,9 @@ export class ExternalDocumentProjectionService {
     }
     const operation = this.operations.get(preparation.operationId);
     if (!operation
-      || operation.roomId !== input.context.roomId
+      // Phase 2i 后无 Room 维度：操作一律工作区级（roomId 恒 null），
+      // 授权只按 sessionId+runId 比对，不再读 legacy context.roomId。
+      || operation.roomId !== null
       || operation.sessionId !== input.context.sessionId
       || operation.runId !== input.context.runId) {
       throw new DocumentServiceError("OPERATION_FORBIDDEN", "Operation belongs to another Agent run", 403);

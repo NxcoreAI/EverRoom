@@ -83,7 +83,7 @@ try {
   // 否则 package.json 与锁文件不同步，npm 10 的 ci 同样以 edgesOut 崩溃而非 EUSAGE 报错。
   await run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
-  await applyEverRoomBranding(stagingDirectory)
+  await applyEverOfficeBranding(stagingDirectory)
   await run('npm', ['run', 'build:web'], stagingDirectory)
 
   const runtimeManifest = JSON.parse(await readFile(join(stagingDirectory, 'package.json'), 'utf8'))
@@ -125,7 +125,7 @@ try {
   await rm(stagingDirectory, { recursive: true, force: true })
 }
 
-async function applyEverRoomBranding(directory) {
+async function applyEverOfficeBranding(directory) {
   const uiPath = join(directory, 'web', 'src', 'ui.tsx')
   const indexPath = join(directory, 'web', 'index.html')
   const logoPath = join(directory, 'web', 'src', 'assets', 'everroom-connect-logo.svg')
@@ -136,10 +136,10 @@ async function applyEverRoomBranding(directory) {
   await replaceExact(uiPath, [
     ['import oomolConnectLogoUrl from "./assets/oomol-connect-logo.png";', 'import everroomConnectLogoUrl from "./assets/everroom-connect-logo.svg";'],
     ['src={oomolConnectLogoUrl}', 'src={everroomConnectLogoUrl}'],
-    ['<div className="brand-name">OOMOL Connect</div>', '<div className="brand-name">EverRoom</div>'],
+    ['<div className="brand-name">OOMOL Connect</div>', '<div className="brand-name">EverOffice</div>'],
   ])
   await replaceExact(indexPath, [
-    ['<title>OOMOL Connect</title>', '<title>EverRoom</title>'],
+    ['<title>OOMOL Connect</title>', '<title>EverOffice</title>'],
   ])
 }
 

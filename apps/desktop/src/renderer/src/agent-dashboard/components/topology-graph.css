@@ -1,0 +1,133 @@
+/* 链路拓扑：一条串行主线「接收任务 → R1 → … → 终态」。
+   颜色只走令牌（回合 --accent / 工具 --tool / 慢 --warn / 失败 --err，其余灰阶），
+   无阴影、无渐变、无装饰边框；分隔只用 1px --line-soft 与留白。 */
+
+/* 标题行的「展开工具调用」开关：与 Panel 自带折叠按钮同形，避免第二种按钮语言。 */
+.topo-toggle {
+  height: 22px; padding: 0 var(--sp-2); border: 1px solid var(--line); border-radius: var(--radius);
+  font-size: var(--fs-label); color: var(--ink-2); background: var(--surface); white-space: nowrap;
+}
+.topo-toggle:hover { border-color: var(--line-strong); color: var(--ink); }
+.topo-toggle[aria-pressed='true'] { background: var(--surface-3); color: var(--ink); }
+
+/* ── 主图：横向可滚动的主线，一列 = 一个回合 ───────────────────────────────── */
+.topo-scroll { overflow-x: auto; overflow-y: hidden; padding: var(--sp-2) 0 var(--sp-1); }
+.topo-track { display: flex; align-items: flex-start; min-width: max-content; }
+.topo-step {
+  position: relative; display: grid; gap: var(--sp-1); align-content: start;
+  width: 100px; min-width: 0;
+}
+
+/* 列间连接线：1px 细线（方向由左→右的排布说明，不加箭头装饰）。 */
+.topo-step + .topo-step { margin-left: 16px; }
+.topo-step + .topo-step::before {
+  content: ''; position: absolute; top: 26px; left: -16px;
+  width: 16px; height: 1px; background: var(--line-strong);
+}
+
+/* ── 节点：浅底小方块（一行 R{n}、一行「往返 x」、可选上下文 %） ───────────── */
+.topo-node {
+  position: relative; display: grid; gap: 1px; align-content: start; min-height: 54px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) 10px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface-2); text-align: left;
+}
+.topo-node[data-kind='round'] {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--line));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
+}
+.topo-node[data-kind='round']:hover { background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.topo-node[data-selected] { border-color: var(--accent); background: var(--accent-soft); }
+.topo-node[data-future] { opacity: 0.38; }
+
+/* 慢 / 失败：只染左侧 3px 色条，不整块染色。 */
+.topo-node[data-tone='warn']::before,
+.topo-node[data-tone='error']::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 0;
+  width: 3px; border-radius: var(--radius) 0 0 var(--radius);
+}
+.topo-node[data-tone='warn']::before { background: var(--warn); }
+.topo-node[data-tone='error']::before { background: var(--err); }
+
+.topo-node-id {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--fs-body); font-weight: 600;
+  line-height: 1.35; color: var(--ink);
+}
+.topo-node-sub,
+.topo-node-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-label); line-height: 1.4; }
+.topo-node-sub { color: var(--ink-2); }
+.topo-node-note { color: var(--ink-3); }
+.topo-node-note[data-warn] { color: var(--warn); }
+
+/* 起止 / 「还有 N 个回合」节点：灰阶、不可点，标签允许折行。 */
+.topo-terminal[data-kind='more'] .topo-node-id {
+  white-space: normal; font-size: var(--fs-label); font-weight: 500; color: var(--ink-2);
+}
+
+/* ── 工具（挂在所属回合节点下方，默认不画） ───────────────────────────────── */
+.topo-tools { display: grid; gap: 2px; }
+.topo-tool {
+  display: flex; align-items: baseline; gap: 4px; width: 100%;
+  padding: 1px 5px; border-radius: var(--radius); background: var(--surface-3); text-align: left;
+}
+.topo-tool:hover { background: color-mix(in srgb, var(--tool) 10%, var(--surface-3)); }
+.topo-tool-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-label); color: var(--tool);
+}
+.topo-tool-ms { margin-left: auto; font-size: var(--fs-label); color: var(--ink-3); }
+.topo-tool[data-tone='warn'] .topo-tool-name { color: var(--warn); }
+.topo-tool[data-tone='error'] .topo-tool-name { color: var(--err); }
+.topo-tool[data-selected] { background: var(--accent-soft); }
+.topo-tool[data-selected] .topo-tool-name { color: var(--accent); }
+.topo-tool[data-future] { opacity: 0.38; }
+.topo-tool-more { font-size: var(--fs-label); color: var(--ink-3); }
+
+/* ── 图例：解释左侧色条与选中态（第一层唯一的说明文字） ───────────────────── */
+.topo-legend {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding-top: var(--sp-2); font-size: var(--fs-label); color: var(--ink-3);
+}
+.topo-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.topo-legend-item i {
+  display: inline-block; width: 3px; height: 10px; border-radius: 1px; background: var(--line-strong);
+}
+.topo-legend-item i[data-tone='warn'] { background: var(--warn); }
+.topo-legend-item i[data-tone='error'] { background: var(--err); }
+.topo-legend-item i[data-tone='accent'] { background: var(--accent); }
+.topo-legend-hint { margin-left: auto; }
+
+/* ── 3 个关键指标 ─────────────────────────────────────────────────────────── */
+.topo-metrics {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4);
+  margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line-soft);
+}
+
+/* ── 明细表（折叠区内）：每行 4 个字段 ────────────────────────────────────── */
+.topo-rows { display: grid; }
+.topo-row {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center; gap: var(--sp-2); width: 100%; padding: 3px 4px;
+  border-bottom: 1px solid var(--line-soft); text-align: left;
+}
+.topo-row:last-child { border-bottom: 0; }
+.topo-row:hover { background: var(--surface-3); }
+.topo-row[data-selected] { background: var(--accent-soft); }
+.topo-row[data-future] { opacity: 0.38; }
+.topo-row-id { font-size: var(--fs-small); color: var(--ink-2); }
+.topo-row-sub {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-small); color: var(--ink-2); text-align: right;
+}
+
+.topo-more-btn { margin-top: var(--sp-2); font-size: var(--fs-label); color: var(--accent); }
+.topo-more-btn:hover { text-decoration: underline; }
+
+/* ── 口径说明：明细区最后一行，弱灰、不抢注意力 ───────────────────────────── */
+.topo-note {
+  margin: var(--sp-3) 0 0; padding-top: var(--sp-2); border-top: 1px solid var(--line-soft);
+  font-size: var(--fs-label); line-height: 1.7; color: var(--ink-3);
+}
+
+.topo-empty { margin: 0; font-size: var(--fs-body); color: var(--ink-3); }

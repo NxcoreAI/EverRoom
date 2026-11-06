@@ -1,18 +1,19 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.9",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "dev": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
     "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "prepare:electron": "node scripts/prepare-electron.mjs",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
-    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
+    "package:mac": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
+    "package:win": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
     "prepare:ntn": "node scripts/prepare-ntn.mjs",
     "prepare:acp-adapters": "node scripts/prepare-acp-adapters.mjs"
   },
@@ -75,6 +76,10 @@
     "ws": "^8.18.3",
     "zustand": "^5.0.16"
   },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.28.1",
+    "@esbuild/win32-x64": "0.28.1"
+  },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@larksuite/cli": "1.0.93",
@@ -98,11 +103,11 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "ai.nxcore.everroom",
-    "productName": "EverRoom",
+    "appId": "ai.nxcore.everoffice",
+    "productName": "EverOffice",
     "protocols": [
       {
-        "name": "EverRoom sign-in callback",
+        "name": "EverOffice sign-in callback",
         "schemes": [
           "everroom"
         ]
@@ -157,6 +162,14 @@
       {
         "from": "../gateway/dist/node_modules/@napi-rs",
         "to": "gateway/node_modules/@napi-rs",
+        "filter": [
+          "**/*",
+          "!**/*.d.ts"
+        ]
+      },
+      {
+        "from": "../gateway/dist/node_modules/@node-rs",
+        "to": "gateway/node_modules/@node-rs",
         "filter": [
           "**/*",
           "!**/*.d.ts"
@@ -235,10 +248,10 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
-        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
-        "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
-        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
+        "NSMicrophoneUsageDescription": "EverOffice needs microphone access to record and transcribe your voice.",
+        "NSAudioCaptureUsageDescription": "EverOffice needs system audio access to record and transcribe audio playing on this Mac.",
+        "NSDocumentsFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
+        "NSDesktopFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
         "CFBundleDocumentTypes": [
           {
             "CFBundleTypeName": "Word Document",
@@ -277,6 +290,18 @@
             "LSItemContentTypes": [
               "org.openxmlformats.presentationml.presentation",
               "com.microsoft.powerpoint.ppt"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "markdown",
+              "md"
+            ],
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown"
             ]
           }
         ]
@@ -347,6 +372,15 @@
             "ppt"
           ],
           "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "md",
+            "markdown"
+          ],
+          "name": "Markdown Document",
           "role": "Editor",
           "rank": "Alternate"
         }

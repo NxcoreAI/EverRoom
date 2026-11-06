@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>数据源 · 重设计草图 — EverRoom</title>
+<title>数据源 · 重设计草图 — EverOffice</title>
 <style>
   /* ── 沿用 app 现有 tokens ─────────────────────────────── */
   :root {
@@ -343,7 +343,7 @@
 
   <!-- 侧栏：仅示意 app 环境 -->
   <aside class="nav" aria-hidden="true">
-    <div class="nav-brand"><i></i>EverRoom</div>
+    <div class="nav-brand"><i></i>EverOffice</div>
     <div class="nav-group"><small>核心工作</small>
       <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>首页</div>
       <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h20v18H2z" opacity="0"/><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>Context Room</div>
@@ -426,7 +426,7 @@
         <article class="card" data-status="ok" data-src="documents" tabindex="0" role="button" aria-haspopup="dialog">
           <header class="card-head">
             <span class="card-logo"><svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
-            <div class="card-title"><h3>Documents</h3><small>~/Documents/EverRoom-Notes</small></div>
+            <div class="card-title"><h3>Documents</h3><small>~/Documents/EverOffice-Notes</small></div>
             <span class="state" data-tone="ok"><i class="dot ok"></i>已同步</span>
           </header>
           <div class="card-stats">
@@ -641,7 +641,7 @@
         </div>
         <div class="feed-row">
           <span class="glyph"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
-          <span class="feed-name"><strong>Documents</strong><small>~/Documents/EverRoom-Notes</small></span>
+          <span class="feed-name"><strong>Documents</strong><small>~/Documents/EverOffice-Notes</small></span>
           <span class="mode">增量</span>
           <span class="feed-counts"><span>新增 <b>2</b> · 修改 <b>5</b></span></span>
           <span class="feed-time">12 分钟前</span>
@@ -711,7 +711,7 @@ AttachmentReadError: Q3-report.xlsm (宏文件已按策略跳过)</code>
       <h3 id="dName">Documents</h3>
       <button class="drawer-close" id="dClose" aria-label="关闭"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
     </div>
-    <div class="drawer-sub" id="dPath">~/Documents/EverRoom-Notes</div>
+    <div class="drawer-sub" id="dPath">~/Documents/EverOffice-Notes</div>
     <div class="drawer-meta" id="dMeta"></div>
     <div class="drawer-actions" id="dActions"></div>
   </div>
@@ -728,7 +728,7 @@ AttachmentReadError: Q3-report.xlsm (宏文件已按策略跳过)</code>
   // 示例数据（仅草图用）
   const SOURCES = {
     documents: {
-      name: 'Documents', path: '~/Documents/EverRoom-Notes',
+      name: 'Documents', path: '~/Documents/EverOffice-Notes',
       meta: [['ok', '已同步'], null, '2 分钟前同步', '版本 310'],
       stats: [['128', '文件'], ['4,102', '证据段'], ['310', '版本']],
       listTitle: '文件 · 128',
@@ -750,7 +750,7 @@ AttachmentReadError: Q3-report.xlsm (宏文件已按策略跳过)</code>
         { g: 'vault', title: 'Zettelkasten', sub: '持续进入记忆 · 312 篇笔记', badge: ['已连接', ''], meta: '今天 10:02' },
         { g: 'vault', title: '工作日志', sub: '持续进入记忆 · 148 篇笔记', badge: ['已连接', ''], meta: '今天 10:02' },
         { g: 'vault', title: '读书笔记', sub: '已挂载到现有 Room · 60 篇笔记', badge: ['已连接', ''], meta: '昨天 21:40' },
-        { g: 'vault', title: '碎片想法', sub: '尚未进入 EverRoom · 37 篇笔记', badge: ['待导入', 'new'], meta: '新发现' },
+        { g: 'vault', title: '碎片想法', sub: '尚未进入 EverOffice · 37 篇笔记', badge: ['待导入', 'new'], meta: '新发现' },
       ],
     },
     github: {
@@ -831,7 +831,7 @@ AttachmentReadError: Q3-report.xlsm (宏文件已按策略跳过)</code>
       listTitle: '文档 · 87',
       actions: ['恢复', '清理本地数据'],
       items: [
-        { g: 'doc', title: 'EverRoom 发布说明', sub: '32 段', badge: ['未变化', ''], meta: '8 月 28 日' },
+        { g: 'doc', title: 'EverOffice 发布说明', sub: '32 段', badge: ['未变化', ''], meta: '8 月 28 日' },
         { g: 'doc', title: '访谈提纲', sub: '11 段', badge: ['未变化', ''], meta: '8 月 25 日' },
       ],
     },

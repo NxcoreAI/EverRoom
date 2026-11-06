@@ -252,7 +252,6 @@ export function createLocalAgentDispatchTools(deps: LocalAgentDispatchToolsDeps)
           attachments: run.attachments ?? [],
           promptAttachments: source?.promptAttachments ?? [],
           ...(include.selection && source?.selectedText ? { selectedText: source.selectedText } : {}),
-          rooms: run.availableRooms ?? [],
           ...(include.activeDocument && run.activeDocument ? { activeDocument: run.activeDocument } : {}),
           workingDirectory: target.workingDirectory,
           permissionProfile: target.permissionProfile,
@@ -283,7 +282,6 @@ export function createLocalAgentDispatchTools(deps: LocalAgentDispatchToolsDeps)
             originalPrompt: assignment,
             prompt: assignment,
             pageLabel: run.pageLabel,
-            roomId: null,
             delegationContext: sealed,
           });
           let answer = "";

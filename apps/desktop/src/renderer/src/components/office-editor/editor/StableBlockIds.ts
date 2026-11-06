@@ -4,8 +4,8 @@ import { Plugin } from '@tiptap/pm/state'
 import { Extension, type Editor } from '@tiptap/react'
 import {
   addressableBlockTypes,
-  createEverroomBlockReferenceUrl,
-  parseEverroomBlockReferenceUrl,
+  createEverofficeBlockReferenceUrl,
+  parseEverofficeBlockReferenceUrl,
 } from '@nxcore/document-model'
 
 export const stableBlockTypes = addressableBlockTypes
@@ -28,13 +28,13 @@ function remapEverroomUrl(
   sourceDocumentId?: string,
 ): unknown {
   if (typeof value !== 'string') return value
-  const reference = parseEverroomBlockReferenceUrl(value)
+  const reference = parseEverofficeBlockReferenceUrl(value)
   if (!reference) return value
   const replacement = (!sourceDocumentId || sourceDocumentId === reference.documentId)
     ? remap.get(reference.blockId)
     : undefined
   if (!replacement) return value
-  return createEverroomBlockReferenceUrl({ ...reference, blockId: replacement })
+  return createEverofficeBlockReferenceUrl({ ...reference, blockId: replacement })
 }
 
 function freshenPastedNode(

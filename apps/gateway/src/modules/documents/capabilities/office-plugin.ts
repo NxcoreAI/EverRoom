@@ -378,7 +378,7 @@ export function officePlugin(
       const result = await bridge.generate({
         title,
         html,
-        roomId: context.roomId,
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-word", context.runId, title),
@@ -391,7 +391,6 @@ export function officePlugin(
         contentHash: result.contentHash,
         originalName: result.originalName,
         format: "docx",
-        roomId: context.roomId,
         deduped: result.versionDeduped || result.blobDeduped,
         // Room 已删除：roomId 恒为空、roomRoutingRequested 恒为 false，字段保留兼容旧消费方。
         roomRoutingRequested: result.roomRequested,
@@ -439,7 +438,7 @@ export function officePlugin(
         format: "pptx",
         script,
         applyThemeJs: applyThemeJsSource(),
-        roomId: context.roomId,
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-slides", context.runId, title),
@@ -453,7 +452,6 @@ export function officePlugin(
         contentHash: result.contentHash,
         originalName: result.originalName,
         format: "pptx",
-        roomId: context.roomId,
         deduped: result.versionDeduped || result.blobDeduped,
         ...(result.warnings?.length ? { warnings: result.warnings } : {}),
         roomRoutingRequested: result.roomRequested,
@@ -508,7 +506,7 @@ export function officePlugin(
         title,
         format: "xlsx",
         sheets,
-        roomId: context.roomId,
+        roomId: null,
         workspaceId: context.workspaceId ?? null,
         fileName,
         idempotencyKey: idempotencyKey("agent-sheets", context.runId, title),
@@ -522,7 +520,6 @@ export function officePlugin(
         originalName: result.originalName,
         format: "xlsx",
         sheets: sheets.length,
-        roomId: context.roomId,
         deduped: result.versionDeduped || result.blobDeduped,
         roomRoutingRequested: result.roomRequested,
         nextAction: "report_result",
@@ -962,8 +959,8 @@ export function officePlugin(
         const described = await bridge.describeAgentArtifact({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
         });
         return success({
           fileId: target.fileId,
@@ -1045,8 +1042,8 @@ export function officePlugin(
           ? await bridge.applyAgentArtifactTools({
             kind: "docx",
             fileId: target.fileId,
-            roomId: context.roomId,
-            workspaceId: context.workspaceId ?? null,
+                roomId: null,
+                workspaceId: context.workspaceId ?? null,
             calls: prepared.forwarded,
           })
           : { ok: true };
@@ -1153,8 +1150,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
           calls: [{
             id: "ops-1",
             name: "apply_operations",
@@ -1347,8 +1344,8 @@ export function officePlugin(
         exported = await bridge.exportPdf({
           fileId: target.fileId,
           ...(fileName ? { fileName } : {}),
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
         });
       } catch (error) {
         throw new Error(
@@ -1440,8 +1437,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "docx",
           fileId: target.fileId,
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
           calls: [{
             id: "illustration-1",
             name: "insert_image_base64",
@@ -1499,8 +1496,8 @@ export function officePlugin(
         const described = await bridge.describeAgentArtifact({
           kind: "spreadsheet",
           fileId: target.fileId,
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
         });
         return success({
           fileId: target.fileId,
@@ -1569,8 +1566,8 @@ export function officePlugin(
         const applied = await bridge.applyAgentArtifactTools({
           kind: "spreadsheet",
           fileId: target.fileId,
-          roomId: context.roomId,
-          workspaceId: context.workspaceId ?? null,
+            roomId: null,
+            workspaceId: context.workspaceId ?? null,
           calls: args.calls as OfficeAgentToolCall[],
         });
         return success({

@@ -1,6 +1,7 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
 import { randomUUID } from "node:crypto";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
 import {
   type AgentSession,
@@ -26,58 +27,13 @@ import {
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
 import { clampToolResultText, guardRunMessages, type RunContextGuardOptions } from "./context-budget.js";
-import { KnowledgeServiceClient } from "./knowledge/client.js";
-import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
-import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
-import { resolveDefaultWikiIds } from "./knowledge/types.js";
-import { MemoryCoreClient } from "./memory/client.js";
-import { createMemoryExtension, type MemoryRunContext } from "./memory/extension.js";
-import { createMemoryTools, MEMORY_TOOL_NAMES, type RoomMemorySearch } from "./memory/tools.js";
-import type { MemoryRuntimeConfig, RoomMemorySnapshot } from "./memory/types.js";
 import { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
+import { buildLibraryInventoryContext } from "./library-inventory-context.js";
 
 export { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
-
-export { KnowledgeServiceClient, KnowledgeServiceError } from "./knowledge/client.js";
-export type { KnowledgeServiceErrorKind } from "./knowledge/client.js";
-export type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
+export { buildLibraryInventoryContext } from "./library-inventory-context.js";
 export type { RunContextGuardOptions } from "./context-budget.js";
-export { resolveDefaultWikiIds } from "./knowledge/types.js";
-export type {
-  KnowledgePageEntry,
-  KnowledgePageReadItem,
-  KnowledgeSearchResult,
-} from "./knowledge/types.js";
-export type { KnowledgeToolScope } from "./knowledge/tools.js";
-export { createKnowledgeTools } from "./knowledge/tools.js";
 export type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-export { MemoryCoreClient, MemoryCoreError } from "./memory/client.js";
-export type { MemoryCoreErrorKind } from "./memory/client.js";
-export type { RoomMemorySearch } from "./memory/tools.js";
-export type {
-  MemoryAtomicItem,
-  MemoryAtomicPage,
-  MemoryAtomicProvenance,
-  MemoryAtomicQuery,
-  MemoryCaptureMessage,
-  MemoryConversationHit,
-  MemoryConversationItem,
-  MemoryConversationPage,
-  MemoryConversationQuery,
-  MemoryCoreFile,
-  MemoryDocumentChunk,
-  MemoryDocumentDetail,
-  MemoryDocumentImportResult,
-  MemoryDocumentItem,
-  MemoryDocumentMemory,
-  MemoryPipelineStage,
-  MemoryPipelineStatus,
-  MemoryProvenanceAnchor,
-  MemoryRuntimeConfig,
-  MemoryScenarioEntry,
-  MemoryScenarioFile,
-  RoomMemorySnapshot,
-} from "./memory/types.js";
 
 export type PiApi =
   | "openai-completions"
@@ -127,10 +83,11 @@ export interface PiAgentRuntimeConfig {
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
   /**
-   * 同一「工具名 + 参数」在单轮 run 内允许重复出现的次数上限；缺省不限制。
-   * 用户档用它兜住「反复查库/反复执行同一条命令」这类空转。
+   * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
+   * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
+   * 缺省 DEFAULT_MAX_NOOP_TOOL_CALLS；0/负数关闭。
    */
-  maxRepeatedToolCalls?: number;
+  maxNoOpToolCalls?: number;
   /**
    * 单条工具结果进入上下文的字符预算（JSON 感知截断）；缺省/0 = 不截断。
    * 建议只在子 Agent runtime 配置：主 Agent 的文档 read/patch 需要完整结果。
@@ -145,10 +102,6 @@ export interface PiAgentRuntimeConfig {
   runContextGuard?: RunContextGuardOptions;
   /** Pi 内置工具白名单；缺省启用全部（read/bash/edit/write/grep/find/ls），可经 NXCORE_PI_TOOLS 收窄。 */
   builtinTools?: string[];
-  /** MemoryCore 记忆服务配置；缺省时记忆能力完全不启用。 */
-  memory?: MemoryRuntimeConfig;
-  /** Knowledge Service（wiki）配置；缺省时知识库工具不启用。 */
-  knowledge?: KnowledgeRuntimeConfig;
   /** MCP 服务器注入配置（pi-mcp-adapter）；mcpServers 为空时不挂载适配器。 */
   mcp?: {
     mcpServers: Record<string, unknown>;
@@ -222,24 +175,20 @@ export interface PiAgentRuntimeIntegration {
     tool: string,
     invoke: () => Promise<T>,
   ) => Promise<T>;
-  /**
-   * 会话级 wiki 作用域解析（Room 级 wiki 模式）：run 启动前按
-   * roomId 解析本 Room 的 wiki 集合；未提供或解析失败时回退配置默认集。
-   */
-  resolveKnowledgeWikiIds?: (input: StartRuntimeRunInput) => Promise<string[]>;
-  /**
-   * Room 绑定记忆快照解析（限定 Room 记忆注入）：run 的 prompt 前按
-   * roomId 取该 Room 的甄选记忆，进入 memory-recall 注入块；未提供或
-   * 解析失败时静默降级为不注入该段。
-   */
-  resolveRoomMemories?: (input: StartRuntimeRunInput) => Promise<RoomMemorySnapshot[]>;
-  /** memory_search 的 room_id 过滤 provider（Room 绑定记忆快照内检索）。 */
-  roomMemorySearch?: RoomMemorySearch;
   promptGuidelines?: readonly string[];
   onRunFinished?: (
     input: StartRuntimeRunInput,
     outcome: "completed" | "failed" | "cancelled",
   ) => Promise<void>;
+  /**
+   * 本轮 run 的项目根（项目空间目录）。返回绝对路径时，该会话的 cwd、文件工具的
+   * 相对路径基准、bash 沙箱根都改用它；返回 null/缺省时沿用 `config.workingDirectory`。
+   * 由网关按 `input.workspaceId` 解析：只有绑定了目录的项目空间才有值。
+   *
+   * 这是「工作目录」而不是「安全边界」——pi 没有内置沙箱（pi docs/security.md），
+   * 越界读写仍由审批链路与人把关。
+   */
+  resolveProjectRoot?: (input: StartRuntimeRunInput) => string | null | Promise<string | null>;
   /** Called before a sandboxed shell command runs. Returning false denies it. */
   requestBashApproval?: (request: PiBashApprovalRequest) => Promise<boolean>;
   /** Returns whether bash has already been approved for the current Agent session. */
@@ -255,11 +204,9 @@ interface PiRunContextRef {
 interface PiSessionHandle {
   ref: string;
   session: AgentSession;
+  /** 建会话时生效的 cwd（项目空间根或 agent 默认工作目录）；变化时需重建会话。 */
+  cwd: string;
   toolNames: string[];
-  setMemoryRunContext: (context: MemoryRunContext | null) => void;
-  cancelMemoryRun: () => void;
-  /** 会话级 wiki 作用域（Room wiki 优先，缺省为配置默认集）。 */
-  setKnowledgeWikiIds: (wikiIds: string[]) => void;
   context: PiRunContextRef;
   activeRunId: string | null;
   ownerSessionId: string | null;
@@ -276,9 +223,9 @@ interface ActivePiRun {
   cancelled: boolean;
   toolCallCount: number;
   toolLimitExceeded: boolean;
-  /** 单轮 run 内「工具名 + 参数」→ 出现次数；用于重复调用护栏。 */
-  toolSignatureCounts: Map<string, number>;
-  repeatedToolLimitExceeded: boolean;
+  /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
+  noOpStreak: number;
+  noOpLimitExceeded: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -286,23 +233,42 @@ interface ActivePiRun {
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
 
-/** 参数顺序无关的稳定序列化：同一工具调用的指纹不受 JSON key 顺序影响。 */
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+/** 项目空间里作为 project instructions 注入的约定文件（与 pi 的 context file 同名）。 */
+export const PROJECT_INSTRUCTIONS_FILENAME = "AGENTS.md";
+/** 注入上限：整份 system prompt 每轮都要发给模型，超长文件只截断不报错。 */
+const PROJECT_INSTRUCTIONS_MAX_CHARS = 16_000;
+
+/**
+ * 读取项目根下的 `AGENTS.md`（空间级人设 / 约定）。
+ *
+ * 为什么手工读：本 runtime 建会话时关掉了 pi 的 context file 自动发现
+ * （`noContextFiles: true`），否则 agent 默认工作目录里的残留文件也会被吸进提示词。
+ * 这里只对「项目空间根」显式加载，读一次、随会话缓存。
+ */
+export async function loadProjectInstructions(root: string): Promise<string | null> {
+  try {
+    const text = (await readFile(join(root, PROJECT_INSTRUCTIONS_FILENAME), "utf8")).trim();
+    if (!text) return null;
+    return text.length > PROJECT_INSTRUCTIONS_MAX_CHARS
+      ? `${text.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS)}\n（AGENTS.md 过长，已截断）`
+      : text;
+  } catch {
+    return null;
   }
-  return JSON.stringify(value) ?? "null";
 }
+
 function createBashSandboxExtension(
   config: PiAgentRuntimeConfig,
   runtime: PiAgentRuntime,
   getInput: () => StartRuntimeRunInput | null,
+  sessionCwd: string,
 ): ExtensionFactory {
   const policy = config.bashSandbox ?? {};
-  const allowedRoots = (policy.allowedRoots?.length ? policy.allowedRoots : [config.workingDirectory])
-    .map((root) => `${resolve(root)}${sep}`);
+  // 允许根 = 策略声明的根 ∪ 本会话 cwd（项目空间根）。cwd 由运行时按空间选定、
+  // 模型改不了，所以这一条只是形状自检；真正的越界防护靠审批链路与人的判断
+  // （pi 无内置沙箱，见 pi docs/security.md 与本仓库 docs/project-space-layout-plan）。
+  const cwd = resolve(sessionCwd);
+  const allowedRoots = [...(policy.allowedRoots ?? []), cwd].map((root) => `${resolve(root)}${sep}`);
   const timeoutMs = Math.max(1_000, policy.timeoutMs ?? 30_000);
   // ponytail: 默认不硬拒任何命令（sudo/rm 等一律走审批 UI 由用户决定）；
   // 正则粗筛误伤率高于收益，需要收紧时由部署方显式传 deniedPatterns。
@@ -311,7 +277,6 @@ function createBashSandboxExtension(
     pi.on("tool_call", async (event) => {
       if (event.toolName !== "bash") return;
       const command = String(event.input.command ?? "").trim();
-      const cwd = resolve(config.workingDirectory);
       if (!allowedRoots.some((root) => cwd === root.slice(0, -1) || cwd.startsWith(root))) {
         throw new Error("shell_cwd_not_allowed");
       }
@@ -336,10 +301,11 @@ function createBashSandboxExtension(
 }
 
 function createPermissionGateExtension(
-  config: PiAgentRuntimeConfig,
   runtime: PiAgentRuntime,
   getInput: () => StartRuntimeRunInput | null,
+  sessionCwd: string,
 ): ExtensionFactory {
+  const cwd = resolve(sessionCwd);
   return (pi) => {
     pi.on("tool_call", async (event) => {
       if (event.toolName !== "edit" && event.toolName !== "write") return;
@@ -352,7 +318,7 @@ function createPermissionGateExtension(
         approvalId: randomUUID(),
         input,
         command: path || event.toolName,
-        cwd: resolve(config.workingDirectory),
+        cwd,
         timeoutMs: 30_000,
         toolName: event.toolName,
       });
@@ -387,9 +353,12 @@ function sanitizeConversationText(text: string): string {
     .trim();
 }
 
+// 工具名已由 context_room_ 改为 document_ / office_ / slides_ / sheets_ / connector_ 前缀，旧前缀也要认。
+const TOOL_NAME_PREFIX = "(?:context_room|document|office|slides|sheets|connector)";
+
 function looksLikeLeakedToolProtocol(text: string): boolean {
-  return /\{\s*["']name["']\s*:\s*["']context_room_/i.test(text)
-    || /context_room_\w+["']?\s*,\s*["']arguments/i.test(text);
+  return new RegExp(`\\{\\s*["']name["']\\s*:\\s*["']${TOOL_NAME_PREFIX}_`, "i").test(text)
+    || new RegExp(`${TOOL_NAME_PREFIX}_\\w+["']?\\s*,\\s*["']arguments`, "i").test(text);
 }
 
 /** Keep conversation continuity while removing run-scoped tool payloads from the next run. */
@@ -482,8 +451,7 @@ function installRunContextGuard(session: AgentSession, options: RunContextGuardO
 
 function compactHistoricalToolState(session: AgentSession): boolean {
   const messages = session.messages;
-  const hasRunScopedPayload = messages.some((message) => message.role === "toolResult"
-    || (message.role === "custom" && message.customType === "memory-recall"));
+  const hasRunScopedPayload = messages.some((message) => message.role === "toolResult");
   if (!hasRunScopedPayload) return false;
 
   const transcript: string[] = [];
@@ -527,16 +495,11 @@ export class PiAgentRuntime implements AgentRuntime {
   private readonly sessions = new Map<string, PiSessionHandle>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
-  private readonly memoryClient: MemoryCoreClient | null;
-  private readonly knowledgeClient: KnowledgeServiceClient | null;
 
   constructor(
     private readonly config: PiAgentRuntimeConfig,
     private readonly integration: PiAgentRuntimeIntegration = {},
-  ) {
-    this.memoryClient = config.memory ? new MemoryCoreClient(config.memory) : null;
-    this.knowledgeClient = config.knowledge ? new KnowledgeServiceClient(config.knowledge) : null;
-  }
+  ) {}
 
   setBashApprovalHandler(handler: ((request: PiBashApprovalRequest) => Promise<boolean>) | null): void {
     if (handler) this.integration.requestBashApproval = handler;
@@ -660,8 +623,6 @@ export class PiAgentRuntime implements AgentRuntime {
    * 也不含 apiKey。
    */
   async describe(): Promise<AgentRuntimeDescription> {
-    const memoryToolNames = this.config.memory && this.memoryClient ? [...MEMORY_TOOL_NAMES] : [];
-    const knowledgeToolNames = this.config.knowledge && this.knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : [];
     return {
       runtimeId: this.config.runtimeId ?? this.id,
       model: {
@@ -684,8 +645,6 @@ export class PiAgentRuntime implements AgentRuntime {
           label: tool.label,
           description: tool.description,
         })),
-        ...memoryToolNames.map((name) => ({ name })),
-        ...knowledgeToolNames.map((name) => ({ name })),
       ],
       builtinTools: this.enabledBuiltinTools(),
       mcpServers: Object.keys(this.config.mcp?.mcpServers ?? {}),
@@ -731,14 +690,6 @@ export class PiAgentRuntime implements AgentRuntime {
       throw new Error("Pi session belongs to a different Agent session");
     }
     handle.ownerSessionId = input.sessionId;
-    if (this.knowledgeClient && this.integration.resolveKnowledgeWikiIds) {
-      try {
-        const wikiIds = await this.integration.resolveKnowledgeWikiIds(input);
-        handle.setKnowledgeWikiIds(wikiIds);
-      } catch {
-        handle.setKnowledgeWikiIds(this.knowledgeClient.defaultWikiIds);
-      }
-    }
     compactHistoricalToolState(handle.session);
     handle.context.current = input;
     handle.session.setActiveToolsByName(this.activeToolNamesFor(input, handle.toolNames));
@@ -754,8 +705,8 @@ export class PiAgentRuntime implements AgentRuntime {
       cancelled: false,
       toolCallCount: 0,
       toolLimitExceeded: false,
-      toolSignatureCounts: new Map(),
-      repeatedToolLimitExceeded: false,
+      noOpStreak: 0,
+      noOpLimitExceeded: false,
       terminal: false,
       finishPromise: null,
     };
@@ -783,7 +734,6 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
-    active.handle.cancelMemoryRun();
     try {
       await active.handle.session.abort();
       await this.finish(runId, "cancelled");
@@ -875,19 +825,52 @@ export class PiAgentRuntime implements AgentRuntime {
     return this.modelRuntimePromise;
   }
 
+  /**
+   * 本会话的 cwd：项目空间根优先（网关按 workspaceId 解析），否则 agent 的默认
+   * 工作目录。空间目录被删/搬走时解析器返回 null，这里静默回落——绝不静默重建
+   * 用户的空间目录（重建成空目录会盖掉「目录丢了」这个事实）。
+   */
+  private async sessionCwd(input: StartRuntimeRunInput): Promise<string> {
+    const fallback = resolve(this.config.workingDirectory);
+    let candidate: string | null = null;
+    try {
+      candidate = (await this.integration.resolveProjectRoot?.(input)) ?? null;
+    } catch {
+      candidate = null;
+    }
+    const trimmed = candidate?.trim();
+    if (!trimmed) return fallback;
+    const root = resolve(trimmed);
+    if (root === fallback) return fallback;
+    try {
+      if (!(await stat(root)).isDirectory()) return fallback;
+    } catch {
+      return fallback;
+    }
+    return root;
+  }
+
   private async getSession(
     runtimeSessionRef: string | null,
     initialInput: StartRuntimeRunInput,
   ): Promise<PiSessionHandle> {
+    const cwd = await this.sessionCwd(initialInput);
     if (runtimeSessionRef) {
       const cached = this.sessions.get(runtimeSessionRef);
-      if (cached) {
+      if (cached && cached.cwd === cwd) {
         // 复用缓存会话前同步本轮生效档位：网关可能在两轮之间改过覆盖值。
         // pi 的 setThinkingLevel 幂等（档位未变化不写 session 日志）。
         cached.session.setThinkingLevel(
           this.sessionThinkingLevel(initialInput.sessionId) as Parameters<AgentSession["setThinkingLevel"]>[0],
         );
         return cached;
+      }
+      if (cached) {
+        // 项目根变了（空间换绑 / 搬移目录 / 首次拿到空间根）：丢掉旧 cwd 的会话句柄
+        // 就地重建，历史仍从同一个 session 文件恢复，不丢上下文。
+        if (cached.activeRunId) throw new Error(`Pi session is already active: ${cached.activeRunId}`);
+        cached.session.dispose();
+        this.sessions.delete(runtimeSessionRef);
       }
       this.assertOwnedSessionPath(runtimeSessionRef);
     }
@@ -911,7 +894,6 @@ export class PiAgentRuntime implements AgentRuntime {
         if (!input) throw new Error("Pi document tool is not bound to an active run");
         const active = this.activeRuns.get(input.runId);
         if (active?.toolLimitExceeded) throw new Error(this.toolLimitErrorMessage());
-        if (active?.repeatedToolLimitExceeded) throw new Error(this.repeatedToolLimitErrorMessage());
         try {
           const result = await withAbortSignal(
             () => tool.execute(
@@ -960,27 +942,12 @@ export class PiAgentRuntime implements AgentRuntime {
       enableAnalytics: false,
       enableInstallTelemetry: false,
     });
-    let memoryRunContext: MemoryRunContext | null = null;
-    const memory = this.config.memory;
-    const memoryClient = this.memoryClient;
-    const knowledge = this.config.knowledge;
-    const knowledgeClient = this.knowledgeClient;
-    let knowledgeWikiIds: string[] = knowledgeClient ? knowledgeClient.defaultWikiIds : [];
-    // 扩展工厂：memory + MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
+    // 扩展工厂：MCP 适配器（pi-mcp-adapter，注入式隔离配置）。
     const mcpServers = this.config.mcp?.mcpServers;
     const extensionFactories = [
-      createPermissionGateExtension(this.config, this, () => context.current),
+      createPermissionGateExtension(this, () => context.current, cwd),
       ...(this.config.bashSandbox
-        ? [createBashSandboxExtension(this.config, this, () => context.current)]
-        : []),
-      ...(memory && memoryClient
-        ? [
-            createMemoryExtension({
-              client: memoryClient,
-              config: memory,
-              getRunContext: () => memoryRunContext,
-            }),
-          ]
+        ? [createBashSandboxExtension(this.config, this, () => context.current, cwd)]
         : []),
       ...(mcpServers && Object.keys(mcpServers).length > 0
         ? [
@@ -1001,8 +968,12 @@ export class PiAgentRuntime implements AgentRuntime {
           ]
         : []),
     ];
+    // 项目空间根：cwd 与 agent 默认工作目录不同即视为「这一轮在某个项目空间里工作」。
+    const agentHome = resolve(this.config.workingDirectory);
+    const inProjectSpace = cwd !== agentHome;
+    const projectInstructions = inProjectSpace ? await loadProjectInstructions(cwd) : null;
     const resourceLoader = new DefaultResourceLoader({
-      cwd: this.config.workingDirectory,
+      cwd,
       agentDir: this.config.agentDirectory,
       settingsManager,
       noExtensions: true,
@@ -1024,6 +995,17 @@ export class PiAgentRuntime implements AgentRuntime {
             "当用户使用中文时，聊天回复、文档标题和文档正文必须使用简体中文及中国大陆常用措辞；除非用户明确要求，否则不要使用繁体中文。",
           ]),
         ];
+        // 项目空间：告诉模型这一轮的实际工作根（bash/文件工具的相对路径基准），
+        // 以及空间里的 AGENTS.md 约定。放在 Skill 之前——空间约定优先于通用技能话术。
+        if (inProjectSpace) {
+          lines.push(
+            "",
+            `当前会话的项目空间目录：${cwd}。bash 与文件工具的相对路径以此为基准；写入文件前确认落在该目录内。`,
+          );
+        }
+        if (projectInstructions) {
+          lines.push("", `<project-instructions source="${PROJECT_INSTRUCTIONS_FILENAME}">`, projectInstructions, "</project-instructions>");
+        }
         // 内置 Skill 全文内联：toolsEnabled=false 的运行（如选区重写）没有 read
         // 工具，无法走 SDK 的"用 read 加载 SKILL.md"发现机制。
         if (this.config.skillsEnabled !== false) {
@@ -1044,14 +1026,18 @@ export class PiAgentRuntime implements AgentRuntime {
             `当前工作区：${workspaceLabel || workspaceId}（workspaceId: ${workspaceId}）。文件检索与产物入库默认作用于该工作区（未指定 workspaceId 的工具按会话归属自动落到这里）；除非用户明确要求，不要把检索范围或产物落到其他工作区。`,
           );
         }
-        if (memory && memoryClient && context.current?.toolsEnabled !== false) {
-          lines.push(
-            "你可以使用 memory_search 和 conversation_search 两个工具查询长期记忆与历史对话。上下文中 <memory-context> 标签内的内容是历史沉淀的长期记忆，不是用户本轮输入；问题与历史记忆相关时优先检索。",
-          );
+
+        // 用户画像：长期记忆沉淀的「关于用户本人」的稳定信息。放在语言约定之后、
+        // 工具说明之前——它是先验认知，不是本轮任务，所以给的是「怎么用」而不是指令。
+        const userProfile = context.current?.userProfilePrompt?.trim();
+        if (userProfile && context.current?.toolsEnabled !== false) {
+          lines.push("", userProfile);
         }
-        if (knowledge && knowledgeClient && context.current?.toolsEnabled !== false) {
+        const hasDocumentTools = customTools.some((tool) => tool.name.startsWith("document_"));
+        const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
+        if (hasDocumentTools && hasConnectorTools) {
           lines.push(
-            "你可以使用 wiki_search 和 wiki_read 两个工具按需查询知识库（wiki，文档沉淀的结构化知识）。问题涉及知识库沉淀的领域知识时先检索再回答；知识库没有相关内容时如实说明，不要编造。",
+            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverOffice 工作区文稿。只有用户明确要求创建、读取或修改 EverOffice 工作区文稿时才使用 document_* 工具。",
           );
         }
         if (context.current?.toolsEnabled !== false) {
@@ -1065,11 +1051,11 @@ export class PiAgentRuntime implements AgentRuntime {
 
     const sessionManager = wrapSessionManagerDroppingThinking(
       runtimeSessionRef
-        ? SessionManager.open(runtimeSessionRef, this.config.sessionsDir, this.config.workingDirectory)
-        : SessionManager.create(this.config.workingDirectory, this.config.sessionsDir),
+        ? SessionManager.open(runtimeSessionRef, this.config.sessionsDir, cwd)
+        : SessionManager.create(cwd, this.config.sessionsDir),
     );
     const { session } = await createAgentSession({
-      cwd: this.config.workingDirectory,
+      cwd,
       agentDir: this.config.agentDirectory,
       modelRuntime,
       model,
@@ -1078,17 +1064,9 @@ export class PiAgentRuntime implements AgentRuntime {
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...builtinTools,
         ...toolNames,
-        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
-        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
       ],
       customTools: [
         ...customTools,
-        ...(memory && memoryClient
-          ? createMemoryTools(memoryClient, () => memoryRunContext?.sessionId, this.integration.roomMemorySearch)
-          : []),
-        ...(knowledge && knowledgeClient
-          ? createKnowledgeTools(knowledgeClient, () => ({ wikiIds: knowledgeWikiIds }))
-          : []),
       ],
       resourceLoader,
       sessionManager,
@@ -1105,22 +1083,12 @@ export class PiAgentRuntime implements AgentRuntime {
     const handle: PiSessionHandle = {
       ref,
       session,
+      cwd,
       toolNames: [
         ...(this.config.includeBashTool === false ? [] : ["bash"]),
         ...builtinTools,
         ...toolNames,
-        ...(memory && memoryClient ? [...MEMORY_TOOL_NAMES] : []),
-        ...(knowledge && knowledgeClient ? [...KNOWLEDGE_TOOL_NAMES] : []),
       ],
-      setMemoryRunContext: (value) => {
-        memoryRunContext = value;
-      },
-      cancelMemoryRun: () => {
-        if (memoryRunContext) memoryRunContext.cancelled = true;
-      },
-      setKnowledgeWikiIds: (wikiIds) => {
-        knowledgeWikiIds = wikiIds;
-      },
       context,
       activeRunId: null,
       ownerSessionId: null,
@@ -1143,22 +1111,6 @@ export class PiAgentRuntime implements AgentRuntime {
     return input.toolsEnabled === false ? [] : toolNames;
   }
 
-  /**
-   * 限定 Room 记忆注入的取数：仅在记忆启用、本轮开启召回且绑定了 Room 时
-   * 解析；失败静默降级为空（与四路召回的降级语义一致，不影响 run 主流程）。
-   */
-  private async resolveRoomMemoriesForRun(input: StartRuntimeRunInput): Promise<RoomMemorySnapshot[]> {
-    if (!this.config.memory || !this.memoryClient) return [];
-    if (input.recallMemory === false || !input.roomId) return [];
-    if (!this.integration.resolveRoomMemories) return [];
-    try {
-      return await this.integration.resolveRoomMemories(input);
-    } catch {
-      // 与四路召回的无 logger 降级一致：失败不影响 run 主流程，静默跳过注入。
-      return [];
-    }
-  }
-
   private async prompt(input: StartRuntimeRunInput, active: ActivePiRun): Promise<void> {
     try {
       // The resource loader caches the system prompt per persistent session.
@@ -1168,18 +1120,9 @@ export class PiAgentRuntime implements AgentRuntime {
       active.handle.session.setActiveToolsByName(
         this.activeToolNamesFor(input, active.handle.toolNames),
       );
-      active.handle.setMemoryRunContext({
-        sessionId: input.sessionId,
-        originalPrompt: input.prompt,
-        pageLabel: input.pageLabel,
-        cancelled: false,
-        captureEnabled: input.captureMemory !== false,
-        recallEnabled: input.recallMemory !== false,
-        roomMemories: await this.resolveRoomMemoriesForRun(input),
-      });
-      // Room（Context Room）已从产品移除：不再注入 Room 归属/候选提示，也不再
-      // 指示模型调用已下线的 context_room_list。旧提示会让模型把「这个 room 里的
-      // 图片」当成必须解析的实体，从而用 shell/数据库去反查应用内部数据。
+      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照，
+      // 提示词只保留「直接创建、不追问归属」的工作区级指引。
+      const roomContext = "工作区文稿一律按工作区级文稿创建，用户要求创建、保存或写入文档时直接调用 document_write_begin，不需要用户先选择或确认归属，也不要只用文字追问归属。";
       const documentContext = input.activeDocument
         ? [
             `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
@@ -1198,6 +1141,12 @@ export class PiAgentRuntime implements AgentRuntime {
       const activeFileContext = buildActiveFileContext(input.activeFile);
       // 「工作区一共开了哪些页签」：只认识当前这份时，用户问“另一个文件”模型会失明。
       const openFilesContext = buildOpenFilesContext(input.openFiles, input.activeFile);
+      // 「工作区文件库里有多少材料」：新会话没有任何页签时，这是模型知道库里有东西的
+      // 唯一信号。只报数量——条目由模型自己 library_browse / file_search 去取，
+      // 免得「最近 N 条」被当成全库。
+      const libraryInventoryContext = input.toolsEnabled === false
+        ? null
+        : buildLibraryInventoryContext(input.libraryInventory);
       const runBoundary = input.toolsEnabled === false
         ? null
         : [
@@ -1208,9 +1157,11 @@ export class PiAgentRuntime implements AgentRuntime {
           ].join("\n");
       const prompt = [
         `当前工作区：${input.pageLabel}`,
+        roomContext,
         documentContext,
         ...(activeFileContext ? [activeFileContext] : []),
         ...(openFilesContext ? [openFilesContext] : []),
+        ...(libraryInventoryContext ? [libraryInventoryContext] : []),
         ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,
@@ -1320,16 +1271,14 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
-      const maxRepeated = this.config.maxRepeatedToolCalls;
-      if (maxRepeated !== undefined) {
-        const signature = `${event.toolName}\u0000${stableJson(event.args)}`;
-        const seen = (active.toolSignatureCounts.get(signature) ?? 0) + 1;
-        active.toolSignatureCounts.set(signature, seen);
-        if (seen > maxRepeated) {
-          active.repeatedToolLimitExceeded = true;
-          void this.abortForRepeatedToolLimit(runId);
-          return;
-        }
+      // 空转守卫：连续多次"打点式"调用（echo / read /dev/null）说明模型在原地转圈，
+      // 继续跑只会刷满时间线而不推进任务，直接中止并如实报告。
+      const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+      active.noOpStreak = isNoOpToolCall(event.toolName, event.args) ? active.noOpStreak + 1 : 0;
+      if (noOpLimit > 0 && active.noOpStreak >= noOpLimit) {
+        active.noOpLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
       }
       active.queue.push({
         type: "tool.started",
@@ -1356,34 +1305,33 @@ export class PiAgentRuntime implements AgentRuntime {
         runId,
         active.cancelled
           ? "cancelled"
-          : active.toolLimitExceeded || active.repeatedToolLimitExceeded || sessionError || outputLimitReached
+          : active.toolLimitExceeded || active.noOpLimitExceeded || sessionError || outputLimitReached
             ? "failed"
             : "completed",
-        active.repeatedToolLimitExceeded
-          ? new Error(this.repeatedToolLimitErrorMessage())
-          : active.toolLimitExceeded
-            ? new Error(this.toolLimitErrorMessage())
+        active.toolLimitExceeded
+          ? new Error(this.toolLimitErrorMessage())
+          : active.noOpLimitExceeded
+            ? new Error(this.noOpLimitErrorMessage())
             : sessionError
-              ? new Error(friendlyRunError(sessionError))
-              : outputLimitReached
-                ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
-                : undefined,
+            ? new Error(friendlyRunError(sessionError))
+            : outputLimitReached
+              ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
+              : undefined,
       );
     }
   }
 
-  private toolLimitErrorMessage(): string {
-    if (this.config.runtimeRole === "user-facing") {
-      return `本次处理已调用工具 ${String(this.config.maxToolCallsPerRun)} 次，超过单轮上限，已停止。请缩小任务范围后重试。`;
-    }
-    return `Pi runtime exceeded the maximum tool calls per run (${String(this.config.maxToolCallsPerRun)})`;
+  /** 空转中止的用户可读说明：告诉用户这不是失败在业务上，而是模型在原地打转。 */
+  private noOpLimitErrorMessage(): string {
+    const limit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+    return (
+      `本次处理在空转：连续 ${limit} 次无副作用的工具调用（echo / read /dev/null 这类打点），` +
+      "没有任何实际进展，已自动中止。可以把任务拆小、或直接说明期望的结果后重试。"
+    );
   }
 
-  private repeatedToolLimitErrorMessage(): string {
-    if (this.config.runtimeRole === "user-facing") {
-      return `本次处理重复执行了同一次工具调用 ${String(this.config.maxRepeatedToolCalls)} 次以上，已停止以避免空转。如缺少必要信息，请向用户提一个明确的问题。`;
-    }
-    return `Pi runtime repeated the same tool call more than ${String(this.config.maxRepeatedToolCalls)} times per run`;
+  private toolLimitErrorMessage(): string {
+    return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
   }
 
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
@@ -1460,17 +1408,6 @@ export class PiAgentRuntime implements AgentRuntime {
       // The run is already being terminated; preserve the limit error below.
     }
     await this.finish(runId, "failed", new Error(this.toolLimitErrorMessage()));
-  }
-
-  private async abortForRepeatedToolLimit(runId: string): Promise<void> {
-    const active = this.activeRuns.get(runId);
-    if (!active || active.terminal) return;
-    try {
-      await active.handle.session.abort();
-    } catch {
-      // The run is already being terminated; preserve the limit error below.
-    }
-    await this.finish(runId, "failed", new Error(this.repeatedToolLimitErrorMessage()));
   }
 
   private finish(

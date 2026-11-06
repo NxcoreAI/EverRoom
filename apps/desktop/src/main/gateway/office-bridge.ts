@@ -7,13 +7,13 @@ import type { FileImportAcceptedDto } from '../../shared/ingest'
 import type { OfficeAgentFileEvent, OfficeAgentFileFormat } from '../../shared/office'
 import { officePreviewKindForFileName } from '../../shared/sources'
 import type { FilesGatewayBridge } from './files-gateway-bridge'
-import type {
+import type { AgentArtifactFailureReason,
   SlidesEditArtifactOutcome,
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
 import { generateDocxFromHtml, generatePptxFromPageSpecs, generatePptxFromAgentScript, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
 import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
-import { createEverroomMaterialResolver } from '../office/office-material-resolver'
+import { createEverofficeMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
 
 // HTML 正文 / 页 spec / 表格 JSON 远大于通知，放宽到 2MB；超过视为模型输出异常。
@@ -83,8 +83,8 @@ export interface OfficeApplyBytesRequest {
 
 /** Agent 驱动活 Word/Excel 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
 export interface OfficeAgentToolsRequest {
-  /** docx = Word 活文档；spreadsheet = Excel 活工作簿。 */
-  kind: 'docx' | 'spreadsheet'
+  /** docx = Word 活文档；spreadsheet = Excel 活工作簿；pdf = PDF 活文档。 */
+  kind: 'docx' | 'spreadsheet' | 'pdf'
   /** read = describe（上下文+词汇表+指南）；apply = 执行工具调用。 */
   mode: 'read' | 'apply'
   fileId: string
@@ -95,19 +95,8 @@ export interface OfficeAgentToolsRequest {
   workspaceId?: string | null
 }
 
-/** 后台 Word/Excel 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
-type OfficeAgentToolsFailureReason =
-  | 'not_open'
-  | 'not_editable'
-  | 'unsaved'
-  | 'not_found'
-  | 'not_docx'
-  | 'not_xlsx'
-  | 'too_large'
-  | 'encrypted'
-  | 'open_failed'
-  | 'save_failed'
-  | 'error'
+/** 后台 Word/Excel/PDF 编辑会话可能返回的可诊断失败原因（统一取 registry 的全集）。 */
+type OfficeAgentToolsFailureReason = AgentArtifactFailureReason
 
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
@@ -820,7 +809,7 @@ export class OfficeBridgeServer {
 
   /** /v1/office-render：只走生成管线出 pptx 字节，不 file-imports、不广播——风格演示页自校专用。 */
   private async render(req: OfficeRenderRequest): Promise<{ status: number; body: Record<string, unknown> }> {    try {
-      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
+      const imageResolver = createEverofficeMaterialResolver(this.filesBridge)
       const generated = await generatePptxFromPageSpecs(
         { title: req.title.trim(), pages: req.pages },
         () => undefined,
@@ -863,7 +852,7 @@ export class OfficeBridgeServer {
         this.broadcast({ type: 'phase', title: parsed.title, phase, format })
       }
       // everroom-material:// 素材回源器：桥接本地网关素材库（无桥时引用按失败跳过）。
-      const imageResolver = createEverroomMaterialResolver(this.filesBridge)
+      const imageResolver = createEverofficeMaterialResolver(this.filesBridge)
       const generated =
         format === 'docx'
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)

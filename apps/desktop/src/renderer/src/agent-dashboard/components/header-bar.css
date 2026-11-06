@@ -1,0 +1,46 @@
+.db-conn-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-conn-tag {
+  color: var(--ink-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 3px;
+  font-size: var(--fs-micro);
+}
+
+.db-refresh {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  font-size: var(--fs-small);
+  background: var(--surface);
+}
+
+.db-refresh:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.db-refresh-text {
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+}
+
+.db-warning {
+  font-size: var(--fs-micro);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--surface));
+  border-radius: var(--radius);
+  padding: 1px 6px;
+  white-space: nowrap;
+}

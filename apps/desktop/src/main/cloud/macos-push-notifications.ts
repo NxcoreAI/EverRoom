@@ -7,7 +7,7 @@ function alertText(userInfo: Record<string, unknown>): { title: string; body: st
   const aps = userInfo.aps && typeof userInfo.aps === 'object' ? userInfo.aps as Record<string, unknown> : null
   const alert = aps?.alert && typeof aps.alert === 'object' ? aps.alert as Record<string, unknown> : null
   return {
-    title: typeof alert?.title === 'string' ? alert.title : 'EverRoom',
+    title: typeof alert?.title === 'string' ? alert.title : 'EverOffice',
     body: typeof alert?.body === 'string' ? alert.body : '',
   }
 }

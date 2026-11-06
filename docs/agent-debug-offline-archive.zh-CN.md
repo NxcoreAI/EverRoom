@@ -1,17 +1,17 @@
-# Agent 调试台离线归档来源（EverRoom 不启动也能看历史）
+# Agent 调试台离线归档来源（EverOffice 不启动也能看历史）
 
 > 状态：已交付并独立验收（2026-10-26）
 > 关联：`docs/agent-debug-page.zh-CN.md`（调试台总览）、`docs/agent-debug-persistence.zh-CN.md`（历史归档设计）
-> 目标：EverRoom（Gateway）没有运行时，调试页仍然能打开并回看磁盘上的历史 run。
+> 目标：EverOffice（Gateway）没有运行时，调试页仍然能打开并回看磁盘上的历史 run。
 
 ## 1. 问题
 
 调试页的数据来源一直只有 Gateway HTTP API（Vite dev server 代理 + 注入 Bearer）。历史归档虽然已经落盘在
 `<dataDir>/agent-debug/<source>/`，但只有 Gateway 进程在跑时才能通过 `archived=include|only` 读到：
 
-- EverRoom 没启动时 `GET /@agent-debug/sources` 返回 `[]`（manifest 缺失）或 stale manifest 导致 `502`；
+- EverOffice 没启动时 `GET /@agent-debug/sources` 返回 `[]`（manifest 缺失）或 stale manifest 导致 `502`；
 - 页面要么停在「未发现 Gateway」空态，要么「离线」且没有任何数据；
-- 想复盘几天前的 run，必须先启动一次 EverRoom，成本与目的不匹配。
+- 想复盘几天前的 run，必须先启动一次 EverOffice，成本与目的不匹配。
 
 ## 2. 方案（最小改动）
 
@@ -80,7 +80,7 @@ archive 来源的 `label` = `历史归档 · <中文语义名>`：`main` → `�
 
 - 来源下拉：archive 来源显示「历史归档 · 主网关（· 只读）」这类标签；不可用的 live 来源追加「· 离线」。
 - 默认选中：第一个 `available` 的 live 来源 → 第一个 archive 来源 → 第一个来源；
-  当前来源仍在列表里则保持；若当前 live 来源变不可用且有可用来源，自动切换（EverRoom 退出后自动落到历史归档）。
+  当前来源仍在列表里则保持；若当前 live 来源变不可用且有可用来源，自动切换（EverOffice 退出后自动落到历史归档）。
 - 选中 archive 来源时：
   - 顶栏连接态显示「历史归档 · 只读」（title 为归档目录），不再显示「在线」；
   - 「范围」的「本次」禁用（归档来源没有本次进程的 run），切到该来源时范围落到「历史」；
@@ -116,19 +116,19 @@ docs/agent-debug-page.zh-CN.md                                # 总览补「离�
 | 4 | typecheck `cd apps/desktop && node node_modules/typescript/bin/tsc --noEmit` | 既有 ThoughtsPane `10` 条基线，0 新增 |
 | 5 | 构建 `node node_modules/vite/bin/vite.js build --config vite.agent-debug.config.mts` | exit 0，1594 modules → css 17.05 kB / js 197.27 kB |
 | 6 | 离线冒烟（合成 fixture）`node scripts/agent-debug-offline-smoke.mjs` | 13/13 PASS |
-| 7 | 离线冒烟（真实归档）`… --archive "$HOME/Library/Application Support/EverRoom/agent-debug/main"` | 13/13 PASS（586 runs / 63 MB） |
+| 7 | 离线冒烟（真实归档）`… --archive "$HOME/Library/Application Support/EverOffice/agent-debug/main"` | 13/13 PASS（586 runs / 63 MB） |
 | 8 | 浏览器 e2e（合成 / 真实归档）`.tmp-inspect/agent-debug-offline-e2e/run.mjs [--archive <dir>]` | 14/14 PASS ×2；自动选中「历史归档 · 主网关 · 只读」、时间线/工具/事件/输出回放、「本次」禁用、1280×720 无横向溢出、console error 0 |
-| 9 | 在线回归（EverRoom 运行中） | live 来源 `available=true`、archive 来源并列、live snapshot/events 200、archive snapshot 200；浏览器默认选中 live「EverRoom 主网关」、连接态「在线」、无未捕获异常 |
+| 9 | 在线回归（EverOffice 运行中） | live 来源 `available=true`、archive 来源并列、live snapshot/events 200、archive snapshot 200；浏览器默认选中 live「EverOffice 主网关」、连接态「在线」、无未捕获异常 |
 
 截图：`screenshots/agent-debug/offline-archive-1680.png` / `offline-archive-1280.png`（本机，`screenshots/` 不入库）。
 
 验收环境：macOS，系统 node v22.23.1；两名并行工程师（host 读取器 / 页面 UI）+ Lead 集成验收；命令均用
-`node node_modules/...` 直跑（未 `pnpm install` / 未 `git commit`）。EverRoom 运行中（用户 dev 实例）未被打断。
+`node node_modules/...` 直跑（未 `pnpm install` / 未 `git commit`）。EverOffice 运行中（用户 dev 实例）未被打断。
 
 ## 5. 已知限制
 
 - 离线读取不补 `sessionTitle`（不读业务数据库），会话辨识退化为「任务摘要 + #短 id + 首次时间」。
 - 离线读取拿不到 Gateway 的归档配置，`retentionDays` 显示为未知（只显示条数）；实际裁剪仍由 Gateway 写入时执行。
-- 沿用既有 300 条快照上限：更早的 run 需在 EverRoom 运行时或用 `snapshot?runs=300` 之外的直接读文件方式查看。
+- 沿用既有 300 条快照上限：更早的 run 需在 EverOffice 运行时或用 `snapshot?runs=300` 之外的直接读文件方式查看。
 - 归档只包含终态 run；进程被 SIGKILL 时运行中的 run 不在归档里（与现有行为一致）。
 - 读取器只读：索引缺失/损坏时在内存里从 ndjson 首行重建，**不会**改写磁盘上的 `index.json`。

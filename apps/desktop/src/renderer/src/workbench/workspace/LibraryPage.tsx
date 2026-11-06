@@ -1,5 +1,5 @@
-import { FileText, RefreshCw } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { FilePlus2, FileText, RefreshCw } from 'lucide-react'
+import { useState } from 'react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
 
@@ -7,53 +7,61 @@ import { ConfirmModal } from '../ui/modal'
 import { EmptyState, IconButton } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import {
-  FileGrid,
   FileImportButton,
   FileLibraryLoading,
   FileLibraryUnavailable,
-  FileList,
-  FileNoMatches,
-  FileToolbar,
-  SOURCE_FILTERS,
-  countSourceFilters,
-  filterLibraryFiles,
-  groupFilesByDirectory,
-  type FileItemActions,
-  type FileViewMode,
-  type SourceFilterKey,
 } from './fileBrowser'
+import type { FileItemActions } from './fileItemViews'
+import { LibraryBrowser } from './LibraryBrowser'
 import { useFileLibrary } from './useFileLibrary'
+import { useScratchFiles } from './useScratchFiles'
+import { useLibraryDropZone } from './useLibraryDropZone'
 import './library.css'
 
 /**
- * 资料库页：本工作空间专属的文件管理器（搜索 / 来源筛选 / 列表·网格 / 相对目录分组）。
+ * 资料库页：本工作空间专属的文件管理器（返回上一级 / 面包屑 / 搜索 / 网格·列表）。
  *
+ * 布局照 everoffice 原型「资料库」：目录层级由 `relativePath` 派生，网格里文件夹
+ * 在前、文件在后，列表是「名称 / 本地位置 / 修改时间 / 大小 / 操作」六列。
  * 文件入库时带 workspaceId（手动导入按当前空间，Agent 产物按其会话所属空间），
  * 本页只拉 `workspace.id` 名下的文件；存量文件迁移后归默认工作区。
  * 打开文件一律走注入的 onOpenFile → 工作空间右侧气泡窗；本页自己不挂编辑器。
+ * 访达拖文件进内容区直接导入本空间（与「导入文件」按钮同一条 importPathsOnce 链路）。
  */
+
+/** 导入结果摘要 → toast 文案（按钮导入与拖放导入共用）。 */
+function summarizeImport(summary: { imported: number; failed: number; skipped: number }): string {
+  const parts: string[] = []
+  if (summary.imported > 0) parts.push(`已导入 ${summary.imported} 个文件`)
+  if (summary.failed > 0) parts.push(`${summary.failed} 个失败`)
+  if (summary.skipped > 0) parts.push(`${summary.skipped} 个跳过`)
+  return parts.join('，') || '没有可导入的文件'
+}
 export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePageProps) {
   const library = useFileLibrary(workspace.id)
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<SourceFilterKey>('all')
-  const [view, setView] = useState<FileViewMode>('list')
+  const scratch = useScratchFiles(workspace.id)
   const [pendingDelete, setPendingDelete] = useState<RealOfficeFile | null>(null)
   const [deleting, setDeleting] = useState(false)
 
-  const filtered = useMemo(
-    () => filterLibraryFiles(library.items, query, filter),
-    [library.items, query, filter],
-  )
-  const counts = useMemo(() => countSourceFilters(library.items), [library.items])
-  const filters = useMemo(
-    () => SOURCE_FILTERS.map((option) => ({ ...option, count: counts[option.key] })),
-    [counts],
-  )
-  // 目录分组只在「全部 + 未搜索」时用，搜索/筛选后平铺更符合预期。
-  const groups = useMemo(
-    () => (filter === 'all' && !query.trim() ? groupFilesByDirectory(filtered) : undefined),
-    [filter, filtered, query],
-  )
+  /**
+   * 在访达中定位 `.tmp/` 里的临时文件：scratch 清单只给相对路径，
+   * 绝对根从空间布局（layout.paths.tmp）取；reveal 由主进程 showItemInFolder 完成。
+   */
+  const revealScratch = async (relativePath: string) => {
+    const bridge = window.nxcore?.workspace
+    if (!bridge || typeof bridge.layout !== 'function' || typeof bridge.reveal !== 'function') {
+      onToast('桌面端空间能力不可用')
+      return
+    }
+    try {
+      const layout = await bridge.layout(workspace.id)
+      const absolute = `${layout.paths.tmp}/${relativePath}`
+      const ok = await bridge.reveal(absolute)
+      onToast(ok ? '已在访达中定位' : '文件已被清理，可刷新后重试')
+    } catch {
+      onToast('定位失败，请稍后重试')
+    }
+  }
 
   const openOriginal = async (item: RealOfficeFile) => {
     const api = window.nxcore?.files
@@ -80,7 +88,7 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     }
     try {
       await api.exportReveal(item.catalog.id, item.catalog.originalName)
-      onToast('已导出到「下载/EverRoom」并定位到文件管理器')
+      onToast('已导出到「下载/EverOffice」并定位到文件管理器')
     } catch {
       onToast('导出失败，请稍后重试')
     }
@@ -113,18 +121,33 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     try {
       const summary = await library.importFiles()
       if (!summary) {
-        onToast('文件库不可用，无法导入')
+        onToast('资料暂不可用，无法导入')
         return
       }
       if (summary.kind === 'cancelled') {
         onToast('已取消导入')
         return
       }
-      const parts: string[] = []
-      if (summary.imported > 0) parts.push(`已导入 ${summary.imported} 个文件`)
-      if (summary.failed > 0) parts.push(`${summary.failed} 个失败`)
-      if (summary.skipped > 0) parts.push(`${summary.skipped} 个跳过`)
-      onToast(parts.join('，') || '没有可导入的文件')
+      onToast(summarizeImport(summary))
+    } catch {
+      onToast('导入失败，请稍后重试')
+    }
+  }
+
+  /** 访达拖放导入：结果摘要与按钮导入同一套文案。 */
+  const handleDropFiles = async (files: File[]) => {
+    if (library.importing) {
+      onToast('正在导入中，请稍候')
+      return
+    }
+    try {
+      const summary = await library.importDroppedFiles(files)
+      if (!summary) {
+        onToast('资料暂不可用，无法导入')
+        return
+      }
+      if (summary.kind === 'cancelled') return
+      onToast(summarizeImport(summary))
     } catch {
       onToast('导入失败，请稍后重试')
     }
@@ -164,20 +187,19 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
     onDelete: (item) => setPendingDelete(item),
   }
 
-  const clearFilters = () => {
-    setQuery('')
-    setFilter('all')
-  }
-
-  const showToolbar = library.state === 'ready' && library.items.length > 0
+  // 访达拖放：落点是页面根节点——空库/加载/不可用态也能拖，不只在有内容的浏览器里。
+  const { dragActive, dragProps } = useLibraryDropZone((files) => { void handleDropFiles(files) })
 
   return (
-    <div className="wb-wspage wb-library-page">
+    <div
+      className={dragActive ? 'wb-wspage wb-library-page is-dragover' : 'wb-wspage wb-library-page'}
+      {...dragProps}
+    >
       <header className="wb-wspage-head">
-        <h1 className="wb-wspage-title">资料库</h1>
+        <h1 className="wb-wspage-title">资料</h1>
         <div className="wb-file-head-actions">
           <IconButton
-            label="刷新文件库"
+            label="刷新资料"
             icon={<RefreshCw size={15} className={library.refreshing ? 'ui-spin' : undefined} />}
             onClick={library.refresh}
             disabled={library.refreshing}
@@ -185,18 +207,6 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
           <FileImportButton importing={library.importing} onClick={() => { void handleImport() }} />
         </div>
       </header>
-
-      {showToolbar ? (
-        <FileToolbar
-          query={query}
-          onQueryChange={setQuery}
-          filters={filters}
-          filter={filter}
-          onFilterChange={setFilter}
-          view={view}
-          onViewChange={setView}
-        />
-      ) : null}
 
       {library.state === 'loading' ? <FileLibraryLoading /> : null}
       {library.state === 'unavailable' ? <FileLibraryUnavailable onRetry={library.refresh} /> : null}
@@ -209,23 +219,28 @@ export function LibraryPage({ workspace, onOpenFile, onToast }: WorkspacePagePro
         />
       ) : null}
 
-      {library.state === 'ready' && library.items.length > 0 && filtered.length === 0 ? (
-        <FileNoMatches onClear={clearFilters} />
+      {library.state === 'ready' && library.items.length > 0 ? (
+        <LibraryBrowser
+          items={library.items}
+          actions={actions}
+          scratch={scratch.state === 'ready' ? scratch.listing : null}
+          onRevealScratch={(relativePath) => { void revealScratch(relativePath) }}
+        />
       ) : null}
 
-      {library.state === 'ready' && filtered.length > 0 ? (
-        view === 'list' ? (
-          <FileList items={filtered} groups={groups} actions={actions} />
-        ) : (
-          <FileGrid items={filtered} actions={actions} />
-        )
+      {/* 拖放悬停提示：只在拖着文件悬停期间出现，pointer-events:none 防抖动 */}
+      {dragActive ? (
+        <div className="wb-lib-dropzone" aria-hidden="true">
+          <FilePlus2 size={22} aria-hidden="true" />
+          <p>{library.importing ? '正在导入…' : '松手导入到资料'}</p>
+        </div>
       ) : null}
 
       <ConfirmModal
         open={pendingDelete !== null}
         onOpenChange={(open) => { if (!open && !deleting) setPendingDelete(null) }}
         title={pendingDelete ? `删除「${pendingDelete.file.name}」？` : '删除文件？'}
-        description="会从文件库删除该文件及其解析产物，操作不可撤销。"
+        description="会从资料删除该文件及其解析产物，操作不可撤销。"
         confirmLabel={deleting ? '删除中…' : '删除'}
         busy={deleting}
         onConfirm={() => { void confirmDelete() }}

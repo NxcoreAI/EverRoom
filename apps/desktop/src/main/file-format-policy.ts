@@ -6,7 +6,10 @@ export const LOCAL_PARSEABLE_EXTENSIONS = new Set([
   '.txt',
 ])
 
-/** Office, compatible OpenDocument, and PDF formats treated as safe documents. */
+/** Office, compatible OpenDocument, and PDF formats treated as safe documents.
+ * （.md/.markdown 不在此列：本地扫描把 md 视为需审批的资料类，批量导入
+ * 知识库前要过高风险确认；内嵌预览的格式判定走 officePreviewKindForFileName，
+ * 与本集合职责正交。） */
 export const OFFICE_FILE_EXTENSIONS = new Set([
   '.pdf',
   '.doc',
@@ -82,7 +85,7 @@ export function isLocalParseableExtension(extension: string): boolean {
 
 /**
  * 扫描时直接剪枝的无意义目录：依赖、构建产物、缓存、测试缓存和工具
- * 生成目录不应进入 EverRoom 的本地知识库。
+ * 生成目录不应进入 EverOffice 的本地知识库。
  */
 export const IGNORED_LOCAL_DIRECTORY_NAMES = new Set([
   '.cache',

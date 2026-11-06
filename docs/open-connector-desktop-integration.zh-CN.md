@@ -2,7 +2,7 @@
 
 > **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
 
-EverRoom 随桌面发行包分发并托管 OpenConnector，通过 `oo` CLI 在 Agent 与本地网关之间建立统一桥接。默认安装后直接可用：不依赖 Docker、不在用户启动时下载代码，也不要求手工启动服务或配置 Token。渲染进程不持有 Runtime Token，也不能提交任意 CLI 参数。
+EverOffice 随桌面发行包分发并托管 OpenConnector，通过 `oo` CLI 在 Agent 与本地网关之间建立统一桥接。默认安装后直接可用：不依赖 Docker、不在用户启动时下载代码，也不要求手工启动服务或配置 Token。渲染进程不持有 Runtime Token，也不能提交任意 CLI 参数。
 
 本文描述当前桌面集成和运行基线。下一阶段将把 Agent 直接调用 `search/schema/apps/run` 的方式收口为 `connector_prepare` + `connector_execute(planId)`，并通过不可变 Plan、Provider Adapter 和 Completion Gate 约束 Action 选择、参数构造与失败恢复。完整方案见 [Connector 确定性编排与 Agent 完成门设计](./connector-orchestration-design.zh-CN.md)。
 
@@ -19,7 +19,7 @@ flowchart LR
   OC --> APPS["用户已连接的应用"]
 ```
 
-主进程的 `OpenConnectorSupervisor` 先启动内置服务并通过 `/v1/health` 等待就绪，再把连接信息注入桌面 CLI bridge 和 NxCore Gateway。主进程提供 `search`、`schema`、`run`、`apps` 四类调用；Gateway 为 Pi Agent 提供 `connector_search`、`connector_schema`、`connector_apps`、`connector_run` 工具。`connector_run` 在真正执行前强制读取 Action Schema 和当前服务连接：不存在的 Action、空连接、不可用连接或猜测出的连接名都不会进入执行阶段；单连接或默认连接会使用 `connector_apps` 返回的真实 `connectionName`。两条路径使用相同的 CLI 契约和独立的 EverRoom 数据目录，不写用户全局 `connector.toml`。
+主进程的 `OpenConnectorSupervisor` 先启动内置服务并通过 `/v1/health` 等待就绪，再把连接信息注入桌面 CLI bridge 和 NxCore Gateway。主进程提供 `search`、`schema`、`run`、`apps` 四类调用；Gateway 为 Pi Agent 提供 `connector_search`、`connector_schema`、`connector_apps`、`connector_run` 工具。`connector_run` 在真正执行前强制读取 Action Schema 和当前服务连接：不存在的 Action、空连接、不可用连接或猜测出的连接名都不会进入执行阶段；单连接或默认连接会使用 `connector_apps` 返回的真实 `connectionName`。两条路径使用相同的 CLI 契约和独立的 EverOffice 数据目录，不写用户全局 `connector.toml`。
 
 ## 默认启动与生命周期
 
@@ -27,21 +27,21 @@ flowchart LR
 2. Supervisor 从发行包 `resources/open-connector` 启动 OpenConnector，并强制绑定 `127.0.0.1`。
 3. 首次启动生成 encryption key、Admin Token、Runtime Token；优先使用端口 `3000`，被占用时自动选择并持久化其他回环端口。
 4. 鉴权健康检查通过后创建 `oo` bridge，并将同一组 URL/Runtime Token 注入 NxCore Gateway，Agent 工具随即就绪。
-5. EverRoom 退出时先终止 CLI 子进程，再回收 OpenConnector sidecar。
+5. EverOffice 退出时先终止 CLI 子进程，再回收 OpenConnector sidecar。
 
 托管 sidecar 会优先使用显式的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`；未配置环境变量时，通过 Electron 读取桌面系统代理，并自动为 Node/Undici 启用代理支持。`127.0.0.1`、`localhost`、`::1` 始终加入 `NO_PROXY`，避免本地健康检查和 CLI 调用绕到代理。OAuth Token 交换与后续第三方 API 请求因此遵循桌面网络环境。
 
 持久数据位于：
 
 ```text
-<EverRoom userData>/open-connector/
+<EverOffice userData>/open-connector/
   managed-runtime.json  # 0600，密钥与选定端口
   runtime-data/         # 0700，连接器账号与 SQLite 数据
   oo-config/
   oo-data/
 ```
 
-OpenConnector 启动失败不会阻止 EverRoom 其他功能启动；连接器页面会显示错误，Agent 不注册连接器工具。
+OpenConnector 启动失败不会阻止 EverOffice 其他功能启动；连接器页面会显示错误，Agent 不注册连接器工具。
 
 ## Agent 失败恢复
 
@@ -58,7 +58,7 @@ OpenConnector 启动失败不会阻止 EverRoom 其他功能启动；连接器�
 
 ## 外部网关模式
 
-只有明确关闭托管模式时，EverRoom 才不会启动内置服务：
+只有明确关闭托管模式时，EverOffice 才不会启动内置服务：
 
 ```dotenv
 NXCORE_CLI_CONNECTOR_MANAGED=false
@@ -66,14 +66,14 @@ NXCORE_CLI_CONNECTOR_URL=https://connector.example.com
 NXCORE_CLI_CONNECTOR_RUNTIME_TOKEN=<runtime-token>
 ```
 
-远程地址必须使用 HTTPS；HTTP 只允许 `localhost`、`127.0.0.1` 或 `::1`。外部模式的 Web 管理台使用系统浏览器打开，EverRoom 不保存或注入 Admin Token。
+远程地址必须使用 HTTPS；HTTP 只允许 `localhost`、`127.0.0.1` 或 `::1`。外部模式的 Web 管理台使用系统浏览器打开，EverOffice 不保存或注入 Admin Token。
 
-EverRoom 自身只接受 `NXCORE_CLI_CONNECTOR_*` 配置。调用 `oo` 子进程时，桥接层会在内部转换为以下 `oo` 原生环境变量；这些 `OO_*` 变量不是 EverRoom 的配置入口：
+EverOffice 自身只接受 `NXCORE_CLI_CONNECTOR_*` 配置。调用 `oo` 子进程时，桥接层会在内部转换为以下 `oo` 原生环境变量；这些 `OO_*` 变量不是 EverOffice 的配置入口：
 
 - `OO_CONNECTOR_URL`
 - `OO_CONNECTOR_TOKEN`
-- `OO_CONFIG_DIR=<EverRoom userData>/open-connector/oo-config`
-- `OO_DATA_DIR=<EverRoom userData>/open-connector/oo-data`
+- `OO_CONFIG_DIR=<EverOffice userData>/open-connector/oo-config`
+- `OO_DATA_DIR=<EverOffice userData>/open-connector/oo-data`
 
 打开侧栏“连接器”页面即可检查 Gateway/CLI 状态、搜索 Action、查看 Schema、选择连接、校验参数并执行。
 

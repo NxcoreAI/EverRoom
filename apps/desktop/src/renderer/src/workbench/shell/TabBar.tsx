@@ -12,15 +12,14 @@ import {
 import React, { useEffect, useRef } from 'react'
 
 import { WindowControls } from '@/components/WindowControls'
-import { FileTypeIcon } from '@/office-proto/pages/parts'
 
-import { HOME_TAB_ID, type FileTab, type WindowTab, type WorkspaceTab, tabTitle } from '../types'
+import { HOME_TAB_ID, type WindowTab, tabTitle } from '../types'
 import { useWorkbenchStore } from '../state/store'
 import { Hint, IconButton } from '../ui/primitives'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/menu'
 import { cn } from '../ui/cn'
 
-/** 标签栏：窗口最顶层。主页标签固定最左；工作空间/文件标签可关；右侧是全局动作与窗口按钮。 */
+/** 标签栏：窗口最顶层。主页标签固定最左；工作空间标签可关；右侧是全局动作与窗口按钮。 */
 export function TabBar() {
   const tabs = useWorkbenchStore((state) => state.tabs)
   const activeTabId = useWorkbenchStore((state) => state.activeTabId)
@@ -31,11 +30,17 @@ export function TabBar() {
   const sidebarCollapsed = useWorkbenchStore((state) => state.sidebarCollapsed)
   const createSession = useWorkbenchStore((state) => state.createSession)
   const openHome = useWorkbenchStore((state) => state.openHome)
+  const askDrafts = useWorkbenchStore((state) => state.askDrafts)
 
   const activeWorkspaceTab = tabs.find((tab) => tab.id === activeTabId && tab.kind === 'workspace')
+  // 待发送批注按工作空间计数：标签上挂个角标，用户在任何标签下都知道哪里有待发内容。
+  const askCountByWorkspace = new Map<string, number>()
+  for (const draft of askDrafts) {
+    askCountByWorkspace.set(draft.workspaceId, (askCountByWorkspace.get(draft.workspaceId) ?? 0) + 1)
+  }
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
-  // 文件标签没有侧栏，收起按钮在那里只会是个「点了没反应」的死按钮：直接不渲染。
-  const hasSidebar = activeTab !== null && activeTab.kind !== 'file'
+  // 主页/工作空间标签都有侧栏，收起按钮恒可用。
+  const hasSidebar = activeTab !== null
 
   const closeTab = (event: React.MouseEvent, id: string) => {
     event.stopPropagation()
@@ -44,7 +49,7 @@ export function TabBar() {
 
   return (
     <div className="wb-tabbar">
-      {/* 侧栏开关放左侧（应用惯例位置）；文件标签没有侧栏时保留同宽占位，避免标签栏横跳。 */}
+      {/* 侧栏开关放左侧（应用惯例位置）。 */}
       <div className="wb-tabbar-left">
         <span className="wb-sidebar-toggle-slot">
           {hasSidebar ? (
@@ -78,6 +83,7 @@ export function TabBar() {
             tab={tab}
             active={tab.id === activeTabId}
             title={tabTitle(tab, workspaces)}
+            badge={tab.kind === 'workspace' ? askCountByWorkspace.get(tab.workspaceId) : undefined}
             onActivate={() => activateTab(tab.id)}
             onClose={(event) => closeTab(event, tab.id)}
           />
@@ -114,7 +120,7 @@ export function TabBar() {
             icon={<FilePlus2 size={14} />}
             onSelect={() => openHome('files')}
           >
-            浏览文件库
+            浏览资料
           </MenuItem>
         </MenuContent>
       </Menu>
@@ -135,10 +141,12 @@ export function TabBar() {
   )
 }
 
-function WindowTabButton({ tab, active, title, onActivate, onClose }: {
-  tab: WorkspaceTab | FileTab
+function WindowTabButton({ tab, active, title, badge, onActivate, onClose }: {
+  tab: Extract<WindowTab, { kind: 'workspace' }>
   active: boolean
   title: string
+  /** 待发送批注条数（工作空间标签才有）：非 0 时在标签上挂角标。 */
+  badge?: number
   onActivate: () => void
   onClose: (event: React.MouseEvent) => void
 }) {
@@ -169,11 +177,14 @@ function WindowTabButton({ tab, active, title, onActivate, onClose }: {
       }}
     >
       <span className="wb-tab-icon" aria-hidden="true">
-        {tab.kind === 'workspace'
-          ? <LayoutGrid size={15} strokeWidth={1.9} />
-          : <FileTypeIcon kind={tab.file.kind} size={17} />}
+        <LayoutGrid size={15} strokeWidth={1.9} />
       </span>
       <span className="wb-tab-name">{title}</span>
+      {badge ? (
+        <span className="wb-tab-badge" title={`${badge} 条待发送批注`} aria-label={`${badge} 条待发送批注`}>
+          {badge}
+        </span>
+      ) : null}
       <button
         type="button"
         className="wb-tab-close"

@@ -1,17 +1,19 @@
 import type { AgentSession, AgentWorkspace } from '@nxcore/agent-contract'
 
-import type { OfficeFile } from '@/office-proto/data'
-
 /* ───────────────── 主页标签 ───────────────── */
 
-/** 主页侧栏的一级入口（只保留有真实数据能力的页面；知识库后端已移除，不迁移）。 */
-export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'connectors' | 'settings'
+/**
+ * 主页侧栏的页面入口（只保留有真实数据能力的页面；知识库后端已移除，不迁移）。
+ * 设置与其它五个页面平级，只是排到侧栏底部单独一组。
+ */
+export type HomePageKey = 'recent' | 'spaces' | 'files' | 'agent' | 'skills' | 'connectors' | 'settings'
 
 export const HOME_PAGES: ReadonlyArray<{ key: HomePageKey; label: string }> = [
   { key: 'recent', label: '最近' },
   { key: 'spaces', label: '项目空间' },
   { key: 'files', label: '所有文件' },
   { key: 'agent', label: 'Agent' },
+  { key: 'skills', label: '技能' },
   { key: 'connectors', label: '连接器' },
   { key: 'settings', label: '设置' },
 ]
@@ -23,7 +25,7 @@ export type WorkspacePageKey = 'overview' | 'library' | 'outputs' | 'plan'
 
 export const WORKSPACE_PAGES: ReadonlyArray<{ key: WorkspacePageKey; label: string }> = [
   { key: 'overview', label: '概览' },
-  { key: 'library', label: '资料库' },
+  { key: 'library', label: '资料' },
   { key: 'outputs', label: '产物' },
   { key: 'plan', label: '计划' },
 ]
@@ -58,34 +60,17 @@ export interface WorkspaceTab {
   view: WorkspaceTabView
 }
 
-export interface FileTab {
-  id: string
-  kind: 'file'
-  file: OfficeFile
-}
-
-export type WindowTab = HomeTab | WorkspaceTab | FileTab
+export type WindowTab = HomeTab | WorkspaceTab
 
 export const HOME_TAB_ID = 'home' as const
 export const HOME_TAB: HomeTab = { id: HOME_TAB_ID, kind: 'home', page: 'recent' }
 
 export const workspaceTabId = (workspaceId: string): string => `ws:${workspaceId}`
-export const fileTabId = (fileId: string): string => `file:${fileId}`
 
-/** 标签标题：主页固定、工作空间显示空间名、文件显示文件名。 */
+/** 标签标题：主页固定、工作空间显示空间名。 */
 export function tabTitle(tab: WindowTab, workspaces: readonly AgentWorkspace[]): string {
   if (tab.kind === 'home') return '主页'
-  if (tab.kind === 'file') return tab.file.name
   return workspaces.find((workspace) => workspace.id === tab.workspaceId)?.name ?? '工作空间'
-}
-
-/** 标签图标语义（TabBar 只做渲染，不引具体 icon 组件）。 */
-export type TabIconKind = 'home' | 'workspace' | 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'md'
-
-export function tabIconKind(tab: WindowTab): TabIconKind {
-  if (tab.kind === 'home') return 'home'
-  if (tab.kind === 'workspace') return 'workspace'
-  return tab.file.kind
 }
 
 /* ───────────────── 工作会话（= AgentSession） ───────────────── */
@@ -168,7 +153,7 @@ export interface PersistedWorkspaceTab {
 
 export const TABS_STORAGE_KEY = 'everroom:workbench:tabs:v1'
 
-/** 只持久化「打开过的工作空间」与激活标签；文件标签不恢复（文件可能已删除/移动）。 */
+/** 只持久化「打开过的工作空间」与激活标签（文件不再独立开标签，无恢复问题）。 */
 export interface PersistedTabsState {
   workspaceIds: string[]
   activeTabId: string | null

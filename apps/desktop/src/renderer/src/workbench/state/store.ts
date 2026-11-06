@@ -7,6 +7,8 @@ import type {
 import { useMemo } from 'react'
 import { create } from 'zustand'
 
+import type { PendingAskDraft } from '@/components/agent/askDrafts'
+
 import type { OfficeFile } from '@/office-proto/data'
 
 import { workbenchApi } from '../api'
@@ -19,7 +21,6 @@ import {
   type WorkspaceTab,
   type WorkspaceTabView,
   type WindowTab,
-  fileTabId,
   readPersistedTabs,
   sessionsOfWorkspace,
   workspaceTabId,
@@ -61,7 +62,7 @@ export function registerTabCloser(tabId: string, closer: () => Promise<boolean>)
   }
 }
 
-/** 关闭文件标签/气泡文件前先过编辑器脏关闭守卫（保存对话框里取消 → 保留标签）。 */
+/** 关闭气泡文件前先过编辑器脏关闭守卫（保存对话框里取消 → 保留文件）。 */
 export async function closeOfficeFile(file: OfficeFile): Promise<boolean> {
   const closing = file.realCatalog
     ? window.nxcore?.office?.closeInstance(file.realCatalog.id)
@@ -74,7 +75,7 @@ export async function closeOfficeFile(file: OfficeFile): Promise<boolean> {
   }
 }
 
-/** 主页标签始终在最左；工作空间/文件标签按打开顺序跟在后面。 */
+/** 主页标签始终在最左；工作空间标签按打开顺序跟在后面。 */
 function normalizeTabs(tabs: readonly WindowTab[]): WindowTab[] {
   const home = tabs.find((tab): tab is typeof HOME_TAB => tab.kind === 'home') ?? HOME_TAB
   return [home, ...tabs.filter((tab) => tab.kind !== 'home')]
@@ -131,7 +132,7 @@ function persistTabs(tabs: readonly WindowTab[], activeTabId: string): void {
  * 标签页版工作台状态。
  *
  * 数据（workspaces / sessions）仍然来自网关；视图状态收敛成「窗口标签数组 + 激活标签」：
- * 主页标签固定存在，每个工作空间最多一个标签，文件标签按需打开。侧栏形态由激活标签决定。
+ * 主页标签固定存在，每个工作空间最多一个标签。侧栏形态由激活标签决定。
  */
 interface WorkbenchStore {
   booted: boolean
@@ -144,6 +145,28 @@ interface WorkbenchStore {
   sidebarCollapsed: boolean
   /** 刚创建、还没走完三步引导的工作空间 id（引导弹窗由工作空间标签渲染）。 */
   pendingSetupWorkspaceId: string | null
+  /** 设置页默认打开的分区 id（`settings-account` 等）：账号菜单等入口可直达某个分区。 */
+  settingsSection: string | null
+  /** Office「AI 修改」浮层转发来的待注入消息：工作台先激活目标工作空间标签，
+   * 会话面板挂载后再由它消费（消费即置空）。key = workspaceId。
+   */
+  pendingAgentAsk: PendingOfficeAgentAsk | null
+  /**
+   * 「在工作空间里打开文件」的交接载荷（openFileInWorkspace 写入）：气泡窗状态机
+   * 是组件级（每个工作空间标签一份），store 放不下——这里只暂存，由目标标签的
+   * WorkspaceTabHost 挂载/激活后取走（消费即置空）。
+   */
+  pendingBubbleFile: PendingBubbleFile | null
+  /**
+   * Office「AI 修改」攒下来的批注草稿（每个工作空间各自一份清单）：浮层里选
+   * 「加入批注」时追加，用户在对话上方一次全发。
+   */
+  askDrafts: PendingAskDraft[]
+  /**
+   * 「全部发送」请求序号：文档内批注面板点了发送，但对话面板不在同一处时，
+   * 由这里通知对话面板消费（每次 +1）。
+   */
+  askQueueSendNonce: number
 
   boot(): Promise<void>
   refresh(): Promise<void>
@@ -152,14 +175,37 @@ interface WorkbenchStore {
 
   openHome(page?: HomePageKey): void
   setHomePage(page: HomePageKey): void
+  /** 打开设置页（主页「设置」页），可指定要落到哪个分区。 */
+  openSettings(section?: string | null): void
   openWorkspaceTab(workspaceId: string, view?: WorkspaceTabView): void
-  openFileTab(file: OfficeFile): void
+  /**
+   * 在工作空间里打开文件：不再开独立的文件标签，而是激活（或新建）归属工作空间
+   * 标签，把文件交给该标签的气泡窗（pendingBubbleFile 交接）。
+   */
+  openFileInWorkspace(file: OfficeFile): void
   activateTab(tabId: string): void
   setWorkspaceView(tabId: string, view: WorkspaceTabView): void
   /** 关标签：先跑注册的脏关闭守卫；守卫取消则保留标签。返回是否真的关掉。 */
   requestCloseTab(tabId: string): Promise<boolean>
   setActiveWorkspacePage(workspaceId: string, page: WorkspacePageKey): void
+  /** Office「AI 修改」：写入待注入消息（由对话面板消费后清空）。 */
+  setPendingAgentAsk(ask: PendingOfficeAgentAsk | null): void
+  /** 追加一条批注草稿（超过上限时丢掉最旧的）。 */
+  addAskDraft(draft: PendingAskDraft): void
+  removeAskDraft(id: string): void
+  /**
+   * 改写一条批注草稿的原话（文档内面板/徽章列表的行内编辑）。
+   * message/displayMessage 是主进程按旧原话组好的包，这里同步重写：
+   * displayMessage = 新原话；message 里旧原话原样出现，直接子串替换。
+   */
+  updateAskDraft(id: string, instruction: string): void
+  /** 清空某个工作空间的批注草稿（发送成功/用户主动清空）。 */
+  clearAskDrafts(workspaceId: string): void
+  /** 请求对话面板把当前批注一次性发出。 */
+  requestAskQueueSend(): void
 
+  /** 消费（取走）待打开文件；没有或目标不符时返回 null。 */
+  consumePendingBubbleFile(tabId: string): OfficeFile | null
   createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace | null>
   /** 关闭三步引导（完成/全部跳过）。 */
   finishWorkspaceSetup(): void
@@ -175,6 +221,23 @@ interface WorkbenchStore {
   toggleSidebar(): void
 }
 
+/** Office「AI 修改」浮层转发的一条待注入消息（技术指令进 runtime，人话进气泡）。 */
+export interface PendingOfficeAgentAsk {
+  id: string
+  workspaceId: string
+  message: string
+  displayMessage?: string
+}
+
+/** 「在工作空间里打开文件」的交接载荷（目标工作空间标签的气泡窗消费）。 */
+export interface PendingBubbleFile {
+  /** 目标工作空间标签 id（= workspaceTabId(workspaceId)，只应被该标签消费）。 */
+  tabId: string
+  /** 归属工作空间 id（校验用；与 tabId 一一对应）。 */
+  workspaceId: string
+  file: OfficeFile
+}
+
 let sessionsRefreshInFlight = false
 
 export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
@@ -187,6 +250,11 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   activeTabId: HOME_TAB_ID,
   sidebarCollapsed: false,
   pendingSetupWorkspaceId: null,
+  settingsSection: null,
+  pendingAgentAsk: null,
+  pendingBubbleFile: null,
+  askDrafts: [],
+  askQueueSendNonce: 0,
 
   setError(error) {
     set({ error })
@@ -278,6 +346,11 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     get().openHome(page)
   },
 
+  openSettings(section) {
+    set({ settingsSection: section ?? null })
+    get().openHome('settings')
+  },
+
   openWorkspaceTab(workspaceId, view) {
     const workspace = get().workspaces.find((item) => item.id === workspaceId)
     if (!workspace) return
@@ -302,16 +375,29 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     void workbenchApi.updateWorkspace(workspaceId, { lastOpenedAt: new Date().toISOString() }).catch(() => undefined)
   },
 
-  openFileTab(file) {
-    const id = fileTabId(file.id)
-    set((state) => {
-      const existing = state.tabs.find((tab) => tab.id === id)
-      const tabs = existing
-        ? state.tabs.map((tab) => (tab.id === id ? { ...tab, kind: 'file' as const, file } : tab))
-        : normalizeTabs([...state.tabs, { id, kind: 'file' as const, file }])
-      return { tabs, activeTabId: id, error: null }
-    })
-    persistTabs(get().tabs, id)
+  openFileInWorkspace(file) {
+    let workspaces = get().workspaces
+    // 归属空间：真实文件按目录里的 workspaceId（校验存在），其余（mock/新建）落默认空间。
+    const catalogWorkspaceId = file.realCatalog?.workspaceId
+    let target = (catalogWorkspaceId && workspaces.some((workspace) => workspace.id === catalogWorkspaceId))
+      ? catalogWorkspaceId
+      : defaultWorkspaceOf(workspaces).id
+    // 工作区清单还没加载（网关慢/失败）也要能打开文件：目标空间不在清单里时，
+    // 先把兜底默认空间注入 store（boot() 同款容错），保证标签能建出来。
+    if (!workspaces.some((workspace) => workspace.id === target)) {
+      workspaces = [...workspaces, FALLBACK_DEFAULT_WORKSPACE]
+      target = FALLBACK_DEFAULT_WORKSPACE.id
+      set({ workspaces })
+    }
+    get().openWorkspaceTab(target)
+    set({ pendingBubbleFile: { tabId: workspaceTabId(target), workspaceId: target, file } })
+  },
+
+  consumePendingBubbleFile(tabId) {
+    const pending = get().pendingBubbleFile
+    if (!pending || pending.tabId !== tabId) return null
+    set({ pendingBubbleFile: null })
+    return pending.file
   },
 
   activateTab(tabId) {
@@ -337,18 +423,15 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     const state = get()
     const tab = state.tabs.find((item) => item.id === tabId)
     if (!tab || tab.kind === 'home') return false
-    if (tab.kind === 'file') {
-      const closed = await closeOfficeFile(tab.file)
-      if (!closed) return false
-    } else {
-      const closer = tabClosers.get(tabId)
-      if (closer) {
-        try {
-          const closed = await closer()
-          if (!closed) return false
-        } catch {
-          return false
-        }
+    // 工作空间标签的气泡窗/编辑器通过 registerTabCloser 注册脏关闭守卫
+    //（保存对话框里取消 → 保留标签）。
+    const closer = tabClosers.get(tabId)
+    if (closer) {
+      try {
+        const closed = await closer()
+        if (!closed) return false
+      } catch {
+        return false
       }
     }
     const nextState = get()
@@ -510,6 +593,46 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
       set({ error: errorMessage(error, '删除工作失败') })
       return false
     }
+  },
+
+  setPendingAgentAsk(ask) {
+    set({ pendingAgentAsk: ask })
+  },
+
+  addAskDraft(draft) {
+    set((state) => ({
+      // 上限 20：攒批注是临时动作，堆太多既读不清也超出一次调度的合理规模。
+      askDrafts: [...state.askDrafts, draft].slice(-20),
+    }))
+  },
+
+  removeAskDraft(id) {
+    set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.id !== id) }))
+  },
+
+  updateAskDraft(id, instruction) {
+    const text = instruction.trim()
+    set((state) => ({
+      askDrafts: state.askDrafts.map((draft) => {
+        if (draft.id !== id) return draft
+        // message 是主进程组好的「定位前缀 + 原话」技术指令；原话在其中原样出现，
+        // 替换第一个匹配即可保住定位信息。旧草稿可能没存 instruction（只有组好的
+        // 包）：此时找不到子串，退化为只更新 instruction/displayMessage。
+        const oldText = draft.instruction?.trim()
+        const message = oldText && draft.message.includes(oldText)
+          ? draft.message.replace(oldText, text)
+          : draft.message
+        return { ...draft, instruction: text, displayMessage: text, message }
+      }),
+    }))
+  },
+
+  clearAskDrafts(workspaceId) {
+    set((state) => ({ askDrafts: state.askDrafts.filter((draft) => draft.workspaceId !== workspaceId) }))
+  },
+
+  requestAskQueueSend() {
+    set((state) => ({ askQueueSendNonce: state.askQueueSendNonce + 1 }))
   },
 
   toggleSidebar() {

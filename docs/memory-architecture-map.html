@@ -1,0 +1,1683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EverOffice 记忆架构剖面图 · 分层 / 模块 / Agent 与 LLM 边界</title>
+<style>
+  :root {
+    --paper: #e8edf0;
+    --paper-raise: #f3f6f7;
+    --ink: #131c26;
+    --ink-2: #43525d;
+    --ink-3: #7b8892;
+    --rule: #bcc7ce;
+    --rule-soft: #d3dbe0;
+
+    /* 六类各占一个色相区：红 / 青绿 / 蓝 / 灰 / 琥珀 / 紫 */
+    --agent: #c13122;
+    --agent-wash: rgba(193, 49, 34, 0.13);
+    --llm: #0d6f68;
+    --llm-wash: rgba(13, 111, 104, 0.13);
+    --store: #2b4a9c;
+    --store-wash: rgba(43, 74, 156, 0.13);
+    --code: #6d7b87;
+    --code-wash: rgba(109, 123, 135, 0.16);
+    --mech: #9d6410;
+    --mech-wash: rgba(157, 100, 16, 0.14);
+    --model: #6a479c;
+    --model-wash: rgba(106, 71, 156, 0.13);
+
+    --font-display: "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, "Times New Roman", serif;
+    --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+    --gutter: 78px;
+    --radius: 3px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background:
+      repeating-linear-gradient(0deg, rgba(19,28,38,0.038) 0 1px, transparent 1px 34px),
+      repeating-linear-gradient(90deg, rgba(19,28,38,0.038) 0 1px, transparent 1px 34px),
+      var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: rgba(192, 67, 43, 0.18); }
+
+  .sheet {
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 34px 32px 60px;
+  }
+
+  /* ---------- header ---------- */
+
+  header.masthead {
+    border-top: 2px solid var(--ink);
+    padding-top: 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 40px;
+    align-items: end;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 18px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    grid-column: 1 / -1;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule-soft);
+    margin-bottom: 18px;
+  }
+  .meta-row b { color: var(--ink-2); font-weight: 600; }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(30px, 4.2vw, 52px);
+    line-height: 1.06;
+    letter-spacing: -0.015em;
+    margin: 0 0 10px;
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--agent);
+  }
+
+  .thesis {
+    grid-column: 1;
+    max-width: 62ch;
+    color: var(--ink-2);
+    font-size: 14.5px;
+    margin: 0;
+  }
+  .thesis b { color: var(--ink); font-weight: 600; }
+
+  .tally {
+    grid-column: 2;
+    display: flex;
+    gap: 26px;
+    padding-bottom: 4px;
+  }
+  .tally div { text-align: right; }
+  .tally .n {
+    font-family: var(--font-display);
+    font-size: 30px;
+    line-height: 1;
+    font-weight: 700;
+    display: block;
+  }
+  .tally .l {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .tally .n.agent { color: var(--agent); }
+  .tally .n.llm { color: var(--llm); }
+
+  /* ---------- nav ---------- */
+
+  nav.tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0;
+    margin: 30px 0 0;
+    border-bottom: 1px solid var(--ink);
+  }
+  nav.tabs button {
+    appearance: none;
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    padding: 10px 16px 11px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  nav.tabs button:hover { color: var(--ink); }
+  nav.tabs button[aria-selected="true"] {
+    color: var(--ink);
+    border-bottom-color: var(--agent);
+  }
+  nav.tabs .spacer { flex: 1; }
+  nav.tabs .hint {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    padding-right: 4px;
+  }
+
+  /* ---------- legend / filters ---------- */
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 14px 0 6px;
+  }
+  .chip {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--paper-raise);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 5px 12px 5px 9px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    color: var(--ink-2);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .chip .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: 0 0 auto;
+  }
+  .chip .sw {
+    width: 13px; height: 13px;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    border-left-width: 4px;
+    flex: 0 0 auto;
+  }
+  .chip.k-agent .sw { background: var(--agent-wash); }
+  .chip.k-llm .sw { background: var(--llm-wash); }
+  .chip.k-store .sw { background: var(--store-wash); }
+  .chip.k-code .sw { background: var(--code-wash); }
+  .chip.k-mech .sw { background: var(--mech-wash); }
+  .chip.k-model .sw { background: var(--model-wash); }
+  .chip:hover { border-color: var(--ink-3); }
+  .chip[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper-raise);
+  }
+  .chip.k-agent { color: var(--agent); }
+  .chip.k-llm { color: var(--llm); }
+  .chip.k-store { color: var(--store); }
+  .chip.k-mech { color: var(--mech); }
+  .chip.k-model { color: var(--model); }
+  .chip.k-code { color: var(--code); }
+  .chip[aria-pressed="true"] .dot { background: var(--paper-raise); }
+
+  .toolbar .sep { width: 1px; height: 18px; background: var(--rule); margin: 0 4px; }
+
+  /* ---------- panels ---------- */
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 336px;
+    gap: 26px;
+    align-items: start;
+    padding-top: 16px;
+  }
+
+  .canvas-wrap {
+    background: var(--paper-raise);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .canvas-wrap svg { display: block; width: 100%; min-width: 980px; height: auto; }
+
+  /* graph nodes */
+  .node { cursor: pointer; }
+  .node rect.body {
+    stroke-width: 1.2;
+    transition: stroke 0.15s ease, fill 0.15s ease;
+  }
+  .node .bar { transition: fill 0.15s ease; }
+  .node text.t {
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    font-weight: 600;
+    fill: var(--ink);
+  }
+  .node text.s {
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    fill: var(--ink-3);
+  }
+  .node text.k {
+    font-family: var(--font-mono);
+    font-size: 7.5px;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+  .node:hover rect.body { stroke: var(--ink) !important; }
+  .node.selected rect.body { stroke: var(--ink) !important; stroke-width: 2; }
+  .node.dim { opacity: 0.22; }
+  .edge { fill: none; stroke: #9dabb4; stroke-width: 1.1; transition: opacity 0.15s ease, stroke 0.15s ease; }
+  .edge.read { stroke-dasharray: 4 3; }
+  .edge.dim { opacity: 0.1; }
+  .edge.hot { stroke: var(--ink); stroke-width: 1.7; opacity: 1; }
+  .band-rule { stroke: var(--rule); stroke-width: 1; }
+  .band-label {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.16em;
+    fill: var(--ink-3);
+    text-transform: uppercase;
+  }
+  .band-note { font-family: var(--font-mono); font-size: 9px; fill: #9dabb4; }
+
+  /* ---------- detail panel ---------- */
+
+  aside.detail {
+    position: sticky;
+    top: 18px;
+    background: var(--paper-raise);
+    border: 1px solid var(--rule);
+    border-top: 2px solid var(--ink);
+    padding: 16px 18px 20px;
+    min-height: 220px;
+  }
+  aside.detail .kicker {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  aside.detail h3 {
+    font-family: var(--font-display);
+    font-size: 19px;
+    margin: 0 0 2px;
+    line-height: 1.25;
+  }
+  aside.detail .sub {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--ink-3);
+    margin-bottom: 12px;
+    word-break: break-word;
+  }
+  aside.detail h4 {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 14px 0 5px;
+    padding-top: 10px;
+    border-top: 1px solid var(--rule-soft);
+  }
+  aside.detail p { margin: 0 0 6px; font-size: 13px; color: var(--ink-2); }
+  aside.detail ul { margin: 0; padding-left: 15px; font-size: 12.5px; color: var(--ink-2); }
+  aside.detail li { margin-bottom: 3px; }
+  aside.detail code, .pathcode {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    background: rgba(19,28,38,0.055);
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  aside.detail .refs { display: flex; flex-direction: column; gap: 3px; }
+  aside.detail .empty { color: var(--ink-3); font-size: 12.5px; }
+
+  .kind-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .kind-tag .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .kind-tag.agent { color: var(--agent); }
+  .kind-tag.llm { color: var(--llm); }
+  .kind-tag.store { color: var(--store); }
+  .kind-tag.mech { color: var(--mech); }
+  .kind-tag.model { color: var(--model); }
+  .kind-tag.code { color: var(--code); }
+
+  /* ---------- memory profile (stratigraphy) ---------- */
+
+  .profile {
+    display: block;
+    max-width: 1150px;
+    margin-top: 18px;
+  }
+  .strata { position: relative; display: flex; flex-direction: column; gap: 0; }
+  .strata::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 14px; bottom: 14px;
+    width: 1px;
+    background: var(--rule);
+  }
+
+  .stratum {
+    display: grid;
+    grid-template-columns: 46px minmax(0, 1fr) 186px;
+    gap: 0 20px;
+    padding: 16px 0 17px 20px;
+    border-top: 1px solid var(--rule-soft);
+    position: relative;
+  }
+  .stratum:first-child { border-top: 0; }
+  .stratum .idx {
+    font-family: var(--font-display);
+    font-size: 26px;
+    line-height: 1;
+    color: var(--ink-3);
+    font-weight: 700;
+  }
+  .stratum h3 {
+    margin: 0 0 2px;
+    font-family: var(--font-display);
+    font-size: 18px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .stratum h3 span.life {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.07em;
+    color: var(--ink-3);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+  .stratum .desc { color: var(--ink-2); font-size: 13px; margin: 0 0 8px; max-width: 66ch; }
+  .stratum .wiring {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 2px 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .stratum .wiring dt {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .stratum .wiring dd { margin: 0; }
+  .meter-wrap { align-self: start; }
+  .meter-cap {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .meter {
+    height: 11px;
+    border: 1px solid var(--rule);
+    background:
+      repeating-linear-gradient(90deg, rgba(19,28,38,0.10) 0 1px, transparent 1px 9px),
+      #fff;
+    position: relative;
+    margin-bottom: 5px;
+  }
+  .meter i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: currentColor;
+    opacity: 0.86;
+  }
+  .meter-note {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--ink-3);
+    line-height: 1.4;
+  }
+
+  /* ---------- classification tab ---------- */
+
+  .ruling {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 0 26px;
+    margin: 20px 0 6px;
+    padding: 16px 0 18px;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+  }
+  .ruling .q { display: grid; grid-template-columns: 22px 1fr; gap: 10px; }
+  .ruling .q .num {
+    font-family: var(--font-display);
+    font-size: 17px;
+    color: var(--agent);
+    line-height: 1.2;
+  }
+  .ruling .q p { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+  .ruling .q strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 2px; }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 30px;
+    margin-top: 22px;
+  }
+  .col-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--rule);
+    margin-bottom: 2px;
+  }
+  .col-head h2 {
+    font-family: var(--font-display);
+    font-size: 20px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .col-head .count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+  }
+  .col-head.agent h2 { color: var(--agent); }
+  .col-head.llm h2 { color: var(--llm); }
+
+  .card {
+    border-bottom: 1px solid var(--rule-soft);
+    padding: 13px 0 14px;
+  }
+  .card .name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .card .name .badge {
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    letter-spacing: 0.07em;
+    padding: 1px 5px;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  .card.agent .name { color: var(--agent); }
+  .card.llm .name { color: var(--llm); }
+  .card .role { font-size: 12.5px; color: var(--ink); margin-bottom: 5px; }
+  .card dl { margin: 0; display: grid; grid-template-columns: 62px minmax(0,1fr); gap: 3px 8px; font-size: 11.5px; }
+  .card dt {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-top: 2px;
+  }
+  .card dd { margin: 0; color: var(--ink-2); }
+  .card .ref {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--ink-3);
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--rule-soft);
+    word-break: break-all;
+    line-height: 1.5;
+  }
+  .card .ref b { color: var(--ink-2); font-weight: 500; display: block; margin-bottom: 2px; }
+
+  .edgecase {
+    margin-top: 26px;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--mech);
+    background: var(--mech-wash);
+    padding: 14px 18px 16px;
+  }
+  .edgecase h3 {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--mech);
+    margin: 0 0 10px;
+  }
+  .edgecase ol { margin: 0; padding-left: 18px; }
+  .edgecase li { font-size: 12.5px; color: var(--ink-2); margin-bottom: 7px; }
+  .edgecase li b { color: var(--ink); }
+
+  /* ---------- flows tab ---------- */
+
+  .flow-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 34px;
+    margin-top: 20px;
+  }
+  .flow {
+    border-top: 2px solid var(--ink);
+    padding: 14px 0 6px;
+    margin-bottom: 22px;
+  }
+  .flow .head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .flow .head .tag {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    padding: 2px 6px;
+    border-radius: 2px;
+    color: #fff;
+    background: var(--store);
+  }
+  .flow.write .head .tag { background: var(--store); }
+  .flow.read .head .tag { background: var(--llm); }
+  .flow.maintain .head .tag { background: var(--mech); }
+  .flow h3 {
+    font-family: var(--font-display);
+    font-size: 19px;
+    margin: 0;
+  }
+  .flow .sub { font-size: 12px; color: var(--ink-3); margin: 0 0 12px; }
+
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  .steps li {
+    counter-increment: step;
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    gap: 0 12px;
+    padding: 8px 0 9px;
+    border-top: 1px solid var(--rule-soft);
+    position: relative;
+  }
+  .steps li::before {
+    content: counter(step, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--ink-3);
+    padding-top: 3px;
+    border-right: 1px solid var(--rule-soft);
+    padding-right: 6px;
+  }
+  .steps .what { font-size: 12.5px; color: var(--ink); margin-bottom: 2px; }
+  .steps .how { font-size: 11.5px; color: var(--ink-2); }
+  .steps .how code {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: rgba(19,28,38,0.055);
+    padding: 0 3px;
+    border-radius: 2px;
+    word-break: break-all;
+  }
+
+  .guardrail {
+    margin-top: 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  .guardrail div {
+    background: var(--paper-raise);
+    padding: 12px 14px;
+  }
+  .guardrail .g-n {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--store);
+  }
+  .guardrail .g-l {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+  .guardrail .g-d { font-size: 11.5px; color: var(--ink-2); }
+
+  /* ---------- notes / footer ---------- */
+
+  .retired {
+    margin-top: 30px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+  }
+  .retired div { background: var(--paper-raise); padding: 13px 16px 15px; }
+  .retired h4 {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0 0 5px;
+  }
+  .retired p { margin: 0; font-size: 11.5px; color: var(--ink-2); }
+  .retired code { font-family: var(--font-mono); font-size: 10px; }
+
+  footer.colophon {
+    margin-top: 34px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ink);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 10px 26px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: var(--ink-3);
+  }
+  footer.colophon b { color: var(--ink-2); font-weight: 500; }
+
+  /* ---------- responsive ---------- */
+
+  @media (max-width: 1180px) {
+    .split { grid-template-columns: minmax(0, 1fr); }
+    aside.detail { position: static; }
+  }
+  @media (max-width: 900px) {
+    .sheet { padding: 22px 18px 44px; }
+    header.masthead { grid-template-columns: minmax(0, 1fr); }
+    .tally { grid-column: 1; justify-content: flex-start; gap: 22px; }
+    .tally div { text-align: left; }
+    .cols, .flow-grid { grid-template-columns: minmax(0, 1fr); }
+    .stratum { grid-template-columns: 34px minmax(0, 1fr); }
+    .stratum .meter-wrap { grid-column: 2; margin-top: 8px; }
+    .card { grid-template-columns: minmax(0, 1fr); }
+    .card .ref { border-left: 0; padding-left: 0; margin-top: 6px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--agent);
+    outline-offset: 2px;
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header class="masthead">
+    <div class="meta-row">
+      <span>档案 <b>MEM-ARCH / 01</b></span>
+      <span>仓库 <b>EverOfficeMac</b></span>
+      <span>范围 <b>apps/gateway · apps/desktop · packages/agent-runtime*</b></span>
+      <span>采样 <b>2026-11-02</b></span>
+      <span>依据 <b>源码 + docs/hippo-memory-adoption-plan</b></span>
+    </div>
+
+    <h1>记忆架构剖面<br />与 <em>Agent / LLM</em> 边界</h1>
+
+    <p class="thesis">
+      这个产品的"记忆"不是一个数据库，而是<b>五层不同寿命的载体 + 三条写入链路 + 两条读取链路</b>。
+      能"自己找记忆"的只有工具型 harness（13 个 Agent 身份）；其余九处模型调用都是一次性
+      <b>提示词 → 输出</b>，没有工具、没有会话、没有第二轮。
+    </p>
+
+    <div class="tally">
+      <div><span class="n agent">13</span><span class="l">Agent 身份</span></div>
+      <div><span class="n llm">9</span><span class="l">LLM 单次点</span></div>
+      <div><span class="n">5</span><span class="l">记忆层</span></div>
+      <div><span class="n">6</span><span class="l">持久化载体</span></div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="视图切换">
+    <button role="tab" id="tab-map" aria-controls="panel-map" aria-selected="true" data-tab="map">01 · 分层关系图</button>
+    <button role="tab" id="tab-profile" aria-controls="panel-profile" aria-selected="false" data-tab="profile">02 · 记忆剖面</button>
+    <button role="tab" id="tab-class" aria-controls="panel-class" aria-selected="false" data-tab="class">03 · Agent ⟷ LLM</button>
+    <button role="tab" id="tab-flow" aria-controls="panel-flow" aria-selected="false" data-tab="flow">04 · 读写链路</button>
+    <span class="spacer"></span>
+    <span class="hint">点击任一模块查看作用与代码落点</span>
+  </nav>
+
+  <!-- ========== panel: map ========== -->
+  <section class="panel active" id="panel-map" role="tabpanel" aria-labelledby="tab-map">
+    <div class="toolbar" id="legend">
+      <button class="chip k-agent" data-kind="agent" aria-pressed="false"><span class="sw"></span>Agent · 有工具的 harness</button>
+      <button class="chip k-llm" data-kind="llm" aria-pressed="false"><span class="sw"></span>LLM · 一次性调用</button>
+      <button class="chip k-store" data-kind="store" aria-pressed="false"><span class="sw"></span>记忆 / 知识载体</button>
+      <button class="chip k-code" data-kind="code" aria-pressed="false"><span class="sw"></span>确定性编排代码</button>
+      <button class="chip k-mech" data-kind="mech" aria-pressed="false"><span class="sw"></span>机制（裁剪 / 索引）</button>
+      <button class="chip k-model" data-kind="model" aria-pressed="false"><span class="sw"></span>模型槽位</button>
+      <span class="sep"></span>
+      <button class="chip" id="reset-filter" aria-pressed="false"><span class="dot" style="background:#bcc7ce"></span>全部显示</button>
+    </div>
+
+    <div class="split">
+      <div class="canvas-wrap">
+        <svg id="graph" viewBox="0 0 1240 880" role="img"
+             aria-label="EverOffice 记忆架构分层关系图：界面层、桌面壳、网关编排、运行时、记忆载体、模型槽位"></svg>
+      </div>
+      <aside class="detail" id="detail">
+        <div class="kicker">如何使用</div>
+        <h3>六条横带 = 六层</h3>
+        <div class="sub">自上而下：界面 → 桌面壳 → 网关编排 → 运行时 → 载体 → 模型</div>
+        <p>实线箭头是调用或写入（自上而下），虚线箭头是回读（自下而上）。</p>
+        <h4>三种"看起来像记忆"的东西</h4>
+        <ul>
+          <li><span class="kind-tag store"><span class="dot"></span>载体</span> 真正落盘的东西：SQLite 表、hippo 库、pi 会话文件、对象库。</li>
+          <li><span class="kind-tag code"><span class="dot"></span>代码</span> 决定写什么、读什么的编排逻辑（无模型）。</li>
+          <li><span class="kind-tag agent"><span class="dot"></span>Agent</span> / <span class="kind-tag llm"><span class="dot"></span>LLM</span> 唯一真正"产生理解"的两类。</li>
+        </ul>
+        <h4>一个反直觉的事实</h4>
+        <p>长期记忆库没有独立进程、没有端口、也不外呼模型：它是网关进程内一层 <span class="pathcode">node:sqlite</span>，整理回合的 LLM 事实提取被代码硬关掉。</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ========== panel: profile ========== -->
+  <section class="panel" id="panel-profile" role="tabpanel" aria-labelledby="tab-profile">
+    <div class="toolbar">
+      <span class="hint" style="font-family:var(--font-mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em">
+        纵轴 = 信息寿命 · 横条 = 留存强度（衰减后剩余比例）· 每一层都有自己的写入者与读取者
+      </span>
+    </div>
+    <div class="profile">
+      <div class="strata" id="strata"></div>
+    </div>
+
+    <div class="retired" id="crosscut"></div>
+  </section>
+
+  <!-- ========== panel: classification ========== -->
+  <section class="panel" id="panel-class" role="tabpanel" aria-labelledby="tab-class">
+    <div class="ruling" id="ruling"></div>
+    <div class="cols">
+      <div>
+        <div class="col-head agent">
+          <h2>Agent · 有工具的 harness</h2>
+          <span class="count" id="count-agent"></span>
+        </div>
+        <div id="cards-agent"></div>
+      </div>
+      <div>
+        <div class="col-head llm">
+          <h2>LLM · 一次性调用</h2>
+          <span class="count" id="count-llm"></span>
+        </div>
+        <div id="cards-llm"></div>
+      </div>
+    </div>
+    <div class="edgecase" id="edgecase"></div>
+  </section>
+
+  <!-- ========== panel: flows ========== -->
+  <section class="panel" id="panel-flow" role="tabpanel" aria-labelledby="tab-flow">
+    <div class="flow-grid" id="flows"></div>
+    <div class="guardrail" id="guardrail"></div>
+  </section>
+
+  <footer class="colophon">
+    <span><b>数据来源</b> · apps/gateway/src/modules/{memory,agent,subagents,documents,search} · packages/agent-runtime-pi · agents/*/agent.yaml · apps/desktop/src/main/gateway</span>
+    <span><b>配套</b> · <a href="./memory-pipeline.html" style="color:var(--ink-2);text-decoration:none;border-bottom:1px solid var(--rule)">02 记忆链路 / 一次 run 到一条长期事实</a></span>
+    <span><b>免责</b> · 结构随代码演进，本页为 2026-11-02 快照；数字与路径均取自源码而非文档</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ================================================================
+     1. 图数据
+     ================================================================ */
+
+  var BAND_Y = [86, 220, 352, 486, 632, 786];
+  var NODE_W = 128;
+  var NODE_H = 66;
+  var X0 = 92;
+  var X1 = 1186;
+
+  var BANDS = [
+    { name: "L0 · 界面层", note: "桌面渲染进程 · 用户唯一接触面" },
+    { name: "L1 · 桌面壳", note: "Electron 主进程 · IPC 桥 · 网关守护" },
+    { name: "L2 · 网关编排", note: "apps/gateway · 决定写什么、读什么" },
+    { name: "L3 · 运行时", note: "harness 与一次性补全在此分家" },
+    { name: "L4 · 记忆 / 知识载体", note: "真正落盘的五类载体" },
+    { name: "L5 · 模型槽位", note: "runtime-config 中的 provider/model 配置" }
+  ];
+
+  var NODES = [
+    /* ---------- L0 ---------- */
+    { id: "persona", band: 0, kind: "code", title: "智能体页", sub: "AgentPage", role: "把长期记忆反向展示给用户：人格、用户画像、经验三段。", notes: ["画像/经验是同一批记忆按标签分流（PROFILE_TAGS），不是两套存储。", "用户在这里看到的就是 memory_remember 与蒸馏写进去的条目。"], refs: ["workbench/home/AgentPage.tsx", "workbench/home/useAgentPersona.ts"] },
+    { id: "chat", band: 0, kind: "code", title: "对话面板", sub: "AgentPanel", role: "用户与主 Agent 的唯一对话入口：发送消息、观察工具调用时间线、审批写入。", notes: ["把一轮对话落成一次 run，消息与事件回流后渲染工具时间线。", "不做记忆判断——它只负责显示 agent 调了 memory_search 还是 document_read。"] , refs: ["apps/desktop/src/renderer/src/components/agent/", "components/agent/agentRunActivity.ts（工具意图文案）"] },
+    { id: "doc", band: 0, kind: "code", title: "文档 / Office", sub: "office-editor", role: "文档与 Word/Excel/PPT 的编辑面，Agent 的产物最终落在这里被阅读。", notes: ["编辑器与 Agent 通过文档 MCP 工具共享同一份权威快照。"], refs: ["apps/desktop/src/renderer/src/office-editor/"] },
+    { id: "files", band: 0, kind: "code", title: "文件库", sub: "FilesPage", role: "项目语料的入口与浏览面：上传、导入、查看解析结果。", notes: ["文件字节进的是语料库，不是记忆库——两者用途不同（本页 02 剖面说明了差异）。"], refs: ["components/pages/FilesPage.tsx"] },
+    { id: "search", band: 0, kind: "code", title: "搜索面板", sub: "SearchPalette", role: "统一检索 UI：跨文件、文档、历史消息查询。", notes: ["命中来自 search_index（FTS5），不是长期记忆库。"], refs: ["components/search/SearchPalette.tsx"] },
+
+    /* ---------- L1 ---------- */
+    { id: "ipc", band: 1, kind: "code", title: "IPC 桥", sub: "*-bridge.ts", role: "渲染进程到网关的类型化通道：每个网关模块一条桥，失败文案按域区分。", notes: ["listMemoryEntries → GET /v1/memory/entries，是智能体页的数据来源。"], refs: ["apps/desktop/src/main/gateway/agent-gateway-bridge.ts:150"] },
+    { id: "supervisor", band: 1, kind: "code", title: "网关进程守护", sub: "supervisor.ts", role: "拉起并托管本地网关进程，注入 runtime config 与密钥。", notes: ["记忆库路径 <dataDir>/memory/hippo 由网关自己解析，桌面侧不碰。"] , refs: ["apps/desktop/src/main/gateway/gateway-supervisor.ts"] },
+
+    /* ---------- L2 ---------- */
+    { id: "distill", band: 2, kind: "code", title: "MemoryDistiller", sub: "会话蒸馏管线", role: "会话结束后把一轮对话提炼成 0–3 条跨会话事实。", notes: ["门槛：转写 ≥600 字且 ≥2 轮用户发言；同会话冷却 5 分钟；单条 ≤120 字。", "写入前做包含式近似去重；失败只记日志，绝不阻断对话。"], refs: ["modules/memory/distill.ts", "DISTILL_PROMPT"] },
+    { id: "memsvc", band: 2, kind: "code", title: "MemoryService", sub: "生命周期 · 定时整理", role: "长期记忆库的持有者：开关、启动、定时整理、对外 remember/recall/forget。", notes: ["整理回合：启动后 5 分钟首跑，此后每 6 小时一次，衰减 + 去重 + 情景合并成语义。", "启动时把 hippo 的 config.json extraction.enabled 固化为 false——保证整理全程零外呼。"], refs: ["modules/memory/service.ts", "hippo-adapter.ts:210"] },
+    { id: "agentsvc", band: 2, kind: "code", title: "AgentService", sub: "会话 · 运行 · 事件", role: "会话/运行/消息/事件的唯一写者，run 终态时回调记忆蒸馏。", notes: ["setMemoryDistiller 接线：run 落到 completed 才触发蒸馏，失败/取消不触发。", "所有对话内容先落库，再谈提炼——蒸馏读的是 agent_messages 的转写。"], refs: ["apps/gateway/src/modules/agent/service.ts:797", "create-server.ts:1250"] },
+    { id: "factory", band: 2, kind: "code", title: "RuntimeFactory", sub: "Resolver · 工具注入", role: "把「哪个 agent × 哪个模型槽位 × 哪些工具 × 哪些提示词指引」装配成一个 runtime。", notes: ["memory_search / memory_remember 与它们的行为指引只在这一层注入，且只注入用户档。", "提示词指引必须走 integration 级：本仓库自定义 system prompt 会跳过 pi 的工具级 guideline 渲染。"], refs: ["modules/agent/runtime-factory.ts:130–190", "agent/resolver.ts"] },
+    { id: "suborch", band: 2, kind: "code", title: "子代理调度器", sub: "Orchestrator", role: "子代理的物料化（revision 摘要）、调度、结果校验与占用回收。", notes: ["每个子代理的 runtime 有自己的 sessionsDir 与 workspace，工具面由 agent.yaml + 网关注册决定。", "人读的 agent.yaml 只是声明；真正给不给工具由 registerAgentTools 决定。"], refs: ["modules/subagents/orchestrator.ts", "registry.ts", "runtime-manager.ts:322"] },
+    { id: "searchsvc", band: 2, kind: "mech", title: "SearchService", sub: "FTS 索引 worker", role: "统一检索索引：把文件、文档、历史消息、导出产物编进 FTS5。", notes: ["2 秒轮询 + 启动回填；分词对中文单字查询有专门处理。", "它是「历史会话可被找回」的真正实现，不是记忆库。"], refs: ["modules/search/service.ts", "search/jobs.ts", "tokenizer.ts"] },
+    { id: "docs", band: 2, kind: "code", title: "Documents / Files", sub: "语料 · 解析产物", role: "文档模型、文件对象库、版本、解析产物的权威服务。", notes: ["Agent 通过文档 MCP 工具读写这里；VLM 单次调用也挂在这条链上做 OCR/理解。"], refs: ["modules/documents/", "modules/files/"] },
+    { id: "proc", band: 2, kind: "code", title: "Processing", sub: "标题 · 建议", role: "会话标题与输入框补全建议等机器对机器的短输出。", notes: ["零工具、单次调用；用 background 槽位而不是主档模型。"], refs: ["modules/processing/session-title.ts", "conversation-suggestion.ts"] },
+
+    /* ---------- L3 ---------- */
+    { id: "piuser", band: 3, kind: "agent", title: "Pi · 用户档", sub: "main / direct / lite", role: "有工具的 harness：多轮工具环路、会话持久化、工具预算、steering 与 resume。", notes: ["工具面 = agent.yaml 声明 41 项 + 运行时注入（memory_*、web_search、file_read/search、agent_catalog/dispatch、slides_draft…）。", "bash 工具被沙箱限制在自己的 workspace 目录内。"], refs: ["packages/agent-runtime-pi/src/index.ts:466", "agents/main/agent.yaml"] },
+    { id: "pisub", band: 3, kind: "agent", title: "Pi · 子代理", sub: "×9 dispatch-only", role: "每个子代理一个 harness 实例：skill read + 网关注册工具 + submit_result，无 bash、无内置读写。", notes: ["9 个里 5 个有实质工具面（doc-writer / slides-planner / slides-builder / slides-layouter / multimodal-document-parser）。", "run 内两道上下文防线：单条工具结果 24k 字符截断、用量过半后按轮裁剪。"], refs: ["modules/subagents/runtime-manager.ts:322", "packages/agent-runtime-pi/src/context-budget.ts"] },
+    { id: "piint", band: 3, kind: "llm", title: "内部单次补全", sub: "maxToolCalls = 1", role: "用 harness 壳子跑一次性任务：无工具、无会话复用、单次调用。", notes: ["标题、文档速览、版本摘要、索引兜底、对话建议各占一个独立 sessionsDir。", "本质是 LLM 调用——壳子只是为了复用 provider 适配。"], refs: ["runtime-factory.ts:createSessionTitleRuntime 等 5 个工厂"] },
+    { id: "compl", band: 3, kind: "llm", title: "补全 runtime", sub: "tools:false · 无会话", role: "纯补全适配器：capabilities 明确声明 streaming/tools/steering/resume 全为 false。", notes: ["web-search agent 唯一使用者：主 Agent 的 web_search 工具背后就是它。", "用它是因为有些 provider 的额外请求字段 pi 不支持。"], refs: ["modules/agent/openai-completion-runtime.ts", "runtime-factory.ts createAgentResolver"] },
+    { id: "mcp", band: 3, kind: "code", title: "文档 MCP 宿主", sub: "DocumentMcpHost", role: "harness 与业务能力之间的工具边界：每个工具一次调用，结果进上下文。", notes: ["工具是 Agent 与 LLM 的分水岭：LLM 一次调用后没有「下一次」，工具型 harness 有。"], refs: ["modules/documents/mcp-host.ts", "documents/pi-tools.ts"] },
+    { id: "guard", band: 3, kind: "mech", title: "上下文裁剪", sub: "context-budget", role: "子代理的工作记忆守门人：单条工具结果截断 + 轮次级历史裁剪。", notes: ["只配在子代理 runtime 上（runtime-manager 显式给 triggerTokens / keepRecentTurns / 单条 24k）；用户档依赖 pi 自身的轮间压缩。", "只影响「发给模型的那份上下文」；落盘与事件流仍是完整历史。", "阈值优先用 provider 返回的真实 usage，估算只作兜底（中文+JSON 会低估一半）。"], refs: ["packages/agent-runtime-pi/src/context-budget.ts"] },
+
+    /* ---------- L4 ---------- */
+    { id: "pisess", band: 4, kind: "store", title: "pi 会话文件", sub: "pi sessionsDir", role: "harness 自己的会话副本：模型侧上下文、压缩历史、resume 依据。", notes: ["与网关会话库并存不是冗余：一个给业务查询，一个给模型续跑。"], refs: ["runtime-factory.ts agentDirectories()"] },
+    { id: "hippo", band: 4, kind: "store", title: "hippo-memory", sub: "node:sqlite + md", role: "Tier 2 长期记忆：跨会话的偏好、决策、经验、约束。", notes: ["每条有 strength / half_life_days / retrieval_count；衰减由整理回合驱动，召回反馈（markRetrieved / feedback）目前未接线。", "BM25 检索；中文靠 jieba 分词转写成检索键补进 tags，否则汉字全被 \\w 过滤成 0 命中。", "无独立进程、无端口、无外呼。"], refs: ["modules/memory/hippo-adapter.ts", "modules/memory/cjk.ts", "hippo-memory@2.2.0"] },
+    { id: "sesdb", band: 4, kind: "store", title: "会话库", sub: "sessions / messages", role: "Tier 1 会话记忆：谁跟谁、说了什么、每轮跑了什么、问了哪些工具。", notes: ["含 runtime_session_ref、permissionMode、thinkingLevel 等运行期状态。", "蒸馏与历史检索都从这里取数。"], refs: ["infrastructure/database/schema.ts:209, :299"] },
+    { id: "archive", band: 4, kind: "store", title: "执行档案", sub: "subagent_invocations", role: "Tier 4 审计记忆：谁派了谁、输入输出、耗时、工具轨迹。", notes: ["只增不衰减，用于排障与 debug 页；不参与对话上下文。"], refs: ["schema.ts:1431", "modules/agent-debug/"] },
+    { id: "fts", band: 4, kind: "store", title: "search_index", sub: "FTS5 · 4 类 item", role: "可检索视图：把上面几类内容拍平成 4 种 item 组成的倒排索引。", notes: ["它是索引不是事实源——删掉可重建，所以不进记忆层的语义分级。"], refs: ["schema.ts:1630", "modules/search/service.ts"] },
+    { id: "corpus", band: 4, kind: "store", title: "语料库", sub: "documents / files", role: "Tier 3 领域知识：用户的工作资料与产物，以及它们的解析全文。", notes: ["这是「项目知识」而不是「关于人的记忆」——换一个项目仍成立的事实不在其中。"], refs: ["schema.ts:529, :1196"] },
+
+    /* ---------- L5 ---------- */
+    { id: "primary", band: 5, kind: "model", title: "primary 槽位", sub: "强模型 · 128k", role: "主 Agent 与绝大多数子代理的模型来源，reasoning 可按 agent 覆盖。", notes: ["子代理可在 policy.model 里单独改 maxTokens / contextWindow / reasoning。"], refs: ["apps/gateway/runtime-config.default.json"] },
+    { id: "lite", band: 5, kind: "model", title: "litePi 槽位", sub: "轻量档", role: "轻量模型档：同时供 main-lite 与记忆蒸馏使用。", notes: ["未配置时 lite 档整体隐藏，蒸馏静默跳过。"], refs: ["config.ts litePi"] },
+    { id: "cursor", band: 5, kind: "model", title: "cursorCompletion", sub: "低延迟 · 512 tok", role: "编辑器续写与对话建议的低延迟档。", notes: [], refs: ["runtime-config.default.json cursorCompletion"] },
+    { id: "web", band: 5, kind: "model", title: "webSearch 槽位", sub: "enable_search", role: "联网检索档：给一次性补全挂 provider 侧搜索开关。", notes: [], refs: ["config.ts webSearch"] },
+    { id: "vlm", band: 5, kind: "model", title: "vlm 槽位", sub: "视觉单次判定", role: "视觉模型：文档 OCR、PPT 页图质检、风格提取、落页复检。", notes: ["全部是一次性「图 + 指令 → 结构化判定」，没有视觉 agent。"], refs: ["modules/vision/vlm-client.ts"] }
+  ];
+
+  var EDGES = [
+    /* 调用 / 写入：自上而下 */
+    { s: "chat", t: "ipc" },
+    { s: "doc", t: "ipc" },
+    { s: "files", t: "ipc" },
+    { s: "search", t: "ipc" },
+    { s: "persona", t: "ipc" },
+    { s: "ipc", t: "agentsvc" },
+    { s: "ipc", t: "memsvc", label: "/v1/memory/entries" },
+    { s: "ipc", t: "searchsvc" },
+    { s: "ipc", t: "docs" },
+    { s: "supervisor", t: "agentsvc", dashed: true },
+    { s: "agentsvc", t: "factory" },
+    { s: "agentsvc", t: "sesdb" },
+    { s: "agentsvc", t: "distill", label: "run.completed" },
+    { s: "factory", t: "piuser" },
+    { s: "factory", t: "piint" },
+    { s: "factory", t: "compl" },
+    { s: "factory", t: "suborch" },
+    { s: "piuser", t: "mcp" },
+    { s: "pisub", t: "mcp" },
+    { s: "suborch", t: "pisub" },
+    { s: "pisub", t: "guard", dashed: true },
+    { s: "piuser", t: "pisess" },
+    { s: "suborch", t: "archive" },
+    { s: "piuser", t: "memsvc" },
+    { s: "distill", t: "piuser", dashed: true },
+    { s: "distill", t: "memsvc" },
+    { s: "memsvc", t: "hippo" },
+    { s: "searchsvc", t: "fts" },
+    { s: "docs", t: "corpus" },
+    { s: "sesdb", t: "fts", dashed: true },
+    { s: "corpus", t: "fts", dashed: true },
+    { s: "proc", t: "piint" },
+    { s: "docs", t: "vlm" },
+    { s: "factory", t: "primary" },
+    { s: "factory", t: "lite" },
+    { s: "factory", t: "cursor" },
+    { s: "compl", t: "web" },
+    /* 回读：自下而上 */
+    { s: "hippo", t: "piuser", read: true },
+    { s: "sesdb", t: "distill", read: true },
+    { s: "pisess", t: "piuser", read: true },
+    { s: "fts", t: "searchsvc", read: true },
+    { s: "corpus", t: "mcp", read: true }
+  ];
+
+  var KIND_LABEL = {
+    agent: "Agent · harness",
+    llm: "LLM · 单次",
+    store: "记忆载体",
+    code: "编排代码",
+    mech: "机制",
+    model: "模型槽位"
+  };
+
+  var KIND_VAR = {
+    agent: "var(--agent)",
+    llm: "var(--llm)",
+    store: "var(--store)",
+    code: "var(--code)",
+    mech: "var(--mech)",
+    model: "var(--model)"
+  };
+
+  var KIND_WASH = {
+    agent: "var(--agent-wash)",
+    llm: "var(--llm-wash)",
+    store: "var(--store-wash)",
+    code: "var(--code-wash)",
+    mech: "var(--mech-wash)",
+    model: "var(--model-wash)"
+  };
+
+  /* 第三行：类别标签（色相之外的第二条识别通道） */
+  var KIND_TAG = {
+    agent: "AGENT · HARNESS",
+    llm: "LLM · 单次",
+    store: "STORE · 载体",
+    code: "CODE · 编排",
+    mech: "MECH · 机制",
+    model: "MODEL · 槽位"
+  };
+
+  /* ================================================================
+     2. 关系图渲染
+     ================================================================ */
+
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var svg = document.getElementById("graph");
+  var detail = document.getElementById("detail");
+  var byId = {};
+  NODES.forEach(function (n) { byId[n.id] = n; });
+
+  function el(name, attrs, text) {
+    var node = document.createElementNS(SVG_NS, name);
+    if (attrs) Object.keys(attrs).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (text !== undefined && text !== null) node.textContent = text;
+    return node;
+  }
+
+  function layout() {
+    var bands = [[], [], [], [], [], []];
+    NODES.forEach(function (n) { bands[n.band].push(n); });
+    bands.forEach(function (list, bi) {
+      var n = list.length;
+      var span = X1 - X0;
+      list.forEach(function (node, i) {
+        node.cx = X0 + (span * (i + 0.5)) / n;
+        node.cy = BAND_Y[bi];
+      });
+    });
+  }
+  layout();
+
+  function midLabelPath(sx, sy, tx, ty) {
+    var dy = ty - sy;
+    var c1y = sy + dy * 0.45;
+    var c2y = ty - dy * 0.45;
+    return "M " + sx + " " + sy + " C " + sx + " " + c1y + ", " + tx + " " + c2y + ", " + tx + " " + ty;
+  }
+
+  function renderGraph() {
+    svg.innerHTML = "";
+    var defs = el("defs");
+    [["arrow", "var(--ink-3)"], ["arrow-hot", "var(--ink)"]].forEach(function (pair) {
+      var m = el("marker", {
+        id: pair[0], viewBox: "0 0 8 8", refX: "7", refY: "4",
+        markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse"
+      });
+      m.appendChild(el("path", { d: "M 0 0 L 8 4 L 0 8 z", fill: pair[1] }));
+      defs.appendChild(m);
+    });
+    svg.appendChild(defs);
+
+    /* band rules + labels */
+    BANDS.forEach(function (band, bi) {
+      var y = BAND_Y[bi];
+      var top = y - NODE_H / 2 - 30;
+      svg.appendChild(el("line", { x1: X0 - 26, y1: top, x2: X1 + 8, y2: top, class: "band-rule" }));
+      var label = el("text", { x: X0 - 26, y: top - 9, class: "band-label" }, band.name);
+      svg.appendChild(label);
+      var note = el("text", { x: X1 + 8, y: top - 9, class: "band-note", "text-anchor": "end" }, band.note);
+      svg.appendChild(note);
+    });
+
+    /* edges (behind nodes) */
+    var edgeLayer = el("g");
+    EDGES.forEach(function (e) {
+      var a = byId[e.s];
+      var b = byId[e.t];
+      if (!a || !b) return;
+      var sy, ty, d, lx, ly;
+      if (Math.abs(b.cy - a.cy) < 1) {
+        /* 同带：从右侧出、左侧入，在带下方绕行 */
+        var rightward = b.cx > a.cx;
+        var ax = rightward ? a.cx + NODE_W / 2 : a.cx - NODE_W / 2;
+        var bx = rightward ? b.cx - NODE_W / 2 : b.cx + NODE_W / 2;
+        var bulge = a.cy + NODE_H / 2 + 34;
+        d = "M " + ax + " " + a.cy + " C " + ax + " " + bulge + ", " + bx + " " + bulge + ", " + bx + " " + b.cy;
+        lx = (ax + bx) / 2; ly = bulge + 11;
+      } else if (b.cy > a.cy) {
+        sy = a.cy + NODE_H / 2; ty = b.cy - NODE_H / 2 - 2;
+        d = midLabelPath(a.cx, sy, b.cx, ty);
+        /* 标签压到目标带上沿以下，避开带标题基线 */
+        lx = (a.cx + b.cx) / 2; ly = sy + (ty - sy) * 0.72;
+      } else {
+        sy = a.cy - NODE_H / 2; ty = b.cy + NODE_H / 2 + 2;
+        d = midLabelPath(a.cx, sy, b.cx, ty);
+        lx = (a.cx + b.cx) / 2; ly = sy + (ty - sy) * 0.72;
+      }
+      var path = el("path", {
+        d: d,
+        class: "edge" + (e.read || e.dashed ? " read" : ""),
+        "marker-end": "url(#arrow)"
+      });
+      path.dataset.s = e.s;
+      path.dataset.t = e.t;
+      if (e.label) {
+        var t = el("text", {
+          x: lx,
+          y: ly,
+          "text-anchor": "middle",
+          "font-family": "var(--font-mono)",
+          "font-size": "8.5px",
+          fill: "#7d8a94",
+          stroke: "#f3f6f7",
+          "stroke-width": "3.2",
+          "paint-order": "stroke",
+          "stroke-linejoin": "round"
+        }, e.label);
+        t.dataset.s = e.s; t.dataset.t = e.t;
+        t.classList.add("edge-label");
+        edgeLayer.appendChild(t);
+      }
+      edgeLayer.appendChild(path);
+    });
+    svg.appendChild(edgeLayer);
+
+    /* nodes */
+    var nodeLayer = el("g");
+    NODES.forEach(function (n) {
+      var g = el("g", { class: "node", tabindex: "0", role: "button" });
+      g.dataset.id = n.id;
+      g.dataset.kind = n.kind;
+      var x = n.cx - NODE_W / 2;
+      var y = n.cy - NODE_H / 2;
+      var color = KIND_VAR[n.kind];
+      /* 不透明底：淡染层是半透明的，否则穿过的边会在节点里透出来 */
+      g.appendChild(el("rect", {
+        x: x, y: y, width: NODE_W, height: NODE_H, rx: 2, fill: "#f7f9fa"
+      }));
+      var body = el("rect", { x: x, y: y, width: NODE_W, height: NODE_H, rx: 2, class: "body" });
+      body.setAttribute("fill", KIND_WASH[n.kind]);
+      body.setAttribute("stroke", color);
+      body.setAttribute("stroke-opacity", "0.55");
+      g.appendChild(body);
+      g.appendChild(el("rect", {
+        x: x, y: y, width: 5, height: NODE_H, rx: 1.5,
+        class: "bar", fill: color
+      }));
+      var t1 = el("text", { x: x + 13, y: y + 24, class: "t" }, n.title);
+      var t2 = el("text", { x: x + 13, y: y + 41, class: "s" }, n.sub.length > 22 ? n.sub.slice(0, 21) + "…" : n.sub);
+      var t3 = el("text", { x: x + 13, y: y + 56, class: "k", fill: color }, KIND_TAG[n.kind]);
+      g.appendChild(t1);
+      g.appendChild(t2);
+      g.appendChild(t3);
+      nodeLayer.appendChild(g);
+    });
+    svg.appendChild(nodeLayer);
+
+    bindGraphEvents();
+  }
+
+  function neighboursOf(id) {
+    var set = {};
+    set[id] = true;
+    EDGES.forEach(function (e) {
+      if (e.s === id) set[e.t] = true;
+      if (e.t === id) set[e.s] = true;
+    });
+    return set;
+  }
+
+  var kindFilter = null;
+  var selectedId = null;
+  var hoverId = null;
+
+  /* 悬停优先，其次是选中的节点——点击后邻域保持高亮，不会一移开就散掉 */
+  function refresh() { applyHighlight(hoverId || selectedId); }
+
+  function applyHighlight(focusId) {
+    var keep = focusId ? neighboursOf(focusId) : null;
+    Array.prototype.forEach.call(svg.querySelectorAll(".node"), function (g) {
+      var id = g.dataset.id;
+      var kindOk = !kindFilter || g.dataset.kind === kindFilter;
+      var focusOk = !keep || keep[id];
+      g.classList.toggle("dim", !(kindOk && focusOk));
+      g.classList.toggle("selected", id === selectedId);
+    });
+    Array.prototype.forEach.call(svg.querySelectorAll(".edge, .edge-label"), function (p) {
+      var s = p.dataset.s, t = p.dataset.t;
+      var touches = focusId && (s === focusId || t === focusId);
+      var kindOk = !kindFilter || (byId[s] && byId[t] && (byId[s].kind === kindFilter || byId[t].kind === kindFilter));
+      p.classList.toggle("dim", !kindOk || (focusId && !touches));
+      p.classList.toggle("hot", !!(focusId && touches));
+      if (p.classList.contains("edge") && !p.classList.contains("dim")) {
+        p.setAttribute("marker-end", focusId && touches ? "url(#arrow-hot)" : "url(#arrow)");
+      }
+    });
+  }
+
+  function bindGraphEvents() {
+    Array.prototype.forEach.call(svg.querySelectorAll(".node"), function (g) {
+      var id = g.dataset.id;
+      g.addEventListener("mouseenter", function () { hoverId = id; refresh(); });
+      g.addEventListener("mouseleave", function () { hoverId = null; refresh(); });
+      g.addEventListener("focus", function () { hoverId = id; refresh(); });
+      g.addEventListener("blur", function () { hoverId = null; refresh(); });
+      g.addEventListener("click", function () { select(id); });
+      g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(id); }
+      });
+    });
+  }
+
+  function relationList(n) {
+    var up = [], down = [];
+    EDGES.forEach(function (e) {
+      if (e.s === n.id && byId[e.t]) down.push(byId[e.t].title);
+      if (e.t === n.id && byId[e.s]) up.push(byId[e.s].title);
+    });
+    return { up: up, down: down };
+  }
+
+  function select(id) {
+    selectedId = id;
+    var n = byId[id];
+    refresh();
+    var rel = relationList(n);
+    var html = "";
+    html += '<div class="kicker">' + (KIND_LABEL[n.kind] || "") + "</div>";
+    html += "<h3>" + n.title + "</h3>";
+    html += '<div class="sub">' + n.sub + "</div>";
+    html += "<p>" + n.role + "</p>";
+    if (n.notes && n.notes.length) {
+      html += "<h4>要点</h4><ul>";
+      n.notes.forEach(function (note) { html += "<li>" + note + "</li>"; });
+      html += "</ul>";
+    }
+    if (rel.up.length || rel.down.length) {
+      html += "<h4>关系</h4>";
+      if (rel.up.length) html += "<p><b>上游</b> · " + rel.up.join("、") + "</p>";
+      if (rel.down.length) html += "<p><b>下游</b> · " + rel.down.join("、") + "</p>";
+    }
+    if (n.refs && n.refs.length) {
+      html += '<h4>代码落点</h4><div class="refs">';
+      n.refs.forEach(function (r) { html += "<code>" + r + "</code>"; });
+      html += "</div>";
+    }
+    detail.innerHTML = html;
+  }
+
+  /* legend filters */
+  Array.prototype.forEach.call(document.querySelectorAll("#legend .chip[data-kind]"), function (chip) {
+    chip.addEventListener("click", function () {
+      var kind = chip.dataset.kind;
+      if (kindFilter === kind) {
+        kindFilter = null;
+        chip.setAttribute("aria-pressed", "false");
+      } else {
+        kindFilter = kind;
+        Array.prototype.forEach.call(document.querySelectorAll("#legend .chip[data-kind]"), function (c) {
+          c.setAttribute("aria-pressed", String(c.dataset.kind === kind));
+        });
+      }
+      refresh();
+    });
+  });
+  document.getElementById("reset-filter").addEventListener("click", function () {
+    kindFilter = null;
+    Array.prototype.forEach.call(document.querySelectorAll("#legend .chip[data-kind]"), function (c) {
+      c.setAttribute("aria-pressed", "false");
+    });
+    refresh();
+  });
+
+  renderGraph();
+
+  /* ================================================================
+     3. 记忆剖面
+     ================================================================ */
+
+  var STRATA = [
+    {
+      idx: "T0", name: "工作记忆", life: "秒 — 分钟",
+      desc: "模型当前看得见的那一份上下文：系统提示词、本轮消息、工具结果、活跃文件片段。容量由窗口硬限，靠裁剪与压缩维持。",
+      write: "每次模型调用前由 runtime 组装",
+      read: "只给这一次 run 的模型",
+      carrier: "内存对象 + pi 运行期会话状态",
+      meter: 100, meterColor: "var(--agent)",
+      meterNote: "不落盘 · 超限即丢 · 裁剪只改送模的那份副本",
+      refs: ["context-budget.ts: clampToolResultText / pruneToolHistory", "active-file-context.ts"]
+    },
+    {
+      idx: "T1", name: "会话记忆", life: "会话 — 数天",
+      desc: "一轮对话的完整事实：谁说了什么、起了哪些工具、产生了哪些事件。可以续跑、可以回溯、可以蒸馏。",
+      write: "AgentService 逐条落库；pi 自己另存一份会话文件",
+      read: "模型续跑（resume）、历史检索、蒸馏输入",
+      carrier: "agent_sessions / messages / runs / events · pi sessions",
+      meter: 82, meterColor: "var(--store)",
+      meterNote: "随会话保留 · 进 FTS 后变成可检索的历史",
+      refs: ["schema.ts:209–313", "search/service.ts"]
+    },
+    {
+      idx: "T2", name: "长期记忆", life: "跨会话 — 数月",
+      desc: "关于「这个人怎么做事」的稳定事实：偏好、既定决策、踩过的坑、硬约束。条目短、可检索、会衰减。",
+      write: "① agent 主动 memory_remember ② 会话结束后蒸馏 ③ 定时整理合并",
+      read: "memory_search（按需）· 智能体页展示 · 提示词里的行为指引",
+      carrier: "hippo-memory（node:sqlite + markdown 镜像）",
+      meter: 61, meterColor: "var(--store)",
+      meterNote: "强度 × 半衰期 · 只衰减、不强化（反馈通道未接线）",
+      refs: ["modules/memory/{service,hippo-adapter,distill,pi-tools}.ts", "cjk.ts"]
+    },
+    {
+      idx: "T3", name: "知识语料", life: "项目期 — 长期",
+      desc: "用户的工作资料与产物本身：文档、文件、解析全文、导出成品。它是「项目知识」，不是「关于人的记忆」。",
+      write: "上传 / 连接器同步 / agent 生成产物",
+      read: "文档工具、文件检索、统一搜索、VLM 理解",
+      carrier: "documents / file_entries / parsed_contents + 对象库",
+      meter: 96, meterColor: "var(--store)",
+      meterNote: "显式删除才消失 · 版本可追溯",
+      refs: ["modules/documents/", "modules/files/"]
+    },
+    {
+      idx: "T4", name: "执行档案", life: "永久",
+      desc: "审计轨迹：谁派了哪个子代理、输入输出是什么、耗时多少、工具怎么走的。只增不改，不参与对话。",
+      write: "SubagentOrchestrator / agent-debug trace",
+      read: "调试页、排障、用量核算",
+      carrier: "subagent_invocations / revisions / debug trace",
+      meter: 100, meterColor: "var(--mech)",
+      meterNote: "只增不衰减 · 与记忆语义无关",
+      refs: ["schema.ts:1431", "modules/agent-debug/"]
+    }
+  ];
+
+  function renderProfile() {
+    var host = document.getElementById("strata");
+    var html = "";
+    STRATA.forEach(function (s) {
+      html += '<article class="stratum">';
+      html += '<div class="idx">' + s.idx + "</div>";
+      html += "<div>";
+      html += "<h3>" + s.name + '<span class="life">' + s.life + "</span></h3>";
+      html += '<p class="desc">' + s.desc + "</p>";
+      html += '<dl class="wiring">';
+      html += "<dt>写入</dt><dd>" + s.write + "</dd>";
+      html += "<dt>读取</dt><dd>" + s.read + "</dd>";
+      html += "<dt>载体</dt><dd>" + s.carrier + "</dd>";
+      html += "<dt>代码</dt><dd>" + s.refs.map(function (r) { return "<code>" + r + "</code>"; }).join(" ") + "</dd>";
+      html += "</dl></div>";
+      html += '<div class="meter-wrap" style="color:' + s.meterColor + '">';
+      html += '<div class="meter-cap">留存 ' + s.meter + "%</div>";
+      html += '<div class="meter"><i style="width:' + s.meter + '%"></i></div>';
+      html += '<div class="meter-note">' + s.meterNote + "</div>";
+      html += "</div>";
+      html += "</article>";
+    });
+    host.innerHTML = html;
+
+    document.getElementById("crosscut").innerHTML =
+      '<div><h4>跨层机制 01 · 中文检索键</h4><p>hippo 的 BM25 用 <code>\\w</code> 切词，汉字会被整段抹掉。写入时把 jieba 分词结果转写成 <code>zh7528_6237</code> 补进 tags，检索时同样转写——不改库，改的是喂给库的字符串。</p></div>' +
+      '<div><h4>跨层机制 02 · 去重与冷却</h4><p>蒸馏写库前用包含式比对过一遍现有记忆；同会话 5 分钟冷却；单会话最多 3 条。目的是让记忆库长成「偏好清单」而不是「对话备份」。</p></div>' +
+      '<div><h4>跨层机制 03 · 零外呼</h4><p>hippo 自带 LLM 事实提取（<code>extraction.enabled = auto</code>），一旦环境里有 API key 就会把记忆正文发出去。网关每次启动把它固定为 <code>false</code>，整理全程本地。</p></div>' +
+      '<div><h4>跨层机制 04 · 记忆不进子代理</h4><p><code>memory_*</code> 工具只注入用户档 runtime。子代理跑在 <code>runtimeRole: internal</code>、<code>builtinTools: []</code> 的壳里，拿不到长期记忆，也写不进。</p></div>';
+  }
+
+  renderProfile();
+
+  /* ================================================================
+     4. Agent / LLM 分类
+     ================================================================ */
+
+  var RULING = [
+    { n: "①", t: "有没有工具环路", d: "模型 → 调工具 → 拿结果 → 再决定。LLM 一次调用后没有「下一次」。" },
+    { n: "②", t: "有没有会话身份与预算", d: "sessionId、maxToolCalls、timeout、resume、steering——harness 才具备这些。" },
+    { n: "③", t: "输出是过程还是终值", d: "Agent 交付「一段做过的事」，LLM 交付「一段文本或一份 JSON」。" }
+  ];
+
+  var AGENTS = [
+    {
+      name: "main", badge: "用户档 · 主", role: "用户对话的总入口，产出与修改文档/Office 产物，调度内部子代理。",
+      runtime: "PiAgentRuntime", tools: "agent.yaml 声明 41 项 + 运行时注入 memory_*、web_search、file_read/search、agent_catalog/dispatch、slides_draft",
+      budget: "工具预算 + 沙箱 bash（限自身 workspace）", persistence: "会话库 + pi sessions，支持 resume / steering",
+      memory: "memory_search / memory_remember + 系统提示词指引", ref: "agents/main/agent.yaml\nruntime-factory.ts:132"
+    },
+    {
+      name: "main-direct", badge: "档位", role: "与主 Agent 同人格的强模型直连档：不委派轻量模型。",
+      runtime: "PiAgentRuntime", tools: "同 main，去掉 lite 委派工具",
+      budget: "同 main", persistence: "会话库 + pi sessions",
+      memory: "同 main", ref: "runtime-factory.ts:registerModelTierAgents"
+    },
+    {
+      name: "main-lite", badge: "档位", role: "轻量模型档：简单对话直答，同时被记忆蒸馏借用做一次性提炼。",
+      runtime: "PiAgentRuntime", tools: "同装配（litePi 未配置则整档隐藏）",
+      budget: "同 main", persistence: "会话库 + pi sessions",
+      memory: "同 main（蒸馏时只当一次性 generate 用）", ref: "runtime-factory.ts:registerLiteAgentIfMissing"
+    },
+    {
+      name: "cursor-completion", badge: "内部 · 无工具", role: "编辑器续写的低延迟建议，上下文受限。",
+      runtime: "PiAgentRuntime（runtimeRole: internal）", tools: "无网关工具，只有 skill 提示词",
+      budget: "512 输出 tokens", persistence: "独立 sessionsDir",
+      memory: "不注入", ref: "agents/cursor-completion/agent.yaml"
+    },
+    {
+      name: "doc-writer", badge: "子代理", role: "文档正文生成：新建起草、续写、选区改写，交付结构化写作产物。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "skill read + 文档工具 + 分析子代理；写入/调度/通知类被 allowlist 拒绝",
+      budget: "maxToolCalls 24 · 600s", persistence: "独立 revision 目录 + invocation 记录",
+      memory: "不注入", ref: "agents/doc-writer/agent.yaml\ncreate-server.ts:567"
+    },
+    {
+      name: "slides-planner", badge: "子代理", role: "演示文稿两段方案：draft 出内容草稿，arrange 编排成落页方案。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "文档工具 + web_search",
+      budget: "无工具上限 · 1800s · 32k 输出", persistence: "invocation 记录 + 生成检查点",
+      memory: "不注入", ref: "agents/slides-planner/agent.yaml"
+    },
+    {
+      name: "slides-builder", badge: "子代理", role: "按指令读既有 deck 大纲并发编辑事务，保持全篇风格一致。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "文档读 + slides 编辑事务",
+      budget: "maxToolCalls 48 · 1800s", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/slides-builder/agent.yaml"
+    },
+    {
+      name: "slides-layouter", badge: "子代理", role: "单页布局设计与视觉自审：写页面树，用渲染图自审后提交。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "slides_layout_validate + skill read；提交期树校验",
+      budget: "无工具上限 · 1800s · 并发 16", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/slides-layouter/agent.yaml\ncreate-server.ts:591"
+    },
+    {
+      name: "multimodal-document-parser", badge: "子代理", role: "解析 Office/PDF 版本，校验结构化证据并给出质量结论。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "document-understanding 工具集 + skill read",
+      budget: "maxToolCalls 20 · 300s", persistence: "invocation 记录",
+      memory: "不注入", ref: "create-server.ts:998"
+    },
+    {
+      name: "content-analyst", badge: "轻壳", role: "分析调用方提供的材料，提取事实、观点、风险、缺口与结论。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "仅 skill read + submit_result",
+      budget: "maxToolCalls 8 · 180s · 并发 4", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/content-analyst/agent.yaml"
+    },
+    {
+      name: "slides-editor", badge: "轻壳", role: "语义内容修复：按 defects 修 storyboard 页面的来源与完整性。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "仅 submit_result",
+      budget: "无工具上限 · 900s · 并发 16", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/slides-editor/agent.yaml"
+    },
+    {
+      name: "slides-styler", badge: "轻壳", role: "无模板幻灯片的视觉设计判断：给方向、复核色板与视觉属性。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "仅 submit_result",
+      budget: "maxToolCalls 8 · 600s", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/slides-styler/agent.yaml"
+    },
+    {
+      name: "thesis-formatter", badge: "轻壳", role: "论文模版解析与 docx 装订映射，全程无工具、不与用户对话。",
+      runtime: "PiAgentRuntime（dispatch-only）", tools: "仅 submit_result",
+      budget: "maxToolCalls 8 · 900s · 32k 输出", persistence: "invocation 记录",
+      memory: "不注入", ref: "agents/thesis-formatter/agent.yaml"
+    }
+  ];
+
+  var LLMS = [
+    {
+      name: "web-search", badge: "工具背后", role: "联网检索并给出带来源线索的答案。它是主 Agent 的 web_search 工具背后的一次补全。",
+      how: "OpenAiCompletionAgentRuntime · capabilities 明确 tools / streaming / resume 全 false · requestOptions.enable_search",
+      io: "query 字符串 → 答案文本", ref: "runtime-factory.ts createAgentResolver\nagents/web-search/agent.yaml"
+    },
+    {
+      name: "会话标题", badge: "单次", role: "把首轮对话压成一行标题。", how: "内部 Pi runtime · builtinTools 为空 · maxToolCallsPerRun 1 · reasoning off",
+      io: "对话开头 → 单行标题", ref: "createSessionTitleRuntime\nmodules/processing/session-title.ts"
+    },
+    {
+      name: "对话建议", badge: "单次", role: "输入框空态补全与新对话推荐提问。", how: "内部 Pi runtime · 无工具 · 优先低延迟档",
+      io: "上下文片段 → 建议文本", ref: "createConversationSuggestionRuntime"
+    },
+    {
+      name: "文档速览", badge: "单次", role: "文章级 AI 摘要，进文档概览区。", how: "内部 Pi runtime · 单次调用",
+      io: "文档正文 → 概览文本", ref: "createDocumentOverviewRuntime\ndocuments/overview.ts"
+    },
+    {
+      name: "版本摘要", badge: "单次", role: "为某个文档版本生成变更摘要。", how: "内部 Pi runtime · runtimeRole internal",
+      io: "版本差异 → 摘要", ref: "createVersionSummaryRuntime"
+    },
+    {
+      name: "索引回溯兜底", badge: "单次", role: "存量文档补挂来源索引时的 LLM 兜底（确定性匹配优先）。", how: "内部 Pi runtime · 单次调用",
+      io: "段落 + 候选来源 → 归属判断", ref: "createIndexBackfillRuntime\ndocuments/index-backfill/llm.ts"
+    },
+    {
+      name: "章节速览", badge: "单次", role: "长文档分节的局部预览摘要。", how: "invokeRuntime 直接调用，无工具",
+      io: "章节文本 → 速览", ref: "documents/section-preview.ts:84"
+    },
+    {
+      name: "记忆蒸馏", badge: "单次", role: "把一次结束的会话提炼成 0–3 条跨会话事实。用法是一次性，但走的是 lite 档 harness。",
+      how: "invokeAgent(lite, prompt) · 60s 超时 · 只输出 JSON 数组 · 结果再过包含式去重",
+      io: "会话转写（≤12k 字）→ JSON 事实数组", ref: "modules/memory/distill.ts"
+    },
+    {
+      name: "视觉判定 VLM", badge: "单次 ×4 用途", role: "文档 OCR/理解、PPT 页图质检、风格提取、落页视觉复检。",
+      how: "OpenAiCompatibleVlmClient · 图 + 封闭清单 → 结构化判定 · 失败一律放行不阻断",
+      io: "图像 + 指令 → JSON 判定", ref: "modules/vision/vlm-client.ts\nsubagents/slides-image-vlm-qc.ts\nslides-visual-review/review.ts"
+    }
+  ];
+
+  var EDGECASES = [
+    { t: "cursor-completion 是「带壳的 LLM」", d: "运行时是 pi harness，但一个网关工具都没有、只有一个 skill 提示词。分类上算 Agent 身份，实际行为接近一次性补全。" },
+    { t: "content-analyst / slides-editor / slides-styler / thesis-formatter 是「只交 JSON 的轻壳」", d: "它们有 harness 的会话、预算、超时，但唯一的工具是 subagent_submit_result。把它们当 LLM 用会更准确——它们不改世界，只交一份结构化答案。" },
+    { t: "记忆蒸馏走 harness，但用法是一次性", d: "generate 是 invokeAgent(lite, prompt)，拿到一个字符串就结束，没有第二轮。判据看「用法」而不是「壳子」。" },
+    { t: "没有「视觉 agent」", d: "四处 VLM 调用全部是图 + 指令 → 判定的单次往返；排版与修复的循环在代码里，不在模型里。" }
+  ];
+
+  function renderClass() {
+    document.getElementById("ruling").innerHTML = RULING.map(function (r) {
+      return '<div class="q"><div class="num">' + r.n + '</div><div><strong>' + r.t + "</strong><p>" + r.d + "</p></div></div>";
+    }).join("");
+
+    document.getElementById("cards-agent").innerHTML = AGENTS.map(function (a) {
+      return '<article class="card agent">' +
+        '<div><div class="name">' + a.name + '<span class="badge">' + a.badge + "</span></div>" +
+        '<div class="role">' + a.role + "</div>" +
+        "<dl>" +
+        "<dt>运行时</dt><dd>" + a.runtime + "</dd>" +
+        "<dt>工具</dt><dd>" + a.tools + "</dd>" +
+        "<dt>预算</dt><dd>" + a.budget + "</dd>" +
+        "<dt>记忆</dt><dd>" + a.memory + "</dd>" +
+        "</dl></div>" +
+        '<div class="ref"><b>落点</b>' + a.ref.replace(/\n/g, "<br>") + "</div>" +
+        "</article>";
+    }).join("");
+
+    document.getElementById("cards-llm").innerHTML = LLMS.map(function (l) {
+      return '<article class="card llm">' +
+        '<div><div class="name">' + l.name + '<span class="badge">' + l.badge + "</span></div>" +
+        '<div class="role">' + l.role + "</div>" +
+        "<dl>" +
+        "<dt>形态</dt><dd>" + l.how + "</dd>" +
+        "<dt>输入输出</dt><dd>" + l.io + "</dd>" +
+        "</dl></div>" +
+        '<div class="ref"><b>落点</b>' + l.ref.replace(/\n/g, "<br>") + "</div>" +
+        "</article>";
+    }).join("");
+
+    document.getElementById("count-agent").textContent = AGENTS.length + " 个身份 · 5 个有实质工具面";
+    document.getElementById("count-llm").textContent = LLMS.length + " 处调用点 · 全部无工具";
+
+    document.getElementById("edgecase").innerHTML =
+      "<h3>四个边界案例，别算错</h3><ol>" +
+      EDGECASES.map(function (e) { return "<li><b>" + e.t + "。</b>" + e.d + "</li>"; }).join("") +
+      "</ol>";
+  }
+
+  renderClass();
+
+  /* ================================================================
+     5. 读写链路
+     ================================================================ */
+
+  var FLOWS = [
+    {
+      kind: "write", tag: "写入 A", title: "显式记忆", sub: "Agent 判断「这值得记」时写一条",
+      steps: [
+        { w: "系统提示词给出判据", h: "偏好 / 决策 / 经验 / 约束才记；寒暄、一次性指令、工具输出、文档正文不记。<code>MEMORY_PROMPT_GUIDELINES</code>" },
+        { w: "模型调用 memory_remember", h: "一句话事实 + 可选 tags + 可选 scope（如 room:&lt;id&gt;）" },
+        { w: "MemoryService.remember", h: "中文内容追加 jieba 转写检索键进 tags，然后 <code>createMemory</code> + <code>writeEntry</code>" },
+        { w: "落 hippo 库", h: "<code>&lt;dataDir&gt;/memory/hippo</code>：hippo.db + markdown 镜像；失败返回 null 不抛错" }
+      ]
+    },
+    {
+      kind: "write", tag: "写入 B", title: "会话蒸馏", sub: "会话结束后自动提炼，不需要用户说「记住」",
+      steps: [
+        { w: "触发", h: "run 落到 completed 才回调 <code>setMemoryDistiller</code>；失败/取消/中断不触发" },
+        { w: "取转写", h: "从 agent_messages 按时间拼 <code>role: content</code>；&lt;600 字或用户轮次 &lt;2 直接跳过" },
+        { w: "一次性提炼", h: "invokeAgent(lite, DISTILL_PROMPT + 转写前 12k 字)，60s 超时；只解析第一个 JSON 数组" },
+        { w: "去重与限流", h: "包含式近似去重 → 单会话最多 3 条、单条 ≤120 字、标签只允许四个" },
+        { w: "写入", h: "逐条 <code>remember</code>，带 <code>sourceSessionId</code> 以便溯源" }
+      ]
+    },
+    {
+      kind: "maintain", tag: "维护 C", title: "整理回合", sub: "让记忆库越长越像清单，而不是越长越像日志",
+      steps: [
+        { w: "调度", h: "启动后 5 分钟首跑，此后每 6 小时一次；定时器 unref，不阻塞退出" },
+        { w: "hippo sleep", h: "衰减过期条目、批量去重、情景记忆合并成语义记忆、刷新冲突清单" },
+        { w: "关掉 LLM 提取", h: "每次启动把库根 config.json 的 <code>extraction.enabled</code> 固化为 false，保证零外呼" },
+        { w: "并发保护", h: "整理进行中再次触发直接丢弃（一次可能持续数秒）" }
+      ]
+    },
+    {
+      kind: "read", tag: "读取 D", title: "主动检索", sub: "「你上次说的那个方案」——模型自己去查",
+      steps: [
+        { w: "提示词先铺路", h: "出现过去偏好/决定而当前上下文没依据时，必须先 memory_search；检索为空就如实说没有" },
+        { w: "query 转写", h: "对 query 做同样的中文分词转写，避免中文 0 命中" },
+        { w: "BM25 检索", h: "可限定 scope；过滤 superseded；上限 8 条，单条正文截到 600 字" },
+        { w: "回灌上下文", h: "按相关性排序成编号列表进本轮上下文，只占增强预算不挤占对话" }
+      ]
+    },
+    {
+      kind: "read", tag: "读取 E", title: "反向展示", sub: "同一批记忆，换一个视角给用户看",
+      steps: [
+        { w: "智能体页", h: "useAgentPersona 拉 <code>GET /v1/memory/entries</code>（limit 100）" },
+        { w: "按标签分流", h: "画像/偏好/约束/习惯 → 用户画像；其余一律 → 经验（PROFILE_TAGS）" },
+        { w: "人格段另走一路", h: "名称/简介/技能来自 agent bundle，不是记忆库；两路独立成败" }
+      ]
+    },
+    {
+      kind: "read", tag: "读取 F", title: "上下文裁剪", sub: "子代理工作记忆的守门人（用户档走 pi 轮间压缩）",
+      steps: [
+        { w: "单条闸", h: "工具结果超 24k 字符按 JSON 感知规则截断，尽量保住结构可读" },
+        { w: "轮次闸", h: "真实 usage 过半窗口后，最近 3 轮之外的 toolResult 与工具参数换成占位符" },
+        { w: "边界", h: "只改「发给模型的那份」；落盘与事件流仍是完整历史，事后仍可回溯" },
+        { w: "兜底", h: "拿不到真实 usage 时才退估算；中文 + JSON 会低估约一半，所以阈值偏向 usage" }
+      ]
+    }
+  ];
+
+  var GUARDRAIL = [
+    { n: "0", l: "外呼次数", d: "整理全程不出网；hippo 的 LLM 提取被代码固化关闭" },
+    { n: "3", l: "条 / 会话", d: "蒸馏写入上限，防止一次长对话灌进几十条噪声" },
+    { n: "600", l: "字起，才蒸馏", d: "低于此长度、或用户轮次 <2 直接跳过" },
+    { n: "6h", l: "整理周期", d: "启动 5 分钟后首跑，此后固定间隔" },
+    { n: "8", l: "条 / 次检索", d: "单次 memory_search 的命中上限" },
+    { n: "24k", l: "字符 / 工具结果", d: "子代理单条工具结果进入上下文前的硬上限" }
+  ];
+
+  function renderFlows() {
+    document.getElementById("flows").innerHTML = FLOWS.map(function (f) {
+      return '<section class="flow ' + f.kind + '">' +
+        '<div class="head"><span class="tag">' + f.tag + "</span><h3>" + f.title + "</h3></div>" +
+        '<p class="sub">' + f.sub + "</p>" +
+        '<ol class="steps">' +
+        f.steps.map(function (s) {
+          return "<li><div><div class=\"what\">" + s.w + "</div><div class=\"how\">" + s.h + "</div></div></li>";
+        }).join("") +
+        "</ol></section>";
+    }).join("");
+
+    document.getElementById("guardrail").innerHTML = GUARDRAIL.map(function (g) {
+      return '<div><div class="g-l">' + g.l + '</div><div class="g-n">' + g.n + '</div><div class="g-d">' + g.d + "</div></div>";
+    }).join("");
+  }
+
+  renderFlows();
+
+  /* ================================================================
+     6. Tabs
+     ================================================================ */
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll("nav.tabs button[data-tab]"));
+
+  function activate(name) {
+    tabs.forEach(function (b) {
+      var on = b.dataset.tab === name;
+      b.setAttribute("aria-selected", String(on));
+      document.getElementById("panel-" + b.dataset.tab).classList.toggle("active", on);
+    });
+  }
+
+  tabs.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      activate(btn.dataset.tab);
+      try { history.replaceState(null, "", "#" + btn.dataset.tab); } catch (err) { /* file:// 下可能被拒，忽略 */ }
+    });
+  });
+
+  var initial = (location.hash || "").replace("#", "");
+  if (["map", "profile", "class", "flow"].indexOf(initial) >= 0) activate(initial);
+})();
+</script>
+</body>
+</html>

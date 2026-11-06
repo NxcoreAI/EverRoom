@@ -1220,7 +1220,7 @@ export function createSubagentPiTools(
         const explicitRoomId = typeof params.roomId === "string" ? params.roomId.trim() : "";
         // Room 已删除：单工作区语义下不再要求/校验 Room 绑定，文档工具按工作区文稿解析；
         // 历史 roomId 参数仅原样透传（供旧版本兼容），绝不因此抛错。
-        const roomId = explicitRoomId || run.roomId || run.activeDocument?.roomId?.trim() || "";
+        const roomId = explicitRoomId || run.roomId || "" /* legacy roomId 已随 Phase 2i 移除 */;
 
         let snapshot: DocumentDraftSnapshot | null = null;
         if (task === "draft-edit" || task === "draft-continue") {

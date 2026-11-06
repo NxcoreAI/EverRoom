@@ -115,7 +115,7 @@ describe('collectImportCandidates', () => {
 })
 
 describe('FilesGatewayBridge.importPathsOnce', () => {
-  it('imports an Obsidian project with stable project provenance and memory-only pipelines', async () => {
+  it('imports an Obsidian project with stable project provenance and room-only pipelines', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-obsidian-memory-'))
     temporaryDirectories.push(directory)
     await mkdir(join(directory, 'Project'))
@@ -135,7 +135,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
         provider: 'Obsidian · Product Vault',
         connectionId: 'vault-project',
         relativePath: 'Project/brief.md',
-        pipelines: { room: false, wiki: false, memory: true },
+        pipelines: { room: false, wiki: false },
       })
       expect(metadata).not.toHaveProperty('roomId')
       return new Response(JSON.stringify({
@@ -151,7 +151,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       rootPath: directory,
       projectId: 'vault-project',
       projectName: 'Product Vault',
-      pipelines: { room: false, wiki: false, memory: true },
+      pipelines: { room: false, wiki: false },
       resourceIdsByRelativePath: { 'Project/brief.md': 'resource-brief' },
     })).resolves.toEqual([expect.objectContaining({ filename: 'Project/brief.md', error: null })])
   })
@@ -183,7 +183,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       rootPath: directory,
       projectId: 'large-vault',
       projectName: 'Large Vault',
-      pipelines: { room: false, wiki: false, memory: true },
+      pipelines: { room: false, wiki: false },
     })
 
     expect(outcomes).toHaveLength(101)

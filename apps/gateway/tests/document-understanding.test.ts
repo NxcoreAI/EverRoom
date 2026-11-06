@@ -84,7 +84,7 @@ describe("DocumentUnderstandingService", () => {
   it("parses legacy binary Office bytes in-process without an external converter", async () => {
     const test = await setup();
     const fixture = (name: string) => readFile(new URL(
-      `../../../submodules/everroom-connectors/gateway-module/tests/fixtures/${name}`,
+      `../../../submodules/everoffice-connectors/gateway-module/tests/fixtures/${name}`,
       import.meta.url,
     ));
     const cases = [
@@ -177,8 +177,6 @@ describe("DocumentUnderstandingService", () => {
       originalPrompt: "validate",
       pageLabel: "Document parser",
       roomId: null,
-      captureMemory: false,
-      recallMemory: false,
       toolsEnabled: true,
     };
     const validation = await tools.find((tool) => tool.name === "document_validate_artifact")!

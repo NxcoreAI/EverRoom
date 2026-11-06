@@ -1,4 +1,4 @@
-import { app, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
@@ -166,7 +166,6 @@ function skippedOutcome(filename: string, skippedReason: 'unsupported_format' | 
     deduped: false,
     skippedReason,
     pipelines: null,
-    memoryResult: null,
     routeJobId: null,
     error: null,
   }
@@ -328,6 +327,30 @@ export class FilesGatewayBridge {
     return attachments
   }
 
+  /** 「+ → 导入文件」：系统选择框直选文件，导入文件引擎后作为本轮对话附件。 */
+  async pickAgentAttachments(parent?: BrowserWindow | null): Promise<AgentAttachmentReference[]> {
+    const options: Electron.OpenDialogOptions = {
+      title: '添加文件到对话',
+      buttonLabel: '添加到对话',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+      ],
+    }
+    const picked = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return []
+    return this.importAgentAttachments(picked.filePaths)
+  }
+
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
     return this.request(`/v1/file-entries/${encodeURIComponent(fileId)}`, {
       method: 'PATCH',
@@ -338,7 +361,6 @@ export class FilesGatewayBridge {
   delete(fileId: string): Promise<{
     deleted: boolean
     knowledgeCleanup: boolean
-    deletedMemoryDocuments: string[]
     blobCollected: boolean
   }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
@@ -364,11 +386,11 @@ export class FilesGatewayBridge {
     if (error) throw new Error(error)
   }
 
-  /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+  /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
   async exportReveal(fileId: string, originalName: string): Promise<void> {
     const storagePath = await this.storagePath(fileId)
     const safeName = originalName.replace(/[/\\]/g, '_').trim() || 'export.bin'
-    const dir = join(app.getPath('downloads'), 'EverRoom')
+    const dir = join(app.getPath('downloads'), 'EverOffice')
     await mkdir(dir, { recursive: true })
     const target = join(dir, safeName)
     await copyFile(storagePath, target)
@@ -545,7 +567,7 @@ export class FilesGatewayBridge {
       relativePath: input.relativePath,
       provider: input.provider,
       connectionId: input.sourceId,
-      pipelines: { room: true, wiki: true, memory: true },
+      pipelines: { room: true, wiki: true },
     })
   }
 
@@ -615,8 +637,7 @@ export class FilesGatewayBridge {
           deduped: uploaded.versionDeduped,
           skippedReason: null,
           pipelines: options?.pipelines ?? null,
-          memoryResult: null,
-          routeJobId: uploaded.jobId,
+              routeJobId: uploaded.jobId,
           error: null,
         })
         succeeded += 1
@@ -634,8 +655,7 @@ export class FilesGatewayBridge {
           deduped: false,
           skippedReason: null,
           pipelines: null,
-          memoryResult: null,
-          routeJobId: null,
+              routeJobId: null,
           error: error instanceof Error ? error.message : String(error),
         })
         failed += 1
@@ -688,7 +708,7 @@ export class FilesGatewayBridge {
   }
 
   /** 整源级联清理：该源在理解引擎的全部文件条目 + 记忆/台账/Room 归属。 */
-  purgeLocalSource(localSourceId: string): Promise<{ entries: number; deletedMemoryDocuments: string[] }> {
+  purgeLocalSource(localSourceId: string): Promise<{ entries: number }> {
     const query = new URLSearchParams({ localSourceId })
     return this.request(`/v1/local-file-references?${query.toString()}`, { method: 'DELETE' })
   }
@@ -818,7 +838,7 @@ export class FilesGatewayBridge {
       sourceKey: input.sourceKey,
       originalName: input.originalName,
       ...(input.roomId
-        ? { roomId: input.roomId, pipelines: { room: true, wiki: false, memory: true } }
+        ? { roomId: input.roomId, pipelines: { room: true, wiki: false } }
         : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
@@ -827,7 +847,7 @@ export class FilesGatewayBridge {
 
   /**
    * 产物库「导入本地 Office 文件」（渲染端经 webUtils 取路径后调用）：
-   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room+memory 管线，
+   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room 管线，
    * 与 Agent 产物同组——Room Agent 可引用，不进 wiki）。单文件、用户显式
    * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
    * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
@@ -855,7 +875,7 @@ export class FilesGatewayBridge {
           originalName: filename,
           roomId,
           ...(workspaceId ? { workspaceId } : {}),
-          pipelines: { room: true, wiki: false, memory: true },
+          pipelines: { room: true, wiki: false },
         })
         imported.push({ fileId: uploaded.fileEntryId, originalName: filename })
       } catch (error) {

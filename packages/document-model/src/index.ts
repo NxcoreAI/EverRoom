@@ -39,7 +39,7 @@ export interface ProjectedDocumentReference {
   ordinal: number;
 }
 
-export interface EverroomBlockReference {
+export interface EverofficeBlockReference {
   roomId: string;
   documentId: string;
   blockId: string;
@@ -75,7 +75,7 @@ function cleanOptionalText(value: string | null | undefined): string | null {
   return text ? text : null;
 }
 
-export function createEverroomBlockReferenceUrl(reference: EverroomBlockReference): string {
+export function createEverofficeBlockReferenceUrl(reference: EverofficeBlockReference): string {
   const path = [reference.roomId, reference.documentId, reference.blockId]
     .map((part) => encodeURIComponent(part))
     .join("/");
@@ -88,7 +88,7 @@ export function createEverroomBlockReferenceUrl(reference: EverroomBlockReferenc
   return `everroom://room/${path}${suffix}`;
 }
 
-export function parseEverroomBlockReferenceUrl(value: string): EverroomBlockReference | null {
+export function parseEverofficeBlockReferenceUrl(value: string): EverofficeBlockReference | null {
   let url: URL;
   try {
     url = new URL(value);
@@ -117,24 +117,18 @@ export function isValidBlockId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 128;
 }
 
+/**
+ * Block index mark targets. `document` points at a same-Room document block.
+ */
+export type EverofficeBlockIndexTarget = { kind: "document" } & EverofficeBlockReference;
+const MEMORY_INDEX_HOST = "memory";
+
 export interface EverroomMemoryIndex {
   roomId: string;
   memoryId: string;
   fallbackTitle?: string | null;
   fallbackPreview?: string | null;
 }
-
-/**
- * Block index mark targets. `document` points at a same-Room document block;
- * `memory` points at a Room-local memory item. The two URL hosts (`room` with
- * 3 path segments vs `memory` with 2) are disjoint by construction, so the
- * legacy `parseEverroomBlockReferenceUrl` never misreads a memory URL.
- */
-export type EverroomBlockIndexTarget =
-  | ({ kind: "document" } & EverroomBlockReference)
-  | ({ kind: "memory" } & EverroomMemoryIndex);
-
-const MEMORY_INDEX_HOST = "memory";
 
 export function createEverroomMemoryIndexUrl(target: EverroomMemoryIndex): string {
   const path = [target.roomId, target.memoryId]
@@ -173,10 +167,13 @@ export function parseEverroomMemoryIndexUrl(value: string): EverroomMemoryIndex 
   }
 }
 
-export function everroomBlockIndexUrl(target: EverroomBlockIndexTarget): string {
-  return target.kind === "document"
-    ? createEverroomBlockReferenceUrl(target)
-    : createEverroomMemoryIndexUrl(target);
+/** 文档与记忆两类索引目标的联合（office-editor 的链接/标记同时承载两类）。 */
+export type BlockIndexUrlTarget = EverofficeBlockIndexTarget | ({ kind: "memory" } & EverroomMemoryIndex);
+
+export function everroomBlockIndexUrl(target: BlockIndexUrlTarget): string {
+  return target.kind === "memory"
+    ? createEverroomMemoryIndexUrl(target)
+    : createEverofficeBlockReferenceUrl(target);
 }
 
 function escapeBlockIndexLabel(value: string): string {
@@ -193,7 +190,7 @@ function unescapeBlockIndexLabel(value: string): string {
  * plain markdown links and from the block-level reference tokenizer (which
  * only claims line-leading `[label](everroom://...)`).
  */
-export function formatBlockIndexMarkMarkdown(target: EverroomBlockIndexTarget, label: string): string {
+export function formatBlockIndexMarkMarkdown(target: BlockIndexUrlTarget, label: string): string {
   const escaped = escapeBlockIndexLabel(label) || escapeBlockIndexLabel(target.fallbackTitle || "");
   // The label already carries the title; writing it into the URL query too
   // would make serialize(parse(x)) grow on every round trip.
@@ -223,7 +220,7 @@ export function buildIndexProbe(textPreview: string): string | null {
 
 export function parseBlockIndexMarkMarkdown(
   text: string,
-): { target: EverroomBlockIndexTarget; label: string | null; raw: string } | null {
+): { target: EverofficeBlockIndexTarget; label: string | null; raw: string } | null {
   const match = text.match(BLOCK_INDEX_MARK_PATTERN);
   const raw = match?.[0];
   const rawLabel = match?.[1];
@@ -231,19 +228,7 @@ export function parseBlockIndexMarkMarkdown(
   if (!match || !raw || rawLabel === undefined || !rawUrl) return null;
   const label = unescapeBlockIndexLabel(rawLabel) || null;
 
-  const memory = parseEverroomMemoryIndexUrl(rawUrl);
-  if (memory) {
-    return {
-      target: {
-        kind: "memory",
-        ...memory,
-        fallbackTitle: memory.fallbackTitle || cleanOptionalText(label ?? undefined),
-      },
-      label,
-      raw,
-    };
-  }
-  const reference = parseEverroomBlockReferenceUrl(rawUrl);
+  const reference = parseEverofficeBlockReferenceUrl(rawUrl);
   if (!reference) return null;
   return {
     target: {
@@ -332,7 +317,7 @@ export function freshenDocumentContent(
     if (node.marks) {
       node.marks = node.marks.map((mark) => {
         if (mark.type !== "link" || typeof mark.attrs?.href !== "string") return mark;
-        const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
+        const reference = parseEverofficeBlockReferenceUrl(mark.attrs.href);
         const targetBlockId = reference?.documentId === documentId
           ? idMap.get(reference.blockId)
           : null;
@@ -341,7 +326,7 @@ export function freshenDocumentContent(
           ...mark,
           attrs: {
             ...mark.attrs,
-            href: createEverroomBlockReferenceUrl({ ...reference, blockId: targetBlockId }),
+            href: createEverofficeBlockReferenceUrl({ ...reference, blockId: targetBlockId }),
           },
         };
       });
@@ -376,7 +361,7 @@ function nodeReferences(node: TiptapJsonContent): Array<{
   }
   for (const mark of node.marks ?? []) {
     if (mark.type !== "link" || typeof mark.attrs?.href !== "string") continue;
-    const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
+    const reference = parseEverofficeBlockReferenceUrl(mark.attrs.href);
     if (reference) result.push(reference);
   }
   return result;

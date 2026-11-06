@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { type FileCatalogScope } from "./service.js";
+import { describeFileKind, scopeLabelOf } from "./file-kind.js";
 
 /** 单次读取预算：与 document_read 对齐（避免整篇长文进上下文）。 */
 export const FILE_READ_DEFAULT_LIMIT = 40_000;
@@ -61,11 +63,14 @@ function positiveInt(value: unknown, fallback: number, max: number): number {
 export function createFileReadPiTool(deps: FileReadToolDeps): PiAgentRuntimeTool {
   return {
     name: "file_read",
-    label: "读取当前 Office 文件正文",
+    label: "读取任意已入库文件正文（含资料库/产物里的 PDF、Office）",
     description:
       "读取用户当前正在浏览的 Office 文件（Word/Excel/PPT/PDF）或指定 fileId 的正文（Markdown）。"
       + "fileId 省略 = 用户当前打开/浏览的那个文件；回答“这份文档写了什么”之前先调用本工具，"
       + "不要用 document_list/document_read 去猜工作区里的其他文稿。"
+      + "传资料库/产物里任意条目的 fileId 也能读（file_search 可拿到，或用运行提示里的库内线索）；"
+      + "PDF/Office 没解析过时会现解析（首次可能几秒），解析结果会缓存到该版本。"
+      + "用户的问题答案可能落在库内某份材料里时，先 file_search 定位、再本工具读，不要凭常识作答。"
       + "读的是最近一次保存到磁盘的版本（未保存的编辑不在其中）；长文按 offset/limit 分页，"
       + "truncated/nextOffset 标明是否还有后续。空白文件会返回 empty=true。",
     parameters: Type.Object({
@@ -85,10 +90,9 @@ export function createFileReadPiTool(deps: FileReadToolDeps): PiAgentRuntimeTool
       })),
     }, { additionalProperties: false }),
     executionMode: "sequential",
-    promptSnippet: "读取当前/指定 Office 文件正文",
-    promptGuidelines: [
-      "用户提到“这份文档/这个表格/这份 PPT/当前打开的文件”时，先用 file_read 读取它，再回答或修改。",
-    ],
+    // 行为指引不写在这里：本仓库 runtime 一律用自定义 system prompt，工具级
+    // promptSnippet/promptGuidelines 不会渲染（见 modules/memory/pi-tools.ts 注释）。
+    // 「用户说这份文档就先读它」的规矩写在 agents/main/SYSTEM.md 路由表。
     execute: async (input: StartRuntimeRunInput, params: Record<string, unknown>) => {
       const requestedFileId = typeof params.fileId === "string" ? params.fileId.trim() : "";
       const fileId = requestedFileId || input.activeFile?.fileId || "";
@@ -109,7 +113,7 @@ export function createFileReadPiTool(deps: FileReadToolDeps): PiAgentRuntimeTool
           entry = files.catalogEntry(fileId);
         }
       }
-      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在资料中（可能仍在导入或已被删除）`);
 
       let markdown = files.catalogMarkdownOf(fileId)
         ?? files.markdownOf(fileId)
@@ -163,6 +167,8 @@ interface CatalogSearchHit {
   workspaceId: string;
   updatedAt: string;
   dataType: string | null;
+  /** 来源（产物/资料的判据）：agent-generated / artifact-imported 属产物库。 */
+  sourceKind: string;
 }
 
 export interface FileSearchToolDeps {
@@ -173,27 +179,13 @@ export interface FileSearchToolDeps {
       options?: {
         extensions?: readonly string[];
         workspaceId?: string;
+        scope?: FileCatalogScope;
         limit?: number;
         offset?: number;
       },
     ): { items: CatalogSearchHit[]; total: number } | null;
   } | null;
 }
-
-/** 扩展名 → Agent 路由用的文件类型标签（决定该用 file_read / word_agent_* / slides_*）。 */
-const SEARCH_KIND_BY_EXTENSION: Record<string, string> = {
-  ".docx": "word",
-  ".xlsx": "excel",
-  ".pptx": "slides",
-  ".pdf": "pdf",
-  ".md": "markdown",
-  ".txt": "text",
-  ".csv": "csv",
-  ".png": "image",
-  ".jpg": "image",
-  ".jpeg": "image",
-  ".webp": "image",
-};
 
 /**
  * `file_search`：按文件名在文件库里定位条目，拿到 fileId。
@@ -206,14 +198,19 @@ const SEARCH_KIND_BY_EXTENSION: Record<string, string> = {
 export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntimeTool {
   return {
     name: "file_search",
-    label: "按文件名搜索文件库",
+    label: "按文件名搜索文件（可限定产物/资料）",
     description:
-      "在文件库里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
+      "在资料里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
+      + "用户的问题可能落在工作区资料库/产物的某份材料里时，先用它把「哪份文件」变成确定 fileId，"
+      + "不必等用户报出文件名，也不要要求用户先上传或打开文件。"
       + "query 同时匹配原始文件名和显示名（不区分大小写，中文按子串）；extension 可以是单个扩展名或数组。"
+      + "scope 用来对应用户界面上的两个页签：用户说“产物库/你生成的/上次做的”传 artifacts，"
+      + "说“资料库/我上传的/我的资料”传 library，不提则省略（= 整库搜）。"
       + "用户说“那份/之前生成的/叫 XX 的报告”但没给 fileId、或者要改的文件当前没打开时，先用本工具定位 fileId，"
       + "再把 fileId 传给 file_read / word_agent_read / word_agent_edit / word_agent_ops / slides_read / sheets_agent_read / sheets_agent_edit。"
       + "用户提到“刚上传的 logo / 之前生成的那张图”时也先用本工具（extension 传 [\"png\",\"jpg\",\"jpeg\"]）找图片 fileId，再作为图片入参的 fileId。"
-      + "query 省略 = 按最近更新时间倒序列出（可在 extension 过滤后浏览）。",
+      + "query 省略 = 按最近更新时间倒序列出（可在 scope/extension 过滤后浏览）。"
+      + "每条结果带 scope 字段（产物/资料），可用来核对命中是不是用户说的那一栏。",
     parameters: Type.Object({
       query: Type.Optional(Type.String({
         minLength: 1,
@@ -226,6 +223,13 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
       ], {
         description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）、逗号分隔或 JSON 数组字符串（自动解析）。大小写不敏感",
       })),
+      scope: Type.Optional(Type.Union([
+        Type.Literal("all"),
+        Type.Literal("library"),
+        Type.Literal("artifacts"),
+      ], {
+        description: "来源范围：artifacts = 产物库（Agent 生成/产物导入），library = 资料库（上传/本地目录/连接器/剪藏等），all 或省略 = 整库",
+      })),
       workspaceId: Type.Optional(Type.String({
         minLength: 1,
         maxLength: 200,
@@ -236,12 +240,15 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
         maximum: FILE_SEARCH_MAX_LIMIT,
         description: `返回条数上限（缺省 ${FILE_SEARCH_DEFAULT_LIMIT}，最多 ${FILE_SEARCH_MAX_LIMIT}）`,
       })),
+      offset: Type.Optional(Type.Integer({
+        minimum: 0,
+        description: "分页偏移：命中多于 limit 时传上一页的 nextOffset 继续翻",
+      })),
     }, { additionalProperties: false }),
     executionMode: "sequential",
-    promptSnippet: "按文件名搜索文件库、定位 fileId",
-    promptGuidelines: [
-      "用户提到的文件没有 fileId（“那份调研报告”“之前生成的那个 Word/Excel”）或不在打开清单里时，先用 file_search 定位 fileId，再交给 file_read / word_agent_* / sheets_agent_* 读取或修改；不要要求用户先去打开/保存文件。",
-    ],
+    // 行为指引不写在这里：本仓库 runtime 一律用自定义 system prompt，工具级
+    // promptSnippet/promptGuidelines 不会渲染（见 modules/memory/pi-tools.ts 注释）。
+    // 「什么时候该先搜、不许要求用户先打开文件」这类规矩写在 agents/main/SYSTEM.md 路由表。
     execute: async (input: StartRuntimeRunInput, params: Record<string, unknown>) => {
       const files = deps.files();
       if (!files) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
@@ -268,43 +275,72 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
         .map((value) => value.trim())
         .filter(Boolean)
         .slice(0, 8);
+      const rawScope = typeof params.scope === "string" ? params.scope.trim().toLowerCase() : "";
+      const scope: FileCatalogScope = rawScope === "artifacts" || rawScope === "library" ? rawScope : "all";
       const requestedWorkspace = typeof params.workspaceId === "string" ? params.workspaceId.trim() : "";
       const workspaceId = requestedWorkspace || input.workspaceId?.trim() || undefined;
       const limit = positiveInt(params.limit, FILE_SEARCH_DEFAULT_LIMIT, FILE_SEARCH_MAX_LIMIT);
+      const offset = Number.isSafeInteger(Number(params.offset)) && Number(params.offset) > 0
+        ? Number(params.offset)
+        : 0;
       const found = files.searchCatalog(query, {
         ...(extensions.length > 0 ? { extensions } : {}),
+        ...(scope !== "all" ? { scope } : {}),
         ...(workspaceId ? { workspaceId } : {}),
         limit,
+        ...(offset > 0 ? { offset } : {}),
       });
       if (!found) throw new Error("FILE_SEARCH_UNAVAILABLE: 文件目录尚未就绪");
       const items = found.items.map((item) => {
-        const match = /(\.[^./\\]+)$/.exec(item.originalName);
-        const extensionLabel = match?.[1]?.toLowerCase() ?? "";
+        const described = describeFileKind(item.originalName);
+        const { scope: itemScope, scopeKey } = scopeLabelOf(item.sourceKind);
         return {
           fileId: item.id,
           originalName: item.originalName,
           displayName: item.displayName,
-          extension: extensionLabel,
-          kind: SEARCH_KIND_BY_EXTENSION[extensionLabel] ?? "file",
+          extension: described.extension,
+          kind: described.kind,
+          readable: described.readable,
+          scope: itemScope,
+          scopeKey,
+          sourceKind: item.sourceKind,
           dataType: item.dataType,
           workspaceId: item.workspaceId,
           updatedAt: item.updatedAt,
         };
       });
+      const scopeLabel = scope === "artifacts" ? "产物" : scope === "library" ? "资料" : "全部文件";
       const payload = {
         query,
         ...(extensions.length > 0 ? { extension: extensions.length === 1 ? extensions[0] : extensions } : {}),
+        scope,
         ...(workspaceId ? { workspaceId } : {}),
         total: found.total,
+        offset,
         returned: items.length,
+        hasMore: offset + items.length < found.total,
+        ...(offset + items.length < found.total ? { nextOffset: offset + items.length } : {}),
         items,
         ...(items.length === 0
-          ? { hint: query ? `没有文件名包含“${query}”的文件；换个关键词或去掉扩展名过滤再试。` : "文件库里还没有匹配的文件。" }
-          : { hint: "要改 Word 就取其中一条的 fileId，按 word_agent_read → word_agent_edit/word_agent_ops 走；不需要用户先打开文件。" }),
+          ? {
+              hint: query
+                ? `${scopeLabel}里没有文件名包含“${query}”的文件；换个关键词或去掉扩展名过滤再试。`
+                  + (scope === "all" ? "" : "确认真没有，再用 scope=all 搜一次整库。")
+                : `${scopeLabel}里还没有匹配的文件。`,
+            }
+          : {
+              hint: "要改 Word 就取其中一条的 fileId，按 word_agent_read → word_agent_edit/word_agent_ops 走；不需要用户先打开文件。"
+                + (offset + items.length < found.total
+                  ? `命中 ${found.total} 份，还有没列出的；要接着看传 offset=${offset + items.length}。`
+                  : "")
+                + (scope === "all" && items.some((item) => item.scopeKey === "artifacts") && items.some((item) => item.scopeKey === "library")
+                  ? "结果里既有产物也有资料，按 scope 字段挑对那一栏再回话。"
+                  : ""),
+            }),
       };
       return {
         content: JSON.stringify(payload),
-        details: { query, total: found.total, returned: items.length },
+        details: { query, scope, offset, total: found.total, returned: items.length },
       };
     },
   };

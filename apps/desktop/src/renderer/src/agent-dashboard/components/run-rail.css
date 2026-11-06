@@ -1,0 +1,151 @@
+.rail {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+
+.rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-3) var(--sp-2);
+}
+
+.rail-title {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.rail-count {
+  font-size: var(--fs-label);
+  color: var(--ink-4);
+}
+
+.rail-scope {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+}
+
+.rail-filters {
+  display: grid;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3) var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rail-search,
+.rail-select {
+  width: 100%;
+  height: 26px;
+  padding: 0 var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-size: var(--fs-small);
+}
+
+.rail-search::placeholder {
+  color: var(--ink-4);
+}
+
+.rail-select {
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.rail-search:focus-visible,
+.rail-select:focus-visible {
+  border-color: var(--line-strong);
+  outline: none;
+}
+
+.rail-list {
+  overflow: auto;
+  min-height: 0;
+}
+
+.rail-item {
+  display: grid;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+}
+
+.rail-item:hover {
+  background: var(--surface-2);
+}
+
+.rail-item[data-selected] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.rail-item-top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.rail-agent {
+  font-size: var(--fs-small);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-status {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+  flex: 0 0 auto;
+}
+
+.rail-status[data-status='running'] { color: var(--ok); }
+.rail-status[data-status='failed'] { color: var(--err); }
+.rail-status[data-status='cancelled'],
+.rail-status[data-status='interrupted'] { color: var(--warn); }
+
+.rail-task {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.rail-time {
+  margin-left: auto;
+}
+
+.rail-origin {
+  color: var(--ctx);
+}
+
+.rail-note {
+  padding: var(--sp-4) var(--sp-3);
+  font-size: var(--fs-label);
+  line-height: 1.8;
+  color: var(--ink-3);
+}
+
+.rail-note-error {
+  color: var(--err);
+}

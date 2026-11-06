@@ -9,7 +9,7 @@ import type { NotificationBridgeClient } from "./bridge-client.js";
 export const SEND_NOTIFICATION_TOOL={
   name:"send_notification",
   title:"发送系统通知",
-  description:"向用户的 iOS、macOS 或两端发送一条 EverRoom 系统通知。标题和摘要会显示在锁屏或系统通知中心；详细内容在用户点击后从对应 Agent 会话加载。",
+  description:"向用户的 iOS、macOS 或两端发送一条 EverOffice 系统通知。标题和摘要会显示在锁屏或系统通知中心；详细内容在用户点击后从对应 Agent 会话加载。",
   guidelines:[
     "三类场景必须在给出最终回复前调用本工具推送通知，不能省略，也不能只在回复里口头说明：(1) 用户明确要求通知、提醒或要求完成后告知；(2) 本 run 内 Context Room 文档发生实际变更：document_patch_commit 返回 documentChanged=true，或 document_write_commit 成功提交新文档；(3) 长任务到达终态（成功、失败或等待用户审阅）：本 run 累计 5 轮以上工具调用，或包含文档生成、Office 产物、批量导入/索引、子任务派发、多轮联网检索等耗时工作。patch_commit 返回 awaiting_review 只是提案待审、不算文档变更，但该 run 若属长任务仍按第 (3) 类必推。",
     "拿不准是否算长任务时倾向于推送：用户可能已离开对话，漏报结果的代价大于多一条通知。以下不要发送：中间过程与琐碎进展、同一 run 内的重复进展、单轮工具调用即可完成的普通对话；每个 run 至多在终态发一条结果通知。",
@@ -48,7 +48,7 @@ export class NotificationMcpHost{
     // 来源桌面端不接收自己的远程推送（SaaS 扇出时排除来源设备）；当请求包含
     // macos 时，由本机直接弹出内容相同的通知，点击可定位到对应会话。
     const local=platforms.includes("macos");
-    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,roomId:context.roomId,idempotencyKey,local});
+    const result=await this.bridge.send({title,body,platforms,sessionId:context.agentSessionId,runId:context.runId,idempotencyKey,local});
     return{content:[{type:"text" as const,text:JSON.stringify(result)}],structuredContent:result};
   }
   async exchangeTrusted(sessionId:string,message:Record<string,unknown>){const context=resolveTrustedMcpSession(sessionId);if(!context)throw new Error("MCP_SESSION_INVALID: Trusted MCP session is missing or expired");return this.exchange(sessionId,message,context);}

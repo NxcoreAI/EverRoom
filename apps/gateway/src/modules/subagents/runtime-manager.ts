@@ -12,6 +12,11 @@ import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import type { LoadedSubagentRevision } from "./types.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
 
+/** 技能页启停闸门（来自 main）：装配后子 Agent 只能读启用的 Skill。 */
+export interface SkillGate {
+  subagentSkillPaths(agentId: string, paths: string[]): string[];
+}
+
 export type SubagentResultValidator = (
   invocationInput: unknown,
   result: Record<string, unknown>,
@@ -200,6 +205,20 @@ export class SubagentRuntimeManager {
   private readonly retiring = new Map<string, AgentRuntime>();
   private readonly agentTools = new Map<string, () => PiAgentRuntimeTool[]>();
   private readonly agentResultValidators = new Map<string, SubagentResultValidator>();
+  /** 已登记的技能闸门（未装配＝不过滤，旧行为）。 */
+  private skillGate: SkillGate | null = null;
+
+  /** 接入「技能」页的启停闸门。 */
+  setSkillGate(gate: SkillGate): void {
+    this.skillGate = gate;
+  }
+
+  private enabledSkillPaths(revision: LoadedSubagentRevision): string[] {
+    return this.skillGate
+      ? this.skillGate.subagentSkillPaths(revision.manifest.id, revision.manifest.skills)
+      : [...revision.manifest.skills];
+  }
+
   private readonly resultCollector = new SubagentResultCollector();
 
   constructor(
@@ -319,7 +338,7 @@ export class SubagentRuntimeManager {
     }
     const config = this.buildPiConfig(base, revision);
     const tools = [
-      ...(revision.manifest.skills.length > 0 ? [createSubagentSkillReadTool(revision)] : []),
+      ...(this.enabledSkillPaths(revision).length > 0 ? [createSubagentSkillReadTool(revision)] : []),
       ...(this.agentTools.get(revision.manifest.id)?.() ?? []),
       ...(() => {
         const submitResult = this.resultCollector.createTool(
@@ -374,7 +393,7 @@ export class SubagentRuntimeManager {
       runtimeId: `pi:subagent:${revision.id}`,
       systemPrompt: revision.systemPrompt,
       runtimeRole: "internal",
-      skillsEnabled: revision.manifest.skills.length > 0,
+      skillsEnabled: this.enabledSkillPaths(revision).length > 0,
       builtinTools: [],
       includeBashTool: false,
       // 不声明工具预算＝不注入上限：布局类长链路由 timeoutMs / 输出预算兜底。
