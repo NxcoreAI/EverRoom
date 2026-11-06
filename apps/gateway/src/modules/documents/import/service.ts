@@ -95,6 +95,18 @@ export interface CommitWorkspaceImportResult {
   noChange: boolean;
 }
 
+/**
+ * 统一提交入参（REST 与 Agent 工具共用）：`roomId` 省略/null = 工作区导入。
+ * 显式传 Room 时保留 Room 时代的去重/候选语义（旧版桌面兼容）。
+ */
+export interface CommitDocumentImportInput {
+  runId: string;
+  roomId?: string | null;
+  /** 仅在显式 roomId 的旧路径生效：同一来源再次导入到该文档时生成候选版本。 */
+  targetDocumentId?: string;
+  forceNewDocument?: boolean;
+}
+
 /** 图片魔数嗅探：返回真实格式（远端 content-type 声明不可信）。 */
 function sniffImageMime(bytes: Uint8Array): string | null {
   if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
@@ -874,6 +886,37 @@ export class DocumentImportService {
       })),
       commentsStatus: artifact.commentsStatus,
       warnings: artifact.warnings,
+    };
+  }
+
+  /**
+   * 统一提交入口：显式 roomId → 旧 Room 路径（兼容旧桌面）；省略/null → 工作区导入。
+   *
+   * 两条路径的结果 DTO 保持同一形状（`CommitImportResult`）：工作区路径不写
+   * `document_room_imports`，`roomImportId` 恒 null、`relation` 记 "primary"，
+   * 旧调用方按原字段读取不会出现缺字段。
+   */
+  async commit(input: CommitDocumentImportInput): Promise<CommitImportResult> {
+    const roomId = typeof input.roomId === "string" ? input.roomId.trim() : "";
+    if (roomId) {
+      return this.commitToRoom({
+        runId: input.runId,
+        roomId,
+        ...(input.targetDocumentId ? { targetDocumentId: input.targetDocumentId } : {}),
+        ...(input.forceNewDocument ? { forceNewDocument: true } : {}),
+      });
+    }
+    const result = await this.commitToWorkspace({
+      runId: input.runId,
+      ...(input.forceNewDocument ? { forceNewDocument: true } : {}),
+    });
+    return {
+      run: result.run,
+      roomImportId: null,
+      relation: "primary",
+      ...(result.noChange ? { noChange: true } : {}),
+      documentId: result.documentId,
+      document: result.document,
     };
   }
 

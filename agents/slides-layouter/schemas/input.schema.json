@@ -45,30 +45,6 @@
         "dense"
       ]
     },
-    "title": {
-      "type": "string",
-      "maxLength": 80
-    },
-    "points": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 400
-      },
-      "maxItems": 8
-    },
-    "data": {
-      "description": "Structured page data: stats [{value,unit,label}] and optional chart {kind,categories,series}.",
-      "anyOf": [
-        {
-          "type": "string",
-          "maxLength": 2000
-        },
-        {
-          "type": "object"
-        }
-      ]
-    },
     "materials": {
       "type": "array",
       "items": {
@@ -94,23 +70,10 @@
       },
       "maxItems": 8
     },
-    "notes": {
-      "type": "string",
-      "maxLength": 1000
-    },
     "styleBrief": {
       "type": "string",
       "maxLength": 400,
       "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)."
-    },
-    "neighborSignatures": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "maxLength": 200
-      },
-      "maxItems": 4,
-      "description": "仅旧内容模式重排任务使用：返回的页面须与给定邻页结构不同构。"
     },
     "layoutVersion": {
       "type": "integer",
@@ -118,178 +81,6 @@
         2
       ],
       "description": "Always 2: the page you return is a v2 page (version/composition/slot nodes). There is no other layout format."
-    },
-    "composition": {
-      "type": "string",
-      "enum": [
-        "immersive",
-        "hero-data",
-        "editorial",
-        "swiss",
-        "poster",
-        "chapter"
-      ],
-      "description": "旧内容模式：上游确定的 composition，原样写入页面。语义内容模式由 Layouter 自主选择。"
-    },
-    "form": {
-      "type": "string",
-      "enum": [
-        "single-fact",
-        "contrast",
-        "sequence",
-        "hierarchy",
-        "breakdown",
-        "image-led",
-        "quotation",
-        "table",
-        "light-page"
-      ],
-      "description": "旧内容模式：内容形态，结合 skeleton 理解本页结构。"
-    },
-    "units": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 8,
-      "description": "这页有几个单元（对照的方数、序列的步数、表格行数）。"
-    },
-    "skeleton": {
-      "type": "string",
-      "maxLength": 140,
-      "description": "旧内容模式：分区与权重的骨架意图。"
-    },
-    "emphasis": {
-      "type": "string",
-      "enum": [
-        "title",
-        "number",
-        "image",
-        "quote",
-        "chart",
-        "table"
-      ],
-      "description": "v2 only: the page's single visual anchor."
-    },
-    "intent": {
-      "type": "string",
-      "maxLength": 200,
-      "description": "v2 only: what this page should change in the audience's mind."
-    },
-    "takeaway": {
-      "type": "string",
-      "maxLength": 40,
-      "description": "v2 only: one line the audience should remember."
-    },
-    "copy": {
-      "type": "object",
-      "description": "旧内容模式的文案来源；排版保持原文。",
-      "properties": {
-        "kicker": {
-          "type": "string",
-          "maxLength": 40
-        },
-        "message": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "supporting": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "maxItems": 2
-        },
-        "facts": {
-          "type": "array",
-          "maxItems": 4,
-          "items": {
-            "type": "object",
-            "properties": {
-              "label": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              },
-              "unit": {
-                "type": "string"
-              },
-              "body": {
-                "type": "string"
-              },
-              "note": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": false
-          }
-        },
-        "quote": {
-          "type": "object",
-          "properties": {
-            "text": {
-              "type": "string"
-            },
-            "attribution": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "source": {
-          "type": "string",
-          "maxLength": 120
-        },
-        "speakerNotes": {
-          "type": "string",
-          "maxLength": 400
-        }
-      },
-      "additionalProperties": false
-    },
-    "neighbors": {
-      "type": "array",
-      "maxItems": 2,
-      "items": {
-        "type": "object",
-        "properties": {
-          "pageIndex": {
-            "type": "integer"
-          },
-          "composition": {
-            "type": "string"
-          },
-          "takeaway": {
-            "type": "string"
-          },
-          "form": {
-            "type": "string"
-          },
-          "role": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string",
-            "maxLength": 8000
-          }
-        },
-        "additionalProperties": false
-      }
-    },
-    "budget": {
-      "type": "object",
-      "properties": {
-        "prose": {
-          "type": "number"
-        },
-        "copy": {
-          "type": "number"
-        },
-        "notes": {
-          "type": "number"
-        }
-      },
-      "additionalProperties": false
     },
     "styleTokens": {
       "type": "object",
@@ -299,11 +90,96 @@
     "revisionFeedback": {
       "type": "string",
       "maxLength": 300,
-      "description": "本轮修正或自审反馈；按当前内容模式处理，并保留内容契约。"
+      "description": "本轮修正或自审反馈；在内容契约内处理，不改变必留内容。"
+    },
+    "componentCandidates": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "按本页 relations/metrics/引用预检过的组件候选。存在 feasible=true 的语义匹配候选时，默认采用它承载主内容；确不适用时在 designIntent 说明候选名称、具体原因与替代表达。候选绑定真实 block，预检不截断任何内容。",
+      "items": {
+        "type": "object",
+        "required": ["name", "relation", "blockRefs", "feasible"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组，quote 表示引用，navigates 表示导航" },
+          "blockRefs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "feasible": { "type": "boolean" },
+          "validatedSlot": {
+            "type": "object",
+            "required": ["w", "h"],
+            "additionalProperties": false,
+            "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } },
+            "description": "已验证槽位尺寸（px）：当前内容与参数曾在此尺寸通过归一、展开、内容覆盖与文本量测预检；不是最小值，也不承诺更大尺寸可用。"
+          },
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            },
+            "description": "与 validatedSlot 对应的合法栅格槽位（已预留标题与页脚区）。"
+          },
+          "validatedGrid": {
+            "type": "object",
+            "required": ["cols", "rows", "gutter", "rowGutter", "margin"],
+            "additionalProperties": false,
+            "properties": {
+              "cols": { "type": "integer" },
+              "rows": { "type": "integer" },
+              "gutter": { "type": "integer" },
+              "rowGutter": { "type": "integer" },
+              "margin": { "type": "integer" }
+            },
+            "description": "预检使用的网格配置：改变内容集合、网格或组件样式后，原预检结果不再作为通过依据。"
+          },
+          "template": {
+            "type": "object",
+            "description": "已通过预检的组件参数（不含 type/name/slot），可直接用于组件节点承载 blockRefs 的内容。"
+          },
+          "note": { "type": "string", "description": "不可行时的分类原因：参数超限 / 内容无法完整映射 / 空间不足。" }
+        }
+      }
     },
     "currentTree": {
       "type": "object",
-      "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图，沿用当前内容模式。"
+      "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图。"
+    },
+    "blockNeeds": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "各内容块的引擎实测区域需求：text 按 3/6/12 列宽（12×8 网格、body 字号档）给出内容高度；table 给总行数、估算高度与建议槽位；chart 给建议槽位。按这些数字分配区域，不做自己的字数估算；有 validatedSlot 候选的内容组以候选为准。",
+      "items": {
+        "type": "object",
+        "required": ["blockId", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "blockId": { "type": "string" },
+          "kind": { "type": "string", "enum": ["text", "table", "chart"] },
+          "heightsByWidth": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["cols", "px"],
+              "additionalProperties": false,
+              "properties": { "cols": { "type": "integer" }, "px": { "type": "integer" } }
+            }
+          },
+          "rows": { "type": "integer" },
+          "estimatedPx": { "type": "integer" },
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            }
+          }
+        }
+      }
     },
     "previousDesignIntent": {
       "type": "string",
@@ -991,6 +867,34 @@
           }
         }
       }
+    },
+    "deckOutline": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "全册页清单概要（仅本对话首个任务携带）：各页页序、标题、角色与密度，用于把握整册节奏与前后页差异。后续任务不再重复携带；前面页的设计已在本对话上下文里。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "density": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pageIndex",
+          "title"
+        ]
+      }
     }
   },
   "required": [
@@ -998,6 +902,7 @@
     "deckToken",
     "pageIndex",
     "totalPages",
+    "content",
     "role",
     "density"
   ],

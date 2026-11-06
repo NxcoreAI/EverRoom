@@ -386,7 +386,8 @@ export function resolveTheme(styleParams?: StyleParamsInput | null, sceneId?: st
       separator: decoration.divider === "none" ? "gap" : "line",
       align: "start",
       density: composition === "swiss" ? "tight" : composition === "poster" || composition === "immersive" ? "airy" : "normal",
-      numeral: "serif",
+      // 数字默认正文字体（无衬线商务表达）；agent 显式 numeral:serif 时恢复衬线。
+      numeral: "sans",
       accent: accent === primary ? "primary" : "accent",
     },
   };

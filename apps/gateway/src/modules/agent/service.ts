@@ -230,6 +230,9 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
   };
 }
 
+/** 选区重写完成后的宽限期：doc-writer-dispatcher 复用（旧管线保留）。 */
+export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
+
 function toWorkspace(row: typeof agentWorkspaces.$inferSelect): AgentWorkspace {
   return {
     id: row.id,
@@ -2257,6 +2260,8 @@ export class AgentService {
         attachments,
         ...(activeDocument ? { activeDocument } : {}),
       }) : undefined;
+      const runWorkspaceName = this.db.select({ name: agentWorkspaces.name })
+        .from(agentWorkspaces).where(eq(agentWorkspaces.id, runWorkspaceId)).get()?.name ?? null;
       runtimeRun = await selectedRuntime.start({
         runId,
         sessionId,
@@ -2273,6 +2278,7 @@ export class AgentService {
         ...(userProfilePrompt ? { userProfilePrompt } : {}),
         pageLabel: runPageLabel,
         workspaceId: runWorkspaceId,
+        ...(runWorkspaceName ? { workspaceLabel: runWorkspaceName } : {}),
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),

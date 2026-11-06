@@ -11,6 +11,7 @@
   "dialog.knowledgeMarkdown.title": "Choose Markdown files to classify",
   "dialog.importFiles.title": "Choose files or folders to add",
   "dialog.importFiles.documents": "Documents",
+  "dialog.importFiles.all": "All importable",
   "error.requestFailed": "The request failed. Try again later.",
   "error.network.title": "Unable to connect to the local service",
   "error.network.message": "Operation \"{operation}\" could not complete because EverOffice Gateway is unreachable. Make sure Gateway is running and try again.\nSource: {channel}",

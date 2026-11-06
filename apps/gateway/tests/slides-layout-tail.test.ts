@@ -15,12 +15,20 @@ import type { SubagentInvocation } from "@nxcore/agent-contract";
 import { runLayouterTail, type LayouterTailDeps } from "../src/modules/subagents/slides-layout-tail.js";
 import type { SlidesProgressTracker } from "../src/modules/subagents/slides-progress-tracker.js";
 import { semanticCases } from "./fixtures/slides-semantic.js";
+import type { SemanticPage } from "../src/modules/subagents/slides-semantic-contract.js";
 import { pptxToPng } from "../src/modules/slides-style/render.js";
 
 function invocationWithTree(tree: unknown, status = "completed"): SubagentInvocation {
+  // 语义模式提交须带 designIntent 与 bindings；树是 v2 时按同一推导规则自建内容绑定。
+  const record = tree as Record<string, unknown> | null;
+  const page = record && record.version === 2 ? semanticPageOfTree(record, 0) : null;
   return {
     status,
-    result: { structuredOutput: { status: "done", tree } },
+    result: { structuredOutput: {
+      status: "done", tree,
+      designIntent: "测试设计意图",
+      ...(page ? { bindings: deriveBindings(page, tree) } : {}),
+    } },
   } as unknown as SubagentInvocation;
 }
 
@@ -36,7 +44,7 @@ interface Harness {
     notify: ReturnType<typeof vi.fn>;
     disarm: ReturnType<typeof vi.fn>;
   };
-  dispatches: Array<{ input: Record<string, unknown>; key: string }>;
+  dispatches: Array<{ input: Record<string, unknown>; key: string; session?: { sessionId: string; runtimeSessionRef: string | null } }>;
   /** 自审回投（带 currentTree + 渲染图附件）的调用记录。 */
   selfReviews: Array<{ input: Record<string, unknown>; key: string; attachments?: unknown[] }>;
   settled: string[];
@@ -47,9 +55,10 @@ function makeHarness(
   treesPerDispatch: Array<unknown | "FAIL">,
   persistentlyFailingPages: Set<number> = new Set(),
 ): Harness {
-  const dispatches: Array<{ input: Record<string, unknown>; key: string }> = [];
+  const dispatches: Array<{ input: Record<string, unknown>; key: string; session?: { sessionId: string; runtimeSessionRef: string | null } }> = [];
   const selfReviews: Array<{ input: Record<string, unknown>; key: string; attachments?: unknown[] }> = [];
   let dispatchCursor = 0;
+  let refCounter = 0;
   const bridge = {
     generate: vi.fn().mockResolvedValue({ fileEntryId: "file-1", originalName: "deck.pptx" }),
     renderPptx: vi.fn().mockResolvedValue(Buffer.from("pptx-bytes")),
@@ -71,13 +80,13 @@ function makeHarness(
     readMaterialBlob: vi.fn().mockResolvedValue(null),
     fetchImageHead: vi.fn().mockResolvedValue(null),
     makeKey: (runId, agentId, task) => `${runId}:${agentId}:${task}`,
-    dispatchPage: async (input, key, _parentRunId, attachments) => {
+    dispatchPage: async (input, key, _parentRunId, attachments, session) => {
       // 自审回投：带 currentTree 的调用不消耗"每页一张树"的游标，默认原样返回。
       if (input.currentTree) {
         selfReviews.push({ input, key, ...(attachments ? { attachments } : {}) });
         return invocationWithTree(input.currentTree);
       }
-      dispatches.push({ input, key });
+      dispatches.push({ input, key, ...(session ? { session } : {}) });
       const pageIndex = typeof input.pageIndex === "number" ? input.pageIndex : -1;
       if (persistentlyFailingPages.has(pageIndex)) throw new Error("subagent_concurrency_limit");
       const entry = treesPerDispatch[dispatchCursor++] ?? treesPerDispatch[treesPerDispatch.length - 1];
@@ -86,10 +95,78 @@ function makeHarness(
       if (entry === "RUN_FAIL") {
         return { status: "failed", result: null, error_code: "runtime_error" } as unknown as SubagentInvocation;
       }
-      return invocationWithTree(entry);
+      // 模拟 pi 续会话：每次成功 run 返回新的会话 ref，链式传给下一页。
+      refCounter += 1;
+      return { ...invocationWithTree(entry), runtimeSessionRef: `ref-${refCounter}` } as SubagentInvocation;
     },
   };
   return { deps, bridge, progress, dispatches, selfReviews, settled, trashed };
+}
+
+/** 节点可见文本（text 节点原文；组件按条目的标签/标题串接）。 */
+function visibleTextOfNode(node: unknown): string {
+  if (node === null || typeof node !== "object") return "";
+  const record = node as Record<string, unknown>;
+  if (typeof record.text === "string") return record.text;
+  if (Array.isArray(record.items)) {
+    return record.items.map((item) => {
+      if (item === null || typeof item !== "object") return "";
+      const entry = item as Record<string, unknown>;
+      return [entry.label, entry.title, entry.text, entry.body].find((value) => typeof value === "string") ?? "";
+    }).join("");
+  }
+  return "";
+}
+
+/** 内容块 → 树内承载节点：chart 按结构等价匹配，其余按可见文本包含匹配。 */
+function deriveBindings(page: SemanticPage, tree: unknown): Array<{ blockId: string; paths: string[] }> {
+  const nodes = Array.isArray((tree as { nodes?: unknown[] })?.nodes) ? (tree as { nodes: unknown[] }).nodes : [];
+  return page.blocks.flatMap((block) => {
+    const index = nodes.findIndex((node) => {
+      const record = node as Record<string, unknown>;
+      if (block.type === "chart") {
+        return record.type === "chart"
+          && JSON.stringify(record.categories) === JSON.stringify(block.labels)
+          && JSON.stringify((record.series as Array<{ name: string; values: number[] }>).map(s => [s.name, s.values]))
+            === JSON.stringify(block.series.map(s => [s.name, s.values]));
+      }
+      return block.type === "text" && visibleTextOfNode(node).includes(block.text);
+    });
+    return index >= 0 ? [{ blockId: block.id, paths: [`nodes/${index}`] }] : [];
+  });
+}
+
+/** 从 v2 树推导语义内容页（message=首个文本节点；文本/组件条目/chart 各成 block；图片不派生，避免素材依赖）。 */
+function semanticPageOfTree(tree: Record<string, unknown>, index: number): SemanticPage {
+  const nodes = (Array.isArray(tree.nodes) ? tree.nodes : []) as Array<Record<string, unknown>>;
+  const blocks: SemanticPage["blocks"] = [];
+  let firstText: string | undefined;
+  for (const [nodeIndex, node] of nodes.entries()) {
+    if (node.type === "text" && typeof node.text === "string") {
+      firstText ??= node.text;
+      blocks.push({ id: `b${nodeIndex}`, type: "text", text: node.text, sourceRefs: [`src-${index}`],
+        priority: blocks.length === 0 ? "primary" : "supporting", mustShow: true });
+    } else if (node.type === "component" && Array.isArray(node.items)) {
+      for (const [itemIndex, item] of (node.items as Array<Record<string, unknown>>).entries()) {
+        const label = [item.label, item.title].find((value) => typeof value === "string" && value.trim());
+        if (typeof label !== "string") continue;
+        blocks.push({ id: `b${nodeIndex}-${itemIndex}`, type: "text", text: label, sourceRefs: [`src-${index}`],
+          priority: "supporting", mustShow: true });
+      }
+    } else if (node.type === "chart") {
+      blocks.push({ id: `b${nodeIndex}`, type: "chart",
+        labels: node.categories as string[],
+        series: node.series as { name: string; values: number[] }[],
+        sourceRefs: [`src-${index}`], priority: "supporting", mustShow: true });
+    }
+  }
+  return {
+    id: `page-${index + 1}`, sourceRefs: [`src-${index}`],
+    role: (typeof tree.role === "string" ? tree.role : "content") as SemanticPage["role"],
+    message: firstText ?? `第 ${index + 1} 页`,
+    blocks, relations: [], focusRefs: blocks.slice(0, 1).map(b => b.id),
+    constraints: { verbatimRefs: [] }, notes: "", omissions: [],
+  };
 }
 
 const CONTENT_TREE = {
@@ -106,29 +183,6 @@ const CONTENT_TREE = {
       slot: { col: [1, 7], row: [4, 8] },
     },
     { type: "image", url: "https://example.com/a.jpg", slot: { col: [9, 12], row: [1, 8] } },
-  ],
-};
-
-/** 同 CONTENT_TREE 的另一副骨架（槽位与节点类型都不同），用于相邻页重排。 */
-const CONTENT_TREE_ALT = {
-  version: 2,
-  role: "content",
-  composition: "swiss",
-  nodes: [
-    { type: "text", token: "h2", text: "小标题", slot: { col: [1, 4], row: [1, 8] } },
-    {
-      type: "component",
-      name: "stats",
-      items: [{ value: "42", label: "指标甲" }, { value: "7", label: "指标乙" }],
-      slot: { col: [5, 9], row: [1, 4] },
-    },
-    {
-      type: "component",
-      name: "pointList",
-      items: [{ label: "要点", body: "要点内容" }, { label: "要点二", body: "要点内容" }],
-      slot: { col: [5, 9], row: [5, 8] },
-    },
-    { type: "icon", name: "bolt", slot: { col: [10, 12], row: [1, 2] } },
   ],
 };
 
@@ -171,8 +225,7 @@ function planOf(trees: unknown[]): Record<string, unknown> {
       role: (tree as { role?: string }).role,
       density: "standard",
       layoutVersion: 2,
-      composition: (tree as { composition?: string }).composition ?? "swiss",
-      copy: { message: `第 ${index + 1} 页`, supporting: ["要点一", "要点二"], facts: [], speakerNotes: "讲稿" },
+      content: semanticPageOfTree(tree as Record<string, unknown>, index),
     })),
   };
 }
@@ -187,7 +240,6 @@ function armPlanOf(plan: Record<string, unknown>) {
 
 function tailArgs(plan: Record<string, unknown>, harness: Harness) {
   return {
-    roomId: "room-1",
     sessionId: "session-1",
     runId: "run-1",
     parentRunId: "parent-1",
@@ -274,7 +326,9 @@ describe("runLayouterTail", () => {
       { pageIndex: 0, requestedAction: "提供原始表格" }, { pageIndex: 1, requestedAction: "提供原始表格" },
     ] });
     expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    // 逐页追加模式：第 0 页骨架已随文件创建（不补）；第 1 页阻塞也补一页骨架保住页序。
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
+    expect((harness.bridge.fillPage.mock.calls[0]![0] as { slideIndex: number }).slideIndex).toBe(1);
     expect(harness.trashed).toEqual([]);
   });
 
@@ -318,6 +372,87 @@ describe("runLayouterTail", () => {
       expect(review.previousDesignIntent).toBe(`第 ${String(review.pageIndex)} 页：先标题，再并列收益`);
     }
     expect(result.visualValidation).toEqual(["reviewed", "reviewed"]);
+  });
+
+  it("主内容未采用组件时回投修订一次，采纳后统计采用率；修订不收敛则保留原页", async () => {
+    const validateInput = new Ajv({ strict: false }).compile(JSON.parse(readFileSync(resolve("../../agents/slides-layouter/schemas/input.schema.json"), "utf8")));
+    const mkBlock = (id: string, body: string) => ({ id, type: "text" as const, text: body, sourceRefs: ["src-1"], priority: "primary" as const, mustShow: true });
+    const page = {
+      id: "page-1", sourceRefs: ["src-1"], role: "content" as const, message: "推进节奏",
+      blocks: [mkBlock("b1", "调研市场"), mkBlock("b2", "设计方案"), mkBlock("b3", "交付上线")],
+      relations: [{ type: "precedes" as const, refs: ["b1", "b2", "b3"], basis: "先后推进" }],
+      focusRefs: ["b1", "b2", "b3"], constraints: { verbatimRefs: [] }, notes: "", omissions: [],
+    };
+    const heading = { type: "text", token: "h2", text: "推进节奏", slot: { col: [1, 12], row: [1, 1] } };
+    // 首轮：3 个独立 text 节点承载（短文本不触发等宽列检查；无组件触发采用修订）。
+    const plainTree = { version: 2, role: "content", composition: "swiss", notes: "", nodes: [
+      heading,
+      { type: "text", token: "body", text: "调研市场", slot: { col: [1, 3], row: [3, 4] } },
+      { type: "text", token: "body", text: "设计方案", slot: { col: [5, 8], row: [3, 5] } },
+      { type: "text", token: "body", text: "交付上线", slot: { col: [9, 12], row: [3, 6] } },
+    ] };
+    // 修订轮：timeline 组件承载整组。
+    const componentTree = { version: 2, role: "content", composition: "swiss", notes: "", nodes: [
+      heading,
+      { type: "component", name: "timeline", items: [
+        { label: "调研市场", text: "调研市场" }, { label: "设计方案", text: "设计方案" }, { label: "交付上线", text: "交付上线" },
+      ], slot: { col: [1, 12], row: [2, 8] } },
+    ] };
+    const outputs = [plainTree, componentTree, componentTree];
+    const calls: Record<string, unknown>[] = [];
+    const harness = makeHarness([]);
+    harness.deps.dispatchPage = async input => {
+      calls.push(input);
+      expect(validateInput(input), JSON.stringify(validateInput.errors)).toBe(true);
+      const tree = input.currentTree ?? outputs.shift()!;
+      const bindings = tree === componentTree
+        ? page.blocks.map(b => ({ blockId: b.id, paths: ["nodes/1"] }))
+        : page.blocks.map((b, i) => ({ blockId: b.id, paths: [`nodes/${i + 1}`] }));
+      return { status: "completed", result: { structuredOutput: { tree, designIntent: "标题在上", bindings } } } as any;
+    };
+    const plan = { title: "test", pages: [{ content: page }] };
+    const result = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
+    expect(result.status).toBe("completed");
+    // 设计 → 采用修订 → 自审，共 3 次派发；修订反馈点名推荐组件。
+    expect(calls).toHaveLength(3);
+    expect(String((calls[1] as { revisionFeedback?: string }).revisionFeedback)).toContain("timeline");
+    expect(result.warnings.join()).toContain("已按闸门提示修订");
+    expect(result.componentAdoption).toMatchObject({
+      eligibleGroups: 1,
+      adoptedGroups: 1,
+      componentUsage: { timeline: 1 },
+    });
+  });
+
+  it("素材长宽比回填进 layouter 输入：模型按真实比例切框，不必盲猜", async () => {
+    const png = new Uint8Array(createCanvas(1600, 900).toBuffer("image/png")).slice();
+    const harness = makeHarness([]);
+    harness.deps.readMaterialBlob = vi.fn(async () => png);
+    const page = semanticCases[0]!.page;
+    const calls: Record<string, unknown>[] = [];
+    harness.deps.dispatchPage = async (input) => {
+      calls.push(input);
+      const tree = input.currentTree ?? {
+        version: 2, role: "content", composition: "swiss", notes: page.notes,
+        nodes: page.blocks.map((block, index) => ({
+          type: "text", token: index === 0 ? "h1" : "body", text: (block as { text: string }).text,
+          slot: { col: [1, 12], row: [index * 2 + 1, index * 2 + 2] },
+        })),
+      };
+      return {
+        status: "completed",
+        result: { structuredOutput: { tree, designIntent: "标题在上，正文顺排", bindings: page.blocks.map((block, index) => ({ blockId: block.id, paths: [`nodes/${index}`] })) } },
+      } as any;
+    };
+    const plan = {
+      title: "test",
+      pages: [{ content: page, materials: [{ url: `everroom-material://${"b".repeat(64)}`, desc: "封面图" }] }],
+    };
+    const result = JSON.parse((await runLayouterTail(harness.deps, tailArgs(plan, harness))).content);
+    expect(result.status).toBe("completed");
+    const design = calls.find(call => !call.currentTree)!;
+    const material = (design.materials as Array<{ aspectRatio?: number }>)[0]!;
+    expect(material.aspectRatio).toBeCloseTo(1600 / 900, 3);
   });
 
   it("semantic binding failure retries complete content and leaves draft recoverable", async () => {
@@ -369,19 +504,20 @@ describe("runLayouterTail", () => {
     expect(JSON.parse(bridge.renderPptx.mock.calls[1][0].pages[0])).toEqual(JSON.parse(harness.bridge.fillPage.mock.calls[1]![0].specJson));
   });
 
-  it("三页直落：占位页一次建满、按页序替换、逐页进度、回收草稿与落定风格", async () => {
+  it("三页直落：文件只建 1 页骨架、逐页末尾追加、页序落页、回收草稿与落定风格", async () => {
     const harness = makeHarness([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
     const result = await runLayouterTail(harness.deps, tailArgs(planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]), harness));
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
     expect(payload.pages).toBe(3);
     expect(payload.fileEntryId).toBe("file-1");
+    // 逐页追加：fillPage 严格按页序（slideIndex===当前页数即末尾追加），0 替换骨架、1/2 追加。
     const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    expect(appliedIndexes.slice().sort()).toEqual([0, 1, 2]);
+    expect(appliedIndexes).toEqual([0, 1, 2]);
     expect(harness.progress.notify.mock.calls.map((call: unknown[]) => call[1]).sort()).toEqual([0, 1, 2]);
-    // 占位页一次建满：deck 一开始就有 N 页骨架，落页只做「按页序替换」。
-    expect((harness.bridge.generate.mock.calls[0]![0] as { pages: string[] }).pages.length).toBe(3);
-    // 进度快照带落定页号集合（完成顺序 ≠ 页序，卡按集合打勾）。
+    // 文件初始只有第 1 页骨架：deck 随落页一页页长出来，不再一次铺满。
+    expect((harness.bridge.generate.mock.calls[0]![0] as { pages: string[] }).pages.length).toBe(1);
+    // 进度快照带落定页号集合（卡按集合打勾）。
     expect(harness.progress.notify.mock.calls.at(-1)![2]).toEqual([0, 1, 2]);
     expect(payload.appliedPages).toEqual([0, 1, 2]);
     expect(harness.progress.arm.mock.calls[0]![0]).toBe("slides-generate:run-1");
@@ -397,19 +533,21 @@ describe("runLayouterTail", () => {
     const onUpdate = vi.fn();
     const result = await runLayouterTail(harness.deps, {
       ...tailArgs(planOf([CONTENT_TREE, CHART_TREE]), harness),
+      workspaceId: "ws-1",
       onUpdate,
     });
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
     // 骨架入库阶段不广播 done：generate 请求带 deferDone。
     expect(harness.bridge.generate).toHaveBeenCalledWith(expect.objectContaining({ deferDone: true }));
+    // 骨架入会话所属工作区：漏传会落到默认工作区，用户在当前空间看不到产物。
+    expect(harness.bridge.generate).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: "ws-1" }));
     const final = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> };
     expect(final.details).toMatchObject({
       stage: "page_applied",
       completed: true,
       doneCount: 2,
       totalPages: 2,
-      roomId: "room-1",
       documentId: "draft-1",
       fileEntryId: "file-1",
       fileName: "deck.pptx",
@@ -473,7 +611,6 @@ describe("runLayouterTail", () => {
     };
     const plan = planOf([CONTENT_TREE, CHART_TREE]);
     const runPromise = runLayouterTail(deps, {
-      roomId: "room-1",
       sessionId: "session-1",
       runId: "run-1",
       parentRunId: "parent-1",
@@ -499,7 +636,7 @@ describe("runLayouterTail", () => {
     expect(progress.notify.mock.calls.map((call: unknown[]) => call[1])).toEqual([0, 1]);
   });
 
-  it("完成顺序落页：后页先就绪就先落，不排队等前页（head-of-line 消除）", async () => {
+  it("deck 续会话串行：前一页 dispatch 未完成后页不开始，落页按页序；会话 ref 链式传递、首轮带 deckOutline", async () => {
     let releaseSlowPage: ((invocation: SubagentInvocation) => void) | null = null;
     const bridge = {
       generate: vi.fn().mockResolvedValue({ fileEntryId: "file-1", originalName: "deck.pptx" }),
@@ -507,26 +644,27 @@ describe("runLayouterTail", () => {
       renderPage: vi.fn().mockResolvedValue(""),
     };
     const progress = { arm: vi.fn(), notify: vi.fn(), disarm: vi.fn(), setRelay: vi.fn() };
+    const pageCalls: Array<{ pageIndex: number; session?: { sessionId: string; runtimeSessionRef: string | null } }> = [];
     const deps: LayouterTailDeps = {
       progress: progress as unknown as SlidesProgressTracker,
       bridge: bridge as never,
       readMaterialBlob: vi.fn().mockResolvedValue(null),
       fetchImageHead: vi.fn().mockResolvedValue(null),
       makeKey: (runId, agentId, task) => `${runId}:${agentId}:${task}`,
-      dispatchPage: (input: Record<string, unknown>) => {
+      dispatchPage: (input, _key, _parentRunId, _attachments, session) => {
         const pageIndex = typeof input.pageIndex === "number" ? input.pageIndex : -1;
-        // 第 1 页最慢（模拟长 validate/预览自纠），第 2、3 页先就绪。
+        pageCalls.push({ pageIndex, ...(session ? { session } : {}) });
+        // 第 0 页挂起（模拟长设计）：串行门下第 1、2 页必须等它完成才能 dispatch。
         if (pageIndex === 0) {
           return new Promise<SubagentInvocation>((resolve) => {
-            releaseSlowPage = resolve;
+            releaseSlowPage = (invocation) => resolve({ ...invocation, runtimeSessionRef: "ref-a" });
           });
         }
-        return Promise.resolve(invocationWithTree(pageIndex === 1 ? CHART_TREE : QUOTE_TREE));
+        return Promise.resolve({ ...invocationWithTree(pageIndex === 1 ? CHART_TREE : QUOTE_TREE), runtimeSessionRef: `ref-${pageIndex}` } as SubagentInvocation);
       },
     };
     const plan = planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
     const runPromise = runLayouterTail(deps, {
-      roomId: "room-1",
       sessionId: "session-1",
       runId: "run-1",
       parentRunId: "parent-1",
@@ -540,22 +678,49 @@ describe("runLayouterTail", () => {
       pageImagesStore: null,
       trashDraft: async () => {},
     });
-    // 首页树还挂着，第 2、3 页已经各自落进自己的页号——落页不再被前页堵住。
-    await vi.waitFor(() => expect(bridge.fillPage).toHaveBeenCalledTimes(2));
-    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([1, 2]);
-    expect(progress.notify.mock.calls.at(-1)![2]).toEqual([1, 2]);
+    // 首页还在设计：后页既没 dispatch 也没落页——串行门挡住。
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    expect(pageCalls.map((call) => call.pageIndex)).toEqual([0]);
+    expect(bridge.fillPage).not.toHaveBeenCalled();
     releaseSlowPage!(invocationWithTree(CONTENT_TREE));
     const payload = JSON.parse((await runPromise).content);
     expect(payload.status).toBe("completed");
     expect(payload.appliedPages).toEqual([0, 1, 2]);
-    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([1, 2, 0]);
+    // dispatch 严格按页序；落页按页序。
+    expect(pageCalls.map((call) => call.pageIndex)).toEqual([0, 1, 2]);
+    expect(bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([0, 1, 2]);
+    // 会话：全部同 deckSessionId；首页从 null 起，之后每页拿到前一页返回的 ref。
+    expect(pageCalls[0]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: null });
+    expect(pageCalls[1]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: "ref-a" });
+    expect(pageCalls[2]!.session).toEqual({ sessionId: "slides-deck:run-1", runtimeSessionRef: "ref-1" });
+  });
+
+  it("deck 续会话输入瘦身：首 dispatch 带 deckOutline，后续页不带、也不再带 neighbors", async () => {
+    const harness = makeHarness([CONTENT_TREE, CHART_TREE, QUOTE_TREE]);
+    const plan = planOf([{ ...CONTENT_TREE }, { ...CHART_TREE }, { ...QUOTE_TREE }]);
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    expect(JSON.parse(result.content).status).toBe("completed");
+    const pageDispatches = harness.dispatches.filter((entry) => /^run-1:slides-layouter:page:\d+$/.test(entry.key));
+    expect(pageDispatches).toHaveLength(3);
+    expect(pageDispatches[0]!.input.deckOutline).toEqual([
+      { pageIndex: 0, title: "第 1 页", role: "content", density: "standard" },
+      { pageIndex: 1, title: "第 2 页", role: "data", density: "standard" },
+      { pageIndex: 2, title: "第 3 页", role: "quote", density: "standard" },
+    ]);
+    for (const entry of pageDispatches.slice(1)) {
+      expect(entry.input.deckOutline).toBeUndefined();
+    }
+    for (const entry of pageDispatches) {
+      expect(entry.input.neighbors).toBeUndefined();
+    }
   });
 
   it("素材分辨率不足时丢图并告警，避免低清图铺满页面", async () => {
     const canvas = createCanvas(300, 168);
     const buffer = canvas.toBuffer("image/png");
     const tiny = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-    const harness = makeHarness([CONTENT_TREE]);
+    const coverTree = { ...QUOTE_TREE, role: "cover" };
+    const harness = makeHarness([coverTree]);
     harness.deps.readMaterialBlob = vi.fn(async () => tiny);
     const plan = {
       title: "封面测试",
@@ -563,67 +728,86 @@ describe("runLayouterTail", () => {
         title: "封面",
         role: "cover",
         density: "sparse",
-        points: ["封面"],
+        layoutVersion: 2,
+        content: semanticPageOfTree(coverTree, 0),
         materials: [{ url: `everroom-material://${"a".repeat(64)}`, desc: "低清图" }],
       }],
     };
     const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
-    expect(harness.dispatches[0]!.input.materials).toBeUndefined();
+    expect(harness.dispatches[0]!.input.materials).toEqual([]);
     expect(payload.warnings.join("")).toContain("分辨率不足");
   });
 
-  it("v2 页面：layouter 输入带 layoutVersion/copy/composition，且不传 points", async () => {
-    const v2Tree = {
-      version: 2,
-      role: "data",
-      composition: "hero-data",
-      footer: { pageNumbers: true },
-      nodes: [
-        { type: "text", token: "hero", text: "2.7", slot: { col: [1, 4], row: [1, 3] } },
-        { type: "stats", items: [{ value: "2.83", unit: "万亿元", label: "2020 年 GDP" }, { value: "3.87", unit: "万亿元", label: "2025 年 GDP" }], slot: { col: [5, 8], row: [1, 3] } },
-      ],
-    };
-    const harness = makeHarness([v2Tree]);
-    const plan = {
-      title: "v2 deck",
-      pages: [{
-        title: "数据页",
-        role: "data",
-        density: "dense",
-        points: ["兜底要点"],
-        layoutVersion: 2,
-        composition: "hero-data",
-        emphasis: "number",
-        intent: "建立规模事实。",
-        takeaway: "两个量级。",
-        copy: { message: "从 2.7 亿到 3.87 万亿元", supporting: [], facts: [], speakerNotes: "讲稿".repeat(20) },
-        data: { stats: [{ value: "2.83", unit: "万亿元", label: "2020 年 GDP" }] },
-        neighbors: [{ pageIndex: 1, composition: "editorial", takeaway: "下一句" }],
-        budget: { prose: 60, copy: 120, notes: 260 },
-      }],
-    };
+  it("layouter 输入带 layoutVersion 与语义 content，且不再有旧模式字段", async () => {
+    const harness = makeHarness([CHART_TREE]);
+    const plan = planOf([CHART_TREE]);
     const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
-    expect(harness.dispatches[0]!.input.layoutVersion).toBe(2);
-    expect(harness.dispatches[0]!.input.composition).toBe("hero-data");
-    expect(harness.dispatches[0]!.input.copy).toMatchObject({ message: "从 2.7 亿到 3.87 万亿元" });
-    expect(harness.dispatches[0]!.input.points).toBeUndefined();
+    const input = harness.dispatches[0]!.input;
+    expect(input.layoutVersion).toBe(2);
+    expect(input.content).toMatchObject({ role: "data", message: "2.7" });
+    for (const legacyField of ["copy", "composition", "form", "skeleton", "units", "emphasis", "intent", "takeaway", "data", "budget", "points", "notes", "neighborSignatures"]) {
+      expect(input).not.toHaveProperty(legacyField);
+    }
     expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
   });
 
-  it("布局代理失败页落确定性兜底并告警，整册仍完成", async () => {
+  it("缺少语义 content 的页明确失败：不 dispatch、不落页（旧内容模式已移除）", async () => {
+    const harness = makeHarness([CONTENT_TREE]);
+    const plan = {
+      title: "缺内容测试",
+      pages: [{ title: "第 1 页", role: "content", density: "standard", layoutVersion: 2 }],
+    };
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
+    const payload = JSON.parse(result.content);
+    expect(payload.status).toBe("failed");
+    expect(payload.errorCode).toBe("slides_layout_pages_invalid");
+    expect(String(payload.message)).toContain("缺少语义 content");
+    expect(harness.dispatches).toHaveLength(0);
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+  });
+
+  it("流式页源里缺少语义 content：该页跳过并保留占位，不回退旧模式", async () => {
+    const harness = makeHarness([CONTENT_TREE]);
+    const fullPage = { title: "第 1 页", density: "standard", layoutVersion: 2, content: semanticPageOfTree(CONTENT_TREE, 0) };
+    const result = await runLayouterTail(harness.deps, {
+      ...tailArgs({ title: "流式缺内容", pages: [{ title: "第 1 页" }, { title: "第 2 页" }] }, harness),
+      armPlan: armPlanOf({ pages: [{ title: "第 1 页" }, { title: "第 2 页" }] }),
+      stream: {
+        totalPages: 2,
+        outline: ["第 1 页", "第 2 页"],
+        pages: (async function* () {
+          yield { pageIndex: 0, page: fullPage };
+          yield { pageIndex: 1, page: { title: "第 2 页", role: "content", density: "standard" } };
+        })(),
+      },
+    });
+    const payload = JSON.parse(result.content);
+    expect(payload.status).toBe("partial");
+    expect(payload.appliedPages).toEqual([0]);
+    expect(payload.failedPages).toEqual([1]);
+    expect(payload.warnings.join("")).toContain("缺少语义 content");
+    // 只 dispatch 有语义内容的那一页；缺 content 页不进入布局代理。
+    expect(harness.dispatches).toHaveLength(1);
+  });
+
+  it("布局代理失败页不落假成功页：占位保留、整册 partial", async () => {
     const harness = makeHarness([CONTENT_TREE, CHART_TREE, QUOTE_TREE], new Set([0]));
     const result = await runLayouterTail(harness.deps, tailArgs(planOf([CONTENT_TREE, CHART_TREE, QUOTE_TREE]), harness));
     const payload = JSON.parse(result.content);
-    expect(payload.status).toBe("completed");
-    expect(payload.pages).toBe(3);
-    expect(payload.warnings.some((w: string) => /第 1 页布局代理未交合格树/.test(w))).toBe(true);
-    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(3);
+    // 语义页失败不落兜底：第 1 页保留占位（初始骨架），整册 partial、failedPages 可重试。
+    expect(payload.status).toBe("partial");
+    expect(payload.pages).toBe(2);
+    expect(payload.failedPages).toEqual([0]);
+    expect(payload.warnings.some((w: string) => /第 1 页设计未通过/.test(w))).toBe(true);
+    // 第 1 页骨架已随建文件存在（slideIndex 0 不补），第 2、3 页落页。
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(2);
+    expect(harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex)).toEqual([1, 2]);
   });
 
-  it("代理交回 v1 树时按 v2 兜底页落页（布局只有 v2 一种格式）", async () => {
+  it("代理交回 v1 树时整页失败可重试（布局只有 v2 一种格式，不再落兜底页）", async () => {
     const v1Tree = {
       role: "content",
       title: "旧语法页",
@@ -631,37 +815,17 @@ describe("runLayouterTail", () => {
       children: [{ type: "text", variant: "body", text: "v1 语法" }],
     };
     const harness = makeHarness([v1Tree]);
-    const page = {
-      title: "旧语法页",
-      role: "content",
-      density: "standard",
-      layoutVersion: 2,
-      composition: "swiss",
-      copy: { message: "旧语法页", supporting: ["要点一", "要点二"], facts: [], speakerNotes: "讲稿" },
-    };
-    const result = await runLayouterTail(harness.deps, tailArgs({ title: "v1 兜底测试", pages: [page] }, harness));
+    const plan = planOf([CONTENT_TREE]);
+    const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
-    expect(payload.status).toBe("completed");
+    expect(payload.status).toBe("failed");
+    expect(payload.retryable).toBe(true);
     expect(payload.warnings.some((w: string) => /交回的是 v1 树/.test(w))).toBe(true);
-    const specJson = String((harness.bridge.fillPage.mock.calls[0]![0] as { specJson: string }).specJson);
-    expect(specJson).toContain("旧语法页");
-    expect(specJson).toContain("要点一");
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    expect(harness.trashed).toEqual([]);
   });
 
-  it("相邻页同构触发一次重排：重排 dispatch 带邻页签名并重落该页", async () => {
-    const rerolled = CONTENT_TREE_ALT;
-    const harness = makeHarness([CONTENT_TREE, CONTENT_TREE, QUOTE_TREE, rerolled]);
-    const result = await runLayouterTail(harness.deps, tailArgs(planOf([CONTENT_TREE, CONTENT_TREE, QUOTE_TREE]), harness));
-    const payload = JSON.parse(result.content);
-    expect(payload.warnings.some((w: string) => /第 2 页与邻页结构雷同/.test(w))).toBe(true);
-    const rerollDispatch = harness.dispatches.find((d) => d.key.includes("reroll:1"));
-    expect(rerollDispatch).toBeDefined();
-    expect(Array.isArray(rerollDispatch!.input.neighborSignatures)).toBe(true);
-    const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    expect(appliedIndexes.filter((i) => i === 1).length).toBe(2);
-  });
-
-  it("带引擎硬闸缺陷的页落兜底版式，不级联失败（真机 2026-10-15 事故回归）", async () => {
+  it("带引擎硬闸缺陷的页不落页、不级联失败（真机 2026-10-15 事故回归）", async () => {
     const emojiTree = {
       version: 2,
       role: "quote",
@@ -670,28 +834,23 @@ describe("runLayouterTail", () => {
       nodes: [{ type: "text", token: "display", text: "带 emoji 🎉 的树", slot: { col: [1, 6], row: [2, 4] } }],
     };
     const harness = makeHarness([emojiTree, CHART_TREE, QUOTE_TREE]);
-    harness.bridge.fillPage.mockImplementation(async (input: { slideIndex: number }) =>
-      input.slideIndex === 0 ? { ok: false, applied: false, error: "桌面端拒绝" } : { ok: true, applied: true });
     const plan = {
       title: "测试演示",
       pages: [
-        { title: "会失败的页", points: ["要点一"], role: "content", density: "standard" },
-        { title: "数据页", role: "data", density: "standard" },
-        { title: "引用页", role: "quote", density: "standard" },
+        { title: "会失败的页", density: "standard", layoutVersion: 2, content: semanticPageOfTree(emojiTree, 0) },
+        { title: "数据页", density: "standard", layoutVersion: 2, content: semanticPageOfTree(CHART_TREE, 1) },
+        { title: "引用页", density: "standard", layoutVersion: 2, content: semanticPageOfTree(QUOTE_TREE, 2) },
       ],
     };
     const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
-    // 首页落页仍失败（模拟引擎拒绝兜底外的场景）→ 后续页按追加语义继续，不再越界级联。
+    // 首页带 emoji 硬闸缺陷：不落页、保留可重试状态，后续页按页序继续，不越界级联。
     expect(payload.status).toBe("partial");
-    expect(payload.warnings.some((w: string) => /第 1 页布局树未收敛/.test(w))).toBe(true);
-    expect(payload.warnings.some((w: string) => /第 1 页落页失败/.test(w))).toBe(true);
+    expect(payload.warnings.some((w: string) => /第 1 页几何校验未通过/.test(w))).toBe(true);
     expect(payload.warnings.some((w: string) => /slideIndex must be an integer/.test(w))).toBe(false);
-    expect(payload.warnings.some((w: string) => /第 [23] 页落页失败/.test(w))).toBe(false);
     expect(payload.pages).toBe(2);
-    // 第 2、3 页：首页失败后 deck 仍 1 页骨架 → slideIndex 各为 1、2（追加语义）。
     const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    expect(appliedIndexes).toEqual([0, 1, 2]);
+    expect(appliedIndexes).toEqual([1, 2]);
   });
 
   it("建 deck 失败回 failed 不落任何页", async () => {
@@ -704,77 +863,34 @@ describe("runLayouterTail", () => {
     expect(harness.trashed).toEqual([]);
   });
 
-  it("布局代理未交树先减配重试：砍半要点/去图表行/降密度，重试树被采用", async () => {
+  it("布局代理未交树先带反馈重试一次：内容契约不变，重试树被采用", async () => {
     const harness = makeHarness(["RUN_FAIL", CHART_TREE, CONTENT_TREE]);
-    const plan = {
-      title: "测试演示",
-      pages: [
-        { title: "密集数据页", role: "data", density: "dense",
-          layoutVersion: 2, composition: "hero-data",
-          copy: {
-            message: "入境游客量级",
-            supporting: ["要点一", "要点二", "要点三", "要点四"],
-            facts: [{ label: "入境过夜游客", value: "1308.20", unit: "万人次" }],
-            speakerNotes: "环形图表现构成",
-          },
-          data: { stats: [{ value: "1308.20", unit: "万人次", label: "入境过夜游客" }], chart: { kind: "bar", categories: ["甲", "乙"], series: [{ name: "系列", values: [1, 2] }] } } },
-        { title: "正常页", role: "content", density: "standard", layoutVersion: 2, composition: "swiss", copy: { message: "正常页", supporting: ["要点一", "要点二"], facts: [], speakerNotes: "讲稿" } },
-      ],
-    };
+    const plan = planOf([CHART_TREE, CONTENT_TREE]);
     const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
     expect(payload.status).toBe("completed");
-    expect(payload.warnings.some((w: string) => /第 1 页布局代理减配重试后收敛/.test(w))).toBe(true);
-    expect(payload.warnings.some((w: string) => /未交合格树/.test(w))).toBe(false);
-    const trimmed = harness.dispatches.find((d) => d.key.includes(":trimmed"));
-    expect(trimmed).toBeDefined();
-    expect(trimmed!.input.density).toBe("sparse");
-    expect((trimmed!.input.copy as { supporting: string[] }).supporting).toEqual(["要点一", "要点二"]);
-    expect((trimmed!.input.data as Record<string, unknown>).chart).toBeUndefined();
-    expect((trimmed!.input.copy as Record<string, unknown>).speakerNotes).toBeUndefined();
+    expect(payload.warnings.some((w: string) => /第 1 页布局代理重试后收敛/.test(w))).toBe(true);
+    const retry = harness.dispatches.find((d) => d.key.includes(":retry"));
+    expect(retry).toBeDefined();
+    expect(String(retry!.input.revisionFeedback)).toContain("上次提交未通过");
+    // 重试不裁剪内容：语义 content 原样完整携带。
+    expect(retry!.input.content).toEqual((plan.pages as Array<{ content: unknown }>)[0]!.content);
     const appliedIndexes = harness.bridge.fillPage.mock.calls.map((call: unknown[]) => (call[0] as { slideIndex: number }).slideIndex);
-    // 减配重试让第 1 页变慢，第 2 页因此先落——落页按完成顺序，不再被前页堵住。
-    expect(appliedIndexes.slice().sort()).toEqual([0, 1]);
-    expect(appliedIndexes).toEqual([1, 0]);
+    // 串行会话链下取树与落页都按页序：第 0 页重试完成前，第 1 页不开始。
+    expect(appliedIndexes).toEqual([0, 1]);
   });
 
-  it("减配重试仍不收敛才落结构化兜底：pointList 条目 + stats KPI，不再是圆点文本墙", async () => {
+  it("重试仍不收敛：整页失败可重试，不落结构化兜底页", async () => {
     const harness = makeHarness(["RUN_FAIL"]);
-    const plan = {
-      title: "测试演示",
-      pages: [
-        { title: "入境游客数据页", role: "data", density: "dense",
-          layoutVersion: 2, composition: "hero-data",
-          copy: {
-            message: "入境游客与外汇收入",
-            supporting: [
-              "地标：平安金融中心 592.5 米，为深圳第一高楼。",
-              "山海：梧桐山 943.7 米为深圳第一高峰。",
-              "人文：世界之窗汇聚 130 余个微缩景观。",
-              "湾区：湾区之光摩天轮位于宝安欢乐港湾。",
-            ],
-            facts: [],
-            speakerNotes: "讲稿",
-          },
-          data: { stats: [
-            { value: "1308.20", unit: "万人次", label: "入境过夜游客（+34.0%）" },
-            { value: "110.67", unit: "亿美元", label: "旅游外汇收入（+51.2%）" },
-          ] } },
-      ],
-    };
+    const plan = planOf([CHART_TREE]);
     const result = await runLayouterTail(harness.deps, tailArgs(plan, harness));
     const payload = JSON.parse(result.content);
-    expect(payload.status).toBe("completed");
-    expect(payload.warnings.some((w: string) => /第 1 页布局代理未交合格树/.test(w))).toBe(true);
-    expect(harness.dispatches.some((d) => d.key.includes(":trimmed"))).toBe(true);
-    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
-    const specJson = String((harness.bridge.fillPage.mock.calls[0]![0] as { specJson: string }).specJson);
-    expect(specJson).toContain("地标");
-    expect(specJson).toContain("人文");
-    expect(specJson).toContain("1308.20");
-    expect(specJson).toContain("入境过夜游客（+34.0%）");
-    // 不再产出圆点 bullet 文本墙
-    expect(specJson).not.toContain('"bullet":true');
+    expect(payload.status).toBe("failed");
+    expect(payload.retryable).toBe(true);
+    expect(payload.warnings.some((w: string) => /第 1 页设计未通过/.test(w))).toBe(true);
+    expect(harness.dispatches.some((d) => d.key.includes(":retry"))).toBe(true);
+    expect(harness.bridge.fillPage).not.toHaveBeenCalled();
+    expect(harness.trashed).toEqual([]);
   });
 
   it("layouter 输入带风格卡确定性快照（composition/motif/decoration/componentDefaults，体积 ≤1200）", async () => {
@@ -804,18 +920,7 @@ describe("runLayouterTail", () => {
       nodes: [{ type: "text", token: "display", text: "海报标题", slot: { col: [1, 8], row: [1, 3] } }],
     };
     const harness = makeHarness([v2Tree]);
-    const plan = {
-      title: "海报 deck",
-      pages: [{
-        title: "海报页",
-        role: "cover",
-        density: "standard",
-        layoutVersion: 2,
-        composition: "poster",
-        copy: { message: "海报标题", supporting: [], facts: [], speakerNotes: "讲稿" },
-      }],
-    };
-    await runLayouterTail(harness.deps, { ...tailArgs(plan, harness), styleParams });
+    await runLayouterTail(harness.deps, { ...tailArgs(planOf([v2Tree]), harness), styleParams });
 
     interface StyleTokensSnapshot {
       composition: string;
@@ -846,7 +951,7 @@ describe("runLayouterTail", () => {
       separator: "gap",
       align: "start",
       density: "airy",
-      numeral: "serif",
+      numeral: "sans",
       accent: "accent",
     });
     // 字体名只保留首字体（OOXML 单字体），超 40 字截断由 styleTokensFrom 处理。
@@ -965,8 +1070,8 @@ describe("runLayouterTail", () => {
     expect(payload.failedPages).toEqual([0, 1]);
     expect(payload.fileEntryId).toBe("file-1");
     expect(payload.warnings.some((w: string) => w.includes("布局代理并发不可用"))).toBe(true);
-    // 已落页保留（兜底版式写入 deck），重试可复用；但绝不静默报成功。
-    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(2);
+    // 已落页保留（占位骨架写入 deck），重试可复用；但绝不静默报成功。
+    expect(harness.bridge.fillPage).toHaveBeenCalledTimes(1);
     expect(harness.bridge.completeDeck).toHaveBeenCalledWith(expect.objectContaining({ completed: false }));
     const final = onUpdate.mock.calls.at(-1)?.[0] as { details: Record<string, unknown> };
     expect(final.details).toMatchObject({ stage: "page_applied", completed: false, failedPages: [0, 1] });

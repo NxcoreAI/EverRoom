@@ -3,7 +3,8 @@ id: slides-styler
 name: Slides Styler
 description: 无模板幻灯片的视觉设计判断：direction 提供 3 个可比较的纵览图生图方向；settle 复核色板与视觉属性，提交完整风格参数及效果说明。字号由下游负责。
 mode: dispatch_only
-enabled: true
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 

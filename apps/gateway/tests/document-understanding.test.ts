@@ -65,6 +65,22 @@ function minimalPdf(text: string): Buffer {
 }
 
 describe("DocumentUnderstandingService", () => {
+  it("resolveVersionId：模型误传 fileEntryId 时回退条目当前版本（2026-11-06 解析链路连环 not_found）", async () => {
+    const test = await setup();
+    const imported = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:resolve-version",
+      originalName: "sample.md",
+      buffer: Buffer.from("# 标题\n\n正文内容\n", "utf8"),
+      mime: "text/markdown",
+    });
+    // 误传形态：fileVersionId == fileEntryId → 回退 currentVersionId。
+    expect(test.service.resolveVersionId(imported.fileEntryId)).toBe(imported.fileVersionId);
+    // 正常版本号原样返回；不存在的 id 也原样返回（由调用方报 not_found）。
+    expect(test.service.resolveVersionId(imported.fileVersionId)).toBe(imported.fileVersionId);
+    expect(test.service.resolveVersionId("fver-does-not-exist")).toBe("fver-does-not-exist");
+  });
+
   it("parses legacy binary Office bytes in-process without an external converter", async () => {
     const test = await setup();
     const fixture = (name: string) => readFile(new URL(
@@ -375,5 +391,45 @@ describe("DocumentUnderstandingService", () => {
     expect(analyzed.markdown).toContain("Native copy");
     expect(analyzed.markdown).not.toContain("Visual copy");
     await test.files.dispose();
+  });
+});
+
+describe("describeImageVersion（图片按需视觉描述）", () => {
+  it("VLM 描述落库为解析产物：markdown 含结构化字段，二次调用命中缓存", async () => {
+    const calls: string[] = [];
+    const analyze = async (_img: unknown, prompt: string) => {
+      calls.push(prompt.slice(0, 8));
+      return { 主体: "一辆电动自行车侧视图", 构图: "横构图，主体居中，四周留白", 色调: "银灰主色，偏亮", 配图建议: "适合产品页大图" };
+    };
+    const test = await setup({ analyze, ocrDocumentPage: async () => ({ blocks: [], text: "" }) } as never);
+    const imported = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:desc-img",
+      originalName: "product.png",
+      buffer: Buffer.from("89504e470d0a1a0a", "hex"),
+      mime: "image/png",
+    });
+    const first = await test.service.describeImageVersion(imported.fileEntryId, imported.fileEntryId);
+    expect(first.markdown).toContain("电动自行车侧视图");
+    expect(first.markdown).toContain("【图片视觉描述】product.png");
+    // 缓存：第二次不再调 VLM
+    const second = await test.service.describeImageVersion(imported.fileEntryId, imported.fileEntryId);
+    expect(second.deduplicated).toBe(true);
+    expect(calls).toHaveLength(1);
+    // preview 同源可读
+    expect(test.service.markdownForFile(imported.fileEntryId)).toContain("色调");
+  });
+
+  it("非图片文件明确报不支持", async () => {
+    const test = await setup({ analyze: async () => ({}) } as never);
+    const imported = await test.files.importFile({
+      sourceKind: "manual-upload",
+      sourceKey: "manual:desc-doc",
+      originalName: "note.md",
+      buffer: Buffer.from("# hi", "utf8"),
+      mime: "text/markdown",
+    });
+    await expect(test.service.describeImageVersion(imported.fileEntryId, imported.fileEntryId))
+      .rejects.toThrow("仅支持图片");
   });
 });

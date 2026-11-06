@@ -98,6 +98,20 @@ export function Workbench() {
     }
   }, [])
 
+  // 主进程 open-edit 广播：Agent 落页/续落时该产物未以可编辑会话打开（用户关了页签
+  // 或应用重启后点「重新生成」），按广播以可编辑方式打开，fillPage 的 not_open 自动
+  // 打开兜底才能闭环——此前该事件没有任何消费方，续落必报「请先在文件库打开」。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (typeof office?.onAgentFile !== 'function') return
+    return office.onAgentFile((event) => {
+      if (event.type !== 'open-edit' || !event.fileId) return
+      void window.nxcore?.files
+        ?.openOriginal(event.fileId, event.originalName ?? event.title, undefined, { editable: true })
+        .catch(() => undefined)
+    })
+  }, [])
+
   /**
    * Agent 产物就绪（office:agent-file done）→ 自动展示结果：
    * 按归属工作空间定位标签，把文件塞进该空间气泡窗（自动展开 + 打开内容）。

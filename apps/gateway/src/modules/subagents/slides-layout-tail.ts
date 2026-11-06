@@ -20,19 +20,13 @@ import { dropDeckLayoutContext, registerDeckLayoutContext } from "../slides-layo
 import { pptxToPng } from "../slides-style/render.js";
 import { normalizeTree, type LayoutTree } from "../slides-layout/tree/schema.js";
 import { compileTree } from "../slides-layout/tree/compile.js";
-import { visualRichnessIssues } from "../slides-layout/tree/v2/richness.js";
 import { measureDefects, shrinkToFit, type LayoutDefect } from "../slides-layout/tree/measure.js";
-import { auditSimilarity, treeSignature } from "../slides-layout/tree/similarity.js";
 import { imageDimensions, resolveImageArs } from "../slides-layout/tree/aspect-ratio.js";
 import { pngBase64ToJpegBase64 } from "./screenshot-jpeg.js";
-import { checkSemanticBindings, checkSemanticRendered } from "./slides-semantic-bindings.js";
+import { checkSemanticBindings, checkSemanticRendered, semanticRelationIssues, componentAdoptionFor, adoptionFeedback, type ComponentAdoption, type ContentBinding } from "./slides-semantic-bindings.js";
 import type { SemanticPage } from "./slides-semantic-contract.js";
-import {
-  deriveComposition,
-  deriveSkeleton,
-  isPageForm,
-  type EngineComposition,
-} from "./slides-page-form.js";
+import { componentCandidatesFor } from "../slides-layout/tree/v2/component-candidates.js";
+import { blockNeedsFor } from "../slides-layout/tree/v2/block-needs.js";
 
 const COMPOSITION_TENDENCY: Record<string, string> = {
   swiss: "强网格、克制留白、对齐严谨",
@@ -64,13 +58,15 @@ export interface LayouterTailDeps {
   /** 带并发限额退避的 dispatch（tools.ts 的 dispatchWithConcurrencyRetry 单一出处）。 */
   /**
    * 单页布局 dispatch。第 4 参是附件——自审回投时把该页渲染图直接投给布局代理，
-   * 让它"看着自己的成品"改，而不是读一段二手文字描述。
+   * 让它"看着自己的成品"改，而不是读一段二手文字描述。第 5 参是 deck 级续会话：
+   * 同册逐页共享同一 pi 会话（后面页看得到前面页的树与自审）。
    */
   dispatchPage(
     input: Record<string, unknown>,
     idempotencyKey: string,
     parentRunId: string | null,
     attachments?: Array<{ filename: string; mimeType: string; kind: "image"; dataUrl: string }>,
+    session?: { sessionId: string; runtimeSessionRef: string | null },
   ): Promise<SubagentInvocation>;
 }
 
@@ -89,19 +85,22 @@ export interface LayouterExistingDeck {
   /** 已落定页（0 起页序）；这些页不再 dispatch、不再重落。 */
   appliedPages: number[];
   totalPages: number;
+  /** 物理 slide 数：逐页追加模式下文件只长到已落前缀；旧检查点缺省视为骨架全量。 */
+  deckPages?: number;
+  /** deck 级续会话 ref（重启续跑时从磁盘恢复共享上下文；无则新会话）。 */
+  runtimeSessionRef?: string | null;
 }
 
 export interface LayouterTailArgs {
-  roomId: string;
   sessionId: string;
   runId: string;
   parentRunId: string | null;
+  /** 会话所属工作区：deck 骨架入库归属（资料库/产物库按空间隔离）；缺省落默认工作区。 */
+  workspaceId?: string | null;
   instruction: string;
   plan: Record<string, unknown>;
   armPlan: SlidesProgressPlan;
   styleParams: Record<string, unknown> | null;
-  /** 产物归属工作区（done 广播带上，桌面渲染层按空间定向自动展示成品）。 */
-  workspaceId?: string | null;
   /** 场景（静默判断得出）：决定字号阶梯、最小字号与字数预算。缺省落最保守一档。 */
   scene?: string | null;
   draftDocumentId: string;
@@ -111,6 +110,8 @@ export interface LayouterTailArgs {
   trashDraft: (documentId: string) => Promise<void>;
   /** 流式页源：与 plan.pages 二选一。给定时 plan.pages 只用于标题/页数。 */
   stream?: LayouterPageInputStream;
+  /** 试看模式：只落切片后的前 N 页；完成时不回收草稿、不落定风格/配图会话。 */
+  preview?: boolean;
   /** 复用已有 deck：跳过建骨架，只补落 appliedPages 之外的页。 */
   existingDeck?: LayouterExistingDeck;
   signal?: AbortSignal;
@@ -119,28 +120,14 @@ export interface LayouterTailArgs {
 }
 
 export interface PageInput {
+  /** 语义内容契约（必填）：布局输入没有 content 属于上游违约，明确失败而非回退旧模式。 */
   content?: SemanticPage;
   title?: string;
   role?: string;
   density?: string;
-  data?: unknown;
   materials?: unknown;
-  notes?: unknown;
   /** 2 = v2 页面（storyboard 接线）：layouter 输出 version:2/composition/nodes。 */
   layoutVersion?: number;
-  /** 内容形态：这页靠什么证据成立。composition 由它推导，不再由大纲选择。 */
-  form?: string;
-  units?: number;
-  weight?: string;
-  /** 骨架意图（给 layouter 的几何指令，不是版式名）。 */
-  skeleton?: string;
-  composition?: string;
-  emphasis?: string;
-  intent?: string;
-  takeaway?: string;
-  copy?: Record<string, unknown>;
-  neighbors?: unknown[];
-  budget?: Record<string, unknown>;
   /** 视觉丰富度闸门打回时给 layouter 的修正提示（只给一次）。 */
   revisionFeedback?: string;
 }
@@ -288,79 +275,19 @@ function pointListItem(point: string, index: number): { label: string; body: str
   return { label: `要点 ${String(index + 1).padStart(2, "0")}`, body: text.slice(0, 100) };
 }
 
-/** data 的 KPI 行（「指标: 数值 单位（+x%）」）→ stats 条目；图表行跳过；最多 4 条。 */
-function kpiStatsItems(data: string): { value: string; label: string; unit?: string }[] {
-  const items: { value: string; label: string; unit?: string }[] = [];
-  for (const lineRaw of data.split("\n")) {
-    if (items.length >= 4) break;
-    const line = lineRaw.trim();
-    if (!line || /^[a-zA-Z][a-zA-Z0-9]*\s*\|/.test(line)) continue;
-    const at = line.search(/[：:]/);
-    if (at < 1) continue;
-    const rest = line.slice(at + 1).trim();
-    const m = /^([\d,.．]+)\s*([^（(\s]+)?/.exec(rest);
-    if (!m) continue;
-    const growth = /[（(]([+±-][^）)]*)[）)]/.exec(rest);
-    const base = line.slice(0, at).trim();
-    const label = (growth ? `${base}（${growth[1]!.trim()}）` : base).slice(0, 40);
-    const unit = m[2] ?? "";
-    items.push({ value: m[1]!, label, ...(unit ? { unit: unit.slice(0, 8) } : {}) });
-  }
-  return items;
-}
-
-/** v2 结构化 data（{stats:[…]}）→ stats 条目；退化时按 KPI 行文本解析；再不行用 copy.facts；语义页用 metric/chart block。 */
+/** 语义页的 metric block → stats 条目（chart 只有一组数时取首尾差值没有口径，不造数）。 */
 function v2StatsItems(page: PageInput): { value: string; label: string; unit?: string }[] {
-  // 语义页：metric block 天然是 stats 条目（chart 只有一组数时取首尾差值没有口径，不造数）。
-  const metricItems = (page.content?.blocks ?? []).flatMap(block => {
+  return (page.content?.blocks ?? []).flatMap(block => {
     if (block.type !== "metric") return [];
     const value = typeof block.value === "number" ? String(block.value) : block.value.trim();
     if (!value || !block.label.trim()) return [];
     return [{ value: value.slice(0, 16), label: block.label.trim().slice(0, 40), ...(block.unit ? { unit: block.unit.slice(0, 8) } : {}) }];
   }).slice(0, 4);
-  if (metricItems.length > 0) return metricItems;
-  const data = page.data;
-  if (data !== null && typeof data === "object" && !Array.isArray(data)) {
-    const raw = (data as Record<string, unknown>).stats;
-    if (Array.isArray(raw)) {
-      const items = raw.flatMap((entry) => {
-        if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
-        const stat = entry as Record<string, unknown>;
-        const value = typeof stat.value === "string" ? stat.value.trim() : "";
-        const label = typeof stat.label === "string" ? stat.label.trim() : "";
-        if (!value || !label) return [];
-        const unit = typeof stat.unit === "string" && stat.unit.trim() ? stat.unit.trim().slice(0, 8) : undefined;
-        return [{ value: value.slice(0, 16), label: label.slice(0, 40), ...(unit ? { unit } : {}) }];
-      }).slice(0, 4);
-      if (items.length > 0) return items;
-    }
-  }
-  if (typeof data === "string") {
-    const items = kpiStatsItems(data);
-    if (items.length > 0) return items;
-  }
-  const copy = page.copy;
-  const facts = copy && Array.isArray(copy.facts) ? copy.facts : [];
-  return facts.flatMap((entry) => {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return [];
-    const fact = entry as Record<string, unknown>;
-    const value = typeof fact.value === "string" ? fact.value.trim() : "";
-    const label = typeof fact.label === "string" ? fact.label.trim() : "";
-    if (!value || !label) return [];
-    const unit = typeof fact.unit === "string" && fact.unit.trim() ? fact.unit.trim().slice(0, 8) : undefined;
-    return [{ value: value.slice(0, 16), label: label.slice(0, 40), ...(unit ? { unit } : {}) }];
-  }).slice(0, 4);
 }
 
-/**
- * 兜底页的构图：优先按这页声明的内容形态推导（兜底页不放图，所以按 hasImage=false 推）；
- * 没有形态字段的历史页才退回 role 映射。
- */
-function fallbackComposition(page: PageInput): EngineComposition {
-  const role = typeof page.role === "string" ? page.role : "content";
-  if (isPageForm(page.form)) {
-    return deriveComposition(page.form, { hasImage: false, role });
-  }
+/** 兜底页的构图：按语义页角色推导（兜底页不放图）。 */
+function fallbackComposition(page: PageInput): "immersive" | "hero-data" | "editorial" | "swiss" | "poster" | "chapter" {
+  const role = page.content?.role ?? (typeof page.role === "string" ? page.role : "content");
   if (role === "cover") return "poster";
   if (role === "section") return "chapter";
   if (role === "quote") return "poster";
@@ -372,17 +299,14 @@ function fallbackComposition(page: PageInput): EngineComposition {
  * 布局代理失败/未交树时的确定性兜底页。与正常页**同格式**：v2 页面，走同一套校验、编译、落页链路。
  * 不放图片（配图是失败的主要来源）；优先保住 message 与数字，条目进 pointList/stats。
  * 这里不是“第二套排版语法”，是同一套语法的最简解：失败不换格式。
+ * 语义页文案一律从 content 契约取（message + text block），不能落成「内容生成中断」的空页；
+ * 流式管线里未就绪页只占位不落页，这里的无 content 分支仅供该类占位树保持合法。
  */
 function fallbackPage(page: PageInput): LayoutTree {
-  const role = typeof page.role === "string" && page.role.trim() ? page.role.trim().slice(0, 20) : (page.content?.role ?? "content");
-  const copy = page.copy ?? {};
-  const copyText = (key: string, max: number): string | undefined => {
-    const value = copy[key];
-    return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : undefined;
-  };
+  const content = page.content ?? null;
+  const role = content?.role ?? (typeof page.role === "string" && page.role.trim() ? page.role.trim().slice(0, 20) : "content");
   const title = typeof page.title === "string" && page.title.trim() ? page.title.trim().slice(0, 80) : undefined;
-  // 语义页兜底：文案一律从 content 契约取（message + text block），不能落成「内容生成中断」的空页。
-  const semanticTexts = (page.content?.blocks ?? [])
+  const semanticTexts = (content?.blocks ?? [])
     .flatMap(block => {
       if (block.type === "text") return [block.text];
       if (block.type === "quotation") return [block.text];
@@ -391,21 +315,10 @@ function fallbackPage(page: PageInput): LayoutTree {
     })
     .map(text => text.trim())
     .filter(Boolean);
-  const message = copyText("message", 80) ?? (page.content?.message ? page.content.message.trim().slice(0, 80) : undefined) ?? title;
-  const kicker = copyText("kicker", 24);
-  const source = copyText("source", 80);
-  const notes = copyText("speakerNotes", 2000)
-    ?? (typeof page.content?.notes === "string" && page.content.notes.trim() ? page.content.notes.trim().slice(0, 2000) : undefined)
-    ?? (typeof page.notes === "string" && page.notes.trim() ? page.notes.trim().slice(0, 2000) : undefined);
-  // 兜底页只吃 v2 内容（copy.supporting 由 storyboard 合并恒定提供），语义页吃 text block 文案。
-  const bodyLines = (Array.isArray(copy.supporting) ? copy.supporting : semanticTexts)
-    .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
-    .slice(0, 4);
+  const message = content?.message ? content.message.trim().slice(0, 80) : title;
+  const notes = content?.notes && content.notes.trim() ? content.notes.trim().slice(0, 2000) : undefined;
+  const bodyLines = semanticTexts.slice(0, 4);
   const bodyItems = bodyLines.slice(0, 3).map((line, index) => pointListItem(line, index));
-  const quote = copy.quote !== null && copy.quote !== undefined && typeof copy.quote === "object" && !Array.isArray(copy.quote)
-    ? copy.quote as Record<string, unknown>
-    : null;
-  const quoteText = typeof quote?.text === "string" && quote.text.trim() ? quote.text.trim().slice(0, 160) : undefined;
   const statsItems = v2StatsItems(page);
   const composition = fallbackComposition(page);
   const nodes: Record<string, unknown>[] = [];
@@ -416,12 +329,10 @@ function fallbackPage(page: PageInput): LayoutTree {
   const rule = (row: number): Record<string, unknown> => ({ type: "shape", shape: "rect", fill: "tone:primary", slot: { col: [1, 2], row: [row, row] } });
 
   if (composition === "poster" || composition === "chapter") {
-    if (kicker) pushText("kicker", kicker, { col: [1, 6], row: [1, 1] }, "primary");
-    pushText("display", quoteText ?? message ?? "内容生成中断，本页为兜底版式", { col: [1, 12], row: [3, 6] });
+    pushText("display", message ?? "内容生成中断，本页为兜底版式", { col: [1, 12], row: [3, 6] });
     nodes.push(rule(7));
     if (bodyLines.length > 0) pushText("lead", bodyLines.slice(0, 2).join("\n"), { col: [1, 10], row: [8, 8] });
   } else if (composition === "hero-data") {
-    if (kicker) pushText("kicker", kicker, { col: [1, 6], row: [1, 1] }, "primary");
     if (message) pushText("h1", message, { col: [1, 8], row: [2, 2] });
     const first = statsItems[0];
     pushText("hero", first ? `${first.value}${first.unit ?? ""}` : (message ?? "本页为兜底版式"), { col: [1, 4], row: [3, 5] }, "primary");
@@ -435,7 +346,6 @@ function fallbackPage(page: PageInput): LayoutTree {
     }
     nodes.push(rule(7));
   } else {
-    if (kicker) pushText("kicker", kicker, { col: [1, 5], row: [1, 1] }, "primary");
     if (message) pushText("h1", message, { col: [1, 9], row: [2, 3] });
     nodes.push(rule(4));
     if (bodyItems.length >= 2) {
@@ -448,7 +358,7 @@ function fallbackPage(page: PageInput): LayoutTree {
     }
   }
 
-  const footer = source ? { left: source, pageNumbers: true } : { pageNumbers: true };
+  const footer = { pageNumbers: true };
   try {
     return normalizeTree({
       version: 2,
@@ -477,43 +387,6 @@ function fallbackPage(page: PageInput): LayoutTree {
   }
 }
 
-/** 减配页输入：支撑条目砍半、去图表、去讲稿、密度降档——布局代理未交树时的第二次机会（格式不变）。 */
-function trimmedPage(page: PageInput): PageInput {
-  const copy = page.copy ? { ...page.copy } : undefined;
-  if (copy) {
-    if (Array.isArray(copy.supporting)) {
-      const lines = copy.supporting.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
-      copy.supporting = lines.slice(0, Math.max(2, Math.ceil(lines.length / 2))).slice(0, 4);
-    }
-    if (Array.isArray(copy.facts)) copy.facts = copy.facts.slice(0, 3);
-    delete copy.speakerNotes;
-  }
-  const data = page.data !== null && typeof page.data === "object" && !Array.isArray(page.data)
-    ? Object.fromEntries(Object.entries(page.data as Record<string, unknown>).filter(([key]) => key !== "chart"))
-    : page.data;
-  return {
-    layoutVersion: 2,
-    ...(typeof page.composition === "string" ? { composition: page.composition } : {}),
-    ...(typeof page.form === "string" ? { form: page.form } : {}),
-    ...(typeof page.units === "number" ? { units: page.units } : {}),
-    ...(typeof page.weight === "string" ? { weight: page.weight } : {}),
-    ...(typeof page.skeleton === "string" ? { skeleton: page.skeleton } : {}),
-    ...(typeof page.emphasis === "string" ? { emphasis: page.emphasis } : {}),
-    ...(typeof page.intent === "string" ? { intent: page.intent } : {}),
-    ...(typeof page.takeaway === "string" ? { takeaway: page.takeaway } : {}),
-    ...(copy ? { copy } : {}),
-    ...(page.neighbors ? { neighbors: page.neighbors } : {}),
-    ...(page.budget ? { budget: page.budget } : {}),
-    ...(typeof page.title === "string" ? { title: page.title } : {}),
-    ...(typeof page.role === "string" ? { role: page.role } : {}),
-    density: "sparse",
-    ...(data !== undefined && data !== null && (typeof data !== "object" || Object.keys(data as Record<string, unknown>).length > 0)
-      ? { data }
-      : {}),
-    ...(page.materials !== undefined ? { materials: page.materials } : {}),
-  };
-}
-
 /**
  * 单页渲染的并发闸：pptxToPng 会起 LibreOffice 子进程，一册 15 页同时渲染会把
  * 机器打满（实测 16 路 soffice 互相拖慢，反而比串行更久）。渲染只是自审的准备工作，
@@ -528,15 +401,19 @@ const SELF_REVIEW_RENDER_CONCURRENCY = 2;
  */
 const SELF_REVIEW_CONCURRENCY = 4;
 
-/** 引擎硬闸类缺陷：这些没清干净就不能落页（自审修正也按同一套判）。 */
-const BLOCKING_DEFECTS = new Set(["overlap", "emoji", "overflow", "font_floor", "canvas", "element_cap"]);
-
 /**
  * 桌面端「产物未以可编辑会话打开」：落页被拒的确定性原因，不是树/内容的问题。
- * 这种页要明确告诉用户「去产物库打开这本 PPT 再重试」，不要笼统记成落页失败。
+ * 优先看结构化 code（office-bridge-client 会把 422 的 code 挂到 Error 上）；
+ * 没带 code 时（旧桌面端构建）退回文案匹配。这种页要明确告诉用户「去文件库打开
+ * 这本 PPT 再重试」，不要笼统记成落页失败。
  */
-function isDeckNotOpenMessage(message: string): boolean {
-  return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(message);
+function isDeckNotOpen(error: unknown): boolean {
+  if (error instanceof Error) {
+    const code = (error as Error & { code?: unknown }).code;
+    if (typeof code === "string" && code) return code === "not_open" || code === "not_editable";
+    return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(error.message);
+  }
+  return /not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(String(error));
 }
 
 function createSemaphore(limit: number): <T>(task: () => Promise<T>) => Promise<T> {
@@ -622,7 +499,7 @@ async function dispatchWithPageRetry(
 function treeFromInvocation(
   invocation: SubagentInvocation,
   page: PageInput,
-): { tree: LayoutTree; fellBack: boolean; designIntent?: string; reason?: string; blocked?: Record<string, unknown> } {
+): { tree: LayoutTree; fellBack: boolean; designIntent?: string; bindings?: ContentBinding[]; reason?: string; blocked?: Record<string, unknown> } {
   if (invocation.status === "completed") {
     const structured = invocation.result?.structuredOutput;
     if (structured !== null && typeof structured === "object" && !Array.isArray(structured)) {
@@ -636,14 +513,17 @@ function treeFromInvocation(
         try {
           const tree = normalizeTree(raw);
           if (tree.version === 2) {
-            if (page.content) {
-              const errors = checkSemanticBindings(page.content, tree.v2, structured as Record<string, unknown>,
-                Array.isArray(page.materials) ? (page.materials as PageMaterial[]).flatMap(m => typeof m.url === "string" ? [m.url] : []) : []);
-              if (errors.length) return { tree: fallbackPage(page), fellBack: true, reason: errors.join("; ") };
-            }
+            const errors = checkSemanticBindings(page.content!, tree.v2, structured as Record<string, unknown>,
+              Array.isArray(page.materials) ? (page.materials as PageMaterial[]).flatMap(m => typeof m.url === "string" ? [m.url] : []) : []);
+            if (errors.length) return { tree: fallbackPage(page), fellBack: true, reason: errors.join("; ") };
+            // bindings 已过提交期校验（路径存在、载荷完整）；采用检查与最终统计按实际绑定节点判断。
+            const bindings = Array.isArray(result.bindings)
+              ? (result.bindings as ContentBinding[]).filter(b => b && typeof b.blockId === "string" && Array.isArray(b.paths))
+              : undefined;
             return { tree, fellBack: false,
               ...(typeof result.designIntent === "string" && result.designIntent.trim()
                 ? { designIntent: result.designIntent.slice(0, 1000) } : {}),
+              ...(bindings && bindings.length ? { bindings } : {}),
             };
           }
           return { tree: fallbackPage(page), fellBack: true, reason: "交回的是 v1 树，已按 v2 兜底页落页" };
@@ -679,64 +559,49 @@ function materialUrls(pages: PageInput[]): string[] {
 
 /** 页内容 → layouter 输入（白名单拷贝，schema 对齐 agents/slides-layouter/schemas/input.schema.json）。 */
 function layouterInputFor(
-  base: { token: string; totalPages: number; styleBrief: string; styleTokens: Record<string, unknown> },
+  base: {
+    token: string;
+    totalPages: number;
+    styleBrief: string;
+    styleTokens: Record<string, unknown>;
+    /** 素材长宽比（宽/高）。validate 与落页用同一份 map 量测；这里同步给模型，避免它盲猜框比例。 */
+    imageArs: Map<string, number>;
+    /** deck 布局契约：组件候选可行性预检用。 */
+    contract: LayoutContract;
+  },
   page: PageInput,
   index: number,
-  neighborSignatures?: string[],
 ): Record<string, unknown> {
+  if (!page.content) throw new Error("layout_input_content_missing: 布局输入缺少语义 content（旧内容模式已移除）");
   const materials = Array.isArray(page.materials)
     ? (page.materials as PageMaterial[])
         .filter((m) => m !== null && typeof m === "object" && typeof m.url === "string")
-        .slice(0, page.content ? 8 : 4)
-        .map((m) => ({
-          url: (m.url as string).slice(0, 500),
-          ...(typeof m.desc === "string" ? { desc: m.desc.slice(0, 200) } : {}),
-          ...(typeof m.aspectRatio === "number" && Number.isFinite(m.aspectRatio) && m.aspectRatio > 0
-            ? { aspectRatio: m.aspectRatio }
-            : {}),
-        }))
+        .slice(0, 8)
+        .map((m) => {
+          const url = (m.url as string).slice(0, 500);
+          const declared = typeof m.aspectRatio === "number" && Number.isFinite(m.aspectRatio) && m.aspectRatio > 0
+            ? m.aspectRatio
+            : base.imageArs.get(url);
+          return {
+            url,
+            ...(typeof m.desc === "string" ? { desc: m.desc.slice(0, 200) } : {}),
+            ...(declared !== undefined && Number.isFinite(declared) && declared > 0
+              ? { aspectRatio: Math.round(declared * 1000) / 1000 }
+              : {}),
+          };
+        })
     : [];
-  if (page.content) return {
+  return {
     task: "layout", deckToken: base.token, pageIndex: index, totalPages: base.totalPages,
     layoutVersion: 2, content: page.content, role: page.content.role,
-    density: page.density ?? "standard", materials, neighbors: page.neighbors ?? [],
+    // neighbors 不注入：deck 续会话下前页设计已在上下文里，全册骨架由首 dispatch 的 deckOutline 给出。
+    density: page.density ?? "standard", materials,
+    // 组件候选：按本页 relations/metrics 预检过的可行表达（绑定真实 block），写树前供选型。
+    componentCandidates: componentCandidatesFor(page.content, base.contract),
+    // 内容块实测需求（引擎同口径量测）：文本按 3/6/12 列的高度、表格/图表的建议槽位。
+    blockNeeds: blockNeedsFor(page.content, base.contract),
     ...(page.revisionFeedback ? { revisionFeedback: page.revisionFeedback.slice(0, 300) } : {}),
     ...(base.styleBrief ? { styleBrief: base.styleBrief } : {}), styleTokens: base.styleTokens,
-  };
-  return {
-    task: "layout",
-    deckToken: base.token,
-    pageIndex: index,
-    totalPages: base.totalPages,
-    layoutVersion: 2,
-    role: typeof page.role === "string" ? page.role : "content",
-    density: typeof page.density === "string" ? page.density : "standard",
-    ...(typeof page.composition === "string" ? { composition: page.composition } : {}),
-    ...(typeof page.form === "string" ? { form: page.form } : {}),
-    ...(typeof page.units === "number" ? { units: page.units } : {}),
-    ...(typeof page.skeleton === "string" && page.skeleton.trim()
-      ? { skeleton: page.skeleton.slice(0, 140) }
-      : isPageForm(page.form)
-        ? { skeleton: deriveSkeleton(page.form, page.units) }
-        : {}),
-    ...(typeof page.emphasis === "string" ? { emphasis: page.emphasis } : {}),
-    ...(typeof page.intent === "string" ? { intent: page.intent.slice(0, 200) } : {}),
-    ...(typeof page.takeaway === "string" ? { takeaway: page.takeaway.slice(0, 40) } : {}),
-    // v2 不传 planner 的动作标题：模型会拿它当 h1，压过 copy.message 并导致长标题换行。
-    ...(page.copy ? { copy: page.copy } : {}),
-    ...(page.data !== undefined && page.data !== null ? { data: page.data } : {}),
-    ...(materials.length > 0 ? { materials } : {}),
-    ...(Array.isArray(page.neighbors) && page.neighbors.length > 0 ? { neighbors: page.neighbors.slice(0, 2) } : {}),
-    ...(page.budget ? { budget: page.budget } : {}),
-    ...(typeof page.revisionFeedback === "string" && page.revisionFeedback.trim()
-      ? { revisionFeedback: page.revisionFeedback.slice(0, 300) }
-      : {}),
-    // 重排任务：给出邻页签名，要求本页与每一个都不同构。
-    ...(neighborSignatures && neighborSignatures.length > 0
-      ? { neighborSignatures: neighborSignatures.slice(0, 4) }
-      : {}),
-    ...(base.styleBrief ? { styleBrief: base.styleBrief } : {}),
-    styleTokens: base.styleTokens,
   };
 }
 
@@ -754,7 +619,7 @@ async function dropLowResolutionMaterials(
 ): Promise<void> {
   for (const [offset, page] of pages.entries()) {
     const index = pageOffset + offset;
-    const hero = page.role === "cover" || page.composition === "immersive";
+    const hero = (page.content?.role ?? page.role) === "cover";
     if (!Array.isArray(page.materials)) continue;
     const minWidth = hero ? 1280 : 800;
     const minHeight = hero ? 720 : 450;
@@ -782,18 +647,12 @@ async function dropLowResolutionMaterials(
     }
     if (dropped > 0) {
       page.materials = kept;
-      // 没有可用大图后，immersive/editorial 的硬约束不再成立：按形态 + hasImage=false 重新推导，
-      // 避免整页被 validate 拒收，也避免这里成为绕过形态推导的第二条写路径。
+      // 没有可用大图后，immersive/editorial 的硬约束可能不再成立：回投反馈让代理按仍可用素材重设计，
+      // 而不是在这里静默改构图（避免成为绕过代理决策的第二条写路径）。
       if (page.content) {
         page.revisionFeedback = "实际素材已更新；根据仍可用的图片与完整内容重新设计。必留图片不可用时明确失败。";
-      } else if (isPageForm(page.form)) {
-        page.composition = deriveComposition(page.form, { hasImage: kept.length > 0, role: page.role ?? "content" });
-      } else if (page.composition === "immersive") {
-        page.composition = "poster";
-      } else if (page.composition === "editorial") {
-        page.composition = "swiss";
       }
-      warnings.push(`第 ${index + 1} 页配图分辨率不足（<${minWidth}×${minHeight}），已丢弃 ${dropped} 张并退化版式`);
+      warnings.push(`第 ${index + 1} 页配图分辨率不足（<${minWidth}×${minHeight}），已丢弃 ${dropped} 张`);
     }
   }
 }
@@ -863,6 +722,17 @@ export async function runLayouterTail(
     return fail("slides_layout_resume_pages_invalid", "续落的 deck 页数与方案页数不一致；请重新发起 generate。", true);
   }
   if (!deps.bridge) return fail("slides_office_bridge_unavailable", "桌面 Office 桥未配置，无法落页");
+  // 语义 content 是布局输入的硬前提（旧内容模式已移除）：非流式一次性校验全册，
+  // 缺 content 直接失败，不落兜底页也不悄悄回退。流式路径在页到达时逐页校验。
+  if (!stream) {
+    const contentless = planPages.findIndex((page) => !page.content);
+    if (contentless >= 0) {
+      return fail(
+        "slides_layout_pages_invalid",
+        `第 ${contentless + 1} 页缺少语义 content（旧内容模式已移除，布局与自审输入必须携带 content）`,
+      );
+    }
+  }
 
   const warnings: string[] = [];
   /** deck 标题（收尾真完成载荷与补发 done 共用）。 */
@@ -877,7 +747,7 @@ export async function runLayouterTail(
   let deckNotOpen = false;
   const blockedPages: Array<Record<string, unknown>> = [];
   const contract = contractFromStyleParams(args.styleParams as never, args.scene ?? null);
-  // 风格卡 token 快照每 run 只算一次，v1/v2/重排/减配输入共用同一份。
+  // 风格卡 token 快照每 run 只算一次，全部 dispatch 输入共用同一份。
   const styleTokens = styleTokensFrom(contract.theme);
   // 流式页源：素材 QC 与图片宽高比在每页到达时再做（此时才知道这页有哪些素材），
   // 非流式照旧一次算全册。
@@ -920,10 +790,19 @@ export async function runLayouterTail(
 
   let fileEntryId = "";
   let originalName: string | null = null;
+  // deck 级续会话状态（见下方 dispatchDeck）：提前声明，checkpoint 首调（deck 创建后）
+  // 早于 try 块内的串行门初始化。
+  const deckSessionId = `slides-deck:${args.runId}`;
+  let deckSessionRef: string | null = existingDeck?.runtimeSessionRef ?? null;
+  /** 物理 slide 数：追加模式的真相源（引擎 slideIndex===deckPages 即末尾追加）；建文件时初始化。 */
+  let deckPages = 0;
+  /** 首 dispatch（或降级重建会话后的首 dispatch）带全册概要 deckOutline，之后不再带。 */
+  let deckOutlinePending = true;
   const checkpoint = () => {
     if (!fileEntryId) return;
-    args.onCheckpoint?.({ fileEntryId, originalName, totalPages,
-      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b) });
+    args.onCheckpoint?.({ fileEntryId, originalName, totalPages, deckPages,
+      appliedPages: [...appliedPages].filter(index => !degradedPages.has(index)).sort((a, b) => a - b),
+      ...(deckSessionRef ? { runtimeSessionRef: deckSessionRef } : {}) });
   };
 
   /** 最终全量快照：全部页落定后的真完成载荷（failedPages 用 0 起页序）。 */
@@ -934,7 +813,6 @@ export async function runLayouterTail(
     doneCount: appliedPages.size,
     // 完成顺序 ≠ 页序：落定页号集合是卡面打勾的唯一依据。
     appliedPages: [...appliedPages].sort((a, b) => a - b),
-    roomId: args.roomId,
     documentId: args.draftDocumentId,
     pages: armPlan.pages.slice(0, 32),
     completed,
@@ -955,8 +833,6 @@ export async function runLayouterTail(
         fileId: fileEntryId,
         title: deckTitle,
         ...(originalName ? { originalName } : {}),
-        roomId: args.roomId,
-        ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
         completed,
         appliedPages: appliedPages.size,
         totalPages,
@@ -975,22 +851,23 @@ export async function runLayouterTail(
     /** 占位页标题：流式源可能短于总页数，缺省「未命名页」。 */
     const titleOf = (index: number): string => outline[index] ?? "未命名页";
     if (existingDeck) {
-      // 续落：deck 与占位页都已存在，只补没落定的页，不再 generate（避免产生第二个文件）。
+      // 续落：deck 已存在（逐页追加的半成品或旧骨架全量），只补没落定的页。
       fileEntryId = existingDeck.fileEntryId;
       originalName = existingDeck.originalName;
     } else {
       const deckIdempotency = `agent-slides:${createHash("sha256").update(JSON.stringify([args.runId, deckTitle]), "utf8").digest("hex")}`;
-      // 占位页：按计划页数一次建满（骨架页自带页号，打开即见 N 页的进行时骨架）。
-      // 落页因此只做「按页序替换」，不再依赖「末尾追加」语义——于是可以按完成顺序落，
-      // 慢页不挡快页（2026-10-21：逐页落页从按页序改为按完成顺序）。
-      const placeholders = Array.from({ length: totalPages }, (_, index) =>
-        skeletonPageSpec(deckTitle, titleOf(index), index, totalPages));
+      // 逐页追加：文件只建 1 页骨架，不再一次铺满 N 页——后续页按页序在末尾追加
+      // （引擎 fillPage 的 slideIndex===当前页数即追加），用户看着 deck 一页页长出来。
+      const placeholders = [skeletonPageSpec(deckTitle, titleOf(0), 0, totalPages)];
       args.signal?.throwIfAborted();
       const created = await bridge.generate({
         title: deckTitle,
         format: "pptx",
         pages: placeholders,
-        roomId: args.roomId,
+        // 单工作区语义：PPT 不再绑定 Room；workspaceId 归会话所属空间（资料库/产物库按空间隔离），
+        // 缺省会落到默认工作区，用户在当前工作区看不到产物。
+        roomId: null,
+        workspaceId: args.workspaceId ?? null,
         fileName: null,
         idempotencyKey: deckIdempotency,
         deferDone: true,
@@ -999,22 +876,23 @@ export async function runLayouterTail(
       fileEntryId = created.fileEntryId;
       originalName = created.originalName ?? null;
     }
+    /** 物理 slide 数初始化：续落读检查点（旧检查点=骨架全量），新文件=1 页骨架。 */
+    deckPages = existingDeck?.deckPages ?? (existingDeck ? totalPages : 1);
 
     checkpoint();
     args.signal?.throwIfAborted();
     const styleBrief = styleBriefFrom(args.styleParams);
-    const base = { token, totalPages, styleBrief, styleTokens };
+    const base = { token, totalPages, styleBrief, styleTokens, imageArs, contract };
 
-    // 每页并发取树（页序占位）。页级窗口=deps.deckConcurrency（NXCORE_SLIDES_DECK_CONCURRENCY，
-    // 缺省 16）；实际同时在飞的上限还受 slides 池容量（NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT）与
-    // 单代理限额（layouter policy.maxConcurrency）约束，被拒会走页级退避重试，耗尽才兜底该页。
-    // 落页与取树流水线化：worker 只负责把页级窗口压住，落页侧按**完成顺序**消费。
+    // 逐页取树（页序占位，deck 续会话串行——见下方 dispatchDeck）。落页与取树流水线化：
+    // worker 只负责按序压页，落页侧按**完成顺序**消费（串行下即页序）。
     // promise 必须一次建全（而不是 worker 认领时才建）：落页侧要立刻订阅全部页，
     // 否则窗口外的页在订阅时还是数组空洞，会被 map 静默跳过。
     type TreeOutcome = {
       tree: LayoutTree;
       fellBack: boolean;
       designIntent?: string;
+      bindings?: ContentBinding[];
       unavailable?: boolean;
       reason?: string;
       blocked?: Record<string, unknown>;
@@ -1035,58 +913,111 @@ export async function runLayouterTail(
     const appliedFromDeck = new Set<number>(existingDeck?.appliedPages ?? []);
     /** 流式页携带的父调用（批次 planner invocation）：布局调用挂到对应批次下，时间线成链。 */
     const pageParents: Array<string | null | undefined> = new Array(totalPages);
+    // ── deck 级续会话（共享上下文串行逐页）────────────────────────────────
+    // 同册所有 layouter dispatch（取树/丰富度/减配/自审/重排）复用同一 pi 会话：后面页
+    // 看得到前面页的树与自审，跨页多样性与节奏由上下文承载。pi 守卫「同 session 同时仅
+    // 一个 active run」→ 全部 dispatch 过同一条 promise 链互斥（窗口因此恒 1，页序严格）。
+    // 会话状态（deckSessionId/deckSessionRef/deckOutlinePending）已提前到 checkpoint 旁声明。
+    let deckChain: Promise<unknown> = Promise.resolve();
+    /** 流式页源下 pages 逐页到达：概要惰性现算，首个 dispatch 时能带上多少是多少。 */
+    const buildDeckOutline = () => Array.from({ length: totalPages }, (_, index) => {
+      const page = pages[index];
+      return {
+        pageIndex: index,
+        title: (typeof page?.title === "string" && page.title.trim() ? page.title : titleOf(index)).slice(0, 80),
+        ...(typeof page?.role === "string" ? { role: page.role } : {}),
+        ...(typeof page?.density === "string" ? { density: page.density } : {}),
+      };
+    }).slice(0, 64);
+    /** 会话文件丢失/状态异常（续跑后 sessionsDir 被清、owner 冲突）：可安全降级新会话重试。 */
+    const SESSION_GONE_RE = /ENOENT|no such file or directory|Pi session is already active|belongs to a different Agent session/i;
+    const sessionGone = (invocation: SubagentInvocation): boolean =>
+      invocation.status !== "completed"
+      && invocation.errorMessage !== null
+      && SESSION_GONE_RE.test(invocation.errorMessage);
+    const dispatchDeck = (
+      taskTag: string,
+      input: Record<string, unknown>,
+      parentRunId: string | null,
+      attachments?: Array<{ filename: string; mimeType: string; kind: "image"; dataUrl: string }>,
+    ): Promise<SubagentInvocation> => {
+      const attempt = async (session: { sessionId: string; runtimeSessionRef: string | null }): Promise<SubagentInvocation> => {
+        const effective = deckOutlinePending ? { ...input, deckOutline: buildDeckOutline() } : input;
+        const invocation = await dispatchWithPageRetry(() =>
+          deps.dispatchPage(effective, deps.makeKey(args.runId, "slides-layouter", taskTag, effective), parentRunId, attachments, session), args.signal);
+        if (sessionGone(invocation) && session.runtimeSessionRef !== null) {
+          deckSessionRef = null;
+          deckOutlinePending = true;
+          return attempt({ sessionId: deckSessionId, runtimeSessionRef: null });
+        }
+        if (invocation.status === "completed") {
+          deckOutlinePending = false;
+          deckSessionRef = invocation.runtimeSessionRef ?? deckSessionRef;
+        }
+        return invocation;
+      };
+      const next = deckChain.then(() => attempt({ sessionId: deckSessionId, runtimeSessionRef: deckSessionRef }));
+      deckChain = next.catch(() => undefined);
+      return next;
+    };
     const fetchTreeOnce = async (index: number): Promise<TreeOutcome> => {
       args.signal?.throwIfAborted();
-      const input = layouterInputFor(base, pages[index]!, index);
+      const page = pages[index]!;
+      const input = layouterInputFor(base, page, index);
       try {
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(input, deps.makeKey(args.runId, "slides-layouter", `page:${index}`, input), pageParents[index] ?? args.parentRunId), args.signal);
+        const invocation = await dispatchDeck(`page:${index}`, input, pageParents[index] ?? args.parentRunId);
         args.signal?.throwIfAborted();
-        const placed = treeFromInvocation(invocation, pages[index]!);
+        const placed = treeFromInvocation(invocation, page);
         if (placed.blocked) return placed;
         if (!placed.fellBack) {
-          const page = pages[index]!;
-          if (typeof page.composition === "string"
-            && placed.tree.version === 2 && placed.tree.v2?.composition !== page.composition) {
-            warnings.push(
-              `第 ${index + 1} 页 composition 与 storyboard 不一致（${page.composition}→${placed.tree.v2?.composition ?? "?"}），按实际落页`,
-            );
-          }
           if (placed.tree.version === 2 && placed.tree.v2) {
-            const richness = page.content ? [] : visualRichnessIssues(placed.tree.v2);
-            if (richness.length > 0) {
-              const revisionPage = { ...page, revisionFeedback: richness.join("；") };
+            // 查关系表达（长文等宽文本列等反模式）与主内容组件采用；一次回投修订，修不动保留原树，不阻塞整册。
+            const candidates = componentCandidatesFor(page.content!, base.contract);
+            const expressionIssues = [
+              ...semanticRelationIssues(page.content!, placed.tree.v2),
+              ...adoptionFeedback(
+                componentAdoptionFor(page.content!, placed.tree.v2, placed.bindings ?? [], candidates),
+                candidates,
+              ),
+            ];
+            if (expressionIssues.length > 0) {
+              const gateLabel = "主内容未组件化或关系表达未结构化";
+              const revisionPage = { ...page, revisionFeedback: expressionIssues.join("；") };
               const revisionInput = layouterInputFor(base, revisionPage, index);
               try {
-                const revision = await dispatchWithPageRetry(() =>
-                  deps.dispatchPage(revisionInput, deps.makeKey(args.runId, "slides-layouter", `visual:${index}`, revisionInput), pageParents[index] ?? args.parentRunId), args.signal);
+                const revision = await dispatchDeck(`visual:${index}`, revisionInput, pageParents[index] ?? args.parentRunId);
                 const revised = treeFromInvocation(revision, revisionPage);
-                if (!revised.fellBack && revised.tree.version === 2 && revised.tree.v2
-                  && visualRichnessIssues(revised.tree.v2).length === 0) {
-                  warnings.push(`第 ${index + 1} 页视觉丰富度不足，已按闸门提示补图形`);
+                const stillFailing = !revised.fellBack && revised.tree.version === 2 && revised.tree.v2
+                  ? [
+                      ...semanticRelationIssues(page.content!, revised.tree.v2),
+                      ...adoptionFeedback(
+                        componentAdoptionFor(page.content!, revised.tree.v2, revised.bindings ?? [], candidates),
+                        candidates,
+                      ),
+                    ]
+                  : null;
+                if (stillFailing !== null && stillFailing.length === 0) {
+                  warnings.push(`第 ${index + 1} 页${gateLabel}，已按闸门提示修订`);
                   return revised;
                 }
               } catch {
-                // 视觉补救失败：保留原树并告警，不阻塞整册。
+                // 表达补救失败：保留原树并告警，不阻塞整册。
               }
-              warnings.push(`第 ${index + 1} 页视觉丰富度不足（纯文字白底），保留当前树`);
+              warnings.push(`第 ${index + 1} 页${gateLabel}（${expressionIssues[0]}），保留当前树`);
             }
           }
           return placed;
         }
-        // 布局代理未交树（失败/超时/坏树）：减配重试一次——支撑条目砍半、去图表、去讲稿、
-        // 密度降档，格式仍是 v2；仍不收敛才落 v2 兜底页。dispatch 被拒（并发限额）不算未交树，走 catch 退避。
-        const trimmed = pages[index]!.content
-          ? { ...pages[index]!, revisionFeedback: `上次提交未通过：${placed.reason ?? "布局无效"}。不要重画整页或换构图；只按错误做最小修改（补绑定、调区域、删装饰）后立即提交；仍不收敛就简化结构提交，或按 blocked 说明限制。` }
-          : trimmedPage(pages[index]!);
-        const retryInput = layouterInputFor(base, trimmed, index);
+        // 布局代理未交树（失败/超时/坏树）：带反馈重试一次（内容契约不变）；仍不收敛才保留失败态。
+        // dispatch 被拒（并发限额）不算未交树，走 catch 退避。
+        const retryPage = { ...page, revisionFeedback: `上次提交未通过：${placed.reason ?? "布局无效"}。不要重画整页或换构图，按 SYSTEM.md 修复流程处理剩余缺陷；布局树有变化须重新校验后再提交；仍不收敛就按 blocked 说明剩余缺陷与所需调整。` };
+        const retryInput = layouterInputFor(base, retryPage, index);
         try {
-          const retry = await dispatchWithPageRetry(() =>
-            deps.dispatchPage(retryInput, deps.makeKey(args.runId, "slides-layouter", `page:${index}:trimmed`, retryInput), pageParents[index] ?? args.parentRunId), args.signal);
-          const retryPlaced = treeFromInvocation(retry, pages[index]!);
+          const retry = await dispatchDeck(`page:${index}:retry`, retryInput, pageParents[index] ?? args.parentRunId);
+          const retryPlaced = treeFromInvocation(retry, page);
           if (retryPlaced.blocked) return retryPlaced;
           if (retryPlaced.fellBack) return placed;
-          warnings.push(`第 ${index + 1} 页布局代理减配重试后收敛`);
+          warnings.push(`第 ${index + 1} 页布局代理重试后收敛`);
           return retryPlaced;
         } catch {
           return placed;
@@ -1095,7 +1026,7 @@ export async function runLayouterTail(
         // 并发窗口被占满（dispatch 退避/容量等待都耗尽）＝代理不可用，不是「代理交了坏树」：
         // 记为 unavailable 供整册判定，避免把「20 页兜底版式」当成成功交付（2026-10-20 事故）。
         return {
-          tree: fallbackPage(pages[index]!),
+          tree: fallbackPage(page),
           fellBack: true,
           ...(isConcurrencyLimitError(error) ? { unavailable: true } : {}),
         };
@@ -1145,27 +1076,24 @@ export async function runLayouterTail(
           ...layouterInputFor(base, pages[index]!, index),
           currentTree: outcome.tree.v2,
           ...(outcome.designIntent ? { previousDesignIntent: outcome.designIntent } : {}),
-          revisionFeedback: pages[index]!.content
-            ? "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。"
-            : "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码及旧模式兼容门槛。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。notes 写观察、修改或保留理由及待确认项；返回完整 v2 tree。无需修改则原样交树；修改版不会再次回投看图。",
+          revisionFeedback: "附件是 currentTree 的真实渲染图。按 SYSTEM.md「视觉自审」先记录图上观察，再逐项核对内容、焦点与关系、空白与容器、对齐与层级、断行与裁切、页脚页码；对照 previousDesignIntent 验收。自审只做一次：最多改 1 个根因、校验 1 次后提交；没有图上证据的问题不改，不要借自审探索新构图。保留全部内容，修正后防止原有表达退化。修改版校验不通过时原样交回 currentTree，在 notes 记录未解决问题。notes 写观察、修改或保留理由及待确认项；返回完整 tree、designIntent、bindings。无需修改则原样交树；修改版不会再次回投看图。",
         };
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(
-            reviewInput,
-            deps.makeKey(args.runId, "slides-layouter", `self-review:${index}`, reviewInput),
-            pageParents[index] ?? args.parentRunId,
-            [{ filename: `page-${String(index + 1)}.${mimeType === "image/jpeg" ? "jpg" : "png"}`, mimeType, kind: "image", dataUrl: `data:${mimeType};base64,${shotBase64}` }],
-          ), args.signal);
+        const invocation = await dispatchDeck(
+          `self-review:${index}`,
+          reviewInput,
+          pageParents[index] ?? args.parentRunId,
+          [{ filename: `page-${String(index + 1)}.${mimeType === "image/jpeg" ? "jpg" : "png"}`, mimeType, kind: "image", dataUrl: `data:${mimeType};base64,${shotBase64}` }],
+        );
         args.signal?.throwIfAborted();
         const revised = treeFromInvocation(invocation, pages[index]!);
         if (revised.fellBack || revised.tree.version !== 2) return outcome;
         // 只有"能落页且没有阻塞缺陷"的修正才采纳，否则保留原树。
-        const final = finalizeTree(revised.tree, contract, imageArs, { pageIndex: index + 1, pageCount: totalPages }, Boolean(pages[index]?.content));
-        if (pages[index]!.content && checkSemanticRendered(pages[index]!.content!, final.spec as unknown as { elements: unknown[]; notes?: string }).length) {
+        const final = finalizeTree(revised.tree, contract, imageArs, { pageIndex: index + 1, pageCount: totalPages }, true);
+        if (checkSemanticRendered(pages[index]!.content!, final.spec as unknown as { elements: unknown[]; notes?: string }).length) {
           warnings.push(`第 ${index + 1} 页自审修正未保留完整内容，保留原页`);
           return outcome;
         }
-        if (pages[index]!.content ? final.defects.length > 0 : final.defects.some((defect) => BLOCKING_DEFECTS.has(defect.type))) {
+        if (final.defects.length > 0) {
           warnings.push(`第 ${index + 1} 页自审修正未收敛，保留原页`);
           return outcome;
         }
@@ -1186,10 +1114,10 @@ export async function runLayouterTail(
 
     // 自审改为「落页之后」的独立阶段（见下），不再阻塞取树/落页。
 
-    // 页级并发：改造前硬编码 8（= 当时的全局子代理窗口），一册 15 页只能 8 页同时在飞，
-    // 其余页干等 worker 归还，足足多出一整轮单页耗时（实测 P50 141s → 165s）。
-    // 改为可配置后，一册 15 页可一次全飞；上限仍取总页数，页数少于窗口时不空转。
-    const deckWindow = deps.deckConcurrency ?? DEFAULT_DECK_CONCURRENCY;
+    // 页级窗口恒 1：deck 级续会话下所有 dispatch 过同一条串行门（pi 守卫同 session 仅一个
+    // active run），窗口>1 只会让页在门口乱序排队。deps.deckConcurrency 配置链保留但在此
+    // 模式下不参与（后续若恢复并发模式可重新启用）。
+    const deckWindow = 1;
     /** 一页取树（挂到页级并发闸内）。 */
     const dispatchPageTree = async (index: number): Promise<void> => {
       const slot = pending[index]!;
@@ -1233,6 +1161,18 @@ export async function runLayouterTail(
           for await (const item of abortableItems(stream.pages, args.signal)) {
             const index = item.pageIndex;
             if (!Number.isInteger(index) || index < 0 || index >= totalPages || appliedFromDeck.has(index) || scheduled.has(index)) continue;
+            if (!item.page?.content) {
+              // 上游违约：布局输入没有语义 content。明确失败并保留占位页，不回退旧模式。
+              warnings.push(`第 ${index + 1} 页缺少语义 content（旧内容模式已移除），保留占位页`);
+              pending[index]!.resolve({
+                tree: fallbackPage({ title: titleOf(index) }),
+                fellBack: false,
+                skipped: "missing",
+                reason: "缺少语义 content",
+              });
+              scheduled.add(index);
+              continue;
+            }
             pages[index] = item.page;
             pageParents[index] = item.parentRunId;
             await preparePageMaterials(index);
@@ -1258,38 +1198,28 @@ export async function runLayouterTail(
       })();
     }
 
-    // 按完成顺序落页：占位页已按计划页序建满，谁的树先就绪谁先替换自己那页
-    // （slideIndex = 计划页序，与完成顺序无关；某页失败只留它自己的占位页，不连累后页）。
-    // fillPage 打的是同一个活会话，调用本身必须串行——用一条队列按「到达顺序」排队，
-    // 慢页只延迟自己，不再挡住后面已就绪的页。
-    // 两条防线保留：① 降档后仍有引擎硬闸类缺陷（重叠/emoji/溢出）的页落确定性兜底版式；
-    // ② 页号集合统计落定页，重排重落不重复计数。
-    let landingTail: Promise<unknown> = Promise.resolve();
+    // 按完成顺序落页改为**按页序追加**：fillPage 的 slideIndex===当前页数即末尾追加，
+    // 因此第 N 页必须等第 N-1 页落定；后页先就绪就排在页序队列里等。失败/未就绪页补一页
+    // 骨架占位（deckPages 之内已有骨架的不重复补），让后页页序与页脚页码不错位。
     const applyPage = async (index: number, tree: LayoutTree): Promise<boolean> => {
       args.signal?.throwIfAborted();
       // 页脚页码用逻辑页号（1 基）；总页数按计划页数（兜底占位页仍占页码）。
       const footerOpts = { pageIndex: index + 1, pageCount: totalPages };
-      let final = finalizeTree(tree, contract, imageArs, footerOpts, Boolean(pages[index]?.content));
-      if (pages[index]?.content) {
-        const errors = checkSemanticRendered(pages[index]!.content!, final.spec as unknown as { elements: unknown[]; notes?: string });
-        if (errors.length) {
-          degradedPages.add(index);
-          warnings.push(`第 ${index + 1} 页内容校验失败：${errors.join("; ")}`);
-          return false;
-        }
+      const final = finalizeTree(tree, contract, imageArs, footerOpts, true);
+      const errors = checkSemanticRendered(pages[index]!.content!, final.spec as unknown as { elements: unknown[]; notes?: string });
+      if (errors.length) {
+        degradedPages.add(index);
+        warnings.push(`第 ${index + 1} 页内容校验失败：${errors.join("; ")}`);
+        return false;
       }
       if (final.degraded) {
         degradedPages.add(index);
         warnings.push(`第 ${index + 1} 页经引擎降档兜底装下内容`);
       }
-      if (pages[index]?.content ? final.defects.length > 0 : final.defects.some((defect) => BLOCKING_DEFECTS.has(defect.type))) {
+      if (final.defects.length > 0) {
         degradedPages.add(index);
-        if (pages[index]?.content) {
-          warnings.push(`第 ${index + 1} 页几何校验未通过，保留可重试状态`);
-          return false;
-        }
-        warnings.push(`第 ${index + 1} 页布局树未收敛（${final.defects[0]!.type}），已用兜底版式`);
-        final = finalizeTree(fallbackPage(pages[index] ?? { title: titleOf(index) }), contract, imageArs, footerOpts);
+        warnings.push(`第 ${index + 1} 页几何校验未通过，保留可重试状态`);
+        return false;
       }
       const specJson = JSON.stringify(final.spec);
       if (specJson.length > MAX_PAGE_SPEC_LENGTH) {
@@ -1305,9 +1235,10 @@ export async function runLayouterTail(
       } catch (error) {
         degradedPages.add(index);
         const message = error instanceof Error ? error.message : String(error);
-        if (isDeckNotOpenMessage(message)) {
+        if (isDeckNotOpen(error)) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在产物库打开该 PPT 后可重试`);
+          // 桌面端 422 message 携带被 registry 折叠前的真实原因（加密/超限/就绪超时/会话竞态），透传一段供排查。
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；桌面端原因：${message.slice(0, 120)}；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页异常（${message.slice(0, 160)}），保留占位页`);
         }
@@ -1316,9 +1247,9 @@ export async function runLayouterTail(
       if (!result.ok || result.applied !== true) {
         degradedPages.add(index);
         const reason = result.error ?? "桌面端拒绝";
-        if (isDeckNotOpenMessage(reason)) {
+        if (/not_open|未打开|可编辑的\s*PPT|可编辑方式打开/i.test(String(reason))) {
           deckNotOpen = true;
-          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；在产物库打开该 PPT 后可重试`);
+          warnings.push(`第 ${index + 1} 页落页失败：桌面端未打开该 PPT 的可编辑会话（not_open），保留占位页；桌面端原因：${String(reason).slice(0, 120)}；在文件库打开该 PPT 后可重试`);
         } else {
           warnings.push(`第 ${index + 1} 页落页失败（${reason}），保留占位页`);
         }
@@ -1326,15 +1257,17 @@ export async function runLayouterTail(
       }
       appliedPages.add(index);
       appliedSlideIndex.set(index, slideIndex);
+      deckPages = Math.max(deckPages, index + 1);
       checkpoint();
       // 完成顺序 ≠ 页序：进度快照带落定页号集合，卡按页号打勾（不能用「前 doneCount 页已完成」）。
       progress?.notify(progressKey, slideIndex, [...appliedPages]);
       if (final.focusHints.length > 0) appliedFocusHints.set(index, final.focusHints);
       return true;
     };
-    /** 落页排队：按到达顺序串行（会话不是并发安全的），不按页序。 */
-    const landPage = (index: number, tree: LayoutTree): Promise<boolean> => {
-      const task = landingTail.then(() => applyPage(index, tree));
+    /** 落页串行队列：fillPage 打同一个活会话，必须排队；逐页追加还要求严格按页序。 */
+    let landingTail: Promise<unknown> = Promise.resolve();
+    const serialize = <T>(fn: () => Promise<T>): Promise<T> => {
+      const task = landingTail.then(fn);
       landingTail = task.then(() => undefined, () => undefined);
       return task;
     };
@@ -1345,59 +1278,94 @@ export async function runLayouterTail(
     for (let index = 0; index < totalPages; index += 1) {
       landingSettled.set(index, new Promise<void>((resolve) => landingSignals.set(index, resolve)));
     }
-    // 落页阶段：树一到就落页（用户先看到这一页），自审放在落页之后——
-    // 把本页渲染图回投布局代理，采纳的修正树再补落同一页（先交付、后提质）。
-    // 自审不阻塞落页，也不改变「已完成页」判定：首版页先落定，修正只做覆盖。
-    const selfReviewTasks: Array<Promise<void>> = [];
-    const landings = treePromises.map((promise, index) => promise.then(async (outcome) => {
-      trees[index] = outcome;
-      if (outcome.blocked) {
-        blockedPages.push({ pageIndex: index, ...outcome.blocked });
-        degradedPages.add(index);
-        landingSignals.get(index)?.();
-        return;
-      }
-      // 复用 deck 的已落定页 / 内容未就绪页：占位页保持原样，不落页、不自审。
-      if (outcome.skipped) {
-        if (outcome.skipped === "missing") {
-          warnings.push(`第 ${index + 1} 页内容未就绪（${outcome.reason ?? "批次未完成"}），保留占位页`);
-        }
-        landingSignals.get(index)?.();
-        return;
-      }
-      if (outcome.fellBack) {
-        if (pages[index]?.content) {
-          degradedPages.add(index);
-          warnings.push(`第 ${index + 1} 页设计未通过：${outcome.reason ?? "未收敛"}；未落入占位页，内容与草稿保留`);
-          landingSignals.get(index)?.();
-          return;
-        }
-        warnings.push(`第 ${index + 1} 页布局代理未交合格树（${outcome.reason ?? "未收敛"}），已用 v2 兜底页`);
-      }
+    /** 追加模式的空洞页：补一页骨架让后页页序/页脚页码不错位（deckPages 内已有骨架则跳过）。 */
+    const appendPlaceholderPage = async (index: number): Promise<void> => {
+      if (!fileEntryId || index < deckPages) return;
       try {
-        await landPage(index, outcome.tree);
-      } catch (error) {
-        // 单页异常不拖垮整册：该页留占位页，其余页继续落。
-        degradedPages.add(index);
-        warnings.push(`第 ${index + 1} 页落页异常（${error instanceof Error ? error.message : String(error)}），保留占位页`);
-      } finally {
-        landingSignals.get(index)?.();
+        const result = await bridge.fillPage({
+          fileId: fileEntryId,
+          slideIndex: index,
+          specJson: skeletonPageSpec(deckTitle, titleOf(index), index, totalPages),
+        });
+        if (result.ok && result.applied === true) deckPages = Math.max(deckPages, index + 1);
+      } catch {
+        // 占位补不上（会话不在等）：后页会以 slideIndex 超界被拒、退化为跳过，不阻塞整册。
       }
-      if (outcome.fellBack) return;
-      // 落页后再自审：看着自己这一页的真实渲染图改；修正树只覆盖同一页，不动别的页。
-      if (args.signal?.aborted) return;
-      const review = reviewSlots(() => selfReviewPage(index, outcome)).then(async (reviewed) => {
-        args.signal?.throwIfAborted();
-        // 无修正（原样交回）时不重落；只有树真的变了才覆盖同一页。
-        if (JSON.stringify(reviewed.tree) === JSON.stringify(outcome.tree)) return;
-        trees[index] = reviewed;
-        try {
-          await landPage(index, reviewed.tree);
-        } catch (error) {
-          warnings.push(`第 ${index + 1} 页自审修正补落异常（${error instanceof Error ? error.message : String(error)}），保留首版页`);
+    };
+    // 落页阶段：**严格按页序排水**（追加语义要求第 N 页等第 N-1 页落定）；树一到就入队，
+    // 自审放在落页之后——把本页渲染图回投布局代理，采纳的修正树再补落同一页（先交付、后提质）。
+    const selfReviewTasks: Array<Promise<void>> = [];
+    const readyOutcomes = new Map<number, TreeOutcome>();
+    let nextLandIndex = 0;
+    let draining = false;
+    const drainLandings = async (): Promise<void> => {
+      if (draining) return;
+      draining = true;
+      try {
+        while (nextLandIndex < totalPages) {
+          const outcome = readyOutcomes.get(nextLandIndex);
+          if (!outcome) return;
+          const index = nextLandIndex;
+          readyOutcomes.delete(index);
+          nextLandIndex += 1;
+          trees[index] = outcome;
+          if (outcome.blocked) {
+            blockedPages.push({ pageIndex: index, ...outcome.blocked });
+            degradedPages.add(index);
+            await serialize(() => appendPlaceholderPage(index));
+            landingSignals.get(index)?.();
+            continue;
+          }
+          // 复用 deck 的已落定页：文件里已有该页，不追加不替换；内容未就绪页补骨架占位。
+          if (outcome.skipped) {
+            if (outcome.skipped === "missing") {
+              warnings.push(`第 ${index + 1} 页内容未就绪（${outcome.reason ?? "批次未完成"}），保留占位页`);
+              await serialize(() => appendPlaceholderPage(index));
+            }
+            landingSignals.get(index)?.();
+            continue;
+          }
+          if (outcome.fellBack) {
+            degradedPages.add(index);
+            warnings.push(`第 ${index + 1} 页设计未通过：${outcome.reason ?? "未收敛"}；未落入占位页，内容与草稿保留`);
+            await serialize(() => appendPlaceholderPage(index));
+            landingSignals.get(index)?.();
+            continue;
+          }
+          let landed = false;
+          try {
+            landed = await serialize(() => applyPage(index, outcome.tree));
+          } catch (error) {
+            // 单页异常不拖垮整册：该页留占位页，其余页继续落。
+            degradedPages.add(index);
+            warnings.push(`第 ${index + 1} 页落页异常（${error instanceof Error ? error.message : String(error)}），保留占位页`);
+          }
+          if (!landed) await serialize(() => appendPlaceholderPage(index));
+          landingSignals.get(index)?.();
+          if (outcome.fellBack || args.signal?.aborted) continue;
+          // 落页后再自审：看着自己这一页的真实渲染图改；修正树只覆盖同一页，不动别的页。
+          const review = reviewSlots(() => selfReviewPage(index, outcome)).then(async (reviewed) => {
+            args.signal?.throwIfAborted();
+            // 无修正（原样交回）时不重落；只有树真的变了才覆盖同一页。
+            if (JSON.stringify(reviewed.tree) === JSON.stringify(outcome.tree)) return;
+            trees[index] = reviewed;
+            try {
+              await serialize(() => applyPage(index, reviewed.tree));
+            } catch (error) {
+              warnings.push(`第 ${index + 1} 页自审修正补落异常（${error instanceof Error ? error.message : String(error)}），保留首版页`);
+            }
+          });
+          selfReviewTasks.push(review.catch(() => undefined));
         }
-      });
-      selfReviewTasks.push(review.catch(() => undefined));
+      } finally {
+        draining = false;
+        // 只有下一页真的就绪才重入：缺页时 return 不经任何 await，无条件重入会纯同步递归爆栈。
+        if (nextLandIndex < totalPages && readyOutcomes.has(nextLandIndex)) void drainLandings();
+      }
+    };
+    const landings = treePromises.map((promise, index) => promise.then((outcome) => {
+      readyOutcomes.set(index, outcome);
+      return drainLandings();
     }));
     await Promise.all(landings);
     await Promise.all(selfReviewTasks);
@@ -1432,36 +1400,44 @@ export async function runLayouterTail(
       );
     }
 
-    // 页间相似度审计：相邻同签名页重排一次（带邻页签名提示），重排结果替换重落。
-    const rerollTargets = pages.some(p => p?.content) ? [] : auditSimilarity(trees.map((t) => t.tree))
-      .filter(index => pages[index] && !trees[index]?.skipped && !trees[index]?.blocked);
-    for (const index of rerollTargets.slice(0, 2)) {
-      const signatures = [
-        ...(index > 0 ? [treeSignature(trees[index - 1]!.tree)] : []),
-        ...(index + 1 < trees.length ? [treeSignature(trees[index + 1]!.tree)] : []),
-      ];
-      const input = layouterInputFor(base, pages[index]!, index, signatures);
-      try {
-        const invocation = await dispatchWithPageRetry(() =>
-          deps.dispatchPage(input, deps.makeKey(args.runId, "slides-layouter", `reroll:${index}`, input), args.parentRunId), args.signal);
-        const rerolled = treeFromInvocation(invocation, pages[index]!);
-        if (!rerolled.fellBack && treeSignature(rerolled.tree) !== treeSignature(trees[index]!.tree)) {
-          trees[index] = rerolled;
-          warnings.push(`第 ${index + 1} 页与邻页结构雷同，已重排`);
-          await landPage(index, rerolled.tree);
+    // 组件采用统计（语义模式）：自审全部完成后按最终树重新统计；
+    // 只统计有可行候选的重点内容组，装饰性组件不在统计口径内（componentAdoptionFor 只认主表达匹配）。
+    const componentAdoption = (() => {
+      const pageStats: Array<{ page: number; groups: ComponentAdoption[] }> = [];
+      const usage = new Map<string, number>();
+      let eligible = 0;
+      let adopted = 0;
+      for (let index = 0; index < totalPages; index++) {
+        const page = pages[index];
+        const outcome = trees[index];
+        if (!page?.content || !outcome || outcome.fellBack || outcome.skipped
+          || outcome.tree.version !== 2 || !outcome.tree.v2) continue;
+        const groups = componentAdoptionFor(page.content, outcome.tree.v2, outcome.bindings ?? [],
+          componentCandidatesFor(page.content, base.contract));
+        if (groups.length === 0) continue;
+        pageStats.push({ page: index + 1, groups });
+        for (const group of groups) {
+          eligible += 1;
+          if (group.adopted) {
+            adopted += 1;
+            usage.set(group.component!, (usage.get(group.component!) ?? 0) + 1);
+          }
         }
-      } catch {
-        // 重排失败保留原页
       }
-    }
-
+      return {
+        eligibleGroups: eligible,
+        adoptedGroups: adopted,
+        pages: pageStats,
+        ...(usage.size > 0 ? { componentUsage: Object.fromEntries([...usage.entries()].sort()) } : {}),
+      };
+    })();
 
     // 失败/退化页（0 起页序）：未落定、引擎降档兜底、布局代理兜底都算——完成摘要要能定位。
     const failedPages = [...new Set(
       Array.from({ length: totalPages }, (_, index) => index).filter((index) =>
         !appliedPages.has(index) || degradedPages.has(index) || trees[index]?.fellBack === true),
     )].sort((a, b) => a - b);
-    const completed = appliedPages.size === totalPages && (!pages.some(p => p?.content) || failedPages.length === 0);
+    const completed = appliedPages.size === totalPages && failedPages.length === 0;
     checkpoint();
     if (appliedPages.size === 0 && blockedPages.length > 0) {
       await notifyComplete(false, failedPages);
@@ -1473,9 +1449,11 @@ export async function runLayouterTail(
       const zeroPayload = finalPayloadFor(false, failedPages);
       args.onUpdate?.({ content: JSON.stringify(zeroPayload), details: zeroPayload });
       await notifyComplete(false, failedPages);
-      return fail("slides_layout_apply_failed", deckNotOpen
-        ? "全部页面落页失败：桌面端没有以可编辑会话打开这本 PPT（not_open）。在产物库打开该 PPT 后重试即可复用已生成方案。"
-        : "全部页面落页失败；方案已就绪，可重试 generate。", true, {
+      // 两种「零页落定」成因分码：桌面端没开可编辑会话（apply 失败）与设计校验全挂
+      // （fellBack 内容页不落占位页）——用户侧文案与处置不同，不能共用一个码。
+      return fail(deckNotOpen ? "slides_layout_apply_failed" : "slides_layout_design_failed", deckNotOpen
+        ? "全部页面落页失败：桌面端没有以可编辑会话打开这本 PPT（not_open）。在文件库打开该 PPT 后重试即可复用已生成方案。"
+        : "全部页面设计未通过校验（具体原因见 warnings）；内容稿还在，可重试 generate。", true, {
         fileEntryId,
         failedPages,
         ...(warnings.length > 0 ? { warnings } : {}),
@@ -1483,15 +1461,16 @@ export async function runLayouterTail(
       });
     }
     args.signal?.throwIfAborted();
-    if (completed && args.draftDocumentId) {
+    // 试看（preview）完成不回收草稿、不落定会话：用户确认后还要跑整册。
+    if (completed && !args.preview && args.draftDocumentId) {
       await args.trashDraft(args.draftDocumentId).catch(() => {});
     }
     args.signal?.throwIfAborted();
     const settleStyleSessionId = args.settle.styleSessionIdToSettle ?? null;
-    if (completed && settleStyleSessionId && args.styleSessions) {
+    if (completed && !args.preview && settleStyleSessionId && args.styleSessions) {
       args.styleSessions.patch(settleStyleSessionId, { stage: "confirmed" });
     }
-    if (completed && args.settle.pageImagesSessionId && args.pageImagesStore) {
+    if (completed && !args.preview && args.settle.pageImagesSessionId && args.pageImagesStore) {
       args.pageImagesStore.patch(args.settle.pageImagesSessionId, { stage: "resolved" });
     }
     // 最终全量快照 + 真完成通知（done 后移到全部页落定）。
@@ -1512,7 +1491,9 @@ export async function runLayouterTail(
         outline,
         warnings,
         ...(blockedPages.length ? { blockedPages } : {}),
-        ...(pages.some(p => p?.content) ? { contentMode: "semantic-v3", visualValidation: Array.from({ length: totalPages }, (_, i) => visualValidation.get(i) ?? "unverified") } : {}),
+        contentMode: "semantic-v3",
+        visualValidation: Array.from({ length: totalPages }, (_, i) => visualValidation.get(i) ?? "unverified"),
+        componentAdoption,
         ...(failedPages.length > 0 ? { failedPages } : {}),
         ...(deckNotOpen ? { landingBlocked: "deck_not_open" } : {}),
         summary: completed

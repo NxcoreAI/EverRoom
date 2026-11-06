@@ -63,7 +63,6 @@ export interface SlidesProgressState {
   title?: string
   /** 会话最后落库时刻：轮询响应据此判新旧，防旧响应覆盖新广播。 */
   updatedAt?: number
-  roomId?: string
   documentId?: string
   totalPages?: number
   doneCount?: number
@@ -137,7 +136,12 @@ export function slidesProgressFromToolCall(tool: DisplayAgentToolCall | undefine
     }
   }
   // 兜底：工具直接报错时没有阶段载荷，也保留一张失败卡（失败不许消失）。
-  if (tool.status === 'error') return { stage: 'failed' }
+  // 例外：参数校验拒绝（Validation failed）——调用从未开始，不是一次失败的生成任务，
+  // 不渲染失败卡；agent 会在工具结果里看到原因并修正参数重调。
+  if (tool.status === 'error') {
+    if (typeof tool.error === 'string' && tool.error.startsWith('Validation failed for tool')) return null
+    return { stage: 'failed' }
+  }
   return null
 }
 
@@ -215,6 +219,14 @@ function taskKey(entry: SlidesTaskEntry): string {
     ?? (entry.progress.title ? `title:${entry.progress.title}` : `tool:${entry.tool.id}`)
 }
 
+/** 工具失败但所在 run 还没终止：agent 还在跑、大概率自己重试，失败红字先不亮。 */
+export function slidesFailureSuppressed(
+  entry: SlidesTaskEntry,
+  runCompletedAtByRun: Record<string, string>,
+): boolean {
+  return entry.progress.stage === 'failed' && !runCompletedAtByRun[entry.tool.runId]
+}
+
 export interface SlidesTaskSelection {
   /** 最新一张任务卡（完整渲染）。 */
   primary: SlidesTaskEntry | null
@@ -233,6 +245,8 @@ const MAX_RECEIPTS = 3
  * 任务槽选择：只把「还在等用户决定 / 还在跑」的任务留成完整卡，最多 3 张，其余折叠计数。
  * 已完成、已停止、已失败的任务一律收成一行回执——工作结束（无论成败）就不该有
  * 常驻卡片占着对话区；失败回执自带「再试一次」。
+ * 已有更新的 slides_draft 调用（agent 自动重试或用户点了重试）后，旧失败回执剥掉
+ * retryable——不再显示「再试一次」，与停止回执一致，重试交给进行中的那次。
  * 同一文档出现更新的 slides_draft 调用后，旧调用即视为被顶掉（不重复展示）。
  */
 export function selectSlidesTasks(entries: SlidesTaskEntry[], maxFullCards: number = MAX_FULL_CARDS): SlidesTaskSelection {
@@ -251,6 +265,12 @@ export function selectSlidesTasks(entries: SlidesTaskEntry[], maxFullCards: numb
     seen.add(key)
     return true
   })
+  const alreadyRetried = (entry: SlidesTaskEntry): boolean =>
+    entries.some((other) => other !== entry
+      && Date.parse(other.tool.startedAt) > Date.parse(entry.tool.startedAt))
+  const marked = kept.map((entry) => entry.progress.retryable === true && alreadyRetried(entry)
+    ? { ...entry, progress: { ...entry.progress, retryable: false } }
+    : entry)
   const isCompleted = (entry: SlidesTaskEntry): boolean => entry.progress.stage === 'page_applied'
     && entry.progress.completed !== false
     && entry.tool.status === 'completed'
@@ -259,10 +279,10 @@ export function selectSlidesTasks(entries: SlidesTaskEntry[], maxFullCards: numb
     || entry.tool.status === 'error'
   const isReceipt = (entry: SlidesTaskEntry): boolean => isCompleted(entry) || isStopped(entry) || isFailed(entry)
   // 等待态 + 仍在跑的任务保留成完整卡（并行任务不能只剩最新一张）。
-  const actionable = kept.filter((entry) => !isReceipt(entry))
+  const actionable = marked.filter((entry) => !isReceipt(entry))
   const shownFull = actionable.slice(0, Math.max(1, maxFullCards))
-  const receipts = kept.filter(isReceipt).slice(0, MAX_RECEIPTS)
+  const receipts = marked.filter(isReceipt).slice(0, MAX_RECEIPTS)
   const foldedCount = (actionable.length - shownFull.length)
-    + Math.max(0, kept.filter(isReceipt).length - MAX_RECEIPTS)
+    + Math.max(0, marked.filter(isReceipt).length - MAX_RECEIPTS)
   return { primary: shownFull[0] ?? null, waiting: shownFull.slice(1), receipts, foldedCount }
 }

@@ -604,7 +604,6 @@ export interface EditorDispatchInput {
   /** 整本 deck 页数；批量模式用于保持全局构图节奏。 */
   pageCount?: number;
   instruction: string;
-  roomId: string;
   title: string;
   draftPages: EditorDraftPage[];
   audience?: string;
@@ -620,7 +619,6 @@ export interface EditorDispatchInput {
 export function buildEditorInput(input: EditorDispatchInput): Record<string, unknown> {
   return {
     instruction: input.instruction,
-    roomId: input.roomId,
     title: input.title.slice(0, 120),
     draftPages: input.draftPages,
     ...(typeof input.pageOffset === "number" ? { pageOffset: input.pageOffset } : {}),

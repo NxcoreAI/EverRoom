@@ -2051,6 +2051,31 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   gap: 6px;
 }
 
+.agent-slides-page-count {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--slides-border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.agent-slides-page-count select {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-slides-page-count-note {
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.7;
+}
+
 .agent-slides-action {
   display: inline-flex;
   min-height: 28px;

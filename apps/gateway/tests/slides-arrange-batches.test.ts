@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SlidesProgressPage } from "../src/modules/subagents/slides-draft-doc.js";
 import {
@@ -7,6 +7,7 @@ import {
   arrangePageIds,
   mergeArrangeBatchPlans,
   planArrangeBatches,
+  runArrangeBatches,
   validateArrangeBatchPlan,
   type ArrangeBatch,
 } from "../src/modules/subagents/slides-arrange-batches.js";
@@ -172,8 +173,8 @@ describe("mergeArrangeBatchPlans（确定性合并）", () => {
 });
 
 describe("arrangeBatchCheckpointKey", () => {
+  // 去 Room：断点指纹不再含 roomId（单工作区，草稿 id 全局唯一）。
   const base = {
-    roomId: "room-1",
     draftDocumentId: "doc-1",
     instruction: "做一份汇报",
     sourcesHash: "hash-a",
@@ -187,5 +188,61 @@ describe("arrangeBatchCheckpointKey", () => {
     expect(arrangeBatchCheckpointKey(base)).not.toBe(arrangeBatchCheckpointKey({ ...base, deckStyle: { palette: "dark" } }));
     expect(arrangeBatchCheckpointKey({ ...base, deckStyle: { a: 1, b: 2 } }))
       .toBe(arrangeBatchCheckpointKey({ ...base, deckStyle: { b: 2, a: 1 } }));
+  });
+});
+
+describe("runArrangeBatches（失败重试策略）", () => {
+  const pages = pagesOf(4);
+  const sources = sourcesOf(pages);
+  const batches = planArrangeBatches({ pages, sources, batchSize: 4 });
+
+  it("retries transient failures up to attempts", async () => {
+    const run = vi.fn(async () => ({
+      ok: false as const,
+      status: "failed",
+      errorCode: "planner_timeout",
+    }));
+    const outcome = await runArrangeBatches({ batches, run, attempts: 2, concurrency: 1 });
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(outcome.failures).toHaveLength(1);
+    expect(outcome.failures[0]).toMatchObject({
+      status: "failed",
+      errorCode: "planner_timeout",
+    });
+  });
+
+  it("does not re-run a batch whose failure is deterministic (retryable=false)", async () => {
+    const run = vi.fn(async () => ({
+      ok: false as const,
+      status: "failed",
+      errorCode: "slides_semantic_content_invalid",
+      errorMessage: "第 2 页: 指标数值或单位不符来源",
+      retryable: false,
+    }));
+    const outcome = await runArrangeBatches({ batches, run, attempts: 2, concurrency: 1 });
+    // 语义契约失败不是瞬时错误：整批再排一次只会复现同一组缺陷。
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(outcome.failures).toHaveLength(1);
+    expect(outcome.failures[0]).toMatchObject({
+      errorCode: "slides_semantic_content_invalid",
+      errorMessage: "第 2 页: 指标数值或单位不符来源",
+    });
+  });
+
+  it("keeps processing other batches after a non-retryable failure", async () => {
+    const morePages = pagesOf(9);
+    const moreSources = sourcesOf(morePages);
+    const moreBatches = planArrangeBatches({ pages: morePages, sources: moreSources, batchSize: 8 });
+    const calls: number[] = [];
+    const run = vi.fn(async (batch: ArrangeBatch) => {
+      calls.push(batch.index);
+      return batch.index === 0
+        ? { ok: false as const, status: "failed", errorCode: "slides_semantic_content_invalid", retryable: false }
+        : { ok: true as const, plan: { pages: [] } };
+    });
+    const outcome = await runArrangeBatches({ batches: moreBatches, run, attempts: 2, concurrency: 1 });
+    expect(calls).toEqual([0, 1]);
+    expect(outcome.failures).toHaveLength(1);
+    expect(outcome.results.has(1)).toBe(true);
   });
 });

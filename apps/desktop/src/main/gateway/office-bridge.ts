@@ -7,11 +7,11 @@ import type { FileImportAcceptedDto } from '../../shared/ingest'
 import type { OfficeAgentFileEvent, OfficeAgentFileFormat } from '../../shared/office'
 import { officePreviewKindForFileName } from '../../shared/sources'
 import type { FilesGatewayBridge } from './files-gateway-bridge'
-import type {
+import type { AgentArtifactFailureReason,
   SlidesEditArtifactOutcome,
   SlidesEditArtifactRequest,
 } from '../office/office-preview-registry'
-import { generateDocxFromHtml, generatePptxFromPageSpecs, generateThesisDocx, generateXlsxFromSheets, generateMarkdownFromText, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
+import { generateDocxFromHtml, generatePptxFromPageSpecs, generatePptxFromAgentScript, generateThesisDocx, generateXlsxFromSheets, describeThesisDocxBlocks, type DocxGenerationPhase } from '../office/office-generation'
 import type { ThesisBindingSpecPayload, ThesisFormatCardPayload } from '../office/office-runtime'
 import { createEverofficeMaterialResolver } from '../office/office-material-resolver'
 import type { AgentSheetInput } from '../office/xlsx-generation'
@@ -19,7 +19,7 @@ import type { AgentSheetInput } from '../office/xlsx-generation'
 // HTML 正文 / 页 spec / 表格 JSON 远大于通知，放宽到 2MB；超过视为模型输出异常。
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
-export type OfficeGenerateFormat = 'docx' | 'pptx' | 'xlsx' | 'md'
+export type OfficeGenerateFormat = 'docx' | 'pptx' | 'xlsx'
 
 export interface OfficeGenerateRequest {
   title: string
@@ -29,10 +29,12 @@ export interface OfficeGenerateRequest {
   html?: string | null
   /** pptx：每页一个 PageSpec JSON 字符串（1280×720 画布）。 */
   pages?: string[] | null
+  /** pptx（pptx skill 路径）：整册 pptxgenjs 构建脚本，vm 沙箱执行，优先于 pages。 */
+  script?: string | null
+  /** pptx：skill 的 apply_theme.js 源码，网关从 agents 目录带下（单一事实源）。 */
+  applyThemeJs?: string | null
   /** xlsx：sheets→rows 结构。 */
   sheets?: AgentSheetInput[] | null
-  /** md：Markdown 正文（纯文本落盘，无需渲染引擎）。 */
-  markdown?: string | null
   roomId: string | null
   /** 会话所属工作区：产物入库归属（资料库/产物库按空间隔离）。 */
   workspaceId?: string | null
@@ -48,13 +50,17 @@ export interface OfficeCompleteRequest {
   title: string
   originalName?: string
   roomId?: string | null
-  /** 产物归属工作区（done 广播带上，渲染层按空间定向自动展示）。 */
-  workspaceId?: string | null
   completed: boolean
   appliedPages: number
   totalPages: number
   /** 失败/退化页 0 起页码。 */
   failedPages?: number[]
+}
+
+/** 「产物未以可编辑会话打开」：未打开（not_open）或开着只读预览（not_editable）——都可经 open-edit 重建可编辑实例自愈。 */
+function notEditableSessionReason(outcome: SlidesEditArtifactOutcome): 'not_open' | 'not_editable' | null {
+  if (outcome.ok) return null
+  return outcome.reason === 'not_open' || outcome.reason === 'not_editable' ? outcome.reason : null
 }
 
 /** Agent 编辑已打开 slides 产物的请求（gateway 工具 → /v1/office-edit）。 */
@@ -75,41 +81,27 @@ export interface OfficeApplyBytesRequest {
   expectedContentHash: string
 }
 
-/** Agent 驱动活 Word/Excel/PDF 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
+/** Agent 驱动活 Word/Excel 的宿主执行器请求（gateway 工具 → /v1/office-agent-tools）。 */
 export interface OfficeAgentToolsRequest {
-  /** docx = Word 活文档；spreadsheet = Excel 活工作簿；pdf = PDF 文档。 */
+  /** docx = Word 活文档；spreadsheet = Excel 活工作簿；pdf = PDF 活文档。 */
   kind: 'docx' | 'spreadsheet' | 'pdf'
   /** read = describe（上下文+词汇表+指南）；apply = 执行工具调用。 */
   mode: 'read' | 'apply'
   fileId: string
-  /** apply：docs/sheets/pdf AI 工具调用（id/name/input）。 */
+  /** apply：docs/sheets AI 工具调用（id/name/input）。 */
   calls?: Array<{ id: string; name: string; input: Record<string, unknown> }>
-  /** 后台 Word/Excel/PDF 会话回填版本链时的归属（跟当前 Run 的 Room/工作区走）。 */
+  /** 后台 Word 会话回填版本链时的归属（跟当前 Run 的 Room/工作区走）。 */
   roomId?: string | null
   workspaceId?: string | null
 }
 
-/** 后台 Word/Excel/PDF 编辑会话可能返回的可诊断失败原因（不能一律折叠成 not_open）。 */
-type OfficeAgentToolsFailureReason =
-  | 'not_open'
-  | 'not_editable'
-  | 'unsaved'
-  | 'not_found'
-  | 'not_docx'
-  | 'not_xlsx'
-  | 'not_pdf'
-  | 'too_large'
-  | 'encrypted'
-  | 'open_failed'
-  | 'save_failed'
-  | 'error'
-  /** 运行时能力缺失（老 genoffice 构建），调用方走外部回退路径。 */
-  | 'unsupported'
+/** 后台 Word/Excel/PDF 编辑会话可能返回的可诊断失败原因（统一取 registry 的全集）。 */
+type OfficeAgentToolsFailureReason = AgentArtifactFailureReason
 
 function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
   if (!value || typeof value !== 'object') return false
   const input = value as Partial<OfficeAgentToolsRequest>
-  if (input.kind !== 'docx' && input.kind !== 'spreadsheet' && input.kind !== 'pdf') return false
+  if (input.kind !== 'docx' && input.kind !== 'spreadsheet') return false
   if (input.mode !== 'read' && input.mode !== 'apply') return false
   if (typeof input.fileId !== 'string' || !input.fileId.trim()) return false
   if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
@@ -128,8 +120,7 @@ function validAgentToolsBody(value: unknown): value is OfficeAgentToolsRequest {
 
 /**
  * Agent 导出 Word 为 PDF（gateway word_export_pdf → /v1/office-export-pdf）。
- * 桌面端用内置渲染引擎（genoffice，老运行时回退 LibreOffice）把 catalog 里
- * 的 docx 转成 PDF，再作为新文件入库。
+ * 桌面端用 LibreOffice 把 catalog 里的 docx 转成 PDF，再作为新文件入库。
  */
 export interface OfficeExportPdfRequest {
   fileId: string
@@ -208,8 +199,8 @@ function validApplyBytesBody(value: unknown): value is OfficeApplyBytesRequest {
     && typeof input.expectedContentHash === 'string' && /^[a-f0-9]{64}$/i.test(input.expectedContentHash)
 }
 
-const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx', md: '.md' }
-const FORMAT_SOURCE: Record<OfficeGenerateFormat, string> = { docx: 'word', pptx: 'pptx', xlsx: 'xlsx', md: 'markdown' }
+const FORMAT_EXT: Record<OfficeGenerateFormat, string> = { docx: '.docx', pptx: '.pptx', xlsx: '.xlsx' }
+const FORMAT_SOURCE: Record<OfficeGenerateFormat, string> = { docx: 'word', pptx: 'pptx', xlsx: 'xlsx' }
 
 const KIND_LABEL: Record<string, string> = { docx: 'Word', slides: 'PPT', spreadsheet: 'Excel', pdf: 'PDF' }
 
@@ -240,17 +231,21 @@ function validBody(value: unknown): value is OfficeGenerateRequest {
   const input = value as Partial<OfficeGenerateRequest>
   if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
   const format: OfficeGenerateFormat = input.format ?? 'docx'
-  if (format !== 'docx' && format !== 'pptx' && format !== 'xlsx' && format !== 'md') return false
+  if (format !== 'docx' && format !== 'pptx' && format !== 'xlsx') return false
   if (format === 'docx' && !(typeof input.html === 'string' && input.html.length > 0)) return false
   if (format === 'pptx') {
-    if (!Array.isArray(input.pages) || input.pages.length === 0) return false
-    if (!input.pages.every((page) => typeof page === 'string' && page.length > 0)) return false
+    // pptx skill 脚本路径（优先）或旧 PageSpec 路径，二者必居其一。
+    if (typeof input.script === 'string' && input.script.length > 0) {
+      if (input.script.length > 1_000_000) return false
+    } else {
+      if (!Array.isArray(input.pages) || input.pages.length === 0) return false
+      if (!input.pages.every((page) => typeof page === 'string' && page.length > 0)) return false
+    }
   }
   if (format === 'xlsx') {
     if (!Array.isArray(input.sheets) || input.sheets.length === 0) return false
     if (!input.sheets.every((sheet) => sheet && typeof sheet === 'object' && Array.isArray(sheet.rows))) return false
   }
-  if (format === 'md' && !(typeof input.markdown === 'string' && input.markdown.trim().length > 0)) return false
   return (input.roomId == null || typeof input.roomId === 'string')
     && (input.workspaceId == null || typeof input.workspaceId === 'string')
     && (input.fileName == null || typeof input.fileName === 'string')
@@ -265,7 +260,6 @@ function validCompleteBody(value: unknown): value is OfficeCompleteRequest {
   if (!(typeof input.title === 'string' && input.title.trim().length > 0 && input.title.trim().length <= 120)) return false
   if (input.originalName !== undefined && typeof input.originalName !== 'string') return false
   if (input.roomId !== undefined && input.roomId !== null && typeof input.roomId !== 'string') return false
-  if (input.workspaceId !== undefined && input.workspaceId !== null && typeof input.workspaceId !== 'string') return false
   if (typeof input.completed !== 'boolean') return false
   const appliedPages = input.appliedPages
   if (typeof appliedPages !== 'number' || !Number.isInteger(appliedPages) || appliedPages < 0) return false
@@ -474,7 +468,7 @@ export class OfficeBridgeServer {
    */
   private async agentToolsRoute(req: OfficeAgentToolsRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const agentTools = this.agentTools()
-    if (!agentTools) return { status: 503, body: { message: 'EverOffice Office 宿主执行器尚未就绪' } }
+    if (!agentTools) return { status: 503, body: { message: 'EverRoom Office 宿主执行器尚未就绪' } }
     let outcome = await agentTools(req)
     // 旧运行时兜底（Word/Excel 都已经是 headless 优先）：仅当 registry 无法
     // 拉起隐藏会话、仍返回 not_open 时，才按旧路径请渲染端自动打开页签重试。
@@ -496,7 +490,7 @@ export class OfficeBridgeServer {
         outcome.reason === 'unsaved'
           ? `该${kindLabel}文件有未保存的修改，为避免覆盖用户输入已拒绝执行。请先让用户保存（或等自动保存完成）再重试。${openSummary}`
           : outcome.reason === 'not_editable'
-            ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在产物页中重新以可编辑方式打开后再试。${openSummary}`
+            ? `该${kindLabel}文件当前不是以可编辑方式打开的，无法应用编辑。请在 Room 产物库中重新以可编辑方式打开后再试。${openSummary}`
             : outcome.reason === 'not_found'
               ? `文件不在文件库中（可能仍在导入或已被删除）。${detail}`
               : outcome.reason === 'encrypted'
@@ -504,7 +498,7 @@ export class OfficeBridgeServer {
                 : outcome.reason === 'too_large'
                   ? `${detail || '文件过大，超出后台编辑上限。'}`
                   : outcome.reason === 'not_docx' || outcome.reason === 'not_xlsx' || outcome.reason === 'open_failed'
-                    ? `无法在后台打开该${kindLabel}文件。${detail}`
+                    ? `无法在后台打开该${kindLabel}文件。${detail}如只需读取内容，可改用 file_read（确定性解析，不依赖编辑器）。`
                     : req.fileId === 'active'
                       ? `当前没有已打开的${kindLabel}文件。若知道目标文件的 fileEntryId，把它作为 fileId 传入即可后台编辑；不知道时可先用 file_search 按文件名查找。${openSummary}`
                       : `fileId 对应的${kindLabel}文件未能打开。请核对 fileEntryId 后重试。${openSummary}${detail}`
@@ -515,13 +509,13 @@ export class OfficeBridgeServer {
 
   /**
    * /v1/office-export-pdf：任意 Word → PDF 并作为新文件入库。
-   * 桌面端做进程内渲染（或 LibreOffice 回退）与文件库导入；网关只转发 fileId/归属。
+   * 桌面端做 LibreOffice 转换与文件库导入；网关只转发 fileId/归属。
    */
   private async exportPdfRoute(
     req: OfficeExportPdfRequest,
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const exportPdf = this.exportPdfDoc()
-    if (!exportPdf) return { status: 503, body: { message: 'EverOffice Word→PDF 导出尚未就绪' } }
+    if (!exportPdf) return { status: 503, body: { message: 'EverRoom Word→PDF 导出尚未就绪' } }
     const outcome = await exportPdf({
       ...req,
       fileId: req.fileId.trim(),
@@ -535,7 +529,7 @@ export class OfficeBridgeServer {
 
   private async applyBytes(req: OfficeApplyBytesRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const apply = this.applyAgentBytes()
-    if (!apply) return { status: 503, body: { message: 'EverOffice Office 预览会话尚未就绪' } }
+    if (!apply) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
     const bytes = Buffer.from(req.bytesBase64, 'base64')
     if (bytes.length === 0) return { status: 422, body: { message: 'bytesBase64 required' } }
     const result = await apply(req.fileId.trim(), bytes, req.expectedContentHash)
@@ -556,7 +550,7 @@ export class OfficeBridgeServer {
   /**
    * /v1/office-reformat：论文装订。describe = 源 docx → 块大纲（装订映射的
    * 区间事实源）；build = 源 docx + 格式卡 + 装订规格 → 装订版 docx，走
-   * file-imports 入库（版本链幂等）并广播 done（渲染层 toast + 产物库刷新）。
+   * file-imports 入库（版本链幂等）并广播 done（渲染层 toast + 文件库刷新）。
    */
   private async reformat(req: OfficeReformatRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     try {
@@ -568,7 +562,7 @@ export class OfficeBridgeServer {
       }
       if (req.action === 'build') {
         const files = this.filesBridge()
-        if (!files) return { status: 503, body: { message: 'EverOffice 文件服务尚未就绪' } }
+        if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
         if (!req.docxBase64 || !req.formatCard || !req.bindingSpec || !req.sourceFileName) {
           return { status: 422, body: { message: 'docxBase64/formatCard/bindingSpec/sourceFileName required' } }
         }
@@ -666,7 +660,7 @@ export class OfficeBridgeServer {
 
   private async edit(req: OfficeEditRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const slidesEdit = this.slidesEdit()
-    if (!slidesEdit) return { status: 503, body: { message: 'EverOffice Office 编辑会话尚未就绪' } }
+    if (!slidesEdit) return { status: 503, body: { message: 'EverRoom Office 编辑会话尚未就绪' } }
     const artifactReq: SlidesEditArtifactRequest =
       req.mode === 'read'
         ? { mode: 'read' }
@@ -676,24 +670,32 @@ export class OfficeBridgeServer {
     let outcome: SlidesEditArtifactOutcome
     try {
       outcome = await slidesEdit(req.fileId, artifactReq)
-      // 重启后产物未打开：显式 fileEntryId 先请渲染端以可编辑方式打开再重试
-      //（每次调用自带 8s 等待窗口，外层再兜到 30s 覆盖 genoffice 冷启动 + 大文件解包）。
-      if (!outcome.ok && outcome.reason === 'not_open' && req.fileId !== 'active') {
-        console.info('office-bridge: office-edit 命中 not_open，尝试请渲染端自动打开', { fileId: req.fileId })
+      // 重启后产物未打开 / 开着的是只读预览：显式 fileEntryId 先请渲染端以可编辑方式
+      // 打开再重试（open-edit 会原地重建只读实例为可编辑；每次调用自带 8s 等待窗口，
+      // 外层再兜到 150s：大 deck（实测 41MB）从视图打开到 genoffice session 就绪要
+      // 30s+，原 30s 窗口在就绪前 ~ms 级到期，把可恢复的竞态打成 422 not_open）。
+      const reopenReason = notEditableSessionReason(outcome)
+      if (reopenReason && req.fileId !== 'active') {
+        console.info('office-bridge: office-edit 命中未以可编辑会话打开，尝试请渲染端自动打开', {
+          fileId: req.fileId,
+          reason: reopenReason,
+        })
         const opened = await this.requestRendererOpen(req.fileId)
         if (!opened) {
           // requestRendererOpen 内部已带具体跳过原因，这里补一条调用方视角的结论日志。
-          console.warn('office-bridge: office-edit 自动打开未生效（requestRendererOpen 返回 false），保持 not_open 报错', {
+          console.warn('office-bridge: office-edit 自动打开未生效（requestRendererOpen 返回 false），保持报错', {
             fileId: req.fileId,
+            reason: reopenReason,
           })
         } else {
           const startedAt = Date.now()
-          const deadline = startedAt + 30_000
+          const deadline = startedAt + 150_000
           let attempts = 0
           do {
             outcome = await slidesEdit(req.fileId, artifactReq)
             attempts += 1
-          } while (!outcome.ok && outcome.reason === 'not_open' && Date.now() < deadline)
+            if (notEditableSessionReason(outcome)) await new Promise((resolve) => setTimeout(resolve, 500))
+          } while (notEditableSessionReason(outcome) && Date.now() < deadline)
           console.warn('office-bridge: office-edit 自动打开重试结束', {
             fileId: req.fileId,
             ok: outcome.ok,
@@ -709,19 +711,21 @@ export class OfficeBridgeServer {
     }
     if (!outcome.ok) {
       const openSummary = describeOpenInstances(outcome.open)
-      const message =
-        outcome.reason === 'not_editable'
-          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在产物页中重新以可编辑方式打开后再试。${openSummary}`
+      // 后台隐藏会话的失败原因（文件不存在/加密/超限/就绪超时）优先透传，不被通用文案掩盖。
+      const message = outcome.message
+        ? `${outcome.message}${openSummary}`
+        : outcome.reason === 'not_editable'
+          ? `该 PPT 当前不是以可编辑的 PPT 产物打开的，无法应用编辑。请在文件库中重新以可编辑方式打开后再试。${openSummary}`
           : req.fileId === 'active'
-            ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在产物库打开该文件。${openSummary}`
-            : `fileId 对应的 PPT 未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在产物库打开该文件。${openSummary}`
+            ? `当前没有已打开的 PPT。若知道目标 PPT 的 fileEntryId（此前生成/编辑结果里返回过），把它作为 fileId 传入即可自动打开并编辑；不知道时请用户先在文件库打开该文件。${openSummary}`
+            : `fileId 对应的 PPT 未能打开（文件可能不存在或不是 Office 产物）。请核对 fileEntryId 后重试，或请用户先在文件库打开该文件。${openSummary}`
       return { status: 422, body: { code: outcome.reason, message, open: outcome.open ?? [] } }
     }
     return { status: 200, body: { data: outcome.info ?? outcome.result ?? {} } }
   }
 
   /**
-   * 显式 fileEntryId 未打开时的自动打开：核实产物库条目是 Office 产物后，
+   * 显式 fileEntryId 未打开时的自动打开：核实文件库条目是 Office 产物后，
    * 广播 open-edit 让渲染端以可编辑方式打开（顶栏出标签，编辑实时可见）。
    * 渲染层打开失败/文件不存在时返回 false，保持原 not_open 报错路径。
    *
@@ -797,7 +801,7 @@ export class OfficeBridgeServer {
   /** /v1/office-render-page：视觉复检——已打开 slides 产物的一页 → 1x PNG base64。 */
   private async renderPage(req: OfficeRenderPageRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const render = this.slidesRenderPage()
-    if (!render) return { status: 503, body: { message: 'EverOffice Office 预览会话尚未就绪' } }
+    if (!render) return { status: 503, body: { message: 'EverRoom Office 预览会话尚未就绪' } }
     const outcome = await render(req.fileId.trim(), req.slideIndex)
     if (!outcome.ok) return { status: 422, body: { message: outcome.error } }
     return { status: 200, body: { data: { pngBase64: outcome.pngBase64 } } }
@@ -828,7 +832,6 @@ export class OfficeBridgeServer {
       fileId: req.fileId,
       ...(req.originalName ? { originalName: req.originalName } : {}),
       roomId: req.roomId ?? null,
-      ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
       partial: !req.completed,
       appliedPages: req.appliedPages,
       totalPages: req.totalPages,
@@ -839,7 +842,7 @@ export class OfficeBridgeServer {
 
   private async generate(parsed: OfficeGenerateRequest): Promise<{ status: number; body: Record<string, unknown> }> {
     const files = this.filesBridge()
-    if (!files) return { status: 503, body: { message: 'EverOffice 文件服务尚未就绪' } }
+    if (!files) return { status: 503, body: { message: 'EverRoom 文件服务尚未就绪' } }
 
     try {
       const format: OfficeGenerateFormat = parsed.format ?? 'docx'
@@ -854,10 +857,14 @@ export class OfficeBridgeServer {
         format === 'docx'
           ? await generateDocxFromHtml({ title: parsed.title, html: parsed.html! }, broadcastPhase)
           : format === 'pptx'
-            ? await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
-            : format === 'xlsx'
-              ? await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
-              : await generateMarkdownFromText({ title: parsed.title, markdown: parsed.markdown! }, broadcastPhase)
+            ? parsed.script != null
+              ? await generatePptxFromAgentScript(
+                { title: parsed.title, script: parsed.script, applyThemeJs: parsed.applyThemeJs },
+                broadcastPhase,
+                imageResolver.resolveMaterial,
+              )
+              : await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
+            : await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)
       const originalName = parsed.fileName?.trim() || `${generated.title}${FORMAT_EXT[format]}`
       this.broadcast({ type: 'phase', title: parsed.title, phase: 'importing', format })
       let accepted: FileImportAcceptedDto
@@ -872,7 +879,7 @@ export class OfficeBridgeServer {
         })
       } catch (error) {
         // 入库失败保留临时文件供人工恢复（docx 在 defaultSaveDir，其余在系统 temp）。
-        const kindLabel = format === 'docx' ? 'Word' : format === 'pptx' ? 'PPT' : format === 'xlsx' ? 'Excel' : 'Markdown'
+        const kindLabel = format === 'docx' ? 'Word' : format === 'pptx' ? 'PPT' : 'Excel'
         throw new Error(
           `${kindLabel} 已生成（${generated.filePath}）但入库失败：${error instanceof Error ? error.message : String(error)}`,
         )
@@ -886,7 +893,6 @@ export class OfficeBridgeServer {
           fileId: accepted.fileEntryId,
           originalName,
           roomId: parsed.roomId,
-          ...(parsed.workspaceId ? { workspaceId: parsed.workspaceId } : {}),
         })
       }
       return {
@@ -899,10 +905,12 @@ export class OfficeBridgeServer {
             contentHash: accepted.contentHash,
             blobDeduped: accepted.blobDeduped,
             versionDeduped: accepted.versionDeduped,
-            // Room 投影由路由决策异步完成（router 关闭时会降级不进 Room），
-            // 此字段只表达「本次是否请求了 Room 路由」。
+            // Room 已删除：roomRequested 仅表达调用方是否传了 scope，字段保留兼容旧消费方。
             roomRequested: Boolean(parsed.roomId),
             originalName,
+            ...((generated as { warnings?: string[] }).warnings?.length
+              ? { warnings: (generated as unknown as { warnings: string[] }).warnings }
+              : {}),
           },
         },
       }

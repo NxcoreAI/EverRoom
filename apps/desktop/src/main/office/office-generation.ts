@@ -1,3 +1,4 @@
+import { runAgentPptxScript } from './agent-pptx-script'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -922,4 +923,28 @@ export async function generateMarkdownFromText(
   const bytes = Buffer.from(input.markdown, 'utf8')
   onPhase?.('saved')
   return { filePath: await writeGeneratedTempFile(bytes, '.md'), bytes, title }
+}
+
+/**
+ * pptx skill 脚本路径：agent 写的整册 pptxgenjs 脚本经 vm 沙箱执行产出 deck.pptx，
+ * 见 agent-pptx-script.ts。applyThemeJs 由网关从 agents 目录带下来（单一事实源）。
+ */
+export async function generatePptxFromAgentScript(
+  input: { title: string; script: string; applyThemeJs?: string | null },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+  resolveMaterial?: GenOfficeMaterialResolver['resolveMaterial'],
+): Promise<GeneratedPptx> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('演示标题不能为空')
+  if (!input.script.trim()) throw new Error('生成脚本不能为空')
+  onPhase?.('rendering')
+  const run = await runAgentPptxScript(input.script, {
+    ...(input.applyThemeJs ? { applyThemeJs: input.applyThemeJs } : {}),
+    resolveMaterial: resolveMaterial ?? null,
+  })
+  if (!run.ok) {
+    throw new Error(`PPT 脚本生成失败：${run.error}${run.consoleTail.length > 0 ? `；脚本输出尾部：${run.consoleTail.slice(-5).join(' | ')}` : ''}`)
+  }
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(run.bytes, '.pptx'), bytes: run.bytes, title, warnings: run.warnings }
 }
