@@ -260,8 +260,14 @@ function copySlidesRuntime() {
   }
 }
 
-function copyPdfRuntime() {
-  const target = join(stagingRoot, 'pdf')
+/** 把 pdf 文字编辑引擎的 wasm 复制进 runtime/wasm；候选路径全缺失则硬失败（静默缺件=运行期 ENOENT）。 */
+function cpPdfWasmAsset(fileName, candidates) {
+  const source = candidates.find((path) => existsSync(path))
+  if (!source) fail(`PDF wasm asset source missing: ${fileName} (tried ${candidates.join(', ')})`)
+  cpSync(source, join(stagingRoot, 'wasm', fileName))
+}
+
+function copyPdfRuntime() {  const target = join(stagingRoot, 'pdf')
   cpSync(join(pdfOutput, 'main'), join(target, 'main'), { recursive: true })
   cpSync(join(pdfOutput, 'preload'), join(target, 'preload'), { recursive: true })
   // Renderer ships the pdfjs worker asset plus the static cmaps/standard_fonts
@@ -270,6 +276,20 @@ function copyPdfRuntime() {
   rmSync(join(target, 'main', 'index.js'), { force: true })
   writeFileSync(join(target, 'main', 'package.json'), '{\n  "type": "commonjs"\n}\n')
   assertEmbedBundle(join(target, 'main'))
+  // PDF 文字编辑引擎 wasm：打包后的 main 在 runtime 目录里 resolve 不到
+  // @embedpdf/pdfium（runtime 不含 node_modules），genoffice 自家 shell 靠
+  // electron-builder extraResources 把它放进 Resources/wasm —— EverRoom 桌面
+  // 端没有对应条目，缺失时文字编辑保存前的 verify（pdf:validate-text-edits）
+  // 直接 ENOENT，Agent 改 PDF 一律报「修改已应用但未落盘」。随 runtime 带走，
+  // wasm-path 先探测 runtime/wasm，再走原有 resourcesPath 回退。
+  mkdirSync(join(stagingRoot, 'wasm'), { recursive: true })
+  cpPdfWasmAsset('pdfium.wasm', [
+    join(sourceRoot, 'node_modules', '@embedpdf', 'pdfium', 'dist', 'pdfium.wasm'),
+  ])
+  cpPdfWasmAsset('hb-subset.wasm', [
+    join(pdfRoot, 'node_modules', 'harfbuzzjs', 'hb-subset.wasm'),
+    join(sourceRoot, 'node_modules', 'harfbuzzjs', 'hb-subset.wasm'),
+  ])
   // The AI panel is define-folded out of embed renderer builds; delete any
   // AiPanel chunk defensively (docs runtime does the same for its panel).
   for (const path of filesUnder(join(target, 'renderer', 'assets'))) {
