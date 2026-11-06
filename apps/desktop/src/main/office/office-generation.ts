@@ -933,6 +933,7 @@ export async function generatePptxFromAgentScript(
   input: { title: string; script: string; applyThemeJs?: string | null },
   onPhase?: (phase: DocxGenerationPhase) => void,
   resolveMaterial?: GenOfficeMaterialResolver['resolveMaterial'],
+  onSlide?: (slideCount: number) => void,
 ): Promise<GeneratedPptx> {
   const title = input.title.trim().slice(0, 120)
   if (!title) throw new Error('演示标题不能为空')
@@ -941,6 +942,7 @@ export async function generatePptxFromAgentScript(
   const run = await runAgentPptxScript(input.script, {
     ...(input.applyThemeJs ? { applyThemeJs: input.applyThemeJs } : {}),
     resolveMaterial: resolveMaterial ?? null,
+    ...(onSlide ? { onSlide } : {}),
   })
   if (!run.ok) {
     throw new Error(`PPT 脚本生成失败：${run.error}${run.consoleTail.length > 0 ? `；脚本输出尾部：${run.consoleTail.slice(-5).join(' | ')}` : ''}`)

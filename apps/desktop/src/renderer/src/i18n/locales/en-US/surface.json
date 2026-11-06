@@ -938,5 +938,13 @@
   "settings.navigationPlan": "Plan & Credits",
   "plans.perMonth": "mo",
   "settings.planOverviewNoPurchase": "No purchased credits yet",
-  "settings.planOverviewBonus": "Signup bonus"
+  "settings.planOverviewBonus": "Signup bonus",
+  "agentChat.cardConfirmTitle": "Confirm the plan",
+  "agentChat.cardQuestionTitle": "AI needs your answer",
+  "agentChat.cardConfirm": "Confirm",
+  "agentChat.cardCancel": "Cancel",
+  "agentChat.cardSubmit": "Submit answer",
+  "agentChat.cardAnswerPlaceholder": "Type your answer…",
+  "agentChat.cardConfirmFeedbackPlaceholder": "Additional note (optional, sent to the AI when cancelling)…",
+  "agentChat.cardFonts": "Fonts"
 }

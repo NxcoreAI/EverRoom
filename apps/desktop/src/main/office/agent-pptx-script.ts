@@ -34,6 +34,8 @@ export interface AgentPptxScriptOptions {
   /** everroom-material:// 回源；不传则素材一律按占位图处理。 */
   resolveMaterial?: ((url: string) => Promise<{ bytes: Uint8Array; ext: string } | null>) | null
   timeoutMs?: number
+  /** 每新增一页回调（addSlide 计数）：驱动生成进度展示。 */
+  onSlide?: (slideCount: number) => void
 }
 
 export type AgentPptxScriptRun =
@@ -111,7 +113,9 @@ function wrapPptxgen(
   RealPptxgen: unknown,
   deckPath: string,
   writes: Array<Promise<unknown>>,
+  onSlide?: (slideCount: number) => void,
 ): (new () => unknown) & Record<string, unknown> {
+  let slideCount = 0
   const Ctor = RealPptxgen as new () => Record<string, unknown>
   const writeFileTo = (target: Record<string, unknown>, opts?: string | Record<string, unknown>) => {
     const promise = (target.writeFile as (o: Record<string, unknown>) => Promise<unknown>)({
@@ -126,6 +130,14 @@ function wrapPptxgen(
     const instance = new Ctor()
     const proxy = new Proxy(instance, {
       get(target: Record<string, unknown>, prop: string | symbol) {
+        if (prop === 'addSlide') {
+          const original = target[prop as string] as (...args: unknown[]) => unknown
+          return () => {
+            slideCount += 1
+            onSlide?.(slideCount)
+            return original.apply(target)
+          }
+        }
         if (prop === 'writeFile') return (opts?: string | Record<string, unknown>) => writeFileTo(target, opts)
         if (prop === 'write') {
           // write({outputType}) 与 writeFile 同源：统一落 deck.pptx，再按调用方要的形态返回字节。
@@ -170,7 +182,7 @@ export async function runAgentPptxScript(
     let applyTheme: Record<string, unknown> | null = null
     const writes: Array<Promise<unknown>> = []
     const sandboxRequire = (name: string): unknown => {
-      if (name === 'pptxgenjs') return wrapPptxgen(RealPptxgen, deckPath, writes)
+      if (name === 'pptxgenjs') return wrapPptxgen(RealPptxgen, deckPath, writes, options.onSlide)
       if (name === 'pptx/apply_theme.js') {
         if (!options.applyThemeJs) {
           throw new Error('apply_theme 不可用（宿主未提供 pptx/apply_theme.js）：请改用直接 hex 色，不用 SchemeColor/applyTheme')

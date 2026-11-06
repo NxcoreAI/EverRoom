@@ -1592,3 +1592,36 @@ html[data-desktop='darwin'] .op-settings-view-bar {
 .op-settings-view-body > .page {
   flex: 1;
 }
+
+/* Agent 生成进度徽标：pptx 脚本执行期悬浮在主壳顶部，done/error 消失。 */
+.wb-generation-progress {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid #d4dae2;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1);
+  color: #3e4651;
+  font-size: 12.5px;
+  pointer-events: none;
+}
+
+.wb-generation-progress-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2f6fed;
+  animation: wb-generation-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes wb-generation-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}

@@ -3,6 +3,7 @@ import { Check, LoaderCircle, ShieldAlert, Terminal, X } from 'lucide-react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { PendingShellApproval } from './agentShellApprovals'
+import { AgentDecisionCard, type AgentCardResolve } from './AgentDecisionCard'
 
 export function AgentShellApproval({
   approvals,
@@ -11,13 +12,17 @@ export function AgentShellApproval({
 }: {
   approvals: PendingShellApproval[]
   resolvingApprovalIds: ReadonlySet<string>
-  onResolve: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
+  onResolve: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied', feedback?: string, choice?: string, text?: string) => void
 }) {
   const { t } = useLocale()
   const approval = approvals[0]
   if (!approval) return null
 
   const busy = resolvingApprovalIds.has(approval.approvalId)
+  // 通用决策卡（agent_confirm / agent_ask_user）：单独的 UI 分流。
+  if (approval.kind === 'card' && approval.card) {
+    return <AgentDecisionCard approval={approval} busy={busy} onResolve={onResolve as AgentCardResolve} />
+  }
   const queuedCount = approvals.length - 1
   const titleKey = approval.kind === 'edit'
     ? 'surface:agentChat.editApprovalTitle'

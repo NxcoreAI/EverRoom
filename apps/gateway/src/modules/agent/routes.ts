@@ -211,11 +211,25 @@ export function agentRoutes(
               Type.Literal("approved_session"),
               Type.Literal("denied"),
             ]),
+            // 决策卡（kind:"card"）作答：Fastify 默认 AJV removeAdditional 会剥掉
+            // schema 外字段——不声明这两个，choice 到 handler 就没了（404 实测）。
+            choice: Type.Optional(Type.String({ maxLength: 2000 })),
+            text: Type.Optional(Type.String({ maxLength: 4000 })),
           }),
         },
       },
       async (request, reply) => {
         const { decision } = request.body;
+        // 决策卡（confirm/question）：choice/text 是用户在卡片上的作答。
+        const choice = (request.body as { choice?: unknown }).choice;
+        const text = (request.body as { text?: unknown }).text;
+        if (typeof choice === "string" && choice) {
+          const resolved = service.resolveAgentCard(request.params.approvalId, {
+            choice,
+            ...(typeof text === "string" && text ? { text } : {}),
+          });
+          if (resolved) return { approvalId: request.params.approvalId, decision: choice };
+        }
         const result = service.resolveApproval(request.params.approvalId, decision);
         return result ?? reply.code(404).send({ error: "not_found", message: "Approval request not found" });
       },

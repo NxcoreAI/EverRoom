@@ -432,7 +432,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
               workbenchToast(`${item.kind === 'file' ? '文件' : item.kind === 'room' ? '房间' : '对话'}：${item.displayName}`)
             }}
             onOpenSessionLink={() => workbenchToast('会话引用跳转暂未接入工作台')}
-            onResolveApproval={(approvalId, decision, feedback) => void hook.resolveApproval(approvalId, decision, feedback)}
+            onResolveApproval={(approvalId, decision, feedback, choice, text) => void hook.resolveApproval(approvalId, decision, feedback, choice, text)}
             onRetryError={() => hook.reload()}
             onSlidesAction={(prompt) => void hook.sendPrompt(prompt)}
             onRetryPrompt={(prompt, runId) => void hook.sendPrompt(prompt, undefined, null, runId)}

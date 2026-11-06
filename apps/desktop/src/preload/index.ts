@@ -633,7 +633,7 @@ const api: NxcoreDesktopApi = {
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
-    resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
+    resolveApproval: (approvalId, decision, feedback, choice, text) => invoke('agent:resolve-approval', approvalId, decision, feedback, choice, text),
     getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
     setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
     setThinkingLevel: (sessionId, level) => invoke('agent:set-thinking-level', sessionId, level),
