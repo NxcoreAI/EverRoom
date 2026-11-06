@@ -22,5 +22,5 @@ policy:
   allowedCallers: [primary-agent, internal-workflow]
   maxConcurrency: 2
   timeoutSeconds: 600
-  # 素材自取预算（2026-09-03）：研究工具（文档读取/分析/联网）+ skill read + 提交。
-  maxToolCalls: 24
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟兜底。
+  # （本代理 2026-11 已 enabled: false，配置留作恢复参考。）

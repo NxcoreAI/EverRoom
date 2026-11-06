@@ -19,5 +19,5 @@ policy:
   # 4 并发（2026-09-04）：主 Agent 并行投喂多文件 + doc-writer 研究工具也会派发
   # content_analysis，2 槽在并行调用簇下秒满并硬拒（框架无排队）。
   maxConcurrency: 4
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟兜底。
   timeoutSeconds: 180
-  maxToolCalls: 8
