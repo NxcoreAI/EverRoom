@@ -2411,7 +2411,7 @@ async function pickThesisTemplateFromDisk(
   }
 
   const picked = await dialog.showOpenDialog({
-    title: options?.wordOnly ? '选择论文模版（Word）' : '选择论文格式模版',
+    title: options?.wordOnly ? '选择论文模版（Word）' : '选择模版',
     properties: ['openFile'],
     // 产物区「排版工具」只收 Word：管理员模版也多是 .docx，给更窄的选择面降低误选。
     filters: options?.wordOnly
@@ -2720,13 +2720,20 @@ function registerFilesHandlers(
       await bridge.openOriginal(fileId)
       return { openedWith: 'external' as const }
     }
-    return openFileInAppPreview(bridge, fileId, originalName, {
+    const opened = await openFileInAppPreview(bridge, fileId, originalName, {
       ...(contentHash ? { contentHash } : {}),
       ...(options?.editable === true ? { editable: true } : {}),
       ...(typeof options?.roomId === 'string' && options.roomId ? { roomId: options.roomId } : {}),
       ...(typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.focusWindow === true ? { focusWindow: true } : {}),
     })
+    // 没有 DOM 宿主的裸调入口（Agent 对话文件卡、幻灯片成品卡等）直接 openOriginal：
+    // 实例建好后无人激活/上报矩形 → 永远不可见（用户看到「点了没反应」）。这里统一
+    // 补一条预览通知，让工作台开标签接管实例；气泡窗自身的打开幂等（同文件去重），
+    // 多收一次通知也只是无变化的重复 openFile。
+    const request = previewRequestFromOpenResult(opened)
+    if (request) notifyPreviewRequested(request)
+    return opened
   })
   bridge.onImportProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {

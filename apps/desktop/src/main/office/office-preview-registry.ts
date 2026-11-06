@@ -1460,6 +1460,11 @@ export class OfficePreviewRegistry {
 
   /** 激活一个实例并隐藏其余；未知 id 返回 false。 */
   setActive(id: string | null): boolean {
+    // TEMP FIX(2026-11-06)：目标实例已经是当前激活实例时直接返回，不再翻转视图。
+    // 渲染端 NativeEditorHost 的可见性观测会自激重复调用本方法；原来每轮都会
+    // 把全部 view.setActive(false) 再对目标 setActive(true)，表现为预览区持续闪烁，
+    // 且关闭动作被下一次激活立刻覆盖。切换实例与 setActive(null) 的行为保持不变。
+    if (id !== null && this.activeId === id && this.instances.has(id)) return true
     if (id === null) {
       for (const instance of this.instances.values()) instance.view.setActive(false)
       this.activeId = null

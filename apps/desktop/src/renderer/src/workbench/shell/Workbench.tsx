@@ -76,7 +76,15 @@ export function Workbench() {
     const office = window.nxcore?.office
     if (!office?.onPreviewRequest) return
     let disposed = false
+    // 2026-11-06：主进程每次 openOriginal 都会广播一次预览请求，而预览宿主又会
+    // openOriginal，构成 IPC 反馈环。同一实例短时间内只处理一次，合并环里的
+    // 重复广播；用户手动重新打开（间隔 >800ms）不受影响。
+    const lastHandledAt = new Map<string, number>()
     const unsubscribe = office.onPreviewRequest(async (request) => {
+      const now = Date.now()
+      const previous = lastHandledAt.get(request.instanceId)
+      if (previous !== undefined && now - previous < 800) return
+      lastHandledAt.set(request.instanceId, now)
       try {
         const catalog = await window.nxcore?.files?.catalogEntry(request.instanceId)
         const entry = catalog ? catalogToOfficeFile(catalog) : null
