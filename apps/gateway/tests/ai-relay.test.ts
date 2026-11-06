@@ -390,7 +390,7 @@ describe("runtime config relay slot rewrite", () => {
     // 内置 JSON 只声明 model：relay 激活即补齐代理出口与会话令牌，四要素
     // 直接完整（applyRuntimeConfig/inheritPrimaryDefaults 下游继承退化为兜底）。
     expect(slotOf("primary")).toMatchObject({
-      model: "deepseek-v4-flash",
+      model: "deepseek-v4.1-flash",
       baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
       apiKey: "gw-self-token-51",
     });
@@ -497,7 +497,7 @@ describe("runtime config relay plan models", () => {
 
     const snapshot = manager.snapshot(false);
     expect(snapshot.config.primary?.model).toBe("saas-main-x");
-    expect(snapshot.config.background?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.background?.model).toBe("deepseek-v4.1-flash");
     expect(snapshot.config.vlm?.model).toBe("qwen3-vl-flash");
     // 未下发 lite：保持内置未配置态，lite 档不可用。
     expect(snapshot.config.lite).toBeUndefined();
@@ -530,7 +530,7 @@ describe("runtime config relay plan models", () => {
     manager.refresh();
 
     const snapshot = manager.snapshot(false);
-    expect(snapshot.config.primary?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.primary?.model).toBe("deepseek-v4.1-flash");
     expect(snapshot.config.lite).toBeUndefined();
   });
 

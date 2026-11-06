@@ -110,6 +110,8 @@ export interface GenOfficeDocsRuntime {
             blockType?: string
             /** 'queue' = 攒成批注一起发；缺省立即发送。 */
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -297,6 +299,8 @@ export interface GenOfficeSheetsRuntime {
             /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'workbook' = 极简条快捷能力（整簿作用，无选区锚点）。 */
+            scope?: 'workbook'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -410,6 +414,8 @@ export interface GenOfficeSlidesRuntime {
             /** 选区纯文本摘要（≤200 字）。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'page' = 极简条快捷能力（当前页作用，无元素目标）。 */
+            scope?: 'page'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -494,6 +500,8 @@ export interface GenOfficeMarkdownRuntime {
             offset?: number
             /** 'queue' = 攒成批注一起发；缺省立即发送。 */
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -554,6 +562,8 @@ export interface GenOfficePdfRuntime {
             quads: number[][]
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,

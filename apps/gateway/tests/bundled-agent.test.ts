@@ -44,10 +44,14 @@ describe("bundled project Agent", () => {
     expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
       required: expect.arrayContaining(["summary", "facts", "missingFields"]),
     });
-    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页并入 layouter：降思考档、
-    // 不设工具调用硬上限，仅受 timeout/输出预算约束——见 agents/slides-layouter/agent.yaml）。
+    // 仓库内 slides 代理的上下文/预算配置可被注册表解析。
+    // 8ac88033 下线了独立审页代理（slides-reviewer）：审页改由 layouter 看渲染图自审。
+    // layouter 不再设 maxToolCalls（长链路只受 timeoutMs 与输出预算约束），
+    // 这里断言它的新策略形状：reasoning 档位 + 放宽的墙钟。
+    expect(registry.get("slides-reviewer")).toBeNull();
     expect(registry.get("slides-layouter")?.revision.policy.model).toMatchObject({ reasoning: "low" });
-    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls ?? undefined).toBeUndefined();
+    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBeUndefined();
+    expect(registry.get("slides-layouter")?.revision.policy.timeoutMs).toBe(1_800_000);
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;
@@ -206,6 +210,8 @@ describe("bundled project Agent", () => {
       fileVersionId: "fver-student-v1",
       question: "这份文档写了什么？",
     });
+    // normalizeDocumentSummary 的纯文本兜底：非结构化输出不再整体丢成 null，
+    // 而是回填 summary=text 并标记 outputFormat:"text" + unstructured 警告。
     expect(JSON.parse(proseResult.content)).toMatchObject({
       status: "completed",
       // 纯文本（非结构化）解析结果按 normalizeDocumentSummary 语义透传全文并标注 text。
@@ -213,6 +219,7 @@ describe("bundled project Agent", () => {
       facts: null,
       missingFields: null,
       outputFormat: "text",
+      warning: "unstructured_subagent_output",
     });
 
     const invocation = await orchestrator.dispatch({

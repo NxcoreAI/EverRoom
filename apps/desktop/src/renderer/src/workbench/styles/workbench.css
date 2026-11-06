@@ -285,7 +285,13 @@
   color: var(--ui-danger);
   font-size: var(--ui-text-sm);
 }
-.wb-errorbar > span { flex: 1; min-width: 0; }
+.wb-errorbar > span {
+  flex: 1;
+  min-width: 0;
+  /* 错误里可能带 request id 这类无空格长串，必须允许在任意位置断行 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 
 /* ───────────────── 侧栏 ───────────────── */
 

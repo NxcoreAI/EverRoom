@@ -46,7 +46,7 @@ export function describeThesisError(message: string | null | undefined): string 
 
   switch (raw) {
     case 'thesis_format_card_not_found':
-      return '这个工作区还没有可用的论文格式卡。请先点「上传论文模版」（或到资料库把 Word 设为排版模版）并等解析完成（约 1–5 分钟）再排版；模版和要排版的文档必须在同一个工作区。';
+      return '这个工作区还没有可用的论文格式卡。请先点「上传模版」（或到资料库把 Word 设为排版模版）并等解析完成（约 1–5 分钟）再排版；模版和要排版的文档必须在同一个工作区。';
     case 'thesis_template_not_in_workspace':
       return '这份模版不在当前工作区：请把模版上传到该工作区的资料库（或用排版面板里的上传入口），再设为排版模版。';
     case 'thesis_template_file_not_found':

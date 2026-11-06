@@ -58,6 +58,11 @@ export interface OfficeAgentAskEvent {
   excerpt?: string
   /** 选区锚点（Word 顶层块索引区间）：文档侧据此重新高亮原文。 */
   anchor?: OfficeAskAnchor
+  /**
+   * 极简条 AI 快捷能力（WPS 式）：'document' | 'workbook' | 'page' 表示指令
+   * 作用于全文/整簿/当前页，没有选区锚点；缺省 = 经典选区浮层转发。
+   */
+  scope?: 'document' | 'workbook' | 'page'
 }
 
 /**
