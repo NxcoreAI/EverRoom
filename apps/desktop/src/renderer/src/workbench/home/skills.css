@@ -1,105 +1,41 @@
 /* 主页「技能」页（workbench/home/SkillsPage.tsx）。
  *
+ * 布局对齐原型 office-proto 的 SkillsView（op-tpl-row / op-skill-card）：
+ * 自适应卡片网格，每卡「名称 + 说明 + 状态 + 开关」，末尾一张虚线新增卡。
  * 约定与 home.css 一致：只用 --ui-* token；层次靠 hairline + 底色分层；
  * 选择器全部 scoped 到 .wb-skills-*，不碰全局。 */
 
-/* ───────────────── 工具条 ───────────────── */
+/* ───────────────── 卡片网格 ───────────────── */
 
-.wb-skills-toolbar {
-  display: flex;
-  align-items: center;
+.wb-skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 12px;
-  flex-wrap: wrap;
 }
 
-.wb-skills-search {
-  position: relative;
+.wb-skills-card {
   display: flex;
-  align-items: center;
-  flex: 1 1 240px;
-  min-width: 200px;
-  gap: 7px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  color: var(--ui-text-3);
-}
-.wb-skills-search:focus-within {
-  border-color: var(--ui-accent-line);
-  box-shadow: 0 0 0 2px var(--ui-accent-softer);
-}
-.wb-skills-search .ui-input {
-  flex: 1;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-/* ───────────────── 分组 ───────────────── */
-
-.wb-skills-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
-}
-
-.wb-skills-group { display: flex; flex-direction: column; gap: 8px; }
-
-.wb-skills-group-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 22px;
-}
-.wb-skills-group-head h2 {
-  margin: 0;
-  font-size: var(--ui-text-md);
-  font-weight: 650;
-  letter-spacing: var(--ui-tracking-tight);
-}
-.wb-skills-group-count {
-  margin-left: auto;
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-}
-.wb-skills-group-hint {
-  margin: 0;
-  font-size: var(--ui-text-2xs);
-  line-height: var(--ui-leading-normal);
-  color: var(--ui-text-3);
-}
-
-/* ───────────────── 技能行 ───────────────── */
-
-.wb-skills-list {
-  display: flex;
-  flex-direction: column;
+  padding: 14px 16px;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
-  overflow: hidden;
+  transition:
+    transform var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
 }
-.wb-skills-list > * + * { border-top: 1px solid var(--ui-border-subtle); }
+.wb-skills-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--ui-shadow-sm);
+}
 
-.wb-skills-row {
+/* 覆盖整卡的透明按钮：整卡可点开详情，又不把开关/删除嵌进另一个可点区域。 */
+.wb-skills-card-main {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  transition: background var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-skills-row:hover { background: var(--ui-hover); }
-
-.wb-skills-row-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 3px;
-  flex: 1;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -109,7 +45,9 @@
   color: inherit;
   font: inherit;
 }
-.wb-skills-row-name {
+.wb-skills-card-main:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
+
+.wb-skills-card-name {
   font-size: var(--ui-text-sm);
   font-weight: 650;
   letter-spacing: var(--ui-tracking-tight);
@@ -118,40 +56,70 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wb-skills-row-desc {
+.wb-skills-card-desc {
   font-size: var(--ui-text-sm);
   line-height: var(--ui-leading-normal);
   color: var(--ui-text-2);
+  /* 原型卡片是两行以内的短说明；超长截断，全文进详情弹窗。 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wb-skills-row-meta {
-  font-family: var(--ui-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-height: 2.9em;
 }
 
-/* 停用行整体压暗，但正文仍可读（不是禁用态，随时能点开看说明）。 */
-.wb-skills-row[data-disabled] .wb-skills-row-name { color: var(--ui-text-2); }
-.wb-skills-row[data-disabled] .wb-skills-row-desc { color: var(--ui-text-3); }
-
-.wb-skills-row-side {
+.wb-skills-card-foot {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex: none;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
 }
-.wb-skills-row-state {
+.wb-skills-card-side { display: flex; align-items: center; gap: 6px; flex: none; }
+
+/* 启用开关用亮绿色（原型的 op-toggle.on 即 #34c759，白滑块），
+ * 只覆盖技能卡范围内的开关，不动全局 Toggle 基元。 */
+.wb-skills-card .ui-toggle.is-on {
+  background: #34c759;
+  border-color: #34c759;
+}
+.wb-skills-card .ui-toggle.is-on .ui-toggle-knob { background: #fff; }
+
+.wb-skills-card-state {
   font-size: var(--ui-text-2xs);
-  font-weight: 600;
-  color: var(--ui-text-3);
+  font-weight: 500;
+  color: var(--ui-success);
   white-space: nowrap;
 }
-.wb-skills-row:not([data-disabled]) .wb-skills-row-state { color: var(--ui-accent-strong); }
+.wb-skills-card[data-disabled] .wb-skills-card-state { color: var(--ui-text-3); }
+
+/* 停用卡整体压暗，但正文仍可读（不是禁用态，随时能点开看说明）。 */
+.wb-skills-card[data-disabled] .wb-skills-card-name { color: var(--ui-text-2); }
+.wb-skills-card[data-disabled] .wb-skills-card-desc { color: var(--ui-text-3); }
+
+/* 末尾的虚线「新增技能」卡（对齐原型 op-skill-card.add）。 */
+.wb-skills-card-add {
+  align-items: center;
+  justify-content: center;
+  flex-direction: row;
+  gap: 8px;
+  min-height: 96px;
+  border-style: dashed;
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+.wb-skills-card-add:hover {
+  border-color: var(--ui-accent-line);
+  color: var(--ui-accent-strong);
+  background: var(--ui-accent-softer);
+  box-shadow: none;
+  transform: none;
+}
+.wb-skills-card-add:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 2px; }
 
 /* ───────────────── 新增/删除弹窗 ───────────────── */
 
@@ -229,8 +197,6 @@
 }
 
 @media (max-width: 1100px) {
-  .wb-skills-toolbar { gap: 8px; }
-  .wb-skills-row { padding: 9px 12px; }
-  .wb-skills-row-side { gap: 8px; }
-  .wb-skills-row-state { display: none; }
+  .wb-skills-grid { gap: 10px; }
+  .wb-skills-card { padding: 12px 14px; }
 }
