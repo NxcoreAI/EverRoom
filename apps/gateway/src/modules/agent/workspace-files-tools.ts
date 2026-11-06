@@ -243,7 +243,7 @@ export function createWorkspaceFilePreviewTool(
       + "图片返回导入时已解析好的视觉描述（不触发新的视觉分析，秒回）、宽高（width/height，配图按比例定框用）与 materialRef；"
       + "文档/文本返回正文开头与是否截断。"
       + "用途：选定要用的素材、判断文件是否与主题相关时先用本工具；只有确定承担页面内容的文件才需要再读全文。"
-      + "图片若返回 descriptionMissing（导入时解析失败），确需该图再单独做视觉分析。",
+      + "图片若返回 descriptionMissing，用 workspace_images_describe 一次补齐视觉描述（≤4 张/次，自动落库）；不要用 bash/PIL 分析图片。",
     parameters: {
       type: "object",
       properties: {
@@ -507,6 +507,92 @@ export function createWorkspaceFilesReadBatchTool(
         files,
         total: files.length,
         note: "截断的文件用 file_read(fileId, offset=nextOffset) 续读余篇；图片走 workspace_files_preview。",
+      };
+      return { content: JSON.stringify(payload), details: payload };
+    },
+  };
+}
+
+/** 单次最多补描述的图片数：VLM 每张秒级，串行上限防长阻塞。 */
+const DESCRIBE_MAX_IMAGES = 4;
+
+/**
+ * 按需补图片视觉描述：VLM 生成结构化中文描述（主体/构图/色调/配图建议）并
+ * 落库成解析产物——workspace_files_preview 与 content_search 随即可用。
+ * 动机：图片导入时没有视觉描述管道（image-vlm 解析器从未真正实现），模型
+ * 只能用 bash+PIL 画 ASCII 图"看图"（2026-11-06 实测 30+ 次调用风暴）。
+ */
+export function createWorkspaceImagesDescribeTool(
+  getTextSource: () => WorkspaceFileTextSource | null,
+  describeImage: (fileEntryId: string, fileVersionId: string) => Promise<string>,
+): PiAgentRuntimeTool {
+  return {
+    name: "workspace_images_describe",
+    label: "补图片视觉描述",
+    description: "对没有视觉描述的工作区图片生成结构化中文描述（主体/构图/色调/配图建议），一次最多 4 张。"
+      + "描述会落库缓存：之后 workspace_files_preview 秒回、content_search 能按画面内容命中。"
+      + "用途：配图选型前确认画面内容。有缓存描述的图直接用 preview，不要重复调用本工具；"
+      + "禁止用 bash/PIL/python 分析图片字节来替代视觉描述。",
+    parameters: {
+      type: "object",
+      properties: {
+        fileIds: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: DESCRIBE_MAX_IMAGES,
+          description: `图片 fileEntryId 列表（最多 ${String(DESCRIBE_MAX_IMAGES)} 张）`,
+        },
+      },
+      required: ["fileIds"],
+      additionalProperties: false,
+    },
+    promptSnippet: "补图片视觉描述",
+    promptGuidelines: [
+      "图片 preview 标 descriptionMissing 且确需知道画面内容时，用 workspace_images_describe 一次性补齐（自动落库），再按描述配图。",
+    ],
+    executionMode: "sequential",
+    execute: async (_input, params, signal): Promise<PiAgentRuntimeToolResult> => {
+      if (signal?.aborted) throw new Error("workspace_images_describe 已取消");
+      const source = getTextSource();
+      if (!source) throw new Error("workspace_images_describe 暂不可用：工作区文件服务尚未就绪，请稍后重试。");
+      const ids = [...new Set(
+        (Array.isArray(params.fileIds) ? params.fileIds : [])
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim()),
+      )].slice(0, DESCRIBE_MAX_IMAGES);
+      const results: Array<Record<string, unknown>> = [];
+      for (const fileEntryId of ids) {
+        const entry = source.catalogEntry(fileEntryId);
+        if (!entry) {
+          results.push({ fileEntryId, error: "not_found" });
+          continue;
+        }
+        const name = entry.sharedTitle || entry.originalName;
+        if (entry.dataType !== "image" && !IMAGE_NAME.test(entry.originalName)) {
+          results.push({ fileEntryId, name, error: "not_an_image" });
+          continue;
+        }
+        const cached = source.catalogMarkdownOf(fileEntryId);
+        if (cached && cached.trim()) {
+          results.push({ fileEntryId, name, cached: true, description: cached.slice(0, 2000) });
+          continue;
+        }
+        try {
+          const markdown = await describeImage(fileEntryId, fileEntryId);
+          results.push({ fileEntryId, name, description: markdown.slice(0, 2000) });
+        } catch (error) {
+          results.push({
+            fileEntryId,
+            name,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      const payload = {
+        images: results,
+        total: results.length,
+        note: "描述已落库：后续 preview/content_search 直接可用，无需重复生成。",
       };
       return { content: JSON.stringify(payload), details: payload };
     },

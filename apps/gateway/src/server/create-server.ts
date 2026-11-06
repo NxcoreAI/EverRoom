@@ -86,7 +86,7 @@ import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
-import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
+import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceImagesDescribeTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
@@ -833,6 +833,14 @@ export async function createServer(config: GatewayConfig) {
       // 的串行模式——图片描述在导入时已解析落库，这里零推理直读。
       createWorkspaceFilePreviewTool(() => filesService, readWorkspaceFileText),
       createWorkspaceFilesReadBatchTool(() => filesService, readWorkspaceFileText),
+      // 图片按需视觉描述（VLM → 落库缓存）：descriptionMissing 的图一次补齐，
+      // 终结「bash+PIL 挖图片字节」的替代行为。
+      createWorkspaceImagesDescribeTool(
+        () => filesService,
+        (fileEntryId, fileVersionId) =>
+          documentUnderstandingService.describeImageVersion(fileEntryId, fileVersionId)
+            .then((parsed) => parsed.markdown),
+      ),
       createContentSearchPiTool(() => searchService),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
