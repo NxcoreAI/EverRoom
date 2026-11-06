@@ -7,6 +7,8 @@ export interface OfficeAgentFileEvent {
   /** 缺省 docx（旧事件无此字段）。 */
   format?: OfficeAgentFileFormat
   phase?: 'rendering' | 'saved' | 'importing'
+  /** phase=rendering 时的实时页数（脚本执行 addSlide 计数，逐页推进）。 */
+  slide?: number
   /** done：fileEntryId，渲染层用它自动打开预览。 */
   fileId?: string
   originalName?: string

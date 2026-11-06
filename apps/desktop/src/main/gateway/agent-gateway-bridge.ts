@@ -608,10 +608,17 @@ export class AgentGatewayBridge {
     approvalId: string,
     decision: AgentApprovalDecision,
     feedback?: string,
+    choice?: string,
+    text?: string,
   ): Promise<{ approvalId: string; decision: string }> {
     return this.request(`/v1/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
       method: 'POST',
-      data: { decision, ...(feedback ? { feedback } : {}) },
+      data: {
+        decision,
+        ...(feedback ? { feedback } : {}),
+        ...(choice ? { choice } : {}),
+        ...(text ? { text } : {}),
+      },
     })
   }
 
