@@ -3,8 +3,8 @@
  * 主页「技能」页（workbench/home/SkillsPage.tsx）的渲染测试。
  *
  * 数据形状与网关 `/v1/skills` 一致（mock `window.nxcore.agent`），验证四件事：
- * 1. 清单按归属 Agent 分组，启用计数来自真实数据；
- * 2. 搜索与归属筛选都在本地收敛，不重新请求；
+ * 1. 布局是卡片网格（对齐原型）：名称/说明/状态/开关，末尾有新增卡；
+ * 2. 子 Agent 技能整体隐藏，内置与自定义技能才出现在页面上；
  * 3. 开关走 `setSkillEnabled`，成功后界面更新、失败后回滚；
  * 4. 读取失败与「没有技能」区分开（失败给重试，空态不复用失败文案）。
  */
@@ -186,7 +186,6 @@ function toggles(): HTMLButtonElement[] {
 }
 
 function findButton(label: string, scope: ParentNode = container): HTMLButtonElement {
-  // 分段按钮的 textContent 会带上计数（「子 Agent1」），所以用包含匹配。
   const found = [...scope.querySelectorAll<HTMLButtonElement>('button')]
     .find((button) => (button.textContent ?? '').includes(label)
       || (button.getAttribute('aria-label') ?? '').includes(label))
@@ -227,60 +226,46 @@ afterEach(async () => {
 })
 
 describe('技能页', () => {
-  it('按归属 Agent 分组渲染清单与启用计数', async () => {
-    installSkillBridge()
+  it('以卡片网格渲染内置与自定义技能，末尾提供新增卡', async () => {
+    installSkillBridge({ skills: [...SAMPLE_SKILLS, USER_SKILL] })
     await renderPage()
 
     expect(text()).toContain('技能')
-    expect(text()).toContain('Main Agent')
-    expect(text()).toContain('Document Writer')
-    // 归属类别徽标 + 说明
-    expect(text()).toContain('内置 Agent')
-    expect(text()).toContain('子 Agent')
-    // 启用计数：3 个里 2 个启用
-    expect(text()).toContain('2 / 3 已启用')
-    // 行内元信息
-    expect(text()).toContain('./skills/document-export')
-    expect(text()).toContain('2.0 KB')
-    // 停用行有自己的状态文案
-    expect(text()).toContain('已停用')
+    // 内置与自定义技能各一张卡
+    expect(text()).toContain('document-export')
+    expect(text()).toContain('weekly-report')
+    // 卡片网格结构：两张技能卡 + 末尾虚线新增卡，每张技能卡一个开关
+    expect(container.querySelectorAll('.wb-skills-card')).toHaveLength(3)
+    expect(container.querySelector('.wb-skills-card-add')).toBeTruthy()
+    expect(toggles()).toHaveLength(2)
+    // 停用卡有自己的状态文案
+    expect(text()).toContain('已启用')
   })
 
-  it('搜索与归属筛选在本地收敛', async () => {
-    const { agent } = installSkillBridge()
+  it('子 Agent 技能整体隐藏，不参与渲染', async () => {
+    installSkillBridge()
     await renderPage()
 
-    const input = container.querySelector<HTMLInputElement>('input[aria-label="搜索技能"]')!
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-    await act(async () => {
-      setter?.call(input, 'draft')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await flush(2)
-    expect(text()).toContain('draft-create')
-    expect(text()).not.toContain('document-export')
-
-    await act(async () => { findButton('子 Agent').click() })
-    await flush(2)
-    expect(text()).toContain('draft-create')
-    // 内置 Agent 分组整体隐藏
-    expect(text()).not.toContain('Main Agent')
-
-    // 搜索与筛选都是本地的：只请求过一次清单
-    expect(agent.listSkills).toHaveBeenCalledTimes(1)
+    // 只剩内置那一张卡；子 Agent 的两张都不出现
+    expect(container.querySelectorAll('.wb-skills-card')).toHaveLength(2) // 1 技能卡 + 1 新增卡
+    expect(toggles()).toHaveLength(1)
+    expect(text()).not.toContain('rewrite')
+    expect(text()).not.toContain('draft-create')
+    expect(text()).not.toContain('Document Writer')
+    expect(text()).not.toContain('子 Agent')
   })
 
   it('点开关写入网关；成功后更新状态文案', async () => {
     const { setSkillEnabled } = installSkillBridge()
     await renderPage()
 
-    // 第一行（builtin 组）默认启用 → 点一下应停用
+    // 唯一一张卡（builtin）默认启用 → 点一下应停用
     await act(async () => { toggles()[0]!.click() })
     await flush(4)
 
     expect(setSkillEnabled).toHaveBeenCalledWith('builtin:main:document-export', false)
     expect(toggles()[0]!.getAttribute('aria-checked')).toBe('false')
-    expect(text()).toContain('1 / 3 已启用')
+    expect(text()).toContain('已停用')
   })
 
   it('切换失败时回滚并提示', async () => {
@@ -308,12 +293,12 @@ describe('技能页', () => {
     expect(findButton('重试')).toBeTruthy()
   })
 
-  it('点行打开详情，展示 SKILL.md 原文', async () => {
+  it('点卡片打开详情，展示 SKILL.md 原文', async () => {
     const { agent } = installSkillBridge()
     await renderPage()
 
-    const row = container.querySelector<HTMLButtonElement>('.wb-skills-row-main')
-    await act(async () => { row!.click() })
+    const card = container.querySelector<HTMLButtonElement>('.wb-skills-card-main')
+    await act(async () => { card!.click() })
     await flush(4)
 
     expect(agent.getSkill).toHaveBeenCalledWith('builtin:main:document-export')
@@ -347,7 +332,6 @@ describe('技能页：新增与删除', () => {
     // 初次加载 + 新增后刷新
     expect(agent.listSkills).toHaveBeenCalledTimes(2)
     expect(text()).toContain('weekly-report')
-    expect(text()).toContain('自定义技能')
   })
 
   it('从文件夹导入：选目录后调用导入接口', async () => {
@@ -397,7 +381,7 @@ describe('技能页：新增与删除', () => {
     const { deleteSkill, agent } = installSkillBridge({ skills: [...SAMPLE_SKILLS, USER_SKILL] })
     await renderPage()
 
-    // 三行内置/子 Agent 技能没有删除按钮，只有自定义那一行有。
+    // 内置技能卡没有删除按钮，只有自定义那张卡有。
     const deleteButtons = [...container.querySelectorAll<HTMLButtonElement>('button[aria-label^="删除「"]')]
     expect(deleteButtons).toHaveLength(1)
 

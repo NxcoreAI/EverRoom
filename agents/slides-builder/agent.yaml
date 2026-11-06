@@ -18,8 +18,9 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # edit 事务：read + edit 若干 + 失败重试 + 提交。
-  maxToolCalls: 48
+  # 不设工具调用上限：edit 事务是「read + edit 若干 + 失败重试 + 提交」的长链路，
+  # 硬预算中途 abort 会把已写好的编辑事务一起丢掉；run 只受 timeoutSeconds 与
+  # 输出预算约束（与 planner/layouter/editor 同一决策）。
   timeoutSeconds: 1800
   model:
     # builder 走 background 档，未显式声明会继承 8192 输出上限：多条编辑事务的

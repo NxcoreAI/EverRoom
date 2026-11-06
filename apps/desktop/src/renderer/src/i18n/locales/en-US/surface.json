@@ -55,6 +55,7 @@
   "agentComposer.removeMount": "Unmount this folder",
   "agentComposer.removeMountName": "Unmount {name}",
   "agentComposer.mountDirectoryFailed": "Could not mount the folder",
+  "agentComposer.connectorsPickerTitle": "Connectors",
   "agentComposer.modelPickerTitle": "Conversation model tier",
   "agentComposer.modelTierSmart": "Smart",
   "agentComposer.modelTierSmartHint": "Strong model leads; batch small tasks delegated to the lite model",

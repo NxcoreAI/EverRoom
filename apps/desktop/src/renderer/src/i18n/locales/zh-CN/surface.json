@@ -55,6 +55,7 @@
   "agentComposer.removeMount": "取消挂载该目录",
   "agentComposer.removeMountName": "取消挂载 {name}",
   "agentComposer.mountDirectoryFailed": "挂载目录失败",
+  "agentComposer.connectorsPickerTitle": "连接器",
   "agentComposer.modelPickerTitle": "对话模型档位",
   "agentComposer.modelTierSmart": "智能",
   "agentComposer.modelTierSmartHint": "强模型主理，批量小活自动委派轻量模型",
