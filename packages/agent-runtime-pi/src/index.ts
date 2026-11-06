@@ -1120,9 +1120,10 @@ export class PiAgentRuntime implements AgentRuntime {
       active.handle.session.setActiveToolsByName(
         this.activeToolNamesFor(input, active.handle.toolNames),
       );
-      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照，
-      // 提示词只保留「直接创建、不追问归属」的工作区级指引。
-      const roomContext = "工作区文稿一律按工作区级文稿创建，用户要求创建、保存或写入文档时直接调用 document_write_begin，不需要用户先选择或确认归属，也不要只用文字追问归属。";
+      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照。
+      // 2026-11 Markdown 文稿链路下线后不再注入「直接调 document_write_begin」的
+      // 指引——那会诱导模型调用不存在的工具。正式文稿一律 office_create 生成。
+      const roomContext = "工作区的正式文稿（Word/Excel/PPT）由对应 Office 工具直接生成或修改：用户要求创建或写入文档时，按格式选 office_create / sheets_create / slides_create，不需要用户先选择或确认归属，也不要只用文字追问归属。";
       const documentContext = input.activeDocument
         ? [
             `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
@@ -1132,10 +1133,10 @@ export class PiAgentRuntime implements AgentRuntime {
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
         : input.activeFile
-          // 有 Office 页签时不要再说“没有活动文档，去调 document_list”：
-          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜文稿。
-          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先调 document_list。"
-          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+          // 有 Office 页签时不要再说“没有活动文稿，去翻文稿库”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜。
+          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先去搜索文档。"
+          : "当前视口没有已确认的活动文稿；若用户明确要求修改已有文件，先用 file_search 定位 fileId 再走对应的读写工具。";
       // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
       // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
       const activeFileContext = buildActiveFileContext(input.activeFile);
@@ -1152,8 +1153,8 @@ export class PiAgentRuntime implements AgentRuntime {
         : [
             `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
             "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
-            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。文档正文一律先经 document_draft 生成；修改或续写已有文档时不要先调用 document_read——直接调用 document_draft（网关会读取权威版本组装素材并为本轮代签读取凭证），随后凭返回的 invocationId 完成 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。仅当用户询问文档内容本身时才使用 document_read。",
-            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
+            "如果用户本轮明确要求创建或修改文档，必须在本轮重新完成所需工具链：新文稿按格式直接用 office_create / sheets_create / slides_create 生成；修改已有文件先 file_search 定位，再走 word_agent_* / sheets_agent_* / slides_read + slides_edit。除非本轮工具返回不可恢复错误，不要把生成推迟到下一轮。",
+            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或操作句柄；这些都是 Agent 应通过工具获取和组织的内部参数。",
           ].join("\n");
       const prompt = [
         `当前工作区：${input.pageLabel}`,

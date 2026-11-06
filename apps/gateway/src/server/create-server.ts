@@ -88,7 +88,6 @@ import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
 import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceImagesDescribeTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
 import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
-import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
@@ -167,7 +166,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
-import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
+import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentSkillStateStore } from "../modules/skills/state-store.js";
@@ -1696,7 +1695,6 @@ export async function createServer(config: GatewayConfig) {
       "document index backfill worker enabled",
     );
   }
-  // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
   await app.register(planRoutes(planService, planStream));
   await app.register(workspaceActivityRoutes(workspaceActivityService));

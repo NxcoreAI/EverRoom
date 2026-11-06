@@ -312,13 +312,13 @@ describe("PiAgentRuntime", () => {
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
       const request = JSON.stringify(requestBodies[0]);
-      // Phase 2i 去 Room：run 无 Room 维度，提示词只保留工作区级文稿指引，
-      // 不注入 Room 快照，也不引导模型传 roomId 或调用已删除的 context_room_list。
-      expect(request).toContain("工作区文稿一律按工作区级文稿创建");
+      // Phase 2i 去 Room：run 无 Room 维度；2026-11 Markdown 文稿链路下线后，
+      // 提示词不再引导模型调用已删除的 document_write_begin，改为按格式选 Office 工具。
+      expect(request).toContain("由对应 Office 工具直接生成或修改");
       expect(request).toContain("不需要用户先选择或确认归属");
       expect(request).not.toContain("<available_rooms>");
       expect(request).not.toContain("candidateRoomIds");
-      expect(request).not.toContain("document_write_begin.roomId");
+      expect(request).not.toContain("document_write_begin");
       expect(request).not.toContain("context_room_list");
     } finally {
       await runtime.dispose();
@@ -401,11 +401,11 @@ describe("PiAgentRuntime", () => {
 
       expect(requestBodies[0]?.tools).toBeUndefined();
       expect(JSON.stringify(requestBodies[0])).not.toContain("document tool guidance");
-      // Phase 2i 去 Room：不再注入 Room 快照（<room_metadata> 消失），
-      // 换成工作区级文稿指引。
+      // Phase 2i 去 Room：不再注入 Room 快照（<room_metadata> 消失）；
+      // 2026-11 后改为按格式选 Office 工具的工作区级文稿指引。
       expect(JSON.stringify(requestBodies[0])).not.toContain("<room_metadata>");
       expect(JSON.stringify(requestBodies[0])).not.toContain("手动创建的 Room");
-      expect(JSON.stringify(requestBodies[0])).toContain("工作区文稿一律按工作区级文稿创建");
+      expect(JSON.stringify(requestBodies[0])).toContain("由对应 Office 工具直接生成或修改");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain("document_read");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain('"name":"bash"');
     } finally {
@@ -442,8 +442,8 @@ describe("PiAgentRuntime", () => {
               id: `call-${String(requestIndex)}`,
               type: "function",
               function: {
-                name: "document_write_begin",
-                arguments: '{"mode":"create","title":"测试文档","format":"markdown"}',
+                name: "office_create",
+                arguments: '{"title":"测试文档","html":"<p>正文</p>"}',
               },
             }],
           })}\n\n`);
@@ -480,18 +480,17 @@ describe("PiAgentRuntime", () => {
     }, {
       promptGuidelines: ["动态文档能力规范：只使用当前注册表提供的能力说明。"],
       tools: [{
-        name: "document_write_begin",
-        label: "开始创建 Room 文档",
-        description: "创建当前 Room 的文档",
+        name: "office_create",
+        label: "生成 Word 文档",
+        description: "用本地 Word 引擎生成一份新的 .docx 文档",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            mode: { type: "string", enum: ["create"] },
             title: { type: "string" },
-            format: { type: "string", enum: ["markdown"] },
+            html: { type: "string" },
           },
-          required: ["mode", "title", "format"],
+          required: ["title", "html"],
         },
         executionMode: "sequential",
         execute: async (input) => {
@@ -549,13 +548,13 @@ describe("PiAgentRuntime", () => {
       const reusedRunRequest = JSON.stringify(requestBodies[2]);
       expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
       expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");
-      expect(reusedRunRequest).toContain("不要先调用 document_read");
-      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown");
+      expect(reusedRunRequest).toContain("新文稿按格式直接用 office_create / sheets_create / slides_create 生成");
+      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或操作句柄");
       expect(reusedRunRequest).toContain("工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除");
       expect(reusedRunRequest).toContain("用户：创建文档");
       expect(reusedRunRequest).not.toContain('{\\"roomId\\":\\"room-a\\",\\"state\\":\\"open\\"}');
       expect(requestBodies).toHaveLength(4);
-      expect(JSON.stringify(requestBodies[0]?.tools)).toContain("document_write_begin");
+      expect(JSON.stringify(requestBodies[0]?.tools)).toContain("office_create");
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
       expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
       const firstRequest = JSON.stringify(requestBodies[0]);

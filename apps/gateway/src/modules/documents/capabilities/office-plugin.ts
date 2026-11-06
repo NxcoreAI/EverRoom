@@ -350,7 +350,7 @@ export function officePlugin(
     title: "生成 Word 文档",
     description: "用本地 Word 引擎生成一份新的 .docx 文档并保存到文件库，"
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
-      + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
+      + "本环境没有独立的 Markdown 文稿库——用户要落成文件的文档一律用本工具，聊天里随口的短答复直接用文字回复即可。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
       + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
     inputSchema: {
@@ -1591,9 +1591,9 @@ export function officePlugin(
   return {
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
-      "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物用 office_create，"
-      + "数据表格用 sheets_create；演示/汇报（PPT）不在本组工具内，走 slides_create 按内联 pptx skill 写整册 pptxgenjs 脚本生成，修改用 slides_read + slides_edit 直改；"
-      + "普通笔记、速记、随手总结用文档创建工具（markdown），不要用 Office 工具。",
+      "用户需要正式 Office 文档时按格式选工具：Word 报告/交付物/说明书用 office_create，"
+      + "数据表格用 sheets_create，演示/汇报（PPT）按内联 pptx skill 写整册 pptxgenjs 脚本走 slides_create，修改用 slides_read + slides_edit 直改；"
+      + "本环境没有独立的 Markdown 文稿库，需要落成文件的文档不要用纯文字答复搪塞。",
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
