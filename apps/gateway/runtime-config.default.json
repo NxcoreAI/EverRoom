@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "primary": {
     "provider": "openai",
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-v4.1-flash",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": "",
@@ -13,7 +13,7 @@
   },
   "background": {
     "provider": "openai",
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-v4.1-flash",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": "",

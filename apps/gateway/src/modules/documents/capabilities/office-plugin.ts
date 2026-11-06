@@ -82,6 +82,21 @@ export interface OfficeFileAccess {
     contentHash: string;
   } | null;
   catalogContentOf(fileEntryId: string): Promise<{ buffer: Buffer; mime: string; filename: string } | null>;
+  /** 版本历史（word_agent_revert 用）；未实现时回滚工具不暴露。 */
+  listVersions?(fileEntryId: string, limit?: number): Array<{
+    versionNo: number;
+    contentHash: string;
+    createdAt: string;
+    status: string;
+    byteSize: number;
+    current: boolean;
+  }>;
+  /** 回滚到历史版本（字节重走判重导入：currentVersionId 指回旧版本行）。 */
+  revertToVersion?(fileEntryId: string, versionNo: number): Promise<{
+    versionNo: number;
+    contentHash: string;
+    alreadyCurrent: boolean;
+  } | null>;
 }
 
 /**
@@ -1080,10 +1095,10 @@ export function officePlugin(
       + "先 word_agent_read 读 operationsGuide（完整 op 列表与字段）和 documentState（章节/页眉页脚/批注/脚注/域/引用/修订现状），"
       + "按块索引定位对象。覆盖：表格（增删表格/行列/单元格、合并拆分、单元格内容与底色、列宽行高、边框、自适应）、"
       + "分页与页面设置、脚注与尾注、页码与域、行内/对象格式（字符样式、制表位、换行/分栏符、文本框/WordArt/公式/符号、图片环绕）、"
-      + "对象操作（图片替换 object.image.replace / 裁剪 object.image.crop / 去背景 object.image.removeBackground、"
+      + "对象操作（图片替换 object.image.replace / 裁剪 object.image.crop / 去背景 object.image.removeBackground / 转灰度 object.image.grayscale、"
       + "形状层级 object.shape.zOrder、公式转换 object.equation.convert）、"
       + "页眉页脚图片（headerFooter.insertImage/removeImage/replaceImage）、程序化手绘（object.ink.add / object.ink.mark 画直线标注）、新建字符样式（format.createCharacterStyle）、"
-      + "参考文献与交叉引用、修订接受/拒绝。op 词汇共 69 项 / 10 个域，以 word_agent_read 的 operationsGuide 为准。"
+      + "参考文献与交叉引用、修订接受/拒绝。op 词汇共 70 项 / 10 个域，以 word_agent_read 的 operationsGuide 为准。"
       + "图片类 op（object.image.replace / headerFooter.insertImage / replaceImage）的来源用 fileId（文件库图片，用户刚上传/之前生成的）、"
       + "本地 path 或公网 url；网关负责取字节，不要把 base64 写进 ops。"
       + "ops 1-50 条，按序执行、逐条隔离（一条失败不影响其他条）；dryRun=true 只校验并返回计划，不落盘。"
@@ -1185,6 +1200,69 @@ export function officePlugin(
       } catch (error) {
         throw new Error(agentToolsFailureMessage(title, error instanceof Error ? error.message : String(error)));
       }
+    },
+  };
+
+  /**
+   * 版本回滚：不依赖桌面编辑器，纯文件库操作。灰度/裁剪等破坏性 op 不可逆，
+   * 但每次 agent 编辑都落了新版本——回滚 = 把旧版本字节重新指为当前版。
+   */
+  const wordAgentRevert: DocumentCapabilityTool = {
+    name: "word_agent_revert",
+    title: "查看 Word 版本历史 / 回滚到历史版本",
+    description: "查看一份已入库 .docx 的版本历史，或回滚到某个历史版本（mode: list|revert）。"
+      + "每次保存/agent 编辑都会产生新版本（content_hash 变化即新版本，历史字节都在对象库）。"
+      + "list 返回最近版本（versionNo 倒序，current 标当前版）；revert 把指定版本的字节重新指为当前版——"
+      + "典型场景：agent 改坏了/图片转灰度后想恢复原图/误删内容，说“回到改之前那版”即可。"
+      + "回滚不是删除历史：当前版字节仍在版本链里，还能再滚回来（往返无损）。"
+      + "revert 前先 list 确认 versionNo；不确定该回哪版时把最近几版列给用户选，不要猜。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件" },
+        mode: { type: "string", enum: ["list", "revert"], description: "list = 查看版本历史（默认）；revert = 回滚" },
+        versionNo: { type: "integer", minimum: 1, description: "revert 模式必填：目标版本号（先 list 拿到）" },
+      },
+      required: [],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.docx$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: word_agent_revert 只支持 .docx；《${target.entry.originalName}》不是 Word 文档`);
+      }
+      const access = target.access;
+      if (typeof access.listVersions !== "function" || typeof access.revertToVersion !== "function") {
+        throw new Error("VERSION_PORT_UNAVAILABLE: 该文件服务不支持版本操作");
+      }
+      const mode = args.mode === "revert" ? "revert" : "list";
+      if (mode === "list") {
+        const versions = access.listVersions(target.fileId, 30);
+        if (versions.length === 0) throw new Error(`VERSION_HISTORY_EMPTY: 《${target.entry.originalName}》没有可用的版本历史`);
+        const lines = versions.map((v) =>
+          `v${v.versionNo}${v.current ? "（当前版）" : ""} · ${v.createdAt} · ${v.byteSize} bytes · ${v.status}`);
+        return {
+          content: [{ type: "text", text: `《${target.entry.originalName}》版本历史（最近 ${versions.length} 版，倒序）：\n${lines.join("\n")}` }],
+          structuredContent: { fileId: target.fileId, versions },
+        };
+      }
+      const versionNo = args.versionNo;
+      if (typeof versionNo !== "number" || !Number.isInteger(versionNo) || versionNo < 1) {
+        throw new Error("INVALID_ARGS: revert 模式必须带 versionNo（正整数，先 list 拿到）");
+      }
+      const result = await access.revertToVersion(target.fileId, versionNo);
+      if (!result) {
+        throw new Error(`REVERT_FAILED: 《${target.entry.originalName}》没有版本 v${versionNo}（先 list 确认版本号）`);
+      }
+      const message = result.alreadyCurrent
+        ? `v${versionNo} 已经是《${target.entry.originalName}》的当前版，无需回滚。`
+        : `已把《${target.entry.originalName}》回滚到 v${versionNo}（content ${result.contentHash.slice(0, 8)}）。`
+          + "当前版的字节仍在版本链里，随时可以再滚回来。";
+      return {
+        content: [{ type: "text", text: message }],
+        structuredContent: { fileId: target.fileId, ...result },
+      };
     },
   };
 
@@ -1588,6 +1666,128 @@ export function officePlugin(
     },
   };
 
+  const pdfAgentRead: DocumentCapabilityTool = {
+    name: "pdf_agent_read",
+    title: "读取任意 PDF 的文档上下文与操作指南",
+    description: "按 fileId 读取任意已入库 .pdf 的活文档状态（不需要文件在界面上打开，后台编辑器可 headless 打开）："
+      + "文件名/页数/是否有书签大纲/批注统计，以及 PDF 编辑工具词汇表（read_pages/search_text/get_outline/"
+      + "edit_text/edit_block/insert_text/markup_text/add_note/reply_note/list_form_fields/fill_form_field/"
+      + "list_page_images/insert_image/rotate_page/delete_page 等）。"
+      + "fileId 省略 = 用户当前浏览的文件；要改的 PDF 没打开时先用 file_search 按文件名定位 fileId。"
+      + "加密 PDF 只能读不能改（工具会拒绝写操作）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
+      },
+      required: [],
+    },
+    annotations: annotations(true, false),
+    execute: async (args, context) => {
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.pdf$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: pdf_agent_read 只支持 .pdf；《${target.entry.originalName}》不是 PDF 文档`);
+      }
+      try {
+        const described = await bridge.describeAgentArtifact({
+          kind: "pdf",
+          fileId: target.fileId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
+          workspaceId: context.workspaceId ?? null,
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...described,
+          hint: "读内容用 read_pages/search_text（页码是文档原始页码）；改文字前先读原文，"
+            + "edit_text 的 old_text 必须是页面上逐字存在的片段。修改不需要这份 PDF 已经打开："
+            + "后台会 headless 打开一份隐藏视图，编辑静默保存并更新版本。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+  const pdfAgentEdit: DocumentCapabilityTool = {
+    name: "pdf_agent_edit",
+    title: "用 PDF AI 工具链编辑任意 PDF",
+    description: "把 GenOffice PDF 的编辑器 AI 工具调用直接作用到任意已入库 .pdf 上（按 fileId；不需要文件在界面上打开，"
+      + "桌面端在后台以隐藏视图 headless 打开，编辑自动保存并更新文件版本）。"
+      + "先 pdf_agent_read 拿上下文与工具表。常用工具："
+      + "read_pages / search_text / get_outline（读）、edit_text（原地短改，不重排）、"
+      + "edit_block（整段重写，段内重排）、insert_text（空白处新增文字）、"
+      + "markup_text（高亮/下划线/删除线）、add_note / reply_note（便签批注与回复）、"
+      + "read_annotations（读已有批注）、list_form_fields / fill_form_field（表单）、"
+      + "list_page_images / insert_image / transform_image / rotate_image / replace_image / delete_image（图片）、"
+      + "rotate_page / delete_page（页面）。"
+      + "calls 1-50 条，按序执行；结果逐条返回（isError=true 表示该条失败，不影响已执行的其他条）。"
+      + "加密 PDF 无法编辑（pdf-lib 不能写回加密文件）。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        fileId: { type: "string", minLength: 1, description: "文件 id；省略 = 当前正在浏览的文件（可用 file_search 查找）" },
+        calls: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          description: "工具调用数组（{id, name, input}），name 必须是 pdf_agent_read 返回的 tools 之一",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            required: ["id", "name", "input"],
+            properties: {
+              id: { type: "string", minLength: 1 },
+              name: { type: "string", minLength: 1 },
+            },
+          },
+        },
+      },
+      required: ["calls"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!Array.isArray(args.calls) || args.calls.length === 0) {
+        throw new Error("INVALID_REQUEST: calls 必须是非空数组");
+      }
+      const target = await resolveOfficeTarget(args, context);
+      if (!/\.pdf$/i.test(target.entry.originalName)) {
+        throw new Error(`INVALID_TARGET: pdf_agent_edit 只支持 .pdf；《${target.entry.originalName}》不是 PDF 文档`);
+      }
+      try {
+        const applied = await bridge.applyAgentArtifactTools({
+          kind: "pdf",
+          fileId: target.fileId,
+          // Phase 2i 后无 Room 维度：Office 产物一律工作区级。
+        roomId: null,
+          workspaceId: context.workspaceId ?? null,
+          calls: args.calls as OfficeAgentToolCall[],
+        });
+        return success({
+          fileId: target.fileId,
+          title: target.entry.displayName ?? target.entry.originalName,
+          ...applied,
+          nextAction: "report_result",
+          hint: applied.results?.some((r) => r.isError)
+            ? "部分调用失败：读每条 output 修正后重试失败的调用；成功条目已生效，不要重复执行。"
+            : "修改已生效并保存（文件版本 +1）；回复里只说明改了哪些页/哪些内容。",
+        });
+      } catch (error) {
+        throw new Error(agentToolsFailureMessage(
+          target.entry.displayName ?? target.entry.originalName,
+          error instanceof Error ? error.message : String(error),
+        ));
+      }
+    },
+  };
+
+
   return {
     manifest: manifest("office.create", "mutation", null, null, false),
     promptGuidelines: [
@@ -1623,6 +1823,9 @@ export function officePlugin(
       + "导出后告知新 PDF 文件名即可，不要用 office_create 重建一份、也不要假装改动原 .docx。",
       "word_agent_ops 的 object.image.replace 图片来源只写本地图片绝对路径 path 或公网图片 url"
       + "（网关读字节后注入 base64/mime，模型不必也不许把 base64 抄进 ops）；来源解析失败会整批拒绝，先修正 path/url 再重试。",
+      "破坏性 op（图片转灰度/裁剪/去背景、删块、整章删除）不可逆但版本链兜底：用户想反悔（“恢复原图/回到改之前”）"
+      + "用 word_agent_revert（先 mode:list 看版本，再 mode:revert 回滚），不要让用户重新上传原件；"
+      + "不确定该回哪版时把最近几版列出来让用户选。",
     ],
     tools: [
       officeCreate,
@@ -1632,7 +1835,7 @@ export function officePlugin(
       slidesEdit,
       ...(files ? [officeRead, officeEdit, sheetsRead, sheetsEdit] : []),
       ...(files
-        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit]
+        ? [wordAgentRead, wordAgentEdit, wordAgentOps, wordAgentRevert, wordCompare, wordExportPdf, sheetsAgentRead, sheetsAgentEdit, pdfAgentRead, pdfAgentEdit]
         : []),
       ...(files && wordAgentIllustration ? [wordAgentIllustration] : []),
     ],

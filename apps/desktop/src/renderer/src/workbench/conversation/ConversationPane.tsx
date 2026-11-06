@@ -1,10 +1,10 @@
 import { FilePlus2, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { AgentAttachmentReference, AgentMountedDirectory, AgentNoteCard } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentMountedDirectory } from '@nxcore/agent-contract'
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
-import { buildAskBatch, type PendingAskDraft } from '@/components/agent/askDrafts'
+import { buildAskBatch, buildNoteCards, type PendingAskDraft } from '@/components/agent/askDrafts'
 import { AgentComposer, type AgentComposerHandle } from '@/components/agent/AgentComposer'
 import { useAgentSession } from '@/components/agent/useAgentSession'
 import { onToast as onAppToast } from '@/state/toast'
@@ -23,15 +23,6 @@ const CONNECTING_HINT_DELAY_MS = 1500
 
 /** 草稿态 hero 输入框占位文案（与会话态 composer 的占位区分）。 */
 const HERO_PLACEHOLDER = '今天帮你做些什么？'
-
-/** 批注草稿 → 气泡卡片结构（原文摘录 + 注释原话；来源文件可辨时带标题）。 */
-function buildNoteCards(drafts: readonly PendingAskDraft[]): AgentNoteCard[] {
-  return drafts.map((draft) => ({
-    excerpt: (draft.excerpt ?? '').replace(/\s+/g, ' ').trim(),
-    note: (draft.instruction ?? draft.displayMessage ?? draft.message).trim(),
-    ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
-  }))
-}
 
 export interface ConversationPaneProps {
   /** 所属工作空间标签 id：草稿落成会话时把标签视图切到该会话。 */
@@ -497,6 +488,7 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
             resolvingApprovalIds={hook.resolvingApprovalIds}
             runCompletedAtByRun={hook.runCompletedAtByRun}
             failedRunIds={hook.failedRunIds}
+            onContinueRun={hook.outputLimitRunId ? hook.continueRun : undefined}
             runStartedAtByRun={hook.runStartedAtByRun}
             scopeReady={hook.scopeReady}
             sessionLinks={hook.sessionLinks}

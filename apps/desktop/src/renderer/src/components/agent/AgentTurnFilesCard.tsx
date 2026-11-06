@@ -9,15 +9,37 @@ function originLabel(origin: AgentTurnFile['origin'], format: string, t: ReturnT
   return t('surface:agentChat.turnFileCreated', { format: format.toUpperCase() })
 }
 
-function openTurnFile(file: AgentTurnFile, onError: (message: string) => void): void {
+/** 同一文件在请求未返回前不重复发起（连点 / 重渲染触发的二次调用）。 */
+const openingIds = new Set<string>()
+
+async function openTurnFile(file: AgentTurnFile, onError: (message: string) => void): Promise<void> {
   const api = window.nxcore?.files
   if (!api?.openOriginal) {
     onError('surface:agentChat.turnFileOpenUnavailable')
     return
   }
-  void api.openOriginal(file.fileEntryId, file.name, undefined, { editable: true }).catch(() => {
+  if (openingIds.has(file.fileEntryId)) return
+  openingIds.add(file.fileEntryId)
+  try {
+    // 与资料库 / 产物库 / 首页文件三个入口对齐：带上 contentHash，主进程就不必
+    // 每次读盘重算；catalog 取不到时仍由主进程兜底（effectiveHash 回退 hashFileBytes）。
+    let contentHash: string | undefined
+    try {
+      contentHash = (await api.catalogEntry?.(file.fileEntryId))?.contentHash ?? undefined
+    } catch {
+      contentHash = undefined
+    }
+    const result = await api.openOriginal(file.fileEntryId, file.name, contentHash, { editable: true })
+    // openedWith === 'external' 表示已交给系统默认应用打开，属正常结果，不报错。
+    if (result.openedWith === 'external') {
+      console.info('[agent] 文件已交给系统默认应用打开', { fileEntryId: file.fileEntryId })
+    }
+  } catch (error) {
+    console.warn('[agent] 打开文件失败', { fileEntryId: file.fileEntryId, error })
     onError('surface:agentChat.turnFileOpenFailed')
-  })
+  } finally {
+    openingIds.delete(file.fileEntryId)
+  }
 }
 
 /**
@@ -42,7 +64,7 @@ export function AgentTurnFilesCard({ files, onOpenError }: { files: AgentTurnFil
           role="listitem"
           className="agent-turn-file"
           title={t('surface:agentChat.turnFileOpenTitle', { name: file.name })}
-          onClick={() => openTurnFile(file, reportError)}
+          onClick={() => void openTurnFile(file, reportError)}
         >
           <span className="agent-turn-file-icon" aria-hidden="true">
             <FileGlyphIcon kind={file.format} size={28} />

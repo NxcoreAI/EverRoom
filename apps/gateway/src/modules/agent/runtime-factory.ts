@@ -160,7 +160,13 @@ function createUserFacingRuntime(
   return new PiAgentRuntime({
     ...withConnectorMcp(withAgentDirectories(config, agentId, pi), integrations?.connectorMcp),
     // 用户档护栏：单轮工具预算 + 同一调用重复上限，超限即停并如实反馈。
-    maxToolCallsPerRun: 60,
+    // 主 agent 的工具结果不再无限大：一次无参 Excel 读取曾回 82KB（其中指南 69KB），
+    // 三份重复快照直接把上下文顶到 80%、末轮输出额度被思考吃光。60k 字符足够放下
+    // 一份正常文档读取，超出部分按 JSON 感知截断并提示改读具体范围。
+    maxToolResultChars: 60_000,
+    // 主 agent 也要有刹车：实测一个 PPT 任务调了 185 次工具（其中 170 次是同一条
+    // 命令）跑满 7 分钟，期间文件一次没改。120 次足够覆盖正常的长任务。
+    maxToolCallsPerRun: 120,
     // 不挂 pi 原生文件工具（read/edit/write/grep/find/ls 均无沙箱、read 还能把任意
     // 路径图片直接塞进视觉上下文——2026-11-05 实测模型反复 read /tmp 图片烧掉 42%
     // 窗口后触发重复熔断）。文件访问一律走 workspace/file 工具面；工作目录内的

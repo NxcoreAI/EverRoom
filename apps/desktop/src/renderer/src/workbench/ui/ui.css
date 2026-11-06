@@ -280,7 +280,12 @@
 .ui-field { display: flex; flex-direction: column; gap: 6px; }
 .ui-field-label { font-size: var(--ui-text-xs); font-weight: 600; color: var(--ui-text-2); }
 .ui-field-hint { font-size: var(--ui-text-2xs); line-height: var(--ui-leading-normal); color: var(--ui-text-3); }
-.ui-field-error { font-size: var(--ui-text-2xs); color: var(--ui-danger); }
+.ui-field-error {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-danger);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .ui-input {
   width: 100%;
   height: 32px;

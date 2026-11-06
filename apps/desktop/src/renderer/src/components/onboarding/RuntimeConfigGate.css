@@ -492,6 +492,14 @@
   line-height: 1.5;
 }
 
+.runtime-config-gate-error {
+  /* 连接测试失败时上游会回一段带 request id 的长串，必须能断行 */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .runtime-config-gate-error svg {
   flex: none;
   width: 15px;
