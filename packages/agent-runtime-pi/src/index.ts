@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
-import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
+import { DEFAULT_MAX_IDENTICAL_TOOL_CALLS, DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall, stableToolArgs } from "./noop-tool-call.js";
 import { randomUUID } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -55,6 +55,36 @@ export const DEFAULT_PI_BUILTIN_TOOLS: PiBuiltinToolName[] = [
   "find",
   "ls",
 ];
+
+/** 通用决策卡：agent 主动请求用户确认计划（confirm）或回答问题（question）。 */
+export interface PiAgentCardRequest {
+  approvalId: string;
+  input: StartRuntimeRunInput;
+  /** confirm = 计划/操作确认卡；question = 提问卡（等用户回答）。 */
+  card: {
+    kind: "confirm" | "question";
+    title: string;
+    body?: string;
+    /** confirm：计划/步骤列表（按序展示）。 */
+    plan?: string[];
+    /** question：可选答案（按钮）；不传或 allowText 时用户可自由输入。 */
+    options?: string[];
+    allowText?: boolean;
+    /** confirm：设计决策展示——色板（hex，按 主色/次色/强调 顺序）。 */
+    palette?: string[];
+    /** confirm：标题/正文字体名。 */
+    fonts?: { heading?: string; body?: string };
+    /** confirm：其他风格要点（如「深色封面 + 浅色内容页」）。 */
+    notes?: string[];
+  };
+  timeoutMs?: number;
+}
+
+export interface PiAgentCardDecision {
+  /** confirm：approved/denied；question：选项文本或用户输入。 */
+  choice: string;
+  text?: string;
+}
 
 export interface PiAgentRuntimeConfig {
   provider: string;
@@ -226,6 +256,10 @@ interface ActivePiRun {
   /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
   noOpStreak: number;
   noOpLimitExceeded: boolean;
+  /** 连续相同调用（名+参数指纹）计数与超限标记：真输出也会原地转圈（magick 循环实测）。 */
+  identicalStreak: number;
+  identicalLimitExceeded: boolean;
+  lastToolSignature: string | null;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
@@ -493,6 +527,7 @@ function compactHistoricalToolState(session: AgentSession): boolean {
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
   private readonly sessions = new Map<string, PiSessionHandle>();
+  private readonly pendingAgentCards = new Map<string, { resolve: (decision: PiAgentCardDecision) => void; timer: ReturnType<typeof setTimeout>; kind: "confirm" | "question" }>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 
@@ -575,6 +610,72 @@ export class PiAgentRuntime implements AgentRuntime {
   /** edit/write 文件变更审批（ask_before_write 档；其余档在入口直接放行）。 */
   async requestEditApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "edit", toolName: request.toolName ?? "edit" });
+  }
+
+  /**
+   * 通用决策卡：把 confirm/question 卡片作为 approval.requested(kind:"card") 事件
+   * 推进当前 run 的事件流，挂起等待用户在 UI 上作答（resolveApproval 带 choice/text
+   * 回填）。与 bash 审批共用同一条阻塞往返管道，超时按拒绝/空答收口。
+   */
+  async requestAgentCard(request: PiAgentCardRequest): Promise<PiAgentCardDecision> {
+    const active = this.activeRuns.get(request.input.runId);
+    const timeoutMs = Math.max(1_000, request.timeoutMs ?? 10 * 60_000);
+    active?.queue.push({
+      type: "approval.requested",
+      payload: {
+        approvalId: request.approvalId,
+        kind: "card",
+        toolName: request.card.kind === "confirm" ? "agent_confirm" : "agent_ask_user",
+        command: request.card.title,
+        cwd: null,
+        timeoutMs,
+        card: request.card,
+      },
+    });
+    const decision = await new Promise<PiAgentCardDecision>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAgentCards.delete(request.approvalId);
+        resolve({ choice: request.card.kind === "confirm" ? "denied" : "", text: "timeout" });
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingAgentCards.set(request.approvalId, { resolve, timer, kind: request.card.kind });
+    });
+    active?.queue.push({
+      type: "approval.resolved",
+      payload: {
+        approvalId: request.approvalId,
+        approved: request.card.kind === "confirm" ? decision.choice === "approved" : decision.choice !== "" || Boolean(decision.text),
+        choice: decision.choice,
+        ...(decision.text ? { text: decision.text } : {}),
+      },
+    });
+    return decision;
+  }
+
+  /**
+   * run 被取消/中止时把挂起的决策卡按形态收口：confirm 按取消、question 按空答，
+   * 工具拿到正常结果而不是 "Pi tool execution aborted"——卡片挂起期间用户点重试/停止
+   * 不会再把工具标成失败（2026-11-06 实测：confirm 卡挂起时 run 被重试取消，工具行
+   * 显示 aborted，用户以为确认功能坏了）。
+   */
+  private cancelPendingAgentCards(reason: string): void {
+    for (const pending of this.pendingAgentCards.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(pending.kind === "confirm"
+        ? { choice: "denied", text: reason }
+        : { choice: "", text: reason });
+    }
+    this.pendingAgentCards.clear();
+  }
+
+  /** UI 侧回填决策卡作答（gateway 的 resolveApproval 路由转发到这里）。 */
+  resolveAgentCard(approvalId: string, decision: PiAgentCardDecision): boolean {
+    const pending = this.pendingAgentCards.get(approvalId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pendingAgentCards.delete(approvalId);
+    pending.resolve(decision);
+    return true;
   }
 
   private async requestToolApproval(request: PiBashApprovalRequest & { kind: "shell" | "edit" }): Promise<boolean> {
@@ -707,6 +808,9 @@ export class PiAgentRuntime implements AgentRuntime {
       toolLimitExceeded: false,
       noOpStreak: 0,
       noOpLimitExceeded: false,
+      identicalStreak: 0,
+      identicalLimitExceeded: false,
+      lastToolSignature: null,
       terminal: false,
       finishPromise: null,
     };
@@ -734,6 +838,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
+    this.cancelPendingAgentCards("run_cancelled");
     try {
       await active.handle.session.abort();
       await this.finish(runId, "cancelled");
@@ -752,6 +857,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async dispose(): Promise<void> {
     const activeRuns = [...this.activeRuns.entries()];
+    this.cancelPendingAgentCards("runtime_disposed");
     await Promise.all(activeRuns.map(async ([runId, active]) => {
       active.cancelled = true;
       try {
@@ -1280,6 +1386,16 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
+      // 连续相同调用守卫：同名工具 + 参数指纹一致连发（真输出也算——模型拿到结果
+      // 却不换动作，是在原地转圈）。重试类工具（参数会变）不受影响。
+      const signature = `${event.toolName}:${stableToolArgs(event.args)}`;
+      active.identicalStreak = signature === active.lastToolSignature ? active.identicalStreak + 1 : 1;
+      active.lastToolSignature = signature;
+      if (active.identicalStreak >= DEFAULT_MAX_IDENTICAL_TOOL_CALLS) {
+        active.identicalLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       active.queue.push({
         type: "tool.started",
         payload: { toolCallId: event.toolCallId, name: event.toolName, args: event.args },
@@ -1305,13 +1421,15 @@ export class PiAgentRuntime implements AgentRuntime {
         runId,
         active.cancelled
           ? "cancelled"
-          : active.toolLimitExceeded || active.noOpLimitExceeded || sessionError || outputLimitReached
+          : active.toolLimitExceeded || active.noOpLimitExceeded || active.identicalLimitExceeded || sessionError || outputLimitReached
             ? "failed"
             : "completed",
         active.toolLimitExceeded
           ? new Error(this.toolLimitErrorMessage())
           : active.noOpLimitExceeded
             ? new Error(this.noOpLimitErrorMessage())
+            : active.identicalLimitExceeded
+              ? new Error(this.identicalLimitErrorMessage())
             : sessionError
             ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
@@ -1319,6 +1437,14 @@ export class PiAgentRuntime implements AgentRuntime {
               : undefined,
       );
     }
+  }
+
+  /** 连续相同调用中止的说明：模型拿到结果却不换动作（如对同一张图重复跑同一条分析命令）。 */
+  private identicalLimitErrorMessage(): string {
+    return (
+      `本次处理在原地转圈：连续 ${DEFAULT_MAX_IDENTICAL_TOOL_CALLS} 次完全相同的工具调用，` +
+      "模型没有根据结果调整下一步，已自动中止。请缩小任务范围或补充明确指令后重试。"
+    );
   }
 
   /** 空转中止的用户可读说明：告诉用户这不是失败在业务上，而是模型在原地打转。 */
@@ -1402,6 +1528,7 @@ export class PiAgentRuntime implements AgentRuntime {
   private async abortForToolLimit(runId: string): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
+    this.cancelPendingAgentCards("run_aborted");
     try {
       await active.handle.session.abort();
     } catch {

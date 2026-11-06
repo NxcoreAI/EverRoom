@@ -43,6 +43,8 @@ export function Workbench() {
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
   const requestCloseTab = useWorkbenchStore((state) => state.requestCloseTab)
 
+  /** Agent 生成中的产物进度（pptx 脚本执行 phase 事件；done/error 清除）。 */
+  const [generationProgress, setGenerationProgress] = useState<{ title: string; phase: string; slide?: number } | null>(null)
   const [newSpaceOpen, setNewSpaceOpen] = useState(false)
 
   useEffect(() => { void boot() }, [boot])
@@ -105,10 +107,24 @@ export function Workbench() {
     const office = window.nxcore?.office
     if (typeof office?.onAgentFile !== 'function') return
     return office.onAgentFile((event) => {
-      if (event.type !== 'open-edit' || !event.fileId) return
-      void window.nxcore?.files
-        ?.openOriginal(event.fileId, event.originalName ?? event.title, undefined, { editable: true })
-        .catch(() => undefined)
+      if (event.type === 'open-edit' && event.fileId) {
+        void window.nxcore?.files
+          ?.openOriginal(event.fileId, event.originalName ?? event.title, undefined, { editable: true })
+          .catch(() => undefined)
+        return
+      }
+      // 生成进度（phase）：正在渲染的产物挂起进度徽标；终态（done/error）清掉。
+      if (event.type === 'phase' && event.format === 'pptx') {
+        setGenerationProgress({
+          title: event.title,
+          phase: event.phase ?? 'rendering',
+          ...(typeof event.slide === 'number' ? { slide: event.slide } : {}),
+        })
+        return
+      }
+      if (event.type === 'done' || event.type === 'error') {
+        setGenerationProgress((current) => current?.title === event.title ? null : current)
+      }
     })
   }, [])
 
@@ -300,6 +316,18 @@ export function Workbench() {
 
   return (
     <div className="wb-root" data-sidebar-collapsed={String(sidebarCollapsed)}>
+      {generationProgress ? (
+        <div className="wb-generation-progress" role="status">
+          <span className="wb-generation-progress-dot" aria-hidden="true" />
+          <span>
+            {generationProgress.phase === 'importing'
+              ? `正在入库：${generationProgress.title}`
+              : generationProgress.slide
+                ? `正在生成：${generationProgress.title} · 第 ${generationProgress.slide} 页`
+                : `正在生成：${generationProgress.title}`}
+          </span>
+        </div>
+      ) : null}
       <TabBar />
       <div className="wb-body">
         {/* 侧栏保持挂载、用 max-width 过渡收起：折叠/展开有明确视觉反馈，组件内部状态也不丢。 */}

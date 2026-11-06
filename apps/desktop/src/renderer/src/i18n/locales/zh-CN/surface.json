@@ -939,5 +939,13 @@
   "settings.planOverviewPurchased": "充值积分",
   "plans.perMonth": "月",
   "settings.planOverviewNoPurchase": "暂无购买积分",
-  "settings.planOverviewBonus": "注册赠送积分"
+  "settings.planOverviewBonus": "注册赠送积分",
+  "agentChat.cardConfirmTitle": "请确认计划",
+  "agentChat.cardQuestionTitle": "需要你的回答",
+  "agentChat.cardConfirm": "确认执行",
+  "agentChat.cardCancel": "取消",
+  "agentChat.cardSubmit": "提交回答",
+  "agentChat.cardAnswerPlaceholder": "输入你的回答…",
+  "agentChat.cardConfirmFeedbackPlaceholder": "补充说明（可选，取消时反馈给 AI）…",
+  "agentChat.cardFonts": "字体"
 }

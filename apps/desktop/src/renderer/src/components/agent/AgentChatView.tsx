@@ -379,7 +379,7 @@ export function AgentChatView({
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
-  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
+  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string, choice?: string, text?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   /** 卡片动作两段式：prompt 是运行时技术指令，displayText 是用户人话（气泡/标题）。 */
   onSlidesAction?: (prompt: string, displayText: string) => void

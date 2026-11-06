@@ -1194,6 +1194,8 @@ export interface NxcoreDesktopApi {
       approvalId: string,
       decision: AgentApprovalDecision,
       feedback?: string,
+      choice?: string,
+      text?: string,
     ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>

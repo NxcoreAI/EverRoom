@@ -862,6 +862,7 @@ export class OfficeBridgeServer {
                 { title: parsed.title, script: parsed.script, applyThemeJs: parsed.applyThemeJs },
                 broadcastPhase,
                 imageResolver.resolveMaterial,
+                (slide) => this.broadcast({ type: 'phase', title: parsed.title, phase: 'rendering', format, slide }),
               )
               : await generatePptxFromPageSpecs({ title: parsed.title, pages: parsed.pages! }, broadcastPhase, imageResolver)
             : await generateXlsxFromSheets({ title: parsed.title, sheets: parsed.sheets! }, broadcastPhase)

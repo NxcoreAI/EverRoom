@@ -40,3 +40,20 @@ export function isNoOpToolCall(name: unknown, args: unknown): boolean {
 
 /** 连续多少次空调用判定为空转并中止 run。 */
 export const DEFAULT_MAX_NOOP_TOOL_CALLS = 8
+
+/** 参数顺序无关的稳定序列化：同一调用的指纹不受 JSON key 顺序影响。 */
+export function stableToolArgs(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableToolArgs).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableToolArgs(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * 连续相同调用（同名工具 + 参数指纹一致）判定阈值：超过即视为空转。
+ * 实测 2026-11-06：模型用 magick 对同一裁剪区域循环执行同一条颜色分析命令
+ * 30+ 次（每次都拿真输出，echo 类空转守卫不认），直到撞 60 次硬顶才停。
+ */
+export const DEFAULT_MAX_IDENTICAL_TOOL_CALLS = 5
