@@ -86,7 +86,11 @@ export function createDocumentUnderstandingTools(
     }, { additionalProperties: false }),
     execute: async (_toolCallId, params) => {
       const result = await service.parseVersion(String(params.fileEntryId), String(params.fileVersionId));
-      if (!result) throw new Error("document_format_not_supported");
+      if (!result) {
+        // 图片不在本工具支持面（仅 Office/PDF/md/txt）：描述走 workspace_files_preview，
+        // 让子代理按 blocked 收口而不是试遍 fileVersionId 变体（2026-11-06 实测三轮空转）。
+        throw new Error("document_format_not_supported：仅支持 Office/PDF/md/txt；纯图片（png/jpg 等）的视觉描述由调用方经 workspace_files_preview 获取，本工具不处理图片");
+      }
       return toolResult({
         artifactId: result.id,
         fileVersionId: result.artifact.document.fileVersionId,
