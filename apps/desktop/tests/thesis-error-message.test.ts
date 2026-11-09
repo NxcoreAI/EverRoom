@@ -5,7 +5,7 @@ describe('describeThesisError', () => {
   it('翻译「还没有格式卡」并给出如何自解', () => {
     const text = describeThesisError('thesis_format_card_not_found')
     expect(text).toContain('还没有可用的论文格式卡')
-    expect(text).toContain('上传论文模版')
+    expect(text).toContain('上传模版')
     // 关键：告诉用户模版与文档必须同工作区——否则用户会在别的空间里找不着
     expect(text).toContain('同一个工作区')
   })

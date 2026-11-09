@@ -1,166 +1,166 @@
 import type { PiAgentRuntimeTool, PiAgentRuntimeToolResult } from "@nxcore/agent-runtime-pi";
-import type { StartRuntimeRunInput } from "@nxcore/agent-runtime";
-
-/** 卡片请求回调：service.requestAgentCard 的注入形态（runId 从工具入参取）。 */
-export type AgentCardRequester = (
-  runId: string,
-  card: {
-    kind: "confirm" | "question";
-    title: string;
-    body?: string;
-    plan?: string[];
-    options?: string[];
-    allowText?: boolean;
-    palette?: string[];
-    fonts?: { heading?: string; body?: string };
-    notes?: string[];
-  },
-) => Promise<{ choice: string; text?: string }>;
+import type { PiAgentCardDecision, PiAgentCardRequest } from "@nxcore/agent-runtime-pi";
 
 /**
- * 通用交互卡工具对：
- * - agent_confirm：计划/操作确认卡（用户点「确认/取消」，阻塞等待）
- * - agent_ask_user：提问卡（选项按钮或自由输入，阻塞等用户回答）
- * 走 approval 事件通道（kind:"card"），桌面端渲染 AgentDecisionCard。
+ * 通用交互卡工具面：agent_confirm（计划确认卡）与 agent_ask_user（提问卡）。
+ *
+ * 卡片经 AgentService.requestAgentCard → PiAgentRuntime.requestAgentCard 推进
+ * 当前 run 的事件流（approval.requested kind="card"），阻塞等待用户在 UI 上
+ * 作答；桌面端 POST /v1/agent/approvals/:id/resolve 带 choice/text 回填。
+ * 超时按「confirm=denied / question=空答」收口，工具拿到正常返回而非异常。
  */
-export function createAgentCardTools(requestCard: AgentCardRequester): PiAgentRuntimeTool[] {
+export function createAgentCardTools(
+  requestCard: (runId: string, card: PiAgentCardRequest["card"]) => Promise<PiAgentCardDecision>,
+): PiAgentRuntimeTool[] {
   const confirm: PiAgentRuntimeTool = {
     name: "agent_confirm",
     label: "计划确认卡",
-    description: "向用户展示计划/即将执行的操作并等待确认（阻塞到用户点击）。"
-      + "用途：长任务动手前（生成整册 PPT、批量改写文档、删除类操作）出计划让用户确认；用户取消就按反馈调整。"
-      + "不要滥用：单步读写、信息查询不需要确认卡。",
+    description: "向用户展示计划确认卡，等用户点确认或取消后继续。用于动手前对齐："
+      + "生成整册 PPT、批量改写、删除类操作等长任务先出卡（标题 + plan 步骤列表）；"
+      + "PPT 整册生成必须带 palette（2~5 个 hex 色板，按 主色/次色/强调 顺序）与 "
+      + "fonts（标题/正文字体），选定深浅结构再带 notes（如「深色封面 + 浅色内容页」），"
+      + "用户在卡片上直接看到色块与字体再决定。"
+      + "用户确认返回 choice=approved；取消返回 denied，text 带用户反馈——按反馈调整后重新出卡，"
+      + "不要在取消后擅自继续原计划。10 分钟无应答自动取消。",
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", minLength: 1, maxLength: 120, description: "卡片标题，如「将生成 8 页 BP 演示文稿」" },
-        body: { type: "string", maxLength: 600, description: "补充说明（可选）：范围、取舍或风险" },
+        title: { type: "string", description: "卡片标题，一句话说清将做什么（如「将生成 8 页产品介绍演示文稿」）" },
         plan: {
           type: "array",
-          items: { type: "string", minLength: 1, maxLength: 160 },
-          minItems: 1,
-          // 12 页 deck 逐页列计划（材料 2 条 + 每页 1 条）就会到 14——上限 16 覆盖
-          // 「逐页计划」形态（2026-11-06 实测 14 条被拒后模型重试才过）。
-          maxItems: 16,
-          description: "计划步骤列表（按执行顺序，每步一句话；逐页 deck 可一页一条）",
+          items: { type: "string" },
+          description: "计划/步骤列表，按执行顺序每步一行",
         },
         palette: {
           type: "array",
-          items: { type: "string", pattern: "^#?[0-9A-Fa-f]{6}$", minLength: 7, maxLength: 7 },
-          minItems: 2,
-          maxItems: 5,
-          description: "配色方案色板（hex 带 #，按 主色/次色/强调色 顺序）——用户确认前可视判断配色",
+          items: { type: "string" },
+          description: "设计决策色板：2~5 个 hex 色值，按 主色/次色/强调 顺序（PPT 生成必带）",
         },
         fonts: {
           type: "object",
           properties: {
-            heading: { type: "string", maxLength: 60, description: "标题字体（如 Microsoft YaHei）" },
-            body: { type: "string", maxLength: 60, description: "正文字体" },
+            heading: { type: "string", description: "标题字体名" },
+            body: { type: "string", description: "正文字体名" },
           },
-          additionalProperties: false,
-          description: "字体方案（可选）",
+          description: "标题/正文字体（PPT 生成必带）",
         },
         notes: {
           type: "array",
-          items: { type: "string", minLength: 1, maxLength: 80 },
-          minItems: 1,
-          maxItems: 5,
-          description: "其他风格要点（如「深色封面 + 浅色内容页」「衬线标题 + 无衬线正文」）",
+          items: { type: "string" },
+          description: "其他风格要点（如「深色封面 + 浅色内容页」）",
         },
+        body: { type: "string", description: "补充说明（可选）：背景、取舍原因、影响范围" },
       },
-      required: ["title", "plan"],
+      required: ["title"],
       additionalProperties: false,
     },
     promptSnippet: "计划确认卡",
     executionMode: "sequential",
-    execute: async (input: StartRuntimeRunInput, params, signal): Promise<PiAgentRuntimeToolResult> => {
-      if (signal?.aborted) throw new Error("agent_confirm 已取消");
+    execute: async (input, params): Promise<PiAgentRuntimeToolResult> => {
       const title = typeof params.title === "string" ? params.title.trim() : "";
-      const plan = (Array.isArray(params.plan) ? params.plan : [])
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim())
-        .slice(0, 16);
-      if (!title || plan.length === 0) throw new Error("title 与 plan 不能为空");
-      const palette = (Array.isArray(params.palette) ? params.palette : [])
-        .filter((item): item is string => typeof item === "string" && /^#?[0-9A-Fa-f]{6}$/.test(item))
-        .map((item) => (item.startsWith("#") ? item : `#${item}`))
-        .slice(0, 5);
-      const fontsParam = params.fonts as { heading?: unknown; body?: unknown } | undefined;
-      const fonts = fontsParam
-        ? {
-          ...(typeof fontsParam.heading === "string" && fontsParam.heading.trim() ? { heading: fontsParam.heading.trim().slice(0, 60) } : {}),
-          ...(typeof fontsParam.body === "string" && fontsParam.body.trim() ? { body: fontsParam.body.trim().slice(0, 60) } : {}),
-        }
-        : undefined;
-      const notes = (Array.isArray(params.notes) ? params.notes : [])
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim().slice(0, 80))
-        .slice(0, 5);
-      const decision = await requestCard(input.runId, {
+      if (!title) throw new Error("agent_confirm 参数 title 不能为空");
+      const card: PiAgentCardRequest["card"] = {
         kind: "confirm",
-        title,
-        ...(typeof params.body === "string" && params.body.trim() ? { body: params.body.trim().slice(0, 600) } : {}),
-        plan,
-        ...(palette.length >= 2 ? { palette } : {}),
-        ...(fonts && (fonts.heading || fonts.body) ? { fonts } : {}),
-        ...(notes.length > 0 ? { notes } : {}),
-      });
-      const approved = decision.choice === "approved";
+        title: title.slice(0, 200),
+        ...(typeof params.body === "string" && params.body.trim()
+          ? { body: params.body.trim().slice(0, 2_000) }
+          : {}),
+        ...(Array.isArray(params.plan)
+          ? { plan: params.plan.flatMap((step) => (typeof step === "string" && step.trim() ? [step.trim().slice(0, 500)] : [])).slice(0, 30) }
+          : {}),
+        ...(Array.isArray(params.palette)
+          ? {
+            palette: params.palette.flatMap((color) => {
+              if (typeof color !== "string") return [];
+              const value = color.trim();
+              return /^#[0-9a-fA-F]{6}$/.test(value) ? [value.toLowerCase()] : [];
+            }).slice(0, 5),
+          }
+          : {}),
+        ...(params.fonts !== null && typeof params.fonts === "object" && !Array.isArray(params.fonts)
+          ? (() => {
+            const fonts = params.fonts as { heading?: unknown; body?: unknown };
+            return {
+              fonts: {
+                ...(typeof fonts.heading === "string" && fonts.heading.trim()
+                  ? { heading: fonts.heading.trim().slice(0, 100) }
+                  : {}),
+                ...(typeof fonts.body === "string" && fonts.body.trim()
+                  ? { body: fonts.body.trim().slice(0, 100) }
+                  : {}),
+              },
+            };
+          })()
+          : {}),
+        ...(Array.isArray(params.notes)
+          ? { notes: params.notes.flatMap((note) => (typeof note === "string" && note.trim() ? [note.trim().slice(0, 300)] : [])).slice(0, 10) }
+          : {}),
+      };
+      const decision = await requestCard(input.runId, card);
       return {
         content: JSON.stringify({
-          confirmed: approved,
-          ...(approved ? {} : { feedback: decision.text ?? "" }),
-          note: approved ? "用户已确认计划" : "用户取消了本次操作",
+          choice: decision.choice,
+          ...(decision.text ? { text: decision.text } : {}),
+          hint: decision.choice === "approved"
+            ? "用户已确认，按计划继续执行。"
+            : "用户未确认。text 是用户反馈（可能为空/timeout）：有反馈就按反馈调整后重新出卡；无反馈且任务可缩减就缩小范围重新出卡，不要原样重发。",
         }),
-        details: { confirmed: approved },
       };
     },
   };
 
   const askUser: PiAgentRuntimeTool = {
     name: "agent_ask_user",
-    label: "向用户提问",
-    description: "向用户提出一个需要回答的问题并等待作答（阻塞；用户可点选项或自由输入）。"
-      + "用途：缺少必要信息且无法推断时（二选一的方向、缺失的关键参数、素材歧义）；一次只问一个问题。"
-      + "能从上下文/工具返回推断的不要问；连续提问不超过 2 次，仍不够就按最合理假设继续并说明。",
+    label: "提问卡",
+    description: "向用户提一个问题并等待回答。只用于无法从上下文与工具推断的关键分歧："
+      + "方向二选一、关键参数缺失、素材歧义。能给选项就给 options（按钮），"
+      + "allowText=true 时用户也可自由输入。返回 choice=所选选项或用户输入文本（text）。"
+      + "能推断的不要问；一次只问一个问题；连续提问不超过 2 次，仍不够就按最合理假设继续并说明。"
+      + "10 分钟无应答自动取消（choice 为空）。",
     parameters: {
       type: "object",
       properties: {
-        question: { type: "string", minLength: 1, maxLength: 300, description: "问题（一句话，具体到可直接回答）" },
-        context: { type: "string", maxLength: 600, description: "背景说明（可选）：为什么问、答了会怎样" },
+        question: { type: "string", description: "问题本身，一句话只问一个关键分歧点" },
         options: {
           type: "array",
-          items: { type: "string", minLength: 1, maxLength: 120 },
-          minItems: 2,
-          maxItems: 6,
-          description: "候选答案按钮（可选，2~6 个）；不传则用户自由输入",
+          items: { type: "string" },
+          description: "候选答案（按钮）；不传则用户只能自由输入",
         },
+        allowText: { type: "boolean", description: "允许自由输入补充（默认 true）" },
+        context: { type: "string", description: "补充上下文（可选）：为什么问、两个选项分别意味着什么" },
       },
       required: ["question"],
       additionalProperties: false,
     },
-    promptSnippet: "向用户提问",
+    promptSnippet: "提问卡",
     executionMode: "sequential",
-    execute: async (input: StartRuntimeRunInput, params, signal): Promise<PiAgentRuntimeToolResult> => {
-      if (signal?.aborted) throw new Error("agent_ask_user 已取消");
+    execute: async (input, params): Promise<PiAgentRuntimeToolResult> => {
       const question = typeof params.question === "string" ? params.question.trim() : "";
-      if (!question) throw new Error("question 不能为空");
-      const options = (Array.isArray(params.options) ? params.options : [])
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => item.trim())
-        .slice(0, 6);
-      const decision = await requestCard(input.runId, {
+      if (!question) throw new Error("agent_ask_user 参数 question 不能为空");
+      const card: PiAgentCardRequest["card"] = {
         kind: "question",
-        title: question,
-        ...(typeof params.context === "string" && params.context.trim() ? { body: params.context.trim().slice(0, 600) } : {}),
-        ...(options.length >= 2 ? { options } : { allowText: true }),
-      });
-      const answer = decision.text?.trim()
-        ? (decision.choice ? `${decision.choice}：${decision.text.trim()}` : decision.text.trim())
-        : decision.choice;
+        title: question.slice(0, 500),
+        ...(typeof params.context === "string" && params.context.trim()
+          ? { body: params.context.trim().slice(0, 2_000) }
+          : {}),
+        ...(Array.isArray(params.options)
+          ? {
+            options: params.options.flatMap((option) =>
+              typeof option === "string" && option.trim() ? [option.trim().slice(0, 200)] : [],
+            ).slice(0, 6),
+          }
+          : {}),
+        ...(typeof params.allowText === "boolean" ? { allowText: params.allowText } : {}),
+      };
+      const decision = await requestCard(input.runId, card);
       return {
-        content: JSON.stringify({ answer, answered: answer !== "" }),
-        details: { answer },
+        content: JSON.stringify({
+          choice: decision.choice,
+          ...(decision.text ? { text: decision.text } : {}),
+          hint: decision.choice.trim()
+            ? "已收到用户作答，按答案继续。"
+            : "用户未作答（超时或取消）：不要重复追问同一问题，按最合理假设继续并向用户说明该假设。",
+        }),
       };
     },
   };

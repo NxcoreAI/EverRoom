@@ -84,7 +84,7 @@ describe("DocumentUnderstandingService", () => {
   it("parses legacy binary Office bytes in-process without an external converter", async () => {
     const test = await setup();
     const fixture = (name: string) => readFile(new URL(
-      `../../../submodules/everoffice-connectors/gateway-module/tests/fixtures/${name}`,
+      `./fixtures/${name}`,
       import.meta.url,
     ));
     const cases = [

@@ -67,6 +67,8 @@ export type TimelineRow =
   | { kind: 'subagent'; key: string; at: number; subagent: AgentSubagentStep }
   /** 连续空转调用（echo stepN / read /dev/null …）折叠成一行，展开才看明细。 */
   | { kind: 'noop'; key: string; at: number; count: number; samples: string[]; steps: AgentActivityStep[] }
+  /** 同一工具连续调用多次（Excel 拆成一格一次地改）：折叠成一行，展开看每次的对象。 */
+  | { kind: 'repeat'; key: string; at: number; count: number; steps: AgentActivityStep[] }
 
 export interface ReducedAgentRunEvents {
   tools: DisplayAgentToolCall[]
@@ -183,6 +185,17 @@ const AGENT_TOOL_PRESENTATIONS: Record<string, AgentToolPresentation> = {
   connector_record_get: { kind: 'action', zh: ['读取连接记录', '已读取连接记录'], keys: ['surface:agentExecutionTimeline.readConnectorRecord', 'surface:agentExecutionTimeline.connectorRecordRead'] },
   connector_sync_status: { kind: 'action', zh: ['查看连接同步状态', '已查看连接同步状态'], keys: ['surface:agentExecutionTimeline.viewConnectorSyncStatus', 'surface:agentExecutionTimeline.connectorSyncStatusViewed'] },
   send_notification: { kind: 'action', zh: ['发送通知', '已发送通知'], keys: ['surface:agentExecutionTimeline.sendNotification', 'surface:agentExecutionTimeline.notificationSent'] },
+  // 办公套件（Excel/Word/PDF 活文档通道）：原始工具名对用户没有意义，
+  // 统一说成"读取表格 / 编辑表格"，具体对象由 subject（区域、操作摘要）承担。
+  sheets_agent_read: { kind: 'file', zh: ['读取表格', '已读取表格'], keys: ['surface:agentExecutionTimeline.sheetsRead', 'surface:agentExecutionTimeline.sheetsReadDone'] },
+  sheets_agent_edit: { kind: 'file', zh: ['编辑表格', '已编辑表格'], keys: ['surface:agentExecutionTimeline.sheetsEdit', 'surface:agentExecutionTimeline.sheetsEditDone'] },
+  word_agent_read: { kind: 'document', zh: ['读取文档', '已读取文档'], keys: ['surface:agentExecutionTimeline.wordRead', 'surface:agentExecutionTimeline.wordReadDone'] },
+  word_agent_edit: { kind: 'document', zh: ['编辑文档', '已编辑文档'], keys: ['surface:agentExecutionTimeline.wordEdit', 'surface:agentExecutionTimeline.wordEditDone'] },
+  word_agent_ops: { kind: 'document', zh: ['编辑文档', '已编辑文档'], keys: ['surface:agentExecutionTimeline.wordEdit', 'surface:agentExecutionTimeline.wordEditDone'] },
+  pdf_agent_read: { kind: 'document', zh: ['读取 PDF', '已读取 PDF'], keys: ['surface:agentExecutionTimeline.pdfRead', 'surface:agentExecutionTimeline.pdfReadDone'] },
+  pdf_agent_edit: { kind: 'document', zh: ['编辑 PDF', '已编辑 PDF'], keys: ['surface:agentExecutionTimeline.pdfEdit', 'surface:agentExecutionTimeline.pdfEditDone'] },
+  slides_agent_read: { kind: 'slides', zh: ['读取演示文稿', '已读取演示文稿'], keys: ['surface:agentExecutionTimeline.slidesRead', 'surface:agentExecutionTimeline.slidesReadDone'] },
+  slides_agent_edit: { kind: 'slides', zh: ['编辑演示文稿', '已编辑演示文稿'], keys: ['surface:agentExecutionTimeline.slidesEdit', 'surface:agentExecutionTimeline.slidesEditDone'] },
   submit_format_mapping: { kind: 'connector', zh: ['提交格式映射', '已提交格式映射'], keys: ['surface:agentExecutionTimeline.submitFormatMapping', 'surface:agentExecutionTimeline.formatMappingSubmitted'] },
   tool_search: { kind: 'action', zh: ['选择所需工具', '已选择所需工具'], keys: ['surface:agentExecutionTimeline.selectRequiredTool', 'surface:agentExecutionTimeline.requiredToolSelected'] },
   // Room 与文档（Markdown 文稿工具链已下线：context_room_document_*/write_*/patch_*
@@ -415,10 +428,39 @@ function firstSubjectValue(args: Record<string, unknown>, keys: readonly string[
   return undefined
 }
 
+/**
+ * 办公套件活文档工具的参数摘要：`calls[]` 里每一项是一次 read_range / set_cell / format_range。
+ * 单条显示具体对象（区域或地址），多条显示「N 处操作 · 首个操作」。
+ */
+function officeCallSummary(args: Record<string, unknown>): string | undefined {
+  const calls = args.calls
+  if (!Array.isArray(calls) || calls.length === 0) return undefined
+  const describe = (call: unknown): string | undefined => {
+    if (!call || typeof call !== 'object') return undefined
+    const record = call as Record<string, unknown>
+    const opName = typeof record.name === 'string' ? record.name : undefined
+    const input = record.input && typeof record.input === 'object'
+      ? record.input as Record<string, unknown>
+      : {}
+    const target = userText(input.range, 40)
+      ?? userText(input.address, 24)
+      ?? userText(input.sheetName ?? input.name, 40)
+    if (opName && target) return `${opName} ${target}`
+    return opName ?? target
+  }
+  if (calls.length === 1) return describe(calls[0])
+  const first = describe(calls[0])
+  return first ? `${calls.length} 处操作 · ${first}` : `${calls.length} 处操作`
+}
+
 export function agentToolSubject(tool: DisplayAgentToolCall): string | undefined {
   const name = tool.name.toLowerCase()
   // PPT 的阶段与内容由进度卡承载；时间线不再显示 generate/style/draft 这类内部参数值。
   if (name === 'slides_draft') return undefined
+  if (/(^|_)(sheets|word|pdf|slides)_agent_(edit|ops)$/.test(name)) {
+    const office = officeCallSummary(tool.args)
+    if (office) return office
+  }
   if (name.startsWith('connector_')) {
     const service = userText(tool.args.service, 40)
     const operation = userText(tool.args.name, 80) ?? userText(tool.args.query, 80)
@@ -472,6 +514,25 @@ export function agentToolResultSummary(result: unknown, t?: Translate): string |
   }
   if (typeof result !== 'object' || Array.isArray(result)) return undefined
   const record = result as Record<string, unknown>
+  // 办公套件返回 {ok, results:[…]}：results 的长度是"操作条数"，不是"查到多少条结果"，
+  // 直接说成「N 处操作已完成」/「N 处里有 1 处失败」才符合用户对编辑的预期。
+  if (typeof record.ok === 'boolean' && Array.isArray(record.results)) {
+    const total = record.results.length
+    const failed = record.results.filter((item) =>
+      item && typeof item === 'object'
+      && ((item as { ok?: unknown }).ok === false || (item as { isError?: unknown }).isError === true))
+      .length
+    if (record.ok === false) return t
+      ? t('surface:agentExecutionTimeline.officeOpsFailed', { failed, total })
+      : `${total} 处操作未全部成功`
+    if (total === 0) return t ? t('surface:agentExecutionTimeline.officeOpsEmpty') : '无可执行操作'
+    if (failed > 0) return t
+      ? t('surface:agentExecutionTimeline.officeOpsPartial', { failed, total })
+      : `${total} 处操作中 ${failed} 处失败`
+    return t
+      ? t('surface:agentExecutionTimeline.officeOpsDone', { count: total })
+      : `${total} 处操作已完成`
+  }
   for (const key of ['results', 'items', 'messages', 'events', 'photos']) {
     if (Array.isArray(record[key])) return t
       ? t('surface:agentExecutionTimeline.countResults', { count: record[key].length })
@@ -868,7 +929,53 @@ export function buildTimelineRows(
       },
     })
   }
-  return collapseNoOpRows(rows.sort((left, right) => left.at - right.at))
+  return collapseRepeatedToolRows(collapseNoOpRows(rows.sort((left, right) => left.at - right.at)))
+}
+
+/** 同工具连续折叠阈值：少于这么多次照常显示。 */
+const REPEAT_FOLD_MIN = 4
+
+/**
+ * 同一个工具连续调用多次时折叠：典型场景是模型把「改 12 个单元格」拆成 12 次
+ * sheets_agent_edit，时间线被同一行刷屏。折叠后仍然能展开看每一次的对象。
+ */
+function collapseRepeatedToolRows(rows: TimelineRow[]): TimelineRow[] {
+  const output: TimelineRow[] = []
+  let pending: AgentActivityStep[] = []
+  const flush = (): void => {
+    if (pending.length === 0) return
+    if (pending.length < REPEAT_FOLD_MIN) {
+      output.push(...pending.map((step) => ({
+        kind: 'tool' as const,
+        key: step.id,
+        at: Date.parse(step.tool.startedAt) || 0,
+        step,
+      })))
+    } else {
+      const first = pending[0]!
+      output.push({
+        kind: 'repeat',
+        key: `repeat-${first.id}`,
+        at: Date.parse(first.tool.startedAt) || 0,
+        count: pending.length,
+        steps: pending,
+      })
+    }
+    pending = []
+  }
+  for (const row of rows) {
+    if (row.kind === 'tool') {
+      const name = row.step.tool.name
+      if (pending.length === 0 || pending[0]!.tool.name === name) {
+        pending.push(row.step)
+        continue
+      }
+    }
+    flush()
+    output.push(row)
+  }
+  flush()
+  return output
 }
 
 /** 折叠阈值：少于这么多连续空转就直接照常显示（一两次打点不值得折叠）。 */

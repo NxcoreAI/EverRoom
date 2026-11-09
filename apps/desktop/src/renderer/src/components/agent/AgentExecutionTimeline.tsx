@@ -474,6 +474,26 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
               if (row.kind === 'subagent') {
                 return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
               }
+              if (row.kind === 'repeat') {
+                // 同一工具连续调用多次（典型：一格一次地改 Excel）折叠成一行，
+                // 展开能看到每次的对象，不用被同一行刷屏。
+                const first = row.steps[0]!.tool
+                const label = agentToolLabel(first, true, t)
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.repeatCalls', { count: row.count, name: label })}
+                    </summary>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}>
+                          <code>{agentToolSubject(step.tool) ?? step.tool.name}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )
+              }
               if (row.kind === 'noop') {
                 // 空转折叠行：默认一行摘要，展开才看每次打点的命令（原生 details，无需状态）。
                 return (

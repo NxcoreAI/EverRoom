@@ -208,6 +208,14 @@ export function RuntimeConfigSettingsSection() {
           <input value={form.generic.provider} onChange={(event) => updateGeneric('provider', event.target.value)} /></label>
         <label className="rc-form-field"><span>{aiLabels.model}</span>
           <input value={form.generic.model} placeholder="gpt-4o-mini / glm-4-flash / …" onChange={(event) => updateGeneric('model', event.target.value)} /></label>
+        <label className="rc-form-field"><span>{t('surface:settings.rcMaxTokens')}</span>
+          <input
+            inputMode="numeric"
+            value={form.maxTokens}
+            placeholder="8192"
+            onChange={(event) => setForm((current) => ({ ...current, maxTokens: event.target.value.replace(/[^0-9]/g, '') }))}
+          /></label>
+        <p className="rc-form-hint rc-span-2">{t('surface:settings.rcMaxTokensHint')}</p>
         <label className="rc-form-field rc-span-2"><span>{aiLabels.baseUrl}</span>
           <input value={form.generic.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => updateGeneric('baseUrl', event.target.value)} /></label>
         <label className="rc-form-field rc-span-2"><span>{aiLabels.apiKey}</span>

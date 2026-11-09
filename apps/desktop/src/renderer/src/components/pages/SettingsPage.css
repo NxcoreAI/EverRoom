@@ -1516,6 +1516,8 @@
 .rc-form-error {
   color: #b4232a;
   font-size: 11px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .rc-form-test {

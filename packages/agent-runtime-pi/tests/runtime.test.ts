@@ -312,14 +312,83 @@ describe("PiAgentRuntime", () => {
       });
       expect(events.some((event) => event.type === "run.completed")).toBe(false);
       const request = JSON.stringify(requestBodies[0]);
-      // Phase 2i 去 Room：run 无 Room 维度，提示词只保留工作区级文稿指引，
-      // 不注入 Room 快照，也不引导模型传 roomId 或调用已删除的 context_room_list。
-      expect(request).toContain("工作区文稿一律按工作区级文稿创建");
+      // Phase 2i 去 Room：run 无 Room 维度；2026-11 Markdown 文稿链路下线后，
+      // 提示词不再引导模型调用已删除的 document_write_begin，改为按格式选 Office 工具。
+      expect(request).toContain("由对应 Office 工具直接生成或修改");
       expect(request).toContain("不需要用户先选择或确认归属");
       expect(request).not.toContain("<available_rooms>");
       expect(request).not.toContain("candidateRoomIds");
-      expect(request).not.toContain("document_write_begin.roomId");
+      expect(request).not.toContain("document_write_begin");
       expect(request).not.toContain("context_room_list");
+    } finally {
+      await runtime.dispose();
+      await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
+    }
+  });
+
+  it("自动续写：命中输出上限后接着跑完，而不是判失败", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const endpoint = createServer((_request, response) => {
+      let raw = "";
+      _request.on("data", (chunk) => { raw += chunk.toString(); });
+      _request.on("end", () => {
+        requestBodies.push(JSON.parse(raw) as Record<string, unknown>);
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const chunk = (content: string, finishReason: string | null = null) => JSON.stringify({
+          id: "chatcmpl-auto-continue",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "nxcore-test-model",
+          choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
+        });
+        // 第一轮被长度截断，续写这一轮正常说完
+        const first = requestBodies.length === 1;
+        response.write(`data: ${chunk(first ? "先说明还差哪几项：" : "剩余步骤已完成，结论如下。")}\n\n`);
+        response.write(`data: ${chunk("", first ? "length" : "stop")}\n\n`);
+        response.end("data: [DONE]\n\n");
+      });
+    });
+    await new Promise<void>((resolvePromise) => endpoint.listen(0, "127.0.0.1", resolvePromise));
+    const address = endpoint.address();
+    if (!address || typeof address === "string") throw new Error("Test endpoint did not bind a TCP port");
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-pi-auto-continue-test-"));
+    temporaryDirectories.push(dataDir);
+    const runtime = new PiAgentRuntime({
+      provider: "nxcore-test-provider",
+      model: "nxcore-test-model",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: "nxcore-test-key",
+      api: "openai-completions",
+      maxTokens: 32,
+      contextWindow: 8192,
+      temperature: 0.3,
+      reasoning: "off",
+      sessionsDir: join(dataDir, "sessions"),
+      workingDirectory: join(dataDir, "workspace"),
+      agentDirectory: join(dataDir, "config"),
+    });
+
+    try {
+      const run = await runtime.start({
+        runId: "run-auto-continue",
+        sessionId: "session-auto-continue",
+        runtimeSessionRef: null,
+        prompt: "把报告改完",
+        pageLabel: "首页",
+      });
+      const events: RuntimeEvent[] = [];
+      for await (const event of run.events) events.push(event);
+
+      // 续写补完了输出 → 整轮成功，不再把球踢回给用户
+      expect(events.at(-1)).toMatchObject({ type: "run.completed" });
+      expect(events.some((event) => event.type === "run.failed")).toBe(false);
+      // 续写提示词要求"接着写、别重复"，且新请求带上了上一轮的上下文
+      expect(requestBodies).toHaveLength(2);
+      const continuation = JSON.stringify(requestBodies[1]);
+      expect(continuation).toContain("上一轮输出被长度上限截断");
+      expect(continuation).toContain("接着把剩下的部分做完");
+      // 续写不是重开：原始请求仍在同一条会话里
+      expect(continuation).toContain("把报告改完");
     } finally {
       await runtime.dispose();
       await new Promise<void>((resolvePromise, reject) => endpoint.close((error) => error ? reject(error) : resolvePromise()));
@@ -401,11 +470,11 @@ describe("PiAgentRuntime", () => {
 
       expect(requestBodies[0]?.tools).toBeUndefined();
       expect(JSON.stringify(requestBodies[0])).not.toContain("document tool guidance");
-      // Phase 2i 去 Room：不再注入 Room 快照（<room_metadata> 消失），
-      // 换成工作区级文稿指引。
+      // Phase 2i 去 Room：不再注入 Room 快照（<room_metadata> 消失）；
+      // 2026-11 后改为按格式选 Office 工具的工作区级文稿指引。
       expect(JSON.stringify(requestBodies[0])).not.toContain("<room_metadata>");
       expect(JSON.stringify(requestBodies[0])).not.toContain("手动创建的 Room");
-      expect(JSON.stringify(requestBodies[0])).toContain("工作区文稿一律按工作区级文稿创建");
+      expect(JSON.stringify(requestBodies[0])).toContain("由对应 Office 工具直接生成或修改");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain("document_read");
       expect(JSON.stringify(requestBodies[1]?.tools)).toContain('"name":"bash"');
     } finally {
@@ -442,8 +511,8 @@ describe("PiAgentRuntime", () => {
               id: `call-${String(requestIndex)}`,
               type: "function",
               function: {
-                name: "document_write_begin",
-                arguments: '{"mode":"create","title":"测试文档","format":"markdown"}',
+                name: "office_create",
+                arguments: '{"title":"测试文档","html":"<p>正文</p>"}',
               },
             }],
           })}\n\n`);
@@ -480,18 +549,17 @@ describe("PiAgentRuntime", () => {
     }, {
       promptGuidelines: ["动态文档能力规范：只使用当前注册表提供的能力说明。"],
       tools: [{
-        name: "document_write_begin",
-        label: "开始创建 Room 文档",
-        description: "创建当前 Room 的文档",
+        name: "office_create",
+        label: "生成 Word 文档",
+        description: "用本地 Word 引擎生成一份新的 .docx 文档",
         parameters: {
           type: "object",
           additionalProperties: false,
           properties: {
-            mode: { type: "string", enum: ["create"] },
             title: { type: "string" },
-            format: { type: "string", enum: ["markdown"] },
+            html: { type: "string" },
           },
-          required: ["mode", "title", "format"],
+          required: ["title", "html"],
         },
         executionMode: "sequential",
         execute: async (input) => {
@@ -549,13 +617,13 @@ describe("PiAgentRuntime", () => {
       const reusedRunRequest = JSON.stringify(requestBodies[2]);
       expect(reusedRunRequest).toContain("本轮执行 ID：run-room-b");
       expect(reusedRunRequest).toContain("历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效");
-      expect(reusedRunRequest).toContain("不要先调用 document_read");
-      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown");
+      expect(reusedRunRequest).toContain("新文稿按格式直接用 office_create / sheets_create / slides_create 生成");
+      expect(reusedRunRequest).toContain("不得要求用户提供 readReceipt、operationId、patchId、blockId 或操作句柄");
       expect(reusedRunRequest).toContain("工具调用、文档全文、块标识、读取凭证、Operation 标识和工具错误均已移除");
       expect(reusedRunRequest).toContain("用户：创建文档");
       expect(reusedRunRequest).not.toContain('{\\"roomId\\":\\"room-a\\",\\"state\\":\\"open\\"}');
       expect(requestBodies).toHaveLength(4);
-      expect(JSON.stringify(requestBodies[0]?.tools)).toContain("document_write_begin");
+      expect(JSON.stringify(requestBodies[0]?.tools)).toContain("office_create");
       expect(JSON.stringify(requestBodies[0]?.tools)).toContain('"name":"bash"');
       expect(JSON.stringify(requestBodies[0]?.tools)).not.toContain("v2_desktop_user_pc_bash");
       const firstRequest = JSON.stringify(requestBodies[0]);
@@ -667,8 +735,9 @@ describe("PiAgentRuntime", () => {
       expect(executions).toBe(1);
       expect(requestIndex).toBe(2);
       expect(events.map((event) => event.type)).toContain("run.failed");
+      // 文案改成中文可行动版本：说清上限、已中止、以及下一步怎么做
       expect(events.find((event) => event.type === "run.failed")?.payload).toEqual({
-        message: "Pi runtime exceeded the maximum tool calls per run (1)",
+        message: expect.stringContaining("工具调用已达上限（1 次）"),
       });
     } finally {
       await runtime.dispose();
