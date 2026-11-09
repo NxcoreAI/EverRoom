@@ -13,7 +13,6 @@ import '@/components/agent/AgentPanel.css'
 
 import { useWorkbenchStore } from '../state/store'
 import { workbenchToast } from '../shell/toast'
-import { ConnectorsDialog } from './ConnectorsDialog'
 import { ConversationEmpty } from './ConversationEmpty'
 import { NoteQueueChip } from './NoteQueueChip'
 import './conversation.css'
@@ -80,7 +79,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
   const [draft, setDraft] = useState('')
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [connectingVisible, setConnectingVisible] = useState(false)
-  const [connectorsOpen, setConnectorsOpen] = useState(false)
   /** 整区拖拽：dragenter/leave 计数（经过子元素时 leave 先于 enter，布尔会闪）。 */
   const [dragDepth, setDragDepth] = useState(0)
   const composerRef = useRef<HTMLTextAreaElement & AgentComposerHandle>(null)
@@ -361,14 +359,14 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       selectedExternalConversation={null}
       localAgents={[]}
       rooms={[]}
+      /** 附件归当前工作空间：Agent 的 file_search/library_browse 按空间隔离查库，
+       *  拖进来的文件必须落进本空间，否则 Agent 找不到刚导入的文件。 */
+      attachmentWorkspaceId={workspaceId}
       modelPreference={hook.currentSession?.modelPreference ?? hook.modelPreferenceDefault}
       modelPreferenceLocked={Boolean(hook.sessionId)}
       loadModelAvailability={async () => ({ lite: true, primary: true })}
       onSelectModelPreference={hook.setModelPreferenceDefault}
       channelAgentId={null}
-      permissionMode={hook.permissionMode}
-      permissionModeAvailable={hook.permissionModeAvailable}
-      onSelectPermissionMode={hook.setSessionPermissionMode}
       thinkingLevel={hook.sessionId ? hook.currentSession?.thinkingLevel ?? null : hook.thinkingLevelDefault}
       onSelectThinkingLevel={hook.setSessionThinkingLevel}
       contextUsage={hook.contextUsage}
@@ -386,7 +384,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
       onClearContext={() => undefined}
       onRemoveContext={() => undefined}
       onStop={() => void hook.stop()}
-      onOpenConnectors={() => setConnectorsOpen(true)}
       onSubmit={(payload) => send(payload.attachments, payload.mountedDirectories)}
     />
   )
@@ -412,7 +409,6 @@ function ConversationPaneInner({ tabId, workspaceId, sessionId, onRestartConvers
         </div>
       ) : null}
 
-      <ConnectorsDialog open={connectorsOpen} onClose={() => setConnectorsOpen(false)} />
       {!bridgeAvailable || !workspaceId ? (
         <div className="wb-conversation-notice" role="status">
           {bridgeAvailable ? '工作区未就绪，暂时无法发送消息。' : '桌面端 Agent 服务未就绪，暂时无法发送消息。'}

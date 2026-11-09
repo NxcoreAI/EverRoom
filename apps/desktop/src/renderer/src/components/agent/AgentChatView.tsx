@@ -2,6 +2,7 @@ import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw } from
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { AgentAnswerDetails } from './AgentAnswerDetails'
 import { AgentShellApproval } from './AgentShellApproval'
 import { ReasoningBlock } from './ReasoningBlock'
 import {
@@ -928,7 +929,27 @@ export function AgentChatView({
                 activity?.completed && !message.streaming && runCompletedAtByRun[message.runId] ? message.content : ''
               )
               : message.content
-            const finalContent = localizeAgentAnswer(rawFinalContent, t)
+            // 分级答复（answer-tiering）：displayContent 是默认展示层（L0+L1），
+            // 差值折叠为「查看详情」。gateway 拼装的 content 以 displayContent
+            // 为前缀（trim 边界可能有细微空白差，前缀校验失败就不分级——
+            // 保守退化成整段展示，绝不丢内容）。流式期间照常流全文，run 完成
+            // 切分级；无标记的消息 displayContent 为 undefined，行为不变。
+            const tieredDisplay = activity?.finalDisplayContent ?? message.displayContent
+            let displayFinalContent = rawFinalContent
+            let tieredDetails: string | undefined
+            if (
+              tieredDisplay !== undefined && tieredDisplay.trim()
+              && !message.streaming && rawFinalContent.trimStart().startsWith(tieredDisplay.trimEnd())
+              && rawFinalContent.trim().length > tieredDisplay.trim().length
+            ) {
+              const prefixEnd = rawFinalContent.indexOf(tieredDisplay.trimEnd())
+              const rest = prefixEnd >= 0 ? rawFinalContent.slice(prefixEnd + tieredDisplay.trimEnd().length) : ''
+              if (rest.trim()) {
+                displayFinalContent = tieredDisplay
+                tieredDetails = rest
+              }
+            }
+            const finalContent = localizeAgentAnswer(displayFinalContent, t)
             const partialContent = Boolean(
               hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
             )
@@ -1060,7 +1081,10 @@ export function AgentChatView({
                 {finalContent ? (
                   <div className="agent-assistant-response">
                     <AgentResponseByline agentId={authorAgentId} names={agentNamesById} />
-                    <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
+                    <article className="agent-message" data-role="assistant">
+                      <AssistantMessageContent content={finalContent} />
+                      {tieredDetails ? <AgentAnswerDetails details={localizeAgentAnswer(tieredDetails, t)} /> : null}
+                    </article>
                   </div>
                 ) : null}
                 {(() => {

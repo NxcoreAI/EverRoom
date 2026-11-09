@@ -391,4 +391,33 @@ describe('FilesGatewayBridge.importAgentAttachments', () => {
     expect(attachments).toEqual([expect.objectContaining({ fileId: 'upl-1', kind: 'image', mimeType: 'image/png' })])
     expect(calls).toEqual(['upload'])
   })
+
+  it('tags document attachments with the owning workspace so they land in that workspace library', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-ws-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'doc.pdf'), 'pdf-bytes')
+    const uploadedMetadata: Array<Record<string, unknown>> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'http://gateway.test/v1/file-imports') {
+        const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as Record<string, unknown>
+        uploadedMetadata.push(metadata)
+        return new Response(JSON.stringify({
+          fileEntryId: 'file-1', fileVersionId: 'version-1',
+          versionDeduped: false, blobDeduped: false, contentHash: 'a'.repeat(64), jobId: 'job-1',
+        }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/markdown')) {
+        return new Response(JSON.stringify({ markdown: '# parsed' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
+
+    await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'doc.pdf')], { workspaceId: 'ws-42' })
+
+    expect(uploadedMetadata).toEqual([expect.objectContaining({ workspaceId: 'ws-42' })])
+  })
 })

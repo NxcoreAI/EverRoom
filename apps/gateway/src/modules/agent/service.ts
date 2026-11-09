@@ -71,6 +71,7 @@ import {
   pendingAgentIntents,
 } from "../../infrastructure/database/schema.js";
 import { AgentEventBroker } from "./event-broker.js";
+import { splitAgentAnswer } from "./answer-tiering.js";
 import { issueTrustedMcpSession, revokeTrustedMcpSession } from "./mcp-session-authority.js";
 import { requestsWorkspaceDocument } from "./document-intent.js";
 import {
@@ -2560,7 +2561,17 @@ export class AgentService {
       seq,
       type: runtimeEvent.type,
       occurredAt: now.toISOString(),
-      payload: runtimeEvent.payload,
+      payload: runtimeEvent.type === "message.completed" && typeof (runtimeEvent.payload as { content?: unknown }).content === "string"
+        ? (() => {
+            const payload = runtimeEvent.payload as { content: string; displayContent?: unknown };
+            // 与落库同一解析器：事件侧带上 displayContent，实时客户端 run 完成
+            // 即可直接切到分级展示；无标记时不加字段（旧客户端 schema 不受影响）。
+            const tiered = splitAgentAnswer(payload.content);
+            return tiered.hasDetails
+              ? { ...payload, content: tiered.content, displayContent: tiered.displayContent }
+              : { ...payload };
+          })()
+        : runtimeEvent.payload,
     };
 
     const terminalStatus: Partial<Record<AgentEventType, AgentRunStatus>> = {
@@ -2621,15 +2632,21 @@ export class AgentService {
         .run();
 
       if (runtimeEvent.type === "message.completed") {
-        const payload = runtimeEvent.payload as { content?: unknown };
+        const payload = runtimeEvent.payload as { content?: unknown; displayContent?: unknown };
         const assistantMessageId = randomUUID();
+        // 分级协议：模型用 [[details]] 标记行切分 L0/L1 与 L2；命中时
+        // displayContent 只存默认展示层，content 存去标记后的全文。无标记
+        // （旧模型输出/短答复）不落 displayContent，前端回退 content。
+        const rawContent = typeof payload.content === "string" ? payload.content : "";
+        const tiered = splitAgentAnswer(rawContent);
         tx.insert(agentMessages).values({
           id: assistantMessageId,
           sessionId,
           runId,
           role: "assistant",
           authorAgentId: runOwner?.agentId ?? MAIN_AGENT_ID,
-          content: typeof payload.content === "string" ? payload.content : "",
+          content: tiered.hasDetails ? tiered.content : rawContent,
+          ...(tiered.hasDetails ? { displayContent: tiered.displayContent } : {}),
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: assistantMessageId, priority: "high" });

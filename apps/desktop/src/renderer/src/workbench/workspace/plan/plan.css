@@ -14,6 +14,33 @@
   gap: 14px;
 }
 
+/* 页面级错误条（自 tools.css 并入：原文件随新建空间引导一起移除，
+ * 本页是它仅剩的使用方）。 */
+.wb-tool-error {
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 30%, transparent);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+}
+
+/* 计划卡片基础形态（同上并入）。 */
+.wb-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.wb-plan-card-time {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  white-space: nowrap;
+}
+.wb-plan-board.wb-plan-board--tools { align-items: stretch; }
+.wb-plan-board--tools .wb-plan-col { min-width: 0; }
+
 .wb-plan-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -406,6 +433,7 @@
 @media (prefers-reduced-motion: reduce) {
   .wb-plan-detail { animation: none; }
   .wb-plan-task { transition: none; }
+  .wb-plan-card { transition: none; }
 }
 
 /* ───────────────── 多选与批量操作 ───────────────── */

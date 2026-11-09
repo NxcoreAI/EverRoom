@@ -14,7 +14,6 @@ import { isAgentThinkingLevel } from '@nxcore/agent-contract'
 export interface ThinkingLevelOption {
   value: AgentThinkingLevel | null
   labelKey: string
-  hintKey: string
 }
 
 const SURFACE_PREFIX = 'surface:agentComposer'
@@ -24,27 +23,22 @@ export const THINKING_LEVEL_OPTIONS: readonly ThinkingLevelOption[] = [
   {
     value: null,
     labelKey: `${SURFACE_PREFIX}.thinkingLevelDefault`,
-    hintKey: `${SURFACE_PREFIX}.thinkingLevelDefaultHint`,
   },
   {
     value: 'off',
     labelKey: `${SURFACE_PREFIX}.thinkingLevelOff`,
-    hintKey: `${SURFACE_PREFIX}.thinkingLevelOffHint`,
   },
   {
     value: 'low',
     labelKey: `${SURFACE_PREFIX}.thinkingLevelLow`,
-    hintKey: `${SURFACE_PREFIX}.thinkingLevelLowHint`,
   },
   {
     value: 'medium',
     labelKey: `${SURFACE_PREFIX}.thinkingLevelMedium`,
-    hintKey: `${SURFACE_PREFIX}.thinkingLevelMediumHint`,
   },
   {
     value: 'high',
     labelKey: `${SURFACE_PREFIX}.thinkingLevelHigh`,
-    hintKey: `${SURFACE_PREFIX}.thinkingLevelHighHint`,
   },
 ]
 
