@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Check, ChevronDown, ChevronRight, Clock, CornerDownLeft, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, Terminal, X } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -34,10 +34,11 @@ const MAX_MOUNTED_DIRECTORIES = 8
 const TEXTAREA_MIN_HEIGHT = 42
 const TEXTAREA_MAX_HEIGHT = 180
 
-const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey: string; hintKey: string }> = {
-  smart: { icon: Zap, labelKey: 'surface:agentComposer.modelTierSmart', hintKey: 'surface:agentComposer.modelTierSmartHint' },
-  primary: { icon: Brain, labelKey: 'surface:agentComposer.modelTierPrimary', hintKey: 'surface:agentComposer.modelTierPrimaryHint' },
-  lite: { icon: Feather, labelKey: 'surface:agentComposer.modelTierLite', hintKey: 'surface:agentComposer.modelTierLiteHint' },
+/** 档位元数据：只留名称文案；说明小字与装饰图标已按精简要求移除。 */
+const MODEL_TIER_META: Record<AgentModelPreference, { labelKey: string }> = {
+  smart: { labelKey: 'surface:agentComposer.modelTierSmart' },
+  primary: { labelKey: 'surface:agentComposer.modelTierPrimary' },
+  lite: { labelKey: 'surface:agentComposer.modelTierLite' },
 }
 const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
 
@@ -895,7 +896,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
-  const ActiveTierIcon = activeTierMeta.icon
   // 思考档位（推理等级）：仅非渠道会话可选（ACP/CLI 渠道没有思考档概念）。
   // 契约七档里 minimal/xhigh/max 归到最接近的常用档展示（thinkingLevelOption 兜底）。
   const thinkingLevelSelectable = !channelActive && Boolean(onSelectThinkingLevel)
@@ -1206,7 +1206,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                 .filter((tier) => tier !== 'lite' || liteAvailable)
                 .map((tier) => {
                   const meta = MODEL_TIER_META[tier]
-                  const TierIcon = meta.icon
                   const tierSelected = !channelActive && modelPreference === tier
                   return (
                     <button
@@ -1219,8 +1218,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => chooseModelTier(tier)}
                     >
-                      <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
-                      <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
+                      <strong>{t(meta.labelKey)}</strong>
                       {tierSelected ? <Check aria-hidden="true" /> : null}
                     </button>
                   )
@@ -1238,12 +1236,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => chooseChannelAgent(agent.id)}
                     >
-                      <span className="agent-picker-header-icon">
+                      <span className="agent-model-option-channel">
                         {agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw'
                           ? <SourceIcon kind={agent.provider} />
                           : <Terminal aria-hidden="true" />}
                       </span>
-                      <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                      <strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong>
                       {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
                     </button>
                   ))}
@@ -1270,8 +1268,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                     onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseThinkingLevel(option.value)}
                   >
-                    <span className="agent-picker-header-icon"><Brain aria-hidden="true" /></span>
-                    <span><strong>{t(option.labelKey)}</strong><small>{t(option.hintKey)}</small></span>
+                    <strong>{t(option.labelKey)}</strong>
                     {optionSelected ? <Check aria-hidden="true" /> : null}
                   </button>
                 )
@@ -1504,7 +1501,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
                   channelAgent && (channelAgent.provider === 'claude' || channelAgent.provider === 'codex' || channelAgent.provider === 'openclaw')
                     ? <SourceIcon kind={channelAgent.provider} className="agent-model-tier-logo" />
                     : <Terminal aria-hidden="true" />
-                ) : <ActiveTierIcon aria-hidden="true" />}
+                ) : null}
                 <span className="agent-model-tier-label">{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
                 {thinkingLevelSelectable && !channelActive ? (
                   <span className="agent-model-tier-effort">{t(activeThinkingOption.labelKey)}</span>

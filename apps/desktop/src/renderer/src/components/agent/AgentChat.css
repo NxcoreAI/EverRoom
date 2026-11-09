@@ -3076,10 +3076,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
-/* 模型/渠道选项行图标：去底色块，仅留裸图标。 */
-.agent-picker-header-icon { display: grid; width: 22px; height: 22px; place-items: center; color: #667085; }
-.agent-picker-header-icon svg { width: 15px; height: 15px; }
-.agent-picker-header-icon .source-icon { width: 16px; height: 16px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -3828,10 +3824,10 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-model-picker-hint {
-  padding: 7px 9px 6px;
+  padding: 7px 10px 6px;
   border-top: 1px solid #eceef1;
   color: #8b93a0;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -3844,9 +3840,9 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   display: grid;
   gap: 1px;
   width: max-content;
-  min-width: 216px;
+  min-width: 208px;
   max-width: 320px;
-  padding: 4px;
+  padding: 5px;
   border-color: #e8eaee;
   box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
@@ -3859,12 +3855,12 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   height: 34px;
   align-items: center;
   gap: 6px;
-  padding: 0 8px;
+  padding: 0 9px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #22272f;
-  font-size: 12px;
+  font-size: 12.5px;
   line-height: 20px;
   text-align: left;
   cursor: pointer;
@@ -3915,23 +3911,24 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 
-/* 底栏控件统一 ghost 风格：无框无底，图标+文字+下拉箭头，悬停浅底。
-   模型钮（DSH trigger 同款）：模型名 + 推理等级弱化后缀（caption 色）。 */
+/* 底栏控件统一 ghost 风格：无框无底，文字+下拉箭头，悬停浅底。
+   模型钮（DSH trigger 同款）：模型名 + 推理等级后缀；精简后不放档位图标。 */
 .agent-model-tier-toggle {
   display: inline-flex;
   min-width: 0;
   max-width: 220px;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   height: 26px;
   padding: 0 4px 0 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #667085;
-  font-size: 11.5px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 520;
+  letter-spacing: 0.01em;
   line-height: 20px;
   white-space: nowrap;
   cursor: pointer;
@@ -3990,16 +3987,17 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-model-option {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  display: flex;
+  min-height: 34px;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
-  min-height: 38px;
-  padding: 4px 8px;
+  padding: 6px 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #22272f;
+  font-size: 12.5px;
   text-align: left;
   cursor: pointer;
 }
@@ -4013,28 +4011,46 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   outline-offset: -2px;
 }
 
-.agent-model-option > span:nth-child(2) {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
+/* 精简版选项行：单行主文案，去掉小字说明与装饰图标；
+   选中态由右侧 Check 表达（与选项文案之间自动撑开）。 */
 .agent-model-option strong {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 560;
-  line-height: 1.25;
+  font-size: 12.5px;
+  font-weight: 520;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-model-option small {
-  overflow: hidden;
-  color: #747d8a;
-  font-size: 10px;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.agent-model-option > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--accent-strong, #4d6faf);
+}
+
+/* 渠道行：保留品牌 logo / Terminal 身份标识（信息性，非装饰）。 */
+.agent-model-option-channel {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-model-option-channel svg {
+  width: 15px;
+  height: 15px;
+  color: #69717d;
+}
+
+.agent-model-option-channel .source-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
 }
 
 /* 渠道名后缀 (CLI)：弱化显示，与模型档位行区分。 */
@@ -4042,12 +4058,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #8b93a0;
   font-size: 10.5px;
   font-weight: 400;
-}
-
-.agent-model-option > svg {
-  width: 14px;
-  height: 14px;
-  color: var(--accent-strong, #4d6faf);
 }
 
 .agent-prompt-submit {
