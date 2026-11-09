@@ -331,19 +331,19 @@ html[data-desktop='darwin'] .wb-tabbar-left {
 .wb-sidebar-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px 14px;
+  gap: 12px;
+  padding: 10px 8px 16px;
 }
 .wb-sidebar-brand-mark {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex: none;
   border-radius: var(--ui-radius-sm);
   object-fit: contain;
 }
 .wb-sidebar-brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .wb-sidebar-brand-text strong {
-  font-size: var(--ui-text-base);
+  font-size: var(--ui-text-lg);
   font-weight: 700;
   letter-spacing: var(--ui-tracking-tight);
 }

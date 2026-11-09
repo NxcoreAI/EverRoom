@@ -353,14 +353,14 @@ describe('最近页', () => {
 
     await render('recent')
 
-    const subtitle = container.querySelector('.ui-pagehead-sub')?.textContent ?? ''
-    expect(subtitle).toContain('7 个文件')
-    expect(subtitle).toContain('2 个项目空间')
+    // 「最近」页头只留问候语，整行副标题已删除。
+    expect(container.querySelector('.ui-pagehead-sub')).toBeNull()
 
     expect(text()).toContain('整理连接器排期')
     expect(text()).toContain('项目周报.docx')
     expect(text()).toContain('连接器项目')
-    expect(text()).toContain('统一连接器品牌与排期')
+    // 空间行的副行小字（含描述摘要「统一连接器品牌与排期」）已删除。
+    expect(text()).not.toContain('统一连接器品牌与排期')
 
     // 假数据治理：不再出现「今天有 3 封新邮件…」这类无数据支撑的文案。
     expect(text()).not.toContain('封新邮件')
@@ -371,11 +371,11 @@ describe('最近页', () => {
     expect(newTiles.map((tile) => tile.querySelector('.wb-home-new-name')?.textContent))
       .toEqual(['空白空间', '文字文档', '表格', '演示', 'Markdown'])
 
-    // 「最近」分栏：2 个真实项目空间行（时间 · 工作数）+「打开」。
+    // 「最近」分栏：2 个真实项目空间行 +「打开」；副行小字（时间 · 工作数）已删除。
     const spaceRows = [...container.querySelectorAll<HTMLButtonElement>('.wb-home-space-row')]
     expect(spaceRows.length).toBe(2)
     expect(spaceRows[0].textContent).toContain('打开')
-    expect(spaceRows.some((row) => (row.textContent ?? '').includes('项工作'))).toBe(true)
+    expect(spaceRows.some((row) => (row.textContent ?? '').includes('项工作'))).toBe(false)
 
     // 点最近文件行（覆盖整行的透明按钮）→ 在归属工作空间里打开（激活其标签，
     // 文件交给气泡窗；未归类文件落默认空间）。
@@ -513,9 +513,10 @@ describe('项目空间页', () => {
 
     await render('spaces')
 
-    expect(text()).toContain('2 个项目空间')
-    expect(text()).toContain('1 项工作')
-    expect(text()).toContain('统一连接器品牌与排期')
+    // 页头副标题「N 个项目空间 · N 项工作」已删除（空间卡内的「N 项工作」副行仍在）。
+    expect(container.querySelector('.ui-pagehead-sub')).toBeNull()
+    // 空间卡标题下方的摘要行（描述/目标/存放位置）已删除。
+    expect(text()).not.toContain('统一连接器品牌与排期')
     expect(text()).toContain('默认')
 
     // 只有自定义空间有删除按钮。
@@ -557,7 +558,8 @@ describe('Agent 页', () => {
     const name = container.querySelector('.op-agent-hero-name')
     expect(name?.textContent).toContain(SAMPLE_PERSONA.name)
     expect(name?.querySelector('.op-pill.on')?.textContent).toContain('运行中')
-    expect(container.querySelector('.op-agent-hero-text p')?.textContent).toBe(SAMPLE_PERSONA.description)
+    // Hero 与人格卡标题下方的简介小字（tagline）已删除。
+    expect(container.querySelector('.op-agent-hero-text p')).toBeNull()
     expect(findButtonByText(container, '调试')).toBeTruthy()
 
     // 人格卡：原型的 op-info-card + op-chips + op-persona-prompt

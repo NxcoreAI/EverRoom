@@ -13,9 +13,10 @@ const SKILL_ERROR_LABELS: Record<string, string> = {
   skill_name_taken: '已经有一个同名技能，换个名字再试。',
   skill_description_required: '请写一句技能说明，它会显示在技能列表里。',
   skill_body_required: '请写技能正文（模型会读这段说明）。',
-  skill_source_invalid: '这个文件夹不能作为技能导入。',
-  skill_source_missing_manifest: '这个文件夹里没有 SKILL.md。',
+  skill_source_invalid: '所选内容不能作为技能导入。',
+  skill_source_missing_manifest: '所选内容里没有 SKILL.md：请选择包含 SKILL.md 的技能文件夹或 zip 压缩包。',
   skill_source_too_large: '技能文件太大：单文件 ≤ 256KB、合计 ≤ 2MB、最多 64 个文件。',
+  skill_archive_invalid: '这个 zip 压缩包无法解析：文件可能已损坏或包含不安全的路径。',
   skill_not_removable: '这个技能随应用发布，不能删除；不需要时把它关掉即可。',
   skill_not_found: '技能不存在，可能已经被删掉了。',
 }

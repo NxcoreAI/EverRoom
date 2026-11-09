@@ -53,6 +53,7 @@ const INPUT_ERROR_STATUS: Record<SkillInputErrorCode, 400 | 404 | 409> = {
   skill_source_invalid: 400,
   skill_source_missing_manifest: 400,
   skill_source_too_large: 400,
+  skill_archive_invalid: 400,
   skill_name_taken: 409,
   skill_not_removable: 409,
   skill_not_found: 404,
@@ -169,7 +170,7 @@ export function skillRoutes(service: SkillService, hooks: SkillRouteHooks): Fast
       },
     );
 
-    // 从本地文件夹导入（该目录里必须有 SKILL.md）。
+    // 从本地文件夹或 zip 压缩包导入（SKILL.md 必须存在；zip 根或唯一一层子目录里）。
     app.post(
       "/v1/skills/import",
       {
@@ -187,7 +188,7 @@ export function skillRoutes(service: SkillService, hooks: SkillRouteHooks): Fast
       async (request, reply) => {
         let skill: SkillView;
         try {
-          skill = service.importUserSkill(request.body.sourceDirectory);
+          skill = await service.importUserSkill(request.body.sourceDirectory);
         } catch (error) {
           if (error instanceof SkillInputError) {
             return reply.code(INPUT_ERROR_STATUS[error.code]).send(inputErrorPayload(error));

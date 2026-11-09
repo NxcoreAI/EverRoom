@@ -75,6 +75,18 @@ export function NativeEditorHost({
    */
   const openedKeyRef = useRef<string | null>(null)
   const inFlightKeyRef = useRef<string | null>(null)
+  /**
+   * 在途 openOriginal 的 promise：activate()/sendBounds() 在实例 id 尚未回来时
+   * 用它等待，而不是静默跳过。
+   *
+   * 2026-11-09「AI 排版模版预览标签点不动」根因：气泡窗 openFile 会用新对象替换
+   * 同 id 文件（realCatalog 引用变化）→ open/activate 回调身份失效 → open effect
+   * 重跑 → 第二轮 open() 命中 inFlightKey 早退【立即】返回 ok → setStatus('ready')
+   * → bounds effect 跑 report() → activate() ——此时第一轮 openOriginal 还在飞，
+   * instanceRef.current 仍为 null，激活被静默跳过。之后 visible=true、矩形去重命中，
+   * report() 永远早退：原生视图再也不会 setVisible，用户点标签只看到空白。
+   */
+  const openingRef = useRef<Promise<void> | null>(null)
   // 对象引用每次渲染都变：只放 ref，不进 useCallback 依赖。
   const catalogRef = useRef(realCatalog)
   catalogRef.current = realCatalog
@@ -89,9 +101,18 @@ export function NativeEditorHost({
 
   const open = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
     // 已成功打开 / 正在打开同一份文件：直接复用现有实例，不再发 IPC（断环）。
-    if (openedKeyRef.current === openKey || inFlightKeyRef.current === openKey) return { ok: true }
+    if (openedKeyRef.current === openKey || inFlightKeyRef.current === openKey) {
+      // 在途时等实例 id 落地：调用链上的 setStatus('ready') 可能早于 openOriginal
+      // 返回（effect 重跑 + 早退立即 ok），activate() 若拿不到 instanceId 会静默
+      // 跳过且此后再无触发——就是「模版预览标签点不动」的锁死（2026-11-09）。
+      if (inFlightKeyRef.current === openKey && !instanceRef.current) {
+        const flight = openingRef.current
+        if (flight) await flight.catch(() => undefined)
+      }
+      return { ok: true }
+    }
     inFlightKeyRef.current = openKey
-    try {
+    const run = async (): Promise<{ ok: boolean; error?: string }> => {
       const catalog = catalogRef.current
       if (catalog) {
         const files = window.nxcore?.files
@@ -120,6 +141,12 @@ export function NativeEditorHost({
       }
       openedKeyRef.current = openKey
       return { ok: true }
+    }
+    const flight = run()
+    // 在途登记：activate() 等它，instanceId 在 resolve 前必然落地（或整体失败走 error 态）。
+    openingRef.current = flight.then(() => undefined, () => undefined)
+    try {
+      return await flight
     } finally {
       if (inFlightKeyRef.current === openKey) inFlightKeyRef.current = null
     }
@@ -127,8 +154,12 @@ export function NativeEditorHost({
 
   const activate = useCallback(async () => {
     if (real) {
+      // 实例 id 还没回来：等在途的 openOriginal（2026-11-09 修复：此前这里静默
+      // 跳过，模版标签激活一次错过就永远错过——见 openingRef 的注释）。
+      if (!instanceRef.current && openingRef.current) await openingRef.current
       const instanceId = instanceRef.current
-      if (instanceId) await window.nxcore?.office?.setActiveInstance(instanceId)
+      if (!instanceId) return
+      await window.nxcore?.office?.setActiveInstance(instanceId)
       return
     }
     await window.desktop?.office.activate(fileId)
@@ -202,7 +233,11 @@ export function NativeEditorHost({
         if (node.closest('.op-native-wrap')) continue
         const rect = node.getBoundingClientRect()
         if (rect.width <= 0 || rect.height <= 0) continue
-        if (window.getComputedStyle(node).visibility === 'hidden') continue
+        const style = window.getComputedStyle(node)
+        // 退场动画 forwards 只压 opacity 的浮层（如授权弹窗 data-open=false）实际
+        // 已不可见：opacity 归零仍 visibility:visible、矩形非零，按可见浮层处理会把
+        // 原生文档区永久锁在隐藏态。透明即不挡。
+        if (style.visibility === 'hidden' || style.opacity === '0') continue
         return true
       }
       return false
@@ -263,7 +298,12 @@ export function NativeEditorHost({
       lastKey = key
       if (!visible) {
         visible = true
-        await activate()
+        const pendingActivate = activate()
+        await pendingActivate
+        // 激活时实例 id 还没落地（openOriginal 在途）且等待也没等到（外部打开链
+        // 不经过本组件的 open）：重置矩形键，下一轮 report 重走激活分支重试，
+        // 不让「错过一次」变成「永远错过」。
+        if (!instanceRef.current) lastKey = ''
       }
       sendBounds(rect)
     }
