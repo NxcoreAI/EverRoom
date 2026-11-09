@@ -879,12 +879,13 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-artifacts', paths, roomId, workspaceId)
     },
-    importAgentAttachments: (files: File[]) => {
+    importAgentAttachments: (files: File[], workspaceId?: string) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
-      return invoke('files:import-agent-attachments', paths)
+      return invoke('files:import-agent-attachments', paths, typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined)
     },
     /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
-    pickAgentAttachments: () => invoke<AgentAttachmentReference[]>('files:pick-agent-attachments'),
+    pickAgentAttachments: (workspaceId?: string) =>
+      invoke<AgentAttachmentReference[]>('files:pick-agent-attachments', typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined),
     onImportProgress: (listener) => {
       const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
       ipcRenderer.on('files:import-progress', handleProgress)

@@ -276,12 +276,13 @@ export class FilesGatewayBridge {
     return { buffer, mime }
   }
 
-  async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
+  async importAgentAttachments(selectedPaths: string[], options?: { workspaceId?: string }): Promise<AgentAttachmentReference[]> {
     const candidates = await collectImportCandidates(
       selectedPaths,
       new Set([...DEFAULT_IMPORT_EXTENSIONS, ...AGENT_IMAGE_EXTENSIONS]),
     )
     if (candidates.length > AGENT_MAX_ATTACHMENTS) throw new Error('最多只能添加 5 个附件')
+    const workspaceId = typeof options?.workspaceId === 'string' && options.workspaceId.trim() ? options.workspaceId.trim() : undefined
     const attachments: AgentAttachmentReference[] = []
     for (const candidate of candidates) {
       const fileStat = await stat(candidate.filePath)
@@ -313,6 +314,10 @@ export class FilesGatewayBridge {
           sourceKey: `agent:${randomUUID()}`,
           originalName: basename(candidate.filename),
           relativePath: candidate.filename,
+          // 附件必须归入当前会话的工作区（资料库按空间隔离）：不传会落 default，
+          // 用户切到非默认工作区拖文件时，Agent 的 file_search/library_browse 在
+          // 本空间查不到刚导入的文件（现象就是「agent 找不到对应文件」）。
+          ...(workspaceId ? { workspaceId } : {}),
         })
         await this.waitForMarkdown(imported.fileEntryId)
         attachments.push({
@@ -328,8 +333,8 @@ export class FilesGatewayBridge {
   }
 
   /** 「+ → 导入文件」：系统选择框直选文件，导入文件引擎后作为本轮对话附件。 */
-  async pickAgentAttachments(parent?: BrowserWindow | null): Promise<AgentAttachmentReference[]> {
-    const options: Electron.OpenDialogOptions = {
+  async pickAgentAttachments(parent?: BrowserWindow | null, options?: { workspaceId?: string }): Promise<AgentAttachmentReference[]> {
+    const dialogOptions: Electron.OpenDialogOptions = {
       title: '添加文件到对话',
       buttonLabel: '添加到对话',
       properties: ['openFile', 'multiSelections'],
@@ -345,10 +350,10 @@ export class FilesGatewayBridge {
       ],
     }
     const picked = parent && !parent.isDestroyed()
-      ? await dialog.showOpenDialog(parent, options)
-      : await dialog.showOpenDialog(options)
+      ? await dialog.showOpenDialog(parent, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
     if (picked.canceled || picked.filePaths.length === 0) return []
-    return this.importAgentAttachments(picked.filePaths)
+    return this.importAgentAttachments(picked.filePaths, options)
   }
 
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
