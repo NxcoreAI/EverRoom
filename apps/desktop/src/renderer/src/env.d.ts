@@ -16,6 +16,8 @@ interface DesktopBridge {
   platform: string
   versions: { electron: string; chrome: string }
   office: DesktopOfficeBridge
+  /** 主进程日志通道（app:diagnostic-log，模块白名单见主进程 logRendererDiagnostic）。 */
+  diagnostics?: { log: (input: { module: string; level: string; event: unknown }) => void }
 }
 
 declare global {

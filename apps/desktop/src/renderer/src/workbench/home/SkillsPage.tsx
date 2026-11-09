@@ -1,10 +1,12 @@
 import { Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
+import { describeSkillError } from '../../../../shared/skill-error-message'
+
 import { workbenchToast } from '../shell/toast'
 import { Modal } from '../ui/modal'
 import { Button, EmptyState, IconButton, PageHeader, Spinner, Toggle } from '../ui/primitives'
-import { CreateSkillDialog, DeleteSkillDialog } from './SkillDialogs'
+import { DeleteSkillDialog } from './SkillDialogs'
 import { HomeNote } from './parts'
 import {
   toSkillDetail,
@@ -21,6 +23,9 @@ import './skills.css'
  * 虚线「新增技能」卡。与原型（静态卡片 + 本地假开关）的区别是数据与开关
  * 都走网关：清单来自真实目录，开关落 `agent_skill_states` 并立即重装运行时。
  *
+ * 「新增技能」不走弹窗：点按钮直接弹系统选择器（文件夹或 zip 压缩包均可，
+ * 内容必须包含 SKILL.md，校验在网关侧）。
+ *
  * 子 Agent 技能在数据层（useSkills）就已隐藏，这里只会出现内置与自定义技能。
  */
 
@@ -31,9 +36,9 @@ function formatBytes(bytes: number): string {
 }
 
 export function SkillsPage() {
-  const { state, reload, pending, setEnabled, createSkill, importDirectory, removeSkill } = useSkills()
+  const { state, reload, pending, setEnabled, importDirectory, removeSkill } = useSkills()
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [createOpen, setCreateOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SkillItemView | null>(null)
 
   const skills = state.status === 'ready' ? state.value.skills : []
@@ -49,13 +54,27 @@ export function SkillsPage() {
       })
   }, [setEnabled])
 
+  /** 「新增技能」：直接弹系统选择器（文件夹或 zip），SKILL.md 校验在网关侧。 */
+  const startImport = useCallback(async () => {
+    if (importing) return
+    setImporting(true)
+    try {
+      const imported = await importDirectory()
+      if (imported) workbenchToast('技能已导入')
+    } catch (error) {
+      workbenchToast(describeSkillError(error))
+    } finally {
+      setImporting(false)
+    }
+  }, [importDirectory, importing])
+
   return (
     <div className="wb-home-scroll">
       <PageHeader
         title="技能"
         actions={(
-          <Button variant="primary" size="sm" icon={<Plus size={13} />} onClick={() => setCreateOpen(true)}>
-            新增技能
+          <Button variant="primary" size="sm" icon={<Plus size={13} />} disabled={importing} onClick={() => { void startImport() }}>
+            {importing ? '导入中…' : '新增技能'}
           </Button>
         )}
       />
@@ -75,8 +94,8 @@ export function SkillsPage() {
       ) : skills.length === 0 ? (
         <HomeNote>
           当前没有可用的技能。
-          <Button variant="secondary" size="sm" icon={<Plus size={12} />} onClick={() => setCreateOpen(true)}>
-            新增技能
+          <Button variant="secondary" size="sm" icon={<Plus size={12} />} disabled={importing} onClick={() => { void startImport() }}>
+            {importing ? '导入中…' : '新增技能'}
           </Button>
         </HomeNote>
       ) : (
@@ -117,28 +136,14 @@ export function SkillsPage() {
               </div>
             </div>
           ))}
-          <button type="button" className="wb-skills-card wb-skills-card-add" onClick={() => setCreateOpen(true)}>
+          <button type="button" className="wb-skills-card wb-skills-card-add" disabled={importing} onClick={() => { void startImport() }}>
             <Plus size={20} aria-hidden="true" />
-            <span>新增技能</span>
+            <span>{importing ? '导入中…' : '新增技能'}</span>
           </button>
         </div>
       )}
 
       <SkillDetailModal skillId={detailId} onClose={() => setDetailId(null)} />
-
-      <CreateSkillDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onCreate={async (input) => {
-          await createSkill(input)
-          workbenchToast(`已新增「${input.name}」`)
-        }}
-        onImport={async () => {
-          const imported = await importDirectory()
-          if (imported) workbenchToast('技能已导入')
-          return imported
-        }}
-      />
 
       <DeleteSkillDialog
         skill={deleteTarget}

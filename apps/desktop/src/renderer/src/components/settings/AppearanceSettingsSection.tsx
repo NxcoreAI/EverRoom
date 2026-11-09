@@ -70,10 +70,6 @@ export function AppearanceSettingsSection() {
         </div>
       </header>
 
-      <p className="appearance-settings-description">
-        {t('surface:settings.appearanceDescription')}
-      </p>
-
       <div
         className="appearance-theme-grid"
         role="radiogroup"
@@ -118,8 +114,6 @@ export function AppearanceSettingsSection() {
           )
         })}
       </div>
-
-      <p className="appearance-settings-note">{t('surface:settings.appearanceNote')}</p>
     </section>
   )
 }

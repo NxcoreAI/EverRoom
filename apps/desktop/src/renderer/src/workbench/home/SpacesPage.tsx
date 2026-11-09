@@ -7,7 +7,7 @@ import { relativeTimeLabel } from '../types'
 import { Badge, Button, EmptyState, IconButton, PageHeader, TextInput } from '../ui/primitives'
 import { ConfirmModal } from '../ui/modal'
 import { workbenchToast } from '../shell/toast'
-import { requestNewSpace, workspaceSummary } from './parts'
+import { requestNewSpace } from './parts'
 import { cn } from '../ui/cn'
 
 /** 项目空间页：真实 workspace 网格 + 搜索 + 新建 / 行内重命名 / 删除确认。 */
@@ -57,13 +57,10 @@ export function SpacesPage() {
     workbenchToast(ok ? '已重命名项目空间' : '重命名失败')
   }
 
-  const totalSessions = sessions.filter((session) => session.workspaceId).length
-
   return (
     <div className="wb-home-scroll">
       <PageHeader
         title="项目空间"
-        subtitle={`${workspaces.length} 个项目空间 · ${totalSessions} 项工作`}
         actions={(
           <Button variant="primary" icon={<Plus size={15} />} onClick={requestNewSpace}>
             新建项目空间
@@ -128,7 +125,6 @@ export function SpacesPage() {
                           }}
                           onBlur={() => { void commitRename(workspace) }}
                         />
-                        <span>{workspace.path ?? '应用托管空间'}</span>
                       </span>
                     </div>
                   ) : (
@@ -144,7 +140,6 @@ export function SpacesPage() {
                           <span className="wb-home-truncate">{workspace.name}</span>
                           {workspace.kind === 'default' ? <Badge tone="neutral">默认</Badge> : null}
                         </span>
-                        <span>{workspaceSummary(workspace)}</span>
                       </span>
                     </button>
                   )}
@@ -181,7 +176,6 @@ export function SpacesPage() {
               <span className="wb-home-space-icon" aria-hidden="true"><Plus size={17} /></span>
               <span className="wb-home-space-main">
                 <strong>新建项目空间</strong>
-                <span>把资料、工作与产物放在一起</span>
               </span>
             </span>
           </button>

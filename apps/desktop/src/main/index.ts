@@ -1003,8 +1003,11 @@ ipcMain.handle('appearance:set-theme', (_event, theme: unknown) => {
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
+  // native-editor-host：渲染端原生编辑器宿主的 activate/bounds 决策点
+  // （模版预览标签点不动一类的渲染端锁死问题靠它定位，2026-11-09）。
   if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview'
-    && value.module !== 'block-index-mark' && value.module !== 'document-focus') return
+    && value.module !== 'block-index-mark' && value.module !== 'document-focus'
+    && value.module !== 'native-editor-host') return
   if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
   if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
   try {
@@ -2096,13 +2099,17 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.createSkill, (_event, input: CreateAgentSkillInput) => bridge.createSkill(input))
   handle(AGENT_CHANNELS.importSkillDirectory, (_event, sourceDirectory: string) =>
     bridge.importSkillDirectory(sourceDirectory))
-  // 技能文件夹选择：只让用户挑一个目录，SKILL.md 校验与复制都在网关侧。
+  // 技能来源选择：文件夹或 zip 压缩包都能选（zip 由网关解压解析），
+  // SKILL.md 校验与复制都在网关侧。
   handle(AGENT_CHANNELS.pickSkillDirectory, async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options: Electron.OpenDialogOptions = {
-      title: '选择技能文件夹（需包含 SKILL.md）',
+      title: '选择技能文件夹或 zip 压缩包（需包含 SKILL.md）',
       buttonLabel: '导入此技能',
-      properties: ['openDirectory'],
+      properties: ['openFile', 'openDirectory'],
+      filters: [
+        { name: '技能（文件夹或 zip）', extensions: ['zip'] },
+      ],
     }
     const result = parent && !parent.isDestroyed()
       ? await dialog.showOpenDialog(parent, options)
@@ -3984,6 +3991,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             // 否则用户看着 docs 窗口会觉得「点了没反应」。
             focusWindow: true,
           })
+          // 内嵌预览不可用（如 .doc 且本机既无 LibreOffice 也无 textutil）时，
+          // openFileInAppPreview 会回退外部应用打开——但从 AI 面板点 👁 的用户
+          // 预期是「右侧出现预览」，静默外开等于「点了没反应」。如实报不可用。
+          if (result.openedWith === 'external') return { opened: false, reason: 'unsupported_format' as const }
           // 光把窗口提到前台不够：实例的 WebContentsView 默认是隐藏的，可见性由
           // 渲染端驱动（开标签 → 上报矩形 → setActiveInstance）。docs 面板发起的
           // 打开不经过渲染端的 openOriginal，所以必须在这里补一条通知，否则

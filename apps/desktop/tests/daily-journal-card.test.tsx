@@ -121,7 +121,8 @@ describe('DailyJournalCard', () => {
     await render({ onAction })
 
     expect(text('.wb-journal-name')).toBe('今日洞察')
-    expect(text('.wb-journal-sub')).toContain('基于 7 条记忆')
+    // 「基于 N 条记忆 · 更新于 HH:MM」副标题整行已删除。
+    expect(container.querySelector('.wb-journal-sub')).toBeNull()
     expect(text('.wb-journal-headline')).toBe(HEADLINE)
     // 减少动效偏好下不做打字机：首帧就是全文。
     expect(text('.wb-journal-body')).toBe(SUMMARY)
@@ -154,7 +155,8 @@ describe('DailyJournalCard', () => {
     expect(text('.wb-journal-empty')).toBe('今天还没有新的动静。跟我聊几句，我边听边记。')
     expect(container.querySelector('.wb-journal-headline')).toBeNull()
     expect(buttons('.wb-journal-act')).toHaveLength(0)
-    expect(text('.wb-journal-sub')).toContain('基于 0 条记忆')
+    // 副标题已删除：empty 态也不再有「基于 0 条记忆」。
+    expect(container.querySelector('.wb-journal-sub')).toBeNull()
     // 动作行没内容时只剩署名。
     expect(text('.wb-journal-foot')).toBe('—— 小 E · 你的工作台助理')
   })
@@ -167,8 +169,8 @@ describe('DailyJournalCard', () => {
     expect(text('.wb-journal-state')).toContain('今日洞察暂时读不到（桌面服务未就绪）。')
     expect(container.querySelector('.wb-journal-headline')).toBeNull()
     expect(container.querySelector('.wb-journal-body')).toBeNull()
-    // 不可用态不提条数（数字只能来自真实快照）。
-    expect(text('.wb-journal-sub')).not.toContain('条记忆')
+    // 不可用态不提条数（数字只能来自真实快照）；副标题整行已删除。
+    expect(container.querySelector('.wb-journal-sub')).toBeNull()
 
     // 桥恢复后点「重试」能读到内容。
     const bridge = stubBridge(todayDto())

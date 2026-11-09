@@ -468,11 +468,7 @@ export function ConnectorsView({ onToast, variant }: { onToast: (msg: string) =>
     ...presentCategories.map((c) => ({ key: c, label: CATEGORY_LABEL[c] })),
   ]
 
-  const hint = snapshot === null
-    ? '正在读取连接器…'
-    : snapshot.hasApi === false
-      ? '未连接桌面服务，当前是静态示意'
-      : `Agent 在工作中可以直接查询这些来源 · 已连接 ${connectedCount} / ${items.length}`
+  // 副标题整行已按要求移除（含「Agent 在工作中可以直接查询这些来源 · 已连接 n / n」）。
   const enabled = snapshot?.enabled ?? true
 
   return (
@@ -492,7 +488,7 @@ export function ConnectorsView({ onToast, variant }: { onToast: (msg: string) =>
           <span className="op-conn-dialog-count">{snapshot !== null ? `已连接 ${connectedCount} / ${items.length}` : ''}</span>
         </div>
       ) : (
-        <PageHead title="连接器" hint={hint}>
+        <PageHead title="连接器">
           {snapshot === null ? (
             <div className="op-seg op-conn-skel-seg" aria-hidden="true">
               <span className="op-conn-skel-pill" />
