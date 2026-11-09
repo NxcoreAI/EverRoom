@@ -502,14 +502,12 @@ export function SettingsPage({
               <div className="cloud-devices-heading">
                 <div>
                   <strong>{t('surface:settings.connectedDevices')}</strong>
-                  <small>{devices.length ? t('surface:settings.countDevicesCanSyncPrivateData', { count: devices.length }) : t('surface:settings.loadingDevices')}</small>
                 </div>
                 <Laptop aria-hidden="true" />
               </div>
               {devices.length ? (
                 <div className="cloud-device-list">
                   {devices.map((device) => {
-                    const isCurrent = device.id === account.device?.id
                     const isOnline = device.connectionStatus === 'online'
                     return (
                       <div key={device.id} className="cloud-device-row">
@@ -517,8 +515,7 @@ export function SettingsPage({
                           {device.platform.toLowerCase().includes('ios') ? <Smartphone /> : <Laptop />}
                         </span>
                         <div className="cloud-device-info">
-                          <strong>{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
-                          <span>{device.platform}{device.appVersion ? ` · v${device.appVersion}` : ''}{isCurrent ? ` · ${t('surface:settings.thisDevice')}` : ''}</span>
+                          <strong className="cloud-device-line">{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
                         </div>
                         <div className="cloud-device-status" data-online={String(isOnline)}>
                           <span aria-hidden="true" />

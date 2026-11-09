@@ -1144,9 +1144,9 @@ export interface NxcoreDesktopApi {
     setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkillDto>
     /** 手写一个用户技能（落在网关数据目录的 agent/skills 下）。 */
     createSkill(input: CreateAgentSkillInput): Promise<AgentSkillDto>
-    /** 从一个含 SKILL.md 的本地文件夹导入技能。 */
-    importSkillDirectory(sourceDirectory: string): Promise<AgentSkillDto>
-    /** 选择技能文件夹（系统选择器，返回绝对路径；取消为 null）。 */
+    /** 从一个含 SKILL.md 的本地文件夹或 zip 压缩包导入技能。 */
+    importSkillDirectory(source: string): Promise<AgentSkillDto>
+    /** 选择技能来源（系统选择器，接受文件夹与 .zip，返回绝对路径；取消为 null）。 */
     pickSkillDirectory(): Promise<string | null>
     /** 删除一个用户技能（内置/子 Agent 技能会 409）。 */
     deleteSkill(skillId: string): Promise<void>

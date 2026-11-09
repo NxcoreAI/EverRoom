@@ -2,11 +2,12 @@
 /**
  * 主页「技能」页（workbench/home/SkillsPage.tsx）的渲染测试。
  *
- * 数据形状与网关 `/v1/skills` 一致（mock `window.nxcore.agent`），验证四件事：
+ * 数据形状与网关 `/v1/skills` 一致（mock `window.nxcore.agent`），验证：
  * 1. 布局是卡片网格（对齐原型）：名称/说明/状态/开关，末尾有新增卡；
  * 2. 子 Agent 技能整体隐藏，内置与自定义技能才出现在页面上；
  * 3. 开关走 `setSkillEnabled`，成功后界面更新、失败后回滚；
- * 4. 读取失败与「没有技能」区分开（失败给重试，空态不复用失败文案）。
+ * 4. 「新增技能」直接弹系统选择器并导入（文件夹或 zip），取消不导入；
+ * 5. 读取失败与「没有技能」区分开（失败给重试，空态不复用失败文案）。
  */
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -200,19 +201,6 @@ function dialog(): HTMLElement {
   return element
 }
 
-/** React 受控文本域/输入框：走原生 setter + input 事件。 */
-async function fill(element: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
-  const prototype = element instanceof HTMLTextAreaElement
-    ? window.HTMLTextAreaElement.prototype
-    : window.HTMLInputElement.prototype
-  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
-  await act(async () => {
-    setter?.call(element, value)
-    element.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-  await flush(2)
-}
-
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -307,74 +295,57 @@ describe('技能页', () => {
 })
 
 describe('技能页：新增与删除', () => {
-  it('手写技能：提交后调用网关并刷新清单', async () => {
-    const { agent, createSkill } = installSkillBridge()
+  it('「新增技能」直接弹系统选择器并导入（不再先开弹窗）', async () => {
+    const { agent, importSkillDirectory } = installSkillBridge({ pickedDirectory: '/Users/me/skills/my-skill.zip' })
     await renderPage()
 
+    // 点页头「新增技能」：直接进入选择器 → 导入，中间不出现任何 Modal。
     await act(async () => { findButton('新增技能').click() })
-    await flush(2)
-    const dialogScope = dialog()
-    await fill(dialogScope.querySelector<HTMLInputElement>('input[placeholder="weekly-report"]')!, 'weekly-report')
-    await fill(
-      dialogScope.querySelector<HTMLInputElement>('input[placeholder="把本周邮件与会议汇总成周报"]')!,
-      '把本周邮件与会议汇总成周报',
-    )
-    await fill(dialogScope.querySelector<HTMLTextAreaElement>('textarea')!, '# 周报\n\n先列结论。')
-
-    await act(async () => { findButton('创建技能', dialogScope).click() })
     await flush(6)
 
-    expect(createSkill).toHaveBeenCalledWith({
-      name: 'weekly-report',
-      description: '把本周邮件与会议汇总成周报',
-      body: '# 周报\n\n先列结论。',
-    })
-    // 初次加载 + 新增后刷新
+    expect(document.querySelector('.ui-modal')).toBeNull()
+    expect(agent.pickSkillDirectory).toHaveBeenCalledTimes(1)
+    // zip 路径原样交给导入接口（解压与校验在网关侧）。
+    expect(importSkillDirectory).toHaveBeenCalledWith('/Users/me/skills/my-skill.zip')
     expect(agent.listSkills).toHaveBeenCalledTimes(2)
-    expect(text()).toContain('weekly-report')
-  })
-
-  it('从文件夹导入：选目录后调用导入接口', async () => {
-    const { importSkillDirectory } = installSkillBridge({ pickedDirectory: '/Users/me/skills/my-skill' })
-    await renderPage()
-
-    await act(async () => { findButton('新增技能').click() })
-    await flush(2)
-    await act(async () => { findButton('从文件夹导入', dialog()).click() })
-    await flush(2)
-    await act(async () => { findButton('选择文件夹', dialog()).click() })
-    await flush(6)
-
-    expect(importSkillDirectory).toHaveBeenCalledWith('/Users/me/skills/my-skill')
     expect(text()).toContain('imported')
   })
 
-  it('取消选择文件夹时不发起导入', async () => {
+  it('网格末尾的虚线「新增技能」卡也直接触发选择器', async () => {
+    const { importSkillDirectory } = installSkillBridge({ skills: [...SAMPLE_SKILLS, USER_SKILL] })
+    await renderPage()
+
+    const addCard = container.querySelector<HTMLButtonElement>('.wb-skills-card-add')
+    expect(addCard).toBeTruthy()
+    await act(async () => { addCard!.click() })
+    await flush(6)
+
+    expect(importSkillDirectory).toHaveBeenCalledWith('/tmp/my-skill')
+  })
+
+  it('选择器里取消时不发起导入', async () => {
     const { importSkillDirectory } = installSkillBridge({ pickedDirectory: null })
     await renderPage()
 
     await act(async () => { findButton('新增技能').click() })
-    await flush(2)
-    await act(async () => { findButton('从文件夹导入', dialog()).click() })
-    await flush(2)
-    await act(async () => { findButton('选择文件夹', dialog()).click() })
     await flush(4)
 
     expect(importSkillDirectory).not.toHaveBeenCalled()
   })
 
-  it('网关拒绝时把机器码翻成用户话术', async () => {
+  it('网关拒绝时把机器码翻成用户话术（toast）', async () => {
     installSkillBridge({ mutateError: 'skill_source_missing_manifest' })
+    const toastSpy = vi.fn()
+    window.addEventListener('everroom:workbench-toast', toastSpy as EventListener)
     await renderPage()
 
     await act(async () => { findButton('新增技能').click() })
-    await flush(2)
-    await act(async () => { findButton('从文件夹导入', dialog()).click() })
-    await flush(2)
-    await act(async () => { findButton('选择文件夹', dialog()).click() })
     await flush(6)
 
-    expect(dialog().textContent ?? '').toContain('这个文件夹里没有 SKILL.md')
+    expect(toastSpy).toHaveBeenCalled()
+    const messages = toastSpy.mock.calls.map((call) => String((call[0] as CustomEvent<string>).detail))
+    expect(messages.join('\n')).toContain('SKILL.md')
+    window.removeEventListener('everroom:workbench-toast', toastSpy as EventListener)
   })
 
   it('只有自定义技能能删；确认后调用删除接口', async () => {

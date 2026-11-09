@@ -124,6 +124,22 @@ async function convertDocToDocx(
       const target = files.find((f) => f === produced) ?? files.find((f) => f.toLowerCase().endsWith(".docx") && f !== inputBase);
       if (target) return readFile(join(workDirectory, target));
     }
+    // macOS 兜底：未装 LibreOffice 时用系统 textutil 转 .doc → docx。
+    // 保真度不如 soffice（表格摊平、styles 缺失），但版式字号/字体/对齐能保留，
+    // 模版卡因此能带 OOXML 事实出卡——总比「只能按内容重建」好。
+    if (process.platform === "darwin") {
+      const fallbackPath = join(workDirectory, "textutil.docx");
+      const ok = await new Promise<boolean>((resolve) => {
+        const child = spawn("/usr/bin/textutil", ["-convert", "docx", "-output", fallbackPath, inputPath], { stdio: "ignore" });
+        child.on("error", () => resolve(false));
+        child.on("exit", (code) => resolve(code === 0));
+      });
+      if (ok) {
+        try {
+          return await readFile(fallbackPath);
+        } catch { /* 落到 null 兜底 */ }
+      }
+    }
     return null;
   } finally {
     await rm(workDirectory, { recursive: true, force: true }).catch(() => {});

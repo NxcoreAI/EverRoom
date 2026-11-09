@@ -191,14 +191,20 @@
   align-items: stretch;
 }
 .wb-home-split-col { display: flex; flex-direction: column; min-width: 0; }
-/* 「最近」两栏的卡片等高对齐：列表卡与空态提示框都拉满列剩余高度，
-   两栏由 grid stretch 等高，卡片边框上下严格对齐（内容行数不同也不影响）。 */
+/* 「最近」两栏卡片强制等高：列表卡与空态提示框都拉满列剩余高度（两栏由 grid
+   stretch 等高，卡片边框上下严格对齐）。行本身不拉伸（flex:none），条目从上
+   往下自然排列，卡片被撑高时多余空间留在底部，不垂直居中、不分散。 */
 .wb-home-split-col > .wb-home-list,
 .wb-home-split-col > .wb-home-note { flex: 1; }
+.wb-home-split-col > .wb-home-list > * { flex: none; }
 .wb-home-split-label {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 两栏标签行统一高度与盒模型：左边是按钮（13px 图标）、右边是 div，
+     不定高会被图标撑歪，导致两栏卡片起点错位。 */
+  height: 20px;
+  box-sizing: border-box;
   margin-bottom: 8px;
   font-size: var(--ui-text-2xs);
   font-weight: 650;
@@ -361,7 +367,9 @@ button.wb-home-split-label:hover { color: var(--ui-text-2); }
 }
 .wb-home-space-tile.is-new:hover { color: var(--ui-text); }
 .wb-home-space-tile.is-new .wb-home-space-main strong { color: inherit; }
-.wb-home-space-tile-head { display: flex; min-width: 0; }
+/* 头部统一行布局：普通卡由内层 .wb-home-space-open 提供间距，但「新建」卡
+   （is-new）直接放图标+文字，没有内层按钮——间距必须落在这一层，否则图标压字。 */
+.wb-home-space-tile-head { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .wb-home-space-open {
   display: flex;
   align-items: flex-start;
@@ -409,6 +417,10 @@ button.wb-home-split-label:hover { color: var(--ui-text-2); }
   overflow: hidden;
 }
 .wb-home-list > * + * { border-top: 1px solid var(--ui-border-subtle); }
+/* 「最近」分栏两栏卡片内部：条目数不同（3 vs 4）时行线错位视觉乱，
+   去掉列表内的横线分割，纯白卡片靠行高/悬停区分条目。 */
+.wb-home-split .wb-home-list > * + * { border-top: 0; }
+.wb-home-split .wb-home-list .wb-home-filerow + .wb-home-filerow { border-top: 0; }
 .wb-home-row {
   display: flex;
   align-items: center;

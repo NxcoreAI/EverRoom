@@ -514,9 +514,10 @@ describe('项目空间页', () => {
 
     await render('spaces')
 
-    expect(text()).toContain('2 个项目空间')
-    expect(text()).toContain('1 项工作')
-    expect(text()).toContain('统一连接器品牌与排期')
+    // 页头副标题「N 个项目空间 · N 项工作」已删除（空间卡内的「N 项工作」副行仍在）。
+    expect(container.querySelector('.ui-pagehead-sub')).toBeNull()
+    // 空间卡标题下方的摘要行（描述/目标/存放位置）已删除。
+    expect(text()).not.toContain('统一连接器品牌与排期')
     expect(text()).toContain('默认')
 
     // 只有自定义空间有删除按钮。
@@ -558,7 +559,8 @@ describe('Agent 页', () => {
     const name = container.querySelector('.op-agent-hero-name')
     expect(name?.textContent).toContain(SAMPLE_PERSONA.name)
     expect(name?.querySelector('.op-pill.on')?.textContent).toContain('运行中')
-    expect(container.querySelector('.op-agent-hero-text p')?.textContent).toBe(SAMPLE_PERSONA.description)
+    // Hero 与人格卡标题下方的简介小字（tagline）已删除。
+    expect(container.querySelector('.op-agent-hero-text p')).toBeNull()
     expect(findButtonByText(container, '调试')).toBeTruthy()
 
     // 人格卡：原型的 op-info-card + op-chips + op-persona-prompt

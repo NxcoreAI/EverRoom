@@ -969,6 +969,13 @@ contextBridge.exposeInMainWorld('desktop', {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
   },
+  // 渲染端诊断通道（与 nxcore.diagnostics 同走 app:diagnostic-log；
+  // 模块白名单见主进程 logRendererDiagnostic，native-editor-host 用于
+  // 原生编辑器宿主 activate/bounds 决策点诊断，2026-11-09）。
+  diagnostics: {
+    log: (input: { module: string; level: string; event: unknown }) =>
+      ipcRenderer.send('app:diagnostic-log', input),
+  },
   office: {
     open: (request: { fileId: string; title: string; spec: unknown }) =>
       ipcRenderer.invoke('office:open', request) as Promise<{ ok: boolean; error?: string }>,

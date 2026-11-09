@@ -34,8 +34,8 @@ const NEW_FILE_KINDS: ReadonlyArray<{ kind: FileKind; label: string }> = [
   { kind: 'md', label: 'Markdown' },
 ]
 
-/** 「最近」分栏的条数：与原型一致（3 个项目空间 + 4 个文件）。 */
-const RECENT_SPACE_LIMIT = 3
+/** 「最近」分栏的条数：左右两栏条数一致（4 个项目空间 + 4 个文件）。 */
+const RECENT_SPACE_LIMIT = 4
 const RECENT_FILE_LIMIT = 4
 /**
  * 文件库按「目录条目」取数、过滤掉图片等不可打开项后才剩文档，所以要多取一些：
@@ -164,7 +164,6 @@ export function RecentPage() {
         <div className="wb-home-split">
           <div className="wb-home-split-col">
             <button type="button" className="wb-home-split-label" onClick={() => openHome('spaces')}>
-              <LayoutGrid size={13} aria-hidden="true" />
               项目空间
             </button>
             {recentWorkspaces.length === 0 ? (
@@ -190,7 +189,9 @@ export function RecentPage() {
           </div>
 
           <div className="wb-home-split-col">
-            <div className="wb-home-split-label">文件</div>
+            <button type="button" className="wb-home-split-label" onClick={() => openHome('files')}>
+              文件
+            </button>
             {files.state === 'loading' ? (
               <div className="wb-home-state"><Spinner /> 正在读取资料…</div>
             ) : null}

@@ -30,7 +30,7 @@ const KIND_ORDER: readonly FileKind[] = ['docx', 'xlsx', 'pptx', 'pdf', 'md']
  * → 无外框平铺表格（表头 + 文件行：图标 / 文件名 / 修改时间 / 大小 / 操作）。
  *
  * 原型里「网格视图暂未开放」和行尾「⋯」只弹 toast；这里两者都是真功能：
- * 网格是文件瓦片，行菜单能打开原应用、导出定位、删除。
+ * 网格是文件瓦片，行菜单能打开文件、定位文件位置、删除。
  * 来源筛选标签是本端曾有的扩展，原型没有这一行，已按原型去除。
  */
 export function FilesPage() {
@@ -67,21 +67,6 @@ export function FilesPage() {
       workbenchToast(error instanceof Error && error.message ? error.message : '导入文件失败')
     } finally {
       setImporting(false)
-    }
-  }
-
-  /** 交给系统默认应用打开（不受支持/旧格式转换失败时的兜底）。 */
-  const openOriginal = async (item: RealOfficeFile) => {
-    const api = window.nxcore?.files
-    if (!api || typeof api.openOriginal !== 'function') {
-      workbenchToast('桌面端文件能力不可用')
-      return
-    }
-    try {
-      const result = await api.openOriginal(item.catalog.id, item.catalog.originalName, item.catalog.contentHash)
-      workbenchToast(result.openedWith === 'office' ? `已打开「${item.file.name}」` : '已用系统默认应用打开')
-    } catch {
-      workbenchToast('打开失败，请稍后重试')
     }
   }
 
@@ -123,19 +108,9 @@ export function FilesPage() {
 
   const rowActions: FileRowActions = {
     onOpen: (item) => openFileInWorkspace(item.file),
-    onOpenOriginal: (item) => { void openOriginal(item) },
     onExportReveal: (item) => { void exportReveal(item) },
     onDelete: (item) => setPendingDelete(item),
   }
-
-  // 页头副标题与原型同款句式：只说「共 N 个文件」（见 PageHead hint）。
-  const subtitle = files.state === 'ready'
-    ? files.total > files.items.length
-      ? `共 ${files.total} 个文件，其中 ${files.items.length} 个可在此打开（按最近更新排序）。`
-      : `共 ${files.items.length} 个文件`
-    : files.state === 'loading'
-      ? '正在读取资料…'
-      : '资料暂不可用。'
 
   /** 工具行左侧的类型标签（原型 `Seg`：胶囊裸标签，不带计数徽标）。 */
   const kindTabs: Array<{ key: KindFilter; label: string }> = [
@@ -147,7 +122,6 @@ export function FilesPage() {
     <div className="wb-home-scroll">
       <PageHeader
         title="所有文件"
-        subtitle={subtitle}
         actions={(
           <Button
             variant="primary"

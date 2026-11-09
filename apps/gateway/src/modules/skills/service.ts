@@ -126,10 +126,10 @@ export class SkillService implements SkillGate {
     return this.viewOf(created.directoryName);
   }
 
-  /** 从本地文件夹导入一个用户技能。 */
-  importUserSkill(sourceDirectory: string): SkillView {
+  /** 从本地文件夹或 zip 压缩包导入一个用户技能。 */
+  async importUserSkill(source: string): Promise<SkillView> {
     const store = this.requireUserSkills();
-    const created = store.importDirectory(sourceDirectory);
+    const created = await store.importDirectory(source);
     return this.viewOf(created.directoryName);
   }
 

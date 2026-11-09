@@ -97,7 +97,7 @@ export function useSkills(): {
   setEnabled: (skillId: string, enabled: boolean) => Promise<void>
   /** 手写一个技能（成功后刷新清单）。 */
   createSkill: (input: CreateSkillInput) => Promise<void>
-  /** 选文件夹导入；用户取消返回 false（不算失败）。 */
+  /** 弹出系统选择器，导入一个技能文件夹或 zip 压缩包；用户取消返回 false（不算失败）。 */
   importDirectory: () => Promise<boolean>
   /** 删除一个用户技能（成功后刷新清单）。 */
   removeSkill: (skillId: string) => Promise<void>
@@ -181,9 +181,10 @@ export function useSkills(): {
     if (!bridge?.pickSkillDirectory || !bridge.importSkillDirectory) {
       throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     }
-    const directory = await bridge.pickSkillDirectory()
-    if (!directory) return false
-    await bridge.importSkillDirectory(directory)
+    // 选择器同时接受文件夹与 .zip；SKILL.md 的存在性由网关校验。
+    const picked = await bridge.pickSkillDirectory()
+    if (!picked) return false
+    await bridge.importSkillDirectory(picked)
     reload()
     return true
   }, [reload])

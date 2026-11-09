@@ -51,6 +51,44 @@ interface SofficeConversionMessages {
 }
 
 /**
+ * macOS textutil 回退：未安装 LibreOffice 的机器上，.doc 模版预览靠系统自带的
+ * Cocoa 文本引擎转 docx。textutil 只认 .doc（.xls/.ppt 不行），且会把表格摊平成
+ * 段落——保真度不如 soffice，但「能在右侧预览」远好过现在的「点了没反应」。
+ * soffice 可用时永远优先 soffice；这里只是缺它时的兜底。
+ */
+const TEXTUTIL_TIMEOUT_MS = 60_000
+
+/** textutil 可用的组合：仅 macOS 且仅 .doc → docx。 */
+export function textutilFallbackTarget(
+  platform: NodeJS.Platform = process.platform,
+  inputExtension: string,
+): 'docx' | null {
+  if (platform !== 'darwin') return null
+  return inputExtension.toLowerCase() === '.doc' ? 'docx' : null
+}
+
+async function runTextutilDocToDocx(
+  workDirectory: string,
+  inputPath: string,
+): Promise<string | null> {
+  // /usr/bin/textutil 由系统提供，不做候选探测；找不到（ENOENT）视为不可用返回 null。
+  const outputName = 'converted.docx'
+  const outputPath = join(workDirectory, outputName)
+  try {
+    await execFileAsync('/usr/bin/textutil', [
+      '-convert', 'docx',
+      '-output', outputPath,
+      inputPath,
+    ], { timeout: TEXTUTIL_TIMEOUT_MS })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  if (!existsSync(outputPath)) return null
+  return outputName
+}
+
+/**
  * 在 workDirectory 里调用 soffice 把 inputPath 转成 targetExt，返回生成的文件名。
  * 找不到任何 soffice 可执行文件时返回 null；执行失败或没产出文件时按调用方文案抛错。
  */
@@ -122,14 +160,31 @@ export async function convertLegacyOfficeFile(
   try {
     const inputPath = join(workDirectory, `input${extname(originalName).toLowerCase()}`)
     copyFileSync(sourcePath, inputPath)
-    const generated = await runSofficeConversion(workDirectory, inputPath, targetExt, {
+    let generated = await runSofficeConversion(workDirectory, inputPath, targetExt, {
       failure: (detail) => `LibreOffice 转换 ${originalName} 失败：${detail}`,
       missingOutput: `LibreOffice 转换 ${originalName} 后没有生成 .${targetExt} 文件`,
     })
+    let viaTextutil = false
+    // soffice 缺失（而不是执行失败）时，macOS 上用 textutil 兜底 .doc → docx。
+    // 执行失败（生成了却报错/没产出）不算缺失，仍按原逻辑抛错——那里 textutil
+    // 大概率也救不了（文件本身损坏），硬转只会掩盖真实原因。
+    if (generated === null && textutilFallbackTarget(process.platform, extname(originalName)) === targetExt) {
+      generated = await runTextutilDocToDocx(workDirectory, inputPath)
+      viaTextutil = generated !== null
+    }
     if (!generated) {
-      throw new Error(`未找到 LibreOffice（soffice），无法内嵌预览 ${originalName}`)
+      throw new Error(
+        `未找到 LibreOffice（soffice），无法内嵌预览 ${originalName}`
+        + (process.platform === 'darwin' ? '。可安装 LibreOffice 以获得完整保真度。' : ''),
+      )
     }
     copyFileSync(join(workDirectory, generated), target)
+    if (viaTextutil) {
+      console.info(
+        '[office] LibreOffice 不可用，.doc 已用 macOS textutil 转换（表格等复杂结构可能被简化）：',
+        originalName,
+      )
+    }
     return target
   } finally {
     await rm(workDirectory, { recursive: true, force: true }).catch(() => undefined)
