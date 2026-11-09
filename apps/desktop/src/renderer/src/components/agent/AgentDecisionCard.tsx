@@ -113,7 +113,7 @@ export function AgentDecisionCard({
               type="button"
               className="agent-shell-deny"
               disabled={busy}
-              onClick={() => onResolve(approval.approvalId, 'denied', feedback.trim() || undefined)}
+              onClick={() => onResolve(approval.approvalId, 'denied', feedback.trim() || undefined, 'denied', feedback.trim() || undefined)}
             >
               <X aria-hidden="true" />
               {t('surface:agentChat.cardCancel')}
@@ -122,7 +122,7 @@ export function AgentDecisionCard({
               type="button"
               className="agent-shell-approve"
               disabled={busy}
-              onClick={() => onResolve(approval.approvalId, 'approved')}
+              onClick={() => onResolve(approval.approvalId, 'approved', feedback.trim() || undefined, 'approved', feedback.trim() || undefined)}
             >
               {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
               {t('surface:agentChat.cardConfirm')}

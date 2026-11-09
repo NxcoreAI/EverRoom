@@ -72,8 +72,13 @@ export function createAgentCardTools(
           ? {
             palette: params.palette.flatMap((color) => {
               if (typeof color !== "string") return [];
-              const value = color.trim();
-              return /^#[0-9a-fA-F]{6}$/.test(value) ? [value.toLowerCase()] : [];
+              // 宽容归一：模型常写不带 # 的裸 hex（"0E1B2A"）或带 #，
+              // 只认严格 #rrggbb 会把整个色板滤空（2026-11-09 实测 palette:[]）。
+              const value = color.trim().replace(/^#/, "");
+              if (/^[0-9a-fA-F]{6}$/.test(value)) return [`#${value.toLowerCase()}`];
+              // 再容忍「海军蓝 #0E1B2A」这类带名称的写法：取第一段 hex。
+              const embedded = /#([0-9a-fA-F]{6})\b/.exec(color) ?? /\b([0-9a-fA-F]{6})\b/.exec(color);
+              return embedded ? [`#${embedded[1]!.toLowerCase()}`] : [];
             }).slice(0, 5),
           }
           : {}),
