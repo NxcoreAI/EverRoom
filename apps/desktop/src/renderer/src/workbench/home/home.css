@@ -115,6 +115,7 @@
 .wb-home-note {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
   margin: 0;
@@ -183,13 +184,17 @@
 
 .wb-home-split {
   display: grid;
-  /* minmax(0,·)：两节各自成网格，列宽必须严格对半且不被内容 min-content 撑歪，
-     「新建」与「最近」两节的分栏线才能上下对齐 */
+  /* minmax(0,·)：两节各自成网格，列宽必须严格对半且不被内容 min-content 撑歪；
+     stretch 让两栏等高，右栏的空态提示框能拉到与左栏列表卡一样高。 */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 .wb-home-split-col { display: flex; flex-direction: column; min-width: 0; }
+/* 「最近」两栏的卡片等高对齐：列表卡与空态提示框都拉满列剩余高度，
+   两栏由 grid stretch 等高，卡片边框上下严格对齐（内容行数不同也不影响）。 */
+.wb-home-split-col > .wb-home-list,
+.wb-home-split-col > .wb-home-note { flex: 1; }
 .wb-home-split-label {
   display: flex;
   align-items: center;
@@ -201,6 +206,16 @@
   color: var(--ui-text-3);
 }
 .wb-home-split-label svg { flex: none; }
+/* 「项目空间」标签本身可点（跳转到项目空间页）：按钮复位 + 悬停反馈。 */
+button.wb-home-split-label {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+button.wb-home-split-label:hover { color: var(--ui-text-2); }
 .wb-home-split-link {
   margin-left: auto;
   height: 20px;
@@ -245,17 +260,6 @@
 .wb-home-new-tile:active { transform: translateY(0); box-shadow: var(--ui-shadow-sm); }
 /* 新建瓦片内图标浮起投影（原型 op-create-tile .op-ft-icon 同款） */
 .wb-home-new-tile .op-ft-icon { filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.18)); }
-.wb-home-new-glyph {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
-  /* 原型 op-space-glyph：主题 accent → 紫的 135° 渐变 + 白色图标 */
-  background: linear-gradient(135deg, var(--ui-accent-fill), #7a4dff);
-  color: #fff;
-}
 .wb-home-new-name { font-size: var(--ui-text-xs); font-weight: 600; }
 
 .wb-home-space-icon {
@@ -592,14 +596,15 @@
 }
 .wb-home-ft-views button:hover { background: var(--ui-hover); color: var(--ui-text); }
 .wb-home-ft-views button.active { background: var(--ui-hover); color: var(--ui-text); }
-/* 「最近」分栏里的紧凑行变体（.wb-home-list 内）：列窄行矮，与分栏卡内边距对齐。 */
+/* 「最近」分栏里的紧凑行变体（.wb-home-list 内）：列窄行矮，与分栏卡内边距对齐。
+   行高与左侧项目空间行（34px 图标 + 11px×2 内边距）对齐，两栏卡片高度一致。 */
 .wb-home-list .wb-home-filerow {
   display: grid;
   grid-template-columns: 26px minmax(120px, 1fr) 96px 68px 26px;
   align-items: center;
   gap: 12px;
   position: relative;
-  height: 48px;
+  height: 56px;
   padding: 0 14px;
 }
 .wb-home-list .wb-home-filerow + .wb-home-filerow { border-top: 1px solid var(--ui-border-subtle); }
@@ -813,10 +818,15 @@
   width: 36px;
   height: 36px;
   border-radius: 26%;
-  /* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
-  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  /* 与「新建」瓦片的类型图标（op-ft-icon）同款质感：垂直柔和渐变 + 顶部内高光；
+     香槟暖色（自品牌蜜桃 --ui-warm 派生）替代原高饱和紫，去「AI 风」。 */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(180deg, #e0bd96, #a8754a);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 6px rgba(140, 95, 50, 0.2);
 }
 .wb-journal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wb-journal-name {
