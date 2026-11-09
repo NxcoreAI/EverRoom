@@ -4219,3 +4219,71 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   display: grid;
   gap: 2px;
 }
+
+/* 分级答复的 L2 详情折叠区（answer-tiering）：默认收起，点击 summary 展开。
+   视觉上与执行时间线的折叠行同族——低调的次要信息通道。 */
+.agent-answer-details {
+  margin-top: 4px;
+  border-radius: 8px;
+}
+
+.agent-answer-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #657080;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.agent-answer-details > summary::before {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  content: '';
+  transition: transform 140ms ease;
+}
+
+.agent-answer-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.agent-answer-details > summary:hover {
+  color: #3d4653;
+}
+
+.agent-answer-details-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid #e3e7ee;
+  color: #55606f;
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+/* GFM 任务列表：只读展示，弱化系统 checkbox 的默认外观。 */
+.agent-message .agent-markdown li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -18px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.agent-message .agent-markdown input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin: 3px 0 1px;
+  accent-color: #6d83b8;
+}
+
+/* GFM 删除线：语义是"已作废"，弱化为次要色。 */
+.agent-message .agent-markdown del {
+  color: #8a93a3;
+  text-decoration: line-through;
+}
