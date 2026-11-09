@@ -381,17 +381,22 @@ export interface CreditPack {
   code: string
   name: string
   amountCents: number
+  /** 微信支付人民币价(分,如 3500=¥35);未配置人民币价的档位无此字段。 */
+  amountCnyCents?: number
   grantQuota: number
   active: boolean
   /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
   productKind?: 'credits' | 'pro_month'
 }
 
-/** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议)。 */
+/** 充值支付渠道:paypal 走系统浏览器 approval 页;wechatpay 返回 code_url(weixin://)弹窗内扫码。 */
+export type TopupChannel = 'paypal' | 'wechatpay'
+
+/** 充值下单结果:approvalUrl 为 PayPal approval 页(mock:// 为本地联调协议,weixin:// 为微信 Native code_url)。 */
 export interface TopupOrder {
   orderId: string
   approvalUrl: string
-  provider: 'paypal' | 'mock'
+  provider: 'paypal' | 'mock' | 'wechatpay'
 }
 
 /** 套餐档位(GET /app/plans),升级弹窗动态渲染权益。 */
@@ -1097,8 +1102,8 @@ export interface NxcoreDesktopApi {
   billing: {
     /** 充值档位(登录后可用)。 */
     packs(): Promise<CreditPack[]>
-    /** 下单:真实渠道时主进程自动用系统浏览器打开 approval 页。 */
-    topup(packCode: string): Promise<TopupOrder>
+    /** 下单:channel 不传=paypal(现状);真实渠道时主进程自动用系统浏览器打开 approval 页,微信 code_url 由渲染端弹窗内渲染二维码。 */
+    topup(packCode: string, channel?: TopupChannel): Promise<TopupOrder>
     /** 订单状态轮询(pending 时服务端主动核对渠道)。 */
     topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }>
     /** Mock 联调批准;真实渠道服务端 409。 */

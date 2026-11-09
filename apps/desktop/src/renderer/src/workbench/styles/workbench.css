@@ -736,3 +736,59 @@ html[data-desktop='darwin'] .wb-tabbar-left {
 .plan-purchase-message { display: block; margin-top: 10px; font-size: 12px; color: var(--ui-text-muted, #666); }
 .plan-purchase-message[data-phase='failed'] { color: var(--ui-danger, #c4320e); }
 .plan-purchase-done { margin: 8px 0 0; font-size: 12.5px; color: var(--ui-accent, #0071e3); }
+
+/* 充值弹窗渠道分段控件(PayPal | 微信支付) */
+.topup-channel-tabs {
+  display: inline-flex;
+  margin-bottom: 14px;
+  padding: 3px;
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 10px;
+  background: var(--ui-surface-muted, #f5f5f7);
+  gap: 2px;
+}
+.topup-channel-tab {
+  border: none;
+  border-radius: 7px;
+  padding: 5px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--ui-text-muted, #666);
+  cursor: pointer;
+}
+.topup-channel-tab[data-active='true'] {
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text, #1d1d1f);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+/* 微信扫码支付二维码区 */
+.topup-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px 16px;
+}
+.topup-qr-image {
+  width: 180px;
+  height: 180px;
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 12px;
+  background: var(--ui-surface, #fff);
+}
+.topup-qr-title { font-size: 14px; }
+.topup-qr-note { margin: 0; font-size: 12.5px; color: var(--ui-text-muted, #666); }
+.topup-qr-cancel {
+  margin-top: 6px;
+  border: 1px solid var(--ui-border, #d2d2d7);
+  border-radius: 8px;
+  padding: 6px 18px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--ui-surface, #fff);
+  color: var(--ui-text-muted, #666);
+  cursor: pointer;
+}
+.topup-qr-cancel:hover { opacity: 0.85; }
