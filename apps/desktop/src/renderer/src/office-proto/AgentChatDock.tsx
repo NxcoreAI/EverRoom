@@ -75,9 +75,6 @@ function AgentChatDockInner({ file }: { file: OfficeFile }) {
       loadModelAvailability={async () => ({ lite: true, primary: true })}
       onSelectModelPreference={session.setModelPreferenceDefault}
       channelAgentId={null}
-      permissionMode={session.permissionMode}
-      permissionModeAvailable={session.permissionModeAvailable}
-      onSelectPermissionMode={session.setSessionPermissionMode}
       thinkingLevel={session.sessionId ? session.currentSession?.thinkingLevel ?? null : session.thinkingLevelDefault}
       onSelectThinkingLevel={session.setSessionThinkingLevel}
       ghostSuggestion={null}

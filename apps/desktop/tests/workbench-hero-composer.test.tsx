@@ -119,7 +119,7 @@ afterEach(async () => {
 })
 
 describe('工作台新建任务 hero 输入框（AgentComposer 一致性）', () => {
-  it('草稿态 hero 渲染模型档位钮、「+」添加钮、思考档位钮与发送钮', async () => {
+  it('草稿态 hero 渲染模型选择钮（含推理等级后缀）、「+」添加钮与发送钮', async () => {
     installGateway()
     await act(async () => {
       root.render(
@@ -134,14 +134,13 @@ describe('工作台新建任务 hero 输入框（AgentComposer 一致性）', ()
     expect(hero, 'hero 输入框应存在').not.toBeNull()
 
     const tier = hero!.querySelector<HTMLElement>('.agent-model-tier-toggle')
-    expect(tier, 'hero 里应有模型档位切换钮（智能）').not.toBeNull()
+    expect(tier, 'hero 里应有模型选择触发钮（智能）').not.toBeNull()
     expect(tier!.textContent).toContain('智能')
+    // DSH 同款：推理等级作为触发钮上的弱化后缀展示。
+    expect(tier!.querySelector('.agent-model-tier-effort'), '触发钮应有推理等级后缀').not.toBeNull()
 
     const add = hero!.querySelector<HTMLElement>('.agent-add-button')
     expect(add, 'hero 里应有「+」添加入口').not.toBeNull()
-
-    const thinking = hero!.querySelector<HTMLElement>('.agent-thinking-level-toggle')
-    expect(thinking, 'hero 里应有思考档位切换钮').not.toBeNull()
 
     const send = hero!.querySelector<HTMLElement>('button[type="submit"]')
     expect(send, 'hero 里应有发送按钮').not.toBeNull()
@@ -173,7 +172,7 @@ describe('工作台新建任务 hero 输入框（AgentComposer 一致性）', ()
     expect(items.map((item) => item.querySelector('strong')?.textContent)).toEqual(['导入文件', '挂载目录'])
   })
 
-  it('点「智能」展开模型档位选择器并可切到「强模型」', async () => {
+  it('点「智能」展开两级菜单：先见「模型/推理等级」入口，进入模型行可切到「强模型」', async () => {
     const gateway = installGateway()
     await act(async () => {
       root.render(
@@ -189,9 +188,20 @@ describe('工作台新建任务 hero 输入框（AgentComposer 一致性）', ()
       tier!.click()
     })
 
-    const picker = container.querySelector('.agent-model-picker')
-    expect(picker, '「智能」应展开档位选择器').not.toBeNull()
-    const options = [...picker!.querySelectorAll<HTMLElement>('[role="option"]')]
+    const picker = container.querySelector<HTMLElement>('.agent-model-picker')
+    expect(picker, '「智能」应展开模型选择器').not.toBeNull()
+    // root 面板：DSH 同款「模型 / 推理等级」两行入口。
+    const cellLabels = [...picker!.querySelectorAll<HTMLElement>('.agent-model-cell-label')]
+      .map((label) => label.textContent)
+    expect(cellLabels).toEqual(['模型', '推理等级'])
+
+    // 进入「模型」行后见三个档位（DSH 子面板单选列表）。
+    const modelCell = [...picker!.querySelectorAll<HTMLElement>('.agent-model-cell')]
+      .find((cell) => cell.textContent?.includes('模型'))!
+    await act(async () => {
+      modelCell.click()
+    })
+    const options = [...container.querySelectorAll<HTMLElement>('.agent-model-picker [role="menuitemradio"]')]
     expect(options.map((option) => option.querySelector('strong')?.textContent)).toEqual(['智能', '强模型', '轻量'])
 
     // 草稿态选择档位只改「下次新会话默认」，不发请求（会话还没建）。

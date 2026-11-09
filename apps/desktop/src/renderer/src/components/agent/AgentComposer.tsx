@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Cable, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Check, ChevronDown, ChevronRight, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, MessagesSquare, Plus, Quote, Search, Square, Terminal, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -10,7 +10,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { AgentAttachmentReference, AgentContextUsage, AgentModelPreference, AgentMountedDirectory, AgentPermissionMode, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
+import type { AgentAttachmentReference, AgentContextUsage, AgentModelPreference, AgentMountedDirectory, AgentRoomReference, AgentSession, AgentThinkingLevel, ExternalConversationSummary, LocalAgentInstallation, MigrationProvider } from '@nxcore/agent-contract'
 import type { FileCatalogDto } from '@/shared/ingest'
 
 import { showToast } from '@/state/toast'
@@ -40,15 +40,6 @@ const MODEL_TIER_META: Record<AgentModelPreference, { icon: typeof Zap; labelKey
   lite: { icon: Feather, labelKey: 'surface:agentComposer.modelTierLite', hintKey: 'surface:agentComposer.modelTierLiteHint' },
 }
 const MODEL_TIER_ORDER: AgentModelPreference[] = ['smart', 'primary', 'lite']
-
-/** 权限档语义元数据（顺序=下拉展示顺序；选项再按 provider 可用性过滤）。 */
-const PERMISSION_MODE_META: Record<AgentPermissionMode, { icon: typeof Zap; labelKey: string; hintKey: string; danger: boolean }> = {
-  ask_before_write: { icon: Lock, labelKey: 'surface:agentComposer.permissionModeAskBeforeWrite', hintKey: 'surface:agentComposer.permissionModeAskBeforeWriteHint', danger: false },
-  accept_edits: { icon: ShieldCheck, labelKey: 'surface:agentComposer.permissionModeAcceptEdits', hintKey: 'surface:agentComposer.permissionModeAcceptEditsHint', danger: false },
-  auto: { icon: Zap, labelKey: 'surface:agentComposer.permissionModeAuto', hintKey: 'surface:agentComposer.permissionModeAutoHint', danger: false },
-  full_access: { icon: Unlock, labelKey: 'surface:agentComposer.permissionModeFullAccess', hintKey: 'surface:agentComposer.permissionModeFullAccessHint', danger: true },
-}
-const PERMISSION_MODE_ORDER: AgentPermissionMode[] = ['ask_before_write', 'accept_edits', 'auto', 'full_access']
 
 type ExternalPickerStatus = 'idle' | 'loading' | 'ready' | 'loading-more' | 'error'
 type MentionCategory = 'all' | 'agent' | 'room' | 'file' | 'conversation'
@@ -162,11 +153,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   channelAgentId?: string | null
   /** 选择本机 CLI Agent 渠道（整个新会话由其连续执行）；null=回到档位模式。 */
   onSelectChannelAgent?: (agentId: string | null) => void
-  /** 会话权限模式（渠道会话显示切换钮；null=未加载/不适用，隐藏）。 */
-  permissionMode?: AgentPermissionMode | null
-  /** provider 可用语义档（网关按渠道过滤后的权威列表）。 */
-  permissionModeAvailable?: readonly AgentPermissionMode[]
-  onSelectPermissionMode?: (mode: AgentPermissionMode) => void | Promise<unknown>
   /** 思考档位：会话已存在＝会话值（null=跟随模型配置）；草稿态＝下次新会话默认值。 */
   thinkingLevel?: AgentThinkingLevel | null
   /** 选择思考档位（null=跟随模型配置）；渠道会话不显示该切换钮。 */
@@ -189,8 +175,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop: () => void
   /** 提交本轮内容：文件附件（文件引擎引用）+ 挂载目录 + @ 提及。 */
   onSubmit: (payload: ComposerSubmitPayload) => void
-  /** 打开「连接器」弹窗（操作栏多一个连接器按钮；不传则不渲染该按钮）。 */
-  onOpenConnectors?: () => void
+  /**
+   * 附件归属工作空间：导入的文件落进该空间的资料库（Agent 的 file_search /
+   * library_browse 只查本空间）。不传按网关缺省归 default——多空间用户在
+   * 非默认空间拖文件时 Agent 会找不到刚导入的文件。
+   */
+  attachmentWorkspaceId?: string | null
 }>(function AgentComposer({
   active,
   available,
@@ -211,9 +201,6 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onSelectModelPreference,
   channelAgentId = null,
   onSelectChannelAgent,
-  permissionMode = null,
-  permissionModeAvailable = [],
-  onSelectPermissionMode,
   thinkingLevel = null,
   onSelectThinkingLevel,
   onOpenSettings,
@@ -224,13 +211,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   queuedSubmissions = [],
   onRemoveQueuedSubmission,
   value,
+  attachmentWorkspaceId = null,
   onChange,
   onClearContext,
   onRemoveContext,
   onStop,
   onSubmit,
   onSelectExternalConversation,
-  onOpenConnectors,
 }, ref) {
   const { t, formatDate } = useLocale()
   const [attachments, setAttachments] = useState<AgentAttachmentReference[]>([])
@@ -265,12 +252,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const [mentionSourcesLoading, setMentionSourcesLoading] = useState(false)
   const [mentionCategory, setMentionCategory] = useState<MentionCategory>('all')
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
-  const [permissionModeOpen, setPermissionModeOpen] = useState(false)
-  /** full_access 两步确认：true=弹层切到危险确认态。 */
-  const [confirmingFullAccess, setConfirmingFullAccess] = useState(false)
-  const permissionModeRef = useRef<HTMLElement | null>(null)
-  const [thinkingLevelOpen, setThinkingLevelOpen] = useState(false)
-  const thinkingLevelRef = useRef<HTMLElement | null>(null)
+  /** 模型选择器当前面板：root=模型/推理等级两行入口；model/effort=各自列表。 */
+  const [modelPickerPane, setModelPickerPane] = useState<'root' | 'model' | 'effort'>('root')
   const [contextPanelOpen, setContextPanelOpen] = useState(false)
   const [liteAvailable, setLiteAvailable] = useState(false)
   const [primaryAvailable, setPrimaryAvailable] = useState(true)
@@ -358,25 +341,24 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     externalRequestRef.current += 1
     setAgentPickerOpen(false)
     setModelPickerOpen(false)
+    setModelPickerPane('root')
     setContextPanelOpen(false)
-    setPermissionModeOpen(false)
-    setConfirmingFullAccess(false)
-    setThinkingLevelOpen(false)
     mentionHints.current.clear()
   }, [resetKey])
 
   useEffect(() => {
-    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !permissionModeOpen && !thinkingLevelOpen && !addMenuOpen) return undefined
+    if (!externalPickerOpen && !agentPickerOpen && !modelPickerOpen && !contextPanelOpen && !addMenuOpen) return undefined
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target as Element
       if (shellRef.current?.contains(target)) {
         // 壳内点击默认交给组件自身逻辑；但模型/上下文弹层覆盖在输入区上，
         // 点到弹层和触发钮之外（如输入框）视为失去焦点，直接收起。
         if (addMenuOpen && !addMenuRef.current?.contains(target) && !target.closest('.agent-add-button')) setAddMenuOpen(false)
-        if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) setModelPickerOpen(false)
+        if (modelPickerOpen && !modelPickerRef.current?.contains(target) && !target.closest('.agent-model-tier-toggle')) {
+          setModelPickerOpen(false)
+          setModelPickerPane('root')
+        }
         if (contextPanelOpen && !contextPanelRef.current?.contains(target) && !target.closest('.agent-context-ring')) setContextPanelOpen(false)
-        if (permissionModeOpen && !permissionModeRef.current?.contains(target) && !target.closest('.agent-permission-mode-toggle')) setPermissionModeOpen(false)
-        if (thinkingLevelOpen && !thinkingLevelRef.current?.contains(target) && !target.closest('.agent-thinking-level-toggle')) setThinkingLevelOpen(false)
         return
       }
       externalRequestRef.current += 1
@@ -384,13 +366,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setExternalPickerOpen(false)
       setAgentPickerOpen(false)
       setModelPickerOpen(false)
+      setModelPickerPane('root')
       setContextPanelOpen(false)
-      setPermissionModeOpen(false)
-      setThinkingLevelOpen(false)
     }
     document.addEventListener?.('pointerdown', closeOnOutsidePress)
     return () => document.removeEventListener?.('pointerdown', closeOnOutsidePress)
-  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, permissionModeOpen, thinkingLevelOpen, addMenuOpen])
+  }, [externalPickerOpen, agentPickerOpen, modelPickerOpen, contextPanelOpen, addMenuOpen])
 
   const submitMentions = () => resolveMentions(value, mentionHints.current, localAgents)
 
@@ -424,25 +405,12 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       setContextPanelOpen(false)
       return
     }
-    if (permissionModeOpen) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setPermissionModeOpen(false)
-        setConfirmingFullAccess(false)
-      }
-      return
-    }
-    if (thinkingLevelOpen) {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        setThinkingLevelOpen(false)
-      }
-      return
-    }
     if (modelPickerOpen) {
       if (event.key === 'Escape') {
         event.preventDefault()
-        setModelPickerOpen(false)
+        // 子面板先回 root（DSH 同款两级导航），再按一次才整体收起。
+        if (modelPickerPane !== 'root') setModelPickerPane('root')
+        else setModelPickerOpen(false)
       }
       return
     }
@@ -535,7 +503,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     }
     setImportingFiles(true)
     try {
-      const picked = await api.pickAgentAttachments()
+      const picked = await api.pickAgentAttachments(attachmentWorkspaceId ?? undefined)
       if (mergeAttachments((Array.isArray(picked) ? picked : []).filter(Boolean)) > 0) {
         showToast({
           title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
@@ -584,7 +552,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     }
     setImportingFiles(true)
     try {
-      const imported = await api.importAgentAttachments(files)
+      const imported = await api.importAgentAttachments(files, attachmentWorkspaceId ?? undefined)
       if (mergeAttachments((Array.isArray(imported) ? imported : []).filter(Boolean)) > 0) {
         showToast({
           title: t('surface:agentComposer.attachmentsAddedToTheComposer'),
@@ -700,6 +668,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     externalRequestRef.current += 1
     setExternalPickerOpen(false)
     setAgentPickerOpen(false)
+    setModelPickerPane('root')
     setModelPickerOpen(true)
     // 每次打开时刷新：设置页保存后无需重启即可生效（lite 出现/强模型可点）。
     loadModelAvailability().then(
@@ -709,6 +678,11 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       },
       () => setLiteAvailable(false),
     )
+  }
+  const closeModelPicker = () => {
+    setModelPickerOpen(false)
+    setModelPickerPane('root')
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
   }
   const chooseModelTier = (tier: AgentModelPreference) => {
     // 强模型未配置：不切档，直接提示去设置配置。
@@ -721,37 +695,22 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
           onAction: onOpenSettings,
         } : {}),
       })
-      setModelPickerOpen(false)
-      window.requestAnimationFrame(() => textareaRef.current?.focus())
+      closeModelPicker()
       return
     }
     // 渠道生效时点档位＝退出渠道，回到档位模式。
     if (channelAgentId) onSelectChannelAgent?.(null)
     onSelectModelPreference(tier)
-    setModelPickerOpen(false)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
+    closeModelPicker()
   }
   const chooseChannelAgent = (agentId: string) => {
     onSelectChannelAgent?.(agentId)
-    setModelPickerOpen(false)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
-  }
-  const choosePermissionMode = (mode: AgentPermissionMode) => {
-    // full_access 两步确认（与 tutti 同规则）：首次点击进入确认态，再点「开启」才生效。
-    if (mode === 'full_access' && permissionMode !== 'full_access' && !confirmingFullAccess) {
-      setConfirmingFullAccess(true)
-      return
-    }
-    setConfirmingFullAccess(false)
-    setPermissionModeOpen(false)
-    if (mode !== permissionMode) void onSelectPermissionMode?.(mode)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
+    closeModelPicker()
   }
   /** 选择思考档位：立即生效并收起弹层（后端从下一轮 run 起使用该档位）。 */
   const chooseThinkingLevel = (level: AgentThinkingLevel | null) => {
-    setThinkingLevelOpen(false)
     if (level !== thinkingLevel) void onSelectThinkingLevel?.(level)
-    window.requestAnimationFrame(() => textareaRef.current?.focus())
+    closeModelPicker()
   }
   const callableLocalAgents = localAgents.filter((agent) => agent.invocationSupported && agent.callable)
   const agentQueryNormalized = mentionQuery.trim().toLocaleLowerCase()
@@ -932,22 +891,14 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   }
 
   // 弹层引用对象为空时弹层不渲染，composer 也不抬升（menuOpen 与可见弹层保持一致）。
-  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || permissionModeOpen || thinkingLevelOpen || addMenuOpen || (agentPickerOpen && mentionOptionCount > 0)
+  const menuOpen = slashPickerOpen || externalPickerOpen || modelPickerOpen || addMenuOpen || (agentPickerOpen && mentionOptionCount > 0)
   const channelAgent = channelAgentId ? localAgents.find((agent) => agent.id === channelAgentId) ?? null : null
   const channelActive = Boolean(channelAgentId)
   const activeTierMeta = MODEL_TIER_META[modelPreference]
   const ActiveTierIcon = activeTierMeta.icon
-  // 权限档切换钮：一期仅渠道会话显示（gateway 侧已通用，pi 档 UI 放开留二期）。
-  const permissionModeOptions = PERMISSION_MODE_ORDER.filter((mode) => permissionModeAvailable.includes(mode))
-  const permissionModeToggleVisible = channelActive
-    && permissionMode !== null
-    && permissionModeOptions.length > 1
-    && Boolean(onSelectPermissionMode)
-  const activePermissionMeta = permissionMode ? PERMISSION_MODE_META[permissionMode] : null
-  const ActivePermissionIcon = activePermissionMeta?.icon ?? ShieldCheck
-  // 思考档切换钮：仅非渠道会话显示（ACP/CLI 渠道没有思考档概念）。
+  // 思考档位（推理等级）：仅非渠道会话可选（ACP/CLI 渠道没有思考档概念）。
   // 契约七档里 minimal/xhigh/max 归到最接近的常用档展示（thinkingLevelOption 兜底）。
-  const thinkingLevelToggleVisible = !channelActive && Boolean(onSelectThinkingLevel)
+  const thinkingLevelSelectable = !channelActive && Boolean(onSelectThinkingLevel)
   const activeThinkingOption = thinkingLevelOption(thinkingLevel)
   // 上下文占用构成：按占比降序，tokens 已知时补一段剩余空间。
   const contextBreakdown = contextUsage?.contextWindow
@@ -1204,136 +1155,130 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
         </div>
       ) : null}
       {modelPickerOpen ? (
-        <section ref={modelPickerRef} className="agent-composer-popover agent-model-picker" id="agent-composer-menu" role="listbox" aria-label={t('surface:agentComposer.modelPickerTitle')}>
-          {MODEL_TIER_ORDER
-            .filter((tier) => tier !== 'lite' || liteAvailable)
-            .map((tier) => {
-              const meta = MODEL_TIER_META[tier]
-              const TierIcon = meta.icon
-              const tierSelected = !channelActive && modelPreference === tier
-              return (
-                <button
-                  key={tier}
-                  type="button"
-                  className="agent-model-option"
-                  role="option"
-                  aria-selected={tierSelected}
-                  data-active={String(tierSelected)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => chooseModelTier(tier)}
-                >
-                  <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
-                  <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
-                  {tierSelected ? <Check aria-hidden="true" /> : null}
-                </button>
-              )
-            })}
-          {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
-            <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
-              {callableLocalAgents.map((agent) => (
-                <button
-                  key={agent.id}
-                  type="button"
-                  className="agent-model-option"
-                  role="option"
-                  aria-selected={channelAgentId === agent.id}
-                  data-active={String(channelAgentId === agent.id)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => chooseChannelAgent(agent.id)}
-                >
-                  <span className="agent-picker-header-icon">
-                    {agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw'
-                      ? <SourceIcon kind={agent.provider} />
-                      : <Terminal aria-hidden="true" />}
-                  </span>
-                  <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
-                  {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {modelPreferenceLocked ? (
-            <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
-          ) : null}
-        </section>
-      ) : null}
-      {permissionModeOpen && permissionModeToggleVisible ? (
         <section
-          ref={permissionModeRef}
-          className="agent-composer-popover agent-permission-mode-picker"
-          role="listbox"
-          aria-label={t('surface:agentComposer.permissionModePickerTitle')}
+          ref={modelPickerRef}
+          className="agent-composer-popover agent-model-picker"
+          id="agent-composer-menu"
+          role="menu"
+          data-pane={modelPickerPane}
+          aria-label={t('surface:agentComposer.modelPickerTitle')}
         >
-          {confirmingFullAccess ? (
-            <div className="agent-permission-mode-confirm" role="alertdialog" aria-label={t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}>
-              <strong>{t('surface:agentComposer.permissionModeFullAccessConfirmTitle')}</strong>
-              <p>{t('surface:agentComposer.permissionModeFullAccessConfirmBody')}</p>
-              <div className="agent-permission-mode-confirm-actions">
-                <button type="button" onClick={() => setConfirmingFullAccess(false)}>
-                  {t('surface:agentComposer.permissionModeConfirmCancel')}
-                </button>
+          {modelPickerPane === 'root' ? (
+            <>
+              {/* 模型行：label + 当前值 + 右箭头（DSH MenuDropdown 同款两级入口）。 */}
+              <button
+                type="button"
+                role="menuitem"
+                className="agent-model-cell"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setModelPickerPane('model')}
+              >
+                <span className="agent-model-cell-label">{t('surface:agentComposer.modelMenuModel')}</span>
+                <span className="agent-model-cell-value">
+                  {channelActive
+                    ? channelAgent?.displayName ?? channelAgentId
+                    : t(activeTierMeta.labelKey)}
+                </span>
+                <ChevronRight aria-hidden="true" className="agent-model-cell-chevron" />
+              </button>
+              {/* 推理等级行：仅档位模式（渠道会话没有思考档概念）。 */}
+              {thinkingLevelSelectable ? (
                 <button
                   type="button"
-                  className="agent-permission-mode-confirm-enable"
-                  data-danger="true"
-                  onClick={() => choosePermissionMode('full_access')}
+                  role="menuitem"
+                  className="agent-model-cell"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setModelPickerPane('effort')}
                 >
-                  {t('surface:agentComposer.permissionModeConfirmEnable')}
+                  <span className="agent-model-cell-label">{t('surface:agentComposer.modelMenuEffort')}</span>
+                  <span className="agent-model-cell-value">{t(activeThinkingOption.labelKey)}</span>
+                  <ChevronRight aria-hidden="true" className="agent-model-cell-chevron" />
                 </button>
-              </div>
-            </div>
-          ) : permissionModeOptions.map((mode) => {
-            const meta = PERMISSION_MODE_META[mode]
-            const ModeIcon = meta.icon
-            const modeSelected = permissionMode === mode
-            return (
-              <button
-                key={mode}
-                type="button"
-                className="agent-model-option"
-                role="option"
-                aria-selected={modeSelected}
-                data-active={String(modeSelected)}
-                data-danger={meta.danger ? 'true' : undefined}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => choosePermissionMode(mode)}
-              >
-                <span className="agent-picker-header-icon"><ModeIcon aria-hidden="true" /></span>
-                <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
-                {modeSelected ? <Check aria-hidden="true" /> : null}
-              </button>
-            )
-          })}
-        </section>
-      ) : null}
-      {thinkingLevelOpen && thinkingLevelToggleVisible ? (
-        <section
-          ref={thinkingLevelRef}
-          className="agent-composer-popover agent-thinking-level-picker"
-          role="listbox"
-          aria-label={t('surface:agentComposer.thinkingLevelPickerTitle')}
-        >
-          {THINKING_LEVEL_OPTIONS.map((option) => {
-            const optionSelected = activeThinkingOption.value === option.value
-            return (
-              <button
-                key={option.value ?? 'default'}
-                type="button"
-                className="agent-model-option"
-                role="option"
-                aria-selected={optionSelected}
-                data-active={String(optionSelected)}
-                data-level={option.value ?? 'default'}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => chooseThinkingLevel(option.value)}
-              >
-                <span className="agent-picker-header-icon"><Brain aria-hidden="true" /></span>
-                <span><strong>{t(option.labelKey)}</strong><small>{t(option.hintKey)}</small></span>
-                {optionSelected ? <Check aria-hidden="true" /> : null}
-              </button>
-            )
-          })}
-          <footer className="agent-model-picker-hint">{t('surface:agentComposer.thinkingLevelFooterHint')}</footer>
+              ) : null}
+              {modelPreferenceLocked ? (
+                <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
+              ) : null}
+            </>
+          ) : null}
+          {modelPickerPane === 'model' ? (
+            <>
+              {MODEL_TIER_ORDER
+                .filter((tier) => tier !== 'lite' || liteAvailable)
+                .map((tier) => {
+                  const meta = MODEL_TIER_META[tier]
+                  const TierIcon = meta.icon
+                  const tierSelected = !channelActive && modelPreference === tier
+                  return (
+                    <button
+                      key={tier}
+                      type="button"
+                      className="agent-model-option"
+                      role="menuitemradio"
+                      aria-checked={tierSelected}
+                      data-active={String(tierSelected)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => chooseModelTier(tier)}
+                    >
+                      <span className="agent-picker-header-icon"><TierIcon aria-hidden="true" /></span>
+                      <span><strong>{t(meta.labelKey)}</strong><small>{t(meta.hintKey)}</small></span>
+                      {tierSelected ? <Check aria-hidden="true" /> : null}
+                    </button>
+                  )
+                })}
+              {onSelectChannelAgent && callableLocalAgents.length > 0 ? (
+                <div className="agent-model-channel-group" role="group" aria-label={t('surface:agentComposer.channelGroupLabel')}>
+                  {callableLocalAgents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      className="agent-model-option"
+                      role="menuitemradio"
+                      aria-checked={channelAgentId === agent.id}
+                      data-active={String(channelAgentId === agent.id)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => chooseChannelAgent(agent.id)}
+                    >
+                      <span className="agent-picker-header-icon">
+                        {agent.provider === 'claude' || agent.provider === 'codex' || agent.provider === 'openclaw'
+                          ? <SourceIcon kind={agent.provider} />
+                          : <Terminal aria-hidden="true" />}
+                      </span>
+                      <span><strong>{agent.displayName}<span className="agent-model-channel-tag"> (CLI)</span></strong><small>{t('surface:agentComposer.channelOptionHint')}</small></span>
+                      {channelAgentId === agent.id ? <Check aria-hidden="true" /> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {modelPreferenceLocked ? (
+                <footer className="agent-model-picker-hint">{t('surface:agentComposer.modelPickerApplyToNext')}</footer>
+              ) : null}
+            </>
+          ) : null}
+          {modelPickerPane === 'effort' && thinkingLevelSelectable ? (
+            <>
+              {THINKING_LEVEL_OPTIONS.map((option) => {
+                const optionSelected = activeThinkingOption.value === option.value
+                return (
+                  <button
+                    key={option.value ?? 'default'}
+                    type="button"
+                    className="agent-model-option"
+                    role="menuitemradio"
+                    aria-checked={optionSelected}
+                    data-active={String(optionSelected)}
+                    data-level={option.value ?? 'default'}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => chooseThinkingLevel(option.value)}
+                  >
+                    <span className="agent-picker-header-icon"><Brain aria-hidden="true" /></span>
+                    <span><strong>{t(option.labelKey)}</strong><small>{t(option.hintKey)}</small></span>
+                    {optionSelected ? <Check aria-hidden="true" /> : null}
+                  </button>
+                )
+              })}
+              <footer className="agent-model-picker-hint">{t('surface:agentComposer.thinkingLevelFooterHint')}</footer>
+            </>
+          ) : null}
         </section>
       ) : null}
       {contextPanelOpen && contextBreakdown ? (
@@ -1518,139 +1463,97 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
             ))}
           </div>
         ) : null}
+        {/* 底栏（DSH InputBar.row 同款）：左侧 tools=「+」+ 模型选择；右侧
+            trailing=上下文用量 + 发送/停止。模型/推理等级合入同一选择器。 */}
         <div className="agent-prompt-actions">
-          <button
-            type="button"
-            className="agent-add-button"
-            aria-haspopup="menu"
-            aria-expanded={addMenuOpen}
-            title={t('surface:agentComposer.addMenuTitle')}
-            aria-label={t('surface:agentComposer.addMenuTitle')}
-            disabled={controlsDisabled || importingFiles}
-            onClick={() => {
-              // 「+」与档位弹层互斥：它们锚在同一位置，同时打开会重叠。
-              setModelPickerOpen(false)
-              setPermissionModeOpen(false)
-              setThinkingLevelOpen(false)
-              setAddMenuOpen((open) => !open)
-            }}
-          >
-            {importingFiles ? <LoaderCircle aria-hidden="true" className="agent-add-button-spinner" /> : <Plus aria-hidden="true" />}
-          </button>
-          <button
-            type="button"
-            className="agent-model-tier-toggle"
-            data-tier={channelActive ? undefined : modelPreference}
-            data-channel={channelAgentId ?? undefined}
-            aria-haspopup="listbox"
-            aria-expanded={modelPickerOpen}
-            title={channelActive ? channelAgent?.displayName ?? channelAgentId ?? undefined : t('surface:agentComposer.modelPickerTitle')}
-            disabled={controlsDisabled}
-            onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : openModelPicker())}
-          >
-            {channelActive ? (
-              channelAgent && (channelAgent.provider === 'claude' || channelAgent.provider === 'codex' || channelAgent.provider === 'openclaw')
-                ? <SourceIcon kind={channelAgent.provider} className="agent-model-tier-logo" />
-                : <Terminal aria-hidden="true" />
-            ) : <ActiveTierIcon aria-hidden="true" />}
-            <span>{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
-            <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
-          </button>
-          {permissionModeToggleVisible && activePermissionMeta ? (
+          <div className="agent-composer-tools">
             <button
               type="button"
-              className="agent-model-tier-toggle agent-permission-mode-toggle"
-              data-mode={permissionMode ?? undefined}
-              data-danger={permissionMode === 'full_access' ? 'true' : undefined}
-              aria-haspopup="listbox"
-              aria-expanded={permissionModeOpen}
-              title={t('surface:agentComposer.permissionModePickerTitle')}
-              disabled={controlsDisabled}
+              className="agent-add-button"
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              title={t('surface:agentComposer.addMenuTitle')}
+              aria-label={t('surface:agentComposer.addMenuTitle')}
+              disabled={controlsDisabled || importingFiles}
               onClick={() => {
-                setConfirmingFullAccess(false)
-                setPermissionModeOpen((open) => !open)
-              }}
-            >
-              <ActivePermissionIcon aria-hidden="true" />
-              <span>{t(activePermissionMeta.labelKey)}</span>
-              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
-            </button>
-          ) : null}
-          {thinkingLevelToggleVisible && activeThinkingOption ? (
-            <button
-              type="button"
-              className="agent-model-tier-toggle agent-thinking-level-toggle"
-              data-level={thinkingLevel ?? 'default'}
-              aria-haspopup="listbox"
-              aria-expanded={thinkingLevelOpen}
-              title={t('surface:agentComposer.thinkingLevelPickerTitle')}
-              disabled={controlsDisabled}
-              onClick={() => {
-                // 与模型/权限弹层互斥：它们锚在同一位置，同时打开会重叠。
+                // 「+」与模型弹层互斥：它们锚在同一位置，同时打开会重叠。
                 setModelPickerOpen(false)
-                setPermissionModeOpen(false)
-                setThinkingLevelOpen((open) => !open)
+                setModelPickerPane('root')
+                setAddMenuOpen((open) => !open)
               }}
             >
-              <Brain aria-hidden="true" />
-              <span>{t(activeThinkingOption.labelKey)}</span>
-              <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+              {importingFiles ? <LoaderCircle aria-hidden="true" className="agent-add-button-spinner" /> : <Plus aria-hidden="true" />}
             </button>
-          ) : null}
-          {/* 连接器入口：打开连接器弹窗（选择/授权连接器），与档位钮同一 ghost 语言。 */}
-          {onOpenConnectors ? (
-            <button
-              type="button"
-              className="agent-model-tier-toggle agent-connectors-toggle"
-              title={t('surface:agentComposer.connectorsPickerTitle')}
-              aria-label={t('surface:agentComposer.connectorsPickerTitle')}
-              aria-haspopup="dialog"
-              disabled={controlsDisabled}
-              onClick={onOpenConnectors}
-            >
-              <Cable aria-hidden="true" />
-              <span>{t('surface:agentComposer.connectorsPickerTitle')}</span>
-            </button>
-          ) : null}
-          {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}
-          <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
-            {hasSelectedText ? <span>{contextSummary}</span> : null}
-            {hasSelectedText ? (
-              <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
-                <X aria-hidden="true" />
+            <div className="agent-composer-modes">
+              <button
+                type="button"
+                className="agent-model-tier-toggle"
+                data-tier={channelActive ? undefined : modelPreference}
+                data-channel={channelAgentId ?? undefined}
+                aria-haspopup="menu"
+                aria-expanded={modelPickerOpen}
+                title={channelActive
+                  ? channelAgent?.displayName ?? channelAgentId ?? undefined
+                  : thinkingLevelSelectable
+                    ? `${t(activeTierMeta.labelKey)} · ${t(activeThinkingOption.labelKey)}`
+                    : t(activeTierMeta.labelKey)}
+                disabled={controlsDisabled}
+                onClick={() => (modelPickerOpen ? (setModelPickerOpen(false), setModelPickerPane('root')) : openModelPicker())}
+              >
+                {channelActive ? (
+                  channelAgent && (channelAgent.provider === 'claude' || channelAgent.provider === 'codex' || channelAgent.provider === 'openclaw')
+                    ? <SourceIcon kind={channelAgent.provider} className="agent-model-tier-logo" />
+                    : <Terminal aria-hidden="true" />
+                ) : <ActiveTierIcon aria-hidden="true" />}
+                <span className="agent-model-tier-label">{channelActive ? channelAgent?.displayName ?? channelAgentId : t(activeTierMeta.labelKey)}</span>
+                {thinkingLevelSelectable && !channelActive ? (
+                  <span className="agent-model-tier-effort">{t(activeThinkingOption.labelKey)}</span>
+                ) : null}
+                <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
               </button>
-            ) : null}
-            {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
-            {contextUsage?.contextWindow ? (
-              <ContextUsageRing
-                usage={contextUsage}
-                compacting={contextCompacting}
-                expanded={contextPanelOpen}
-                title={contextCompacting
-                  ? t('surface:agentComposer.contextCompacting')
-                  : t('surface:agentComposer.contextUsageTitle', {
-                    used: contextUsage.tokens === null ? '—' : contextUsage.tokens.toLocaleString(),
-                    total: contextUsage.contextWindow.toLocaleString(),
-                    percent: contextUsage.percent === null ? '—' : Math.round(contextUsage.percent),
-                  })}
-                onClick={() => setContextPanelOpen((open) => !open)}
-              />
-            ) : contextCompacting ? (
-              <span className="agent-context-usage agent-context-usage--compacting" title={t('surface:agentComposer.contextCompacting')}>
-                <span className="agent-context-usage-pulse" aria-hidden="true" />
-                {t('surface:agentComposer.contextCompacting')}
-              </span>
-            ) : null}
-          </span>
-          {active ? (
-            <button type="button" className="agent-prompt-submit is-stop" title={t('surface:agentComposer.stop')} aria-label={t('surface:agentComposer.stop')} onClick={onStop}>
-              <Square aria-hidden="true" />
-            </button>
-          ) : (
-            <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
-              <CornerDownLeft aria-hidden="true" />
-            </button>
-          )}
+            </div>
+          </div>
+          <div className="agent-composer-trailing">
+            {/* 上下文摘要/用量：占位 flex 撑开右组；无引用时不渲染文案。 */}
+            <span className="agent-composer-context" title={hasSelectedText ? contextSummary : undefined}>
+              {hasSelectedText ? <span>{contextSummary}</span> : null}
+              {hasSelectedText ? (
+                <button type="button" aria-label={t('surface:agentComposer.clearAllReferences')} title={t('surface:agentComposer.clearAllReferences')} onClick={onClearContext}>
+                  <X aria-hidden="true" />
+                </button>
+              ) : null}
+              {/* 实时上下文用量：默认只有小圆环，悬停看数字，点击展开占用构成；压缩中圆环呼吸。 */}
+              {contextUsage?.contextWindow ? (
+                <ContextUsageRing
+                  usage={contextUsage}
+                  compacting={contextCompacting}
+                  expanded={contextPanelOpen}
+                  title={contextCompacting
+                    ? t('surface:agentComposer.contextCompacting')
+                    : t('surface:agentComposer.contextUsageTitle', {
+                      used: contextUsage.tokens === null ? '—' : contextUsage.tokens.toLocaleString(),
+                      total: contextUsage.contextWindow.toLocaleString(),
+                      percent: contextUsage.percent === null ? '—' : Math.round(contextUsage.percent),
+                    })}
+                  onClick={() => setContextPanelOpen((open) => !open)}
+                />
+              ) : contextCompacting ? (
+                <span className="agent-context-usage agent-context-usage--compacting" title={t('surface:agentComposer.contextCompacting')}>
+                  <span className="agent-context-usage-pulse" aria-hidden="true" />
+                  {t('surface:agentComposer.contextCompacting')}
+                </span>
+              ) : null}
+            </span>
+            {active ? (
+              <button type="button" className="agent-prompt-submit is-stop" title={t('surface:agentComposer.stop')} aria-label={t('surface:agentComposer.stop')} onClick={onStop}>
+                <Square aria-hidden="true" />
+              </button>
+            ) : (
+              <button type="submit" className="agent-prompt-submit" title={t('surface:agentComposer.send')} aria-label={t('surface:agentComposer.send')} disabled={!available || (!value.trim() && attachments.length === 0 && !hasSubmittableContext) || loading}>
+                <CornerDownLeft aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </form>

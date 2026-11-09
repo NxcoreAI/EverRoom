@@ -151,12 +151,19 @@ function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
 }
 
 async function openThinkingPicker(): Promise<HTMLElement[]> {
-  const trigger = container.querySelector<HTMLElement>('.agent-thinking-level-toggle')
-  expect(trigger, '非渠道会话应渲染思考档位切换钮').not.toBeNull()
+  // DSH 式两级菜单：先点模型触发钮 → root 面板「推理等级」行 → 选项列表。
+  const modelTrigger = container.querySelector<HTMLElement>('.agent-model-tier-toggle')
+  expect(modelTrigger, '非渠道会话应渲染模型选择触发钮').not.toBeNull()
   await act(async () => {
-    trigger!.click()
+    modelTrigger!.click()
   })
-  return [...container.querySelectorAll<HTMLElement>('.agent-thinking-level-picker [role="option"]')]
+  const effortCell = [...container.querySelectorAll<HTMLElement>('.agent-model-picker[data-pane="root"] .agent-model-cell')]
+    .find((cell) => cell.textContent?.includes('推理等级'))
+  expect(effortCell, 'root 面板应有「推理等级」入口行').not.toBeUndefined()
+  await act(async () => {
+    effortCell!.click()
+  })
+  return [...container.querySelectorAll<HTMLElement>('.agent-model-picker[data-pane="effort"] [role="menuitemradio"]')]
 }
 
 describe('思考档位端到端接线', () => {
@@ -200,8 +207,8 @@ describe('思考档位端到端接线', () => {
     await flush(2)
 
     expect(gateway.setThinkingLevel).toHaveBeenCalledWith('session-1', 'high')
-    const trigger = container.querySelector<HTMLElement>('.agent-thinking-level-toggle')
-    expect(trigger!.textContent).toContain('高')
+    const modelTrigger = container.querySelector<HTMLElement>('.agent-model-tier-toggle')
+    expect(modelTrigger!.textContent).toContain('高')
     expect(window.localStorage.getItem('nxcore-ce:agent-thinking-level:v1')).toBe('high')
   })
 })

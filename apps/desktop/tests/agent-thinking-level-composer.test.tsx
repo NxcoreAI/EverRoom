@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 /**
- * AgentComposer 思考档位选择器渲染回归：
- * 1) 非渠道会话显示切换钮，点击后 listbox 出现 5 个选项（默认/关闭/低/中/高）；
- * 2) 点「高」立即回调 'high' 并收起弹层；
- * 3) 会话值展示：max 等未暴露档位回落到「高」仍能正确选中；
- * 4) 渠道会话（CLI/ACP）不显示该切换钮。
+ * AgentComposer 模型选择器（DSH 式两级菜单）渲染回归：
+ * 1) 触发钮显示模型名 + 推理等级后缀；打开后 root 面板有「模型/推理等级」两行；
+ * 2) 进入推理等级行后有 5 个选项（默认/关闭/低/中/高），点「高」回调 'high' 并收起；
+ * 3) max 等未暴露档位回落到「高」展示并选中；
+ * 4) 渠道会话（CLI/ACP）不提供推理等级行（没有思考档概念）。
  */
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -50,12 +50,30 @@ async function render(props: Partial<React.ComponentProps<typeof AgentComposer>>
   })
 }
 
-function toggle(): HTMLElement | null {
-  return container.querySelector<HTMLElement>('.agent-thinking-level-toggle')
+function modelToggle(): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.agent-model-tier-toggle')
 }
 
-function options(): HTMLElement[] {
-  return [...container.querySelectorAll<HTMLElement>('.agent-thinking-level-picker [role="option"]')]
+function modelPicker(): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.agent-model-picker')
+}
+
+function rootCells(): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('.agent-model-picker[data-pane="root"] .agent-model-cell')]
+}
+
+function effortOptions(): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('.agent-model-picker[data-pane="effort"] [role="menuitemradio"]')]
+}
+
+async function openPickerAndDrillEffort(): Promise<void> {
+  await act(async () => {
+    modelToggle()!.click()
+  })
+  const effortCell = rootCells().find((cell) => cell.textContent?.includes('推理等级'))
+  await act(async () => {
+    effortCell!.click()
+  })
 }
 
 beforeEach(() => {
@@ -75,56 +93,68 @@ afterEach(async () => {
 })
 
 describe('AgentComposer 思考档位选择器', () => {
-  it('显示切换钮，打开后有 5 个选项且默认项选中', async () => {
+  it('触发钮显示推理等级后缀；root 面板有「模型/推理等级」两行入口', async () => {
     await render({ thinkingLevel: null, onSelectThinkingLevel })
-    const trigger = toggle()
-    expect(trigger, '非渠道会话应渲染思考档位切换钮').not.toBeNull()
+    const trigger = modelToggle()
+    expect(trigger, '非渠道会话应渲染模型选择触发钮').not.toBeNull()
+    expect(trigger!.textContent).toContain('智能')
     expect(trigger!.textContent).toContain('默认')
 
     await act(async () => {
       trigger!.click()
     })
-    expect(options().map((option) => option.querySelector('strong')?.textContent)).toEqual([
+    const cells = rootCells()
+    expect(cells.map((cell) => cell.querySelector('.agent-model-cell-label')?.textContent)).toEqual([
+      '模型',
+      '推理等级',
+    ])
+    expect(cells[0]!.querySelector('.agent-model-cell-value')?.textContent).toBe('智能')
+    expect(cells[1]!.querySelector('.agent-model-cell-value')?.textContent).toBe('默认')
+  })
+
+  it('进入推理等级行后有 5 个选项且默认项选中；点「高」回调 high 并收起', async () => {
+    await render({ thinkingLevel: null, onSelectThinkingLevel })
+    await openPickerAndDrillEffort()
+    expect(effortOptions().map((option) => option.querySelector('strong')?.textContent)).toEqual([
       '默认',
       '关闭',
       '低',
       '中',
       '高',
     ])
-    expect(options()[0].getAttribute('aria-selected')).toBe('true')
-  })
-
-  it('点「高」回调 high 并收起弹层', async () => {
-    await render({ thinkingLevel: null, onSelectThinkingLevel })
-    await act(async () => {
-      toggle()!.click()
-    })
-    const high = options().find((option) => option.dataset.level === 'high')
+    expect(effortOptions()[0].getAttribute('aria-checked')).toBe('true')
+    const high = effortOptions().find((option) => option.dataset.level === 'high')
     expect(high).not.toBeUndefined()
     await act(async () => {
       high!.click()
     })
     expect(onSelectThinkingLevel).toHaveBeenCalledWith('high')
-    expect(container.querySelector('.agent-thinking-level-picker')).toBeNull()
+    expect(modelPicker()).toBeNull()
   })
 
   it('max 等未暴露档位回落到「高」展示并选中', async () => {
     await render({ thinkingLevel: 'max', onSelectThinkingLevel })
-    expect(toggle()!.textContent).toContain('高')
-    await act(async () => {
-      toggle()!.click()
-    })
-    const selected = options().filter((option) => option.getAttribute('aria-selected') === 'true')
+    expect(modelToggle()!.textContent).toContain('高')
+    await openPickerAndDrillEffort()
+    const selected = effortOptions().filter((option) => option.getAttribute('aria-checked') === 'true')
     expect(selected.map((option) => option.dataset.level)).toEqual(['high'])
   })
 
   it('会话值无需回调时也按会话值展示，不回落到默认项', async () => {
     await render({ thinkingLevel: 'off', onSelectThinkingLevel })
-    expect(toggle()!.textContent).toContain('关闭')
+    expect(modelToggle()!.textContent).toContain('关闭')
   })
 
-  it('渠道会话不显示思考档位切换钮', async () => {
+  it('渠道会话不提供推理等级行（触发钮也不显示等级后缀）', async () => {
     await render({ thinkingLevel: null, onSelectThinkingLevel, channelAgentId: 'codex:/usr/local/bin/codex' })
-    expect(toggle()).toBeNull()
+    const trigger = modelToggle()
+    expect(trigger).not.toBeNull()
+    expect(trigger!.querySelector('.agent-model-tier-effort')).toBeNull()
+    await act(async () => {
+      trigger!.click()
+    })
+    const labels = rootCells().map((cell) => cell.querySelector('.agent-model-cell-label')?.textContent)
+    expect(labels).toEqual(['模型'])
+    expect(labels).not.toContain('推理等级')
   })
 })
