@@ -92,6 +92,16 @@
   user-select: none;
 }
 
+/* macOS：侧栏开关与系统红绿灯纵向对齐。
+   红绿灯 trafficLightPosition { x:14, y:16 }，高 12px → 中心在 22px；
+   标签栏内容盒 43px（44 - 1px 底边线），align-self:center 的中心在 21.5px，
+   会比红绿灯高 0.5px。这里把左侧锚定到标签栏顶缘、向下偏移到红绿灯中心
+   (16 + 12/2 - 30/2 = 7px)，Windows 不受影响。 */
+html[data-desktop='darwin'] .wb-tabbar-left {
+  align-self: flex-start;
+  margin-top: 7px;
+}
+
 .wb-tabbar button,
 .wb-tabbar .wb-tab,
 .wb-tabbar .wb-tablist { -webkit-app-region: no-drag; }
@@ -139,6 +149,10 @@
 .wb-tab:hover { background: var(--ui-hover); color: var(--ui-text); }
 .wb-tab:active { background: var(--ui-hover-strong); }
 
+/* 工作空间标签固定宽度：不随名字长短伸缩，改名/切标签时布局稳定；
+   名字过长用省略号（.wb-tab-name flex:1 + ellipsis）。 */
+.wb-tab--page { width: 148px; }
+
 /* 主页标签：图标 + 文字，像一个小房子按钮 */
 .wb-tab--home { padding: 0 12px; }
 .wb-tab--home.is-active {
@@ -170,9 +184,11 @@
 
 .wb-tab-icon { display: inline-flex; flex: none; }
 .wb-tab-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: center;
 }
 /* 待发送批注角标：工作空间标签上的小数字（对话区批注条的另一处提示）。 */
 .wb-tab-badge {
@@ -546,95 +562,6 @@
 .wb-ws-work-row.is-draft .wb-ws-work-title { font-style: italic; }
 .wb-ws-work-row.is-renaming { padding: 2px 4px; }
 .wb-ws-work-rename { height: 28px; font-size: var(--ui-text-xs); }
-
-/* ───────────────── 新建空间弹窗表单 ───────────────── */
-
-.wb-newspace-form { display: flex; flex-direction: column; gap: 16px; }
-
-/* 描述框固定三行：弹窗里不提供手动拖拽，右侧不留 resize 手柄。 */
-.wb-newspace-form .ui-textarea { resize: none; }
-
-/* 目标药丸与「添加目标」同高（28px）、同圆角，避免相邻胶囊一高一低。 */
-.wb-newspace-goals { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.wb-newspace-goal {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  height: 28px;
-  padding: 0 5px 0 11px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-surface);
-  font-size: var(--ui-text-xs);
-  font-weight: 550;
-  line-height: 1;
-}
-.wb-newspace-goal-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wb-newspace-goal button {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 17px;
-  height: 17px;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ui-text-3);
-}
-.wb-newspace-goal button:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
-.wb-newspace-goal-add {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 11px;
-  border: 1px dashed var(--ui-border-strong);
-  border-radius: var(--ui-radius-full);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-xs);
-}
-.wb-newspace-goal-add:focus-within { border-color: var(--ui-accent); color: var(--ui-accent-strong); }
-.wb-newspace-goal-add input {
-  width: 150px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--ui-text);
-  font: inherit;
-  font-size: var(--ui-text-xs);
-}
-
-/* 目录行三项（值 / 清除 / 选择）与输入框同高 32px，垂直居中对齐。 */
-.wb-newspace-path { display: flex; align-items: center; gap: 8px; }
-.wb-newspace-path-value {
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  overflow: hidden;
-  padding: 0 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface-alt);
-  font-size: var(--ui-text-sm);
-  color: var(--ui-text);
-}
-.wb-newspace-path-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wb-newspace-path-value.is-empty { color: var(--ui-text-3); }
 
 /* ───────────────── Toast / 启动态 ───────────────── */
 

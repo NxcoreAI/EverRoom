@@ -38,6 +38,8 @@ export interface AgentRunActivity {
   steps: AgentActivityStep[]
   pendingAnswer: string
   finalAnswer: string
+  /** 分级答复的默认展示层（[[details]] 之前）：无分级时为 undefined，气泡回退 finalAnswer。 */
+  finalDisplayContent?: string
   hasTools: boolean
   completed: boolean
   /** 最后一次工具调用之后、最终答案之前的思考段（无工具时是整段思考）。 */
@@ -637,6 +639,8 @@ export interface AgentRunActivityAccumulator {
   /** 尚未归入某个 step 的思考增量（reasoning.delta）：新工具出现时封段。 */
   pendingReasoning: string
   completedContent: string
+  /** message.completed 事件附带的分级展示层（无分级为 undefined）。 */
+  completedDisplayContent?: string
   completed: boolean
   savedAnswer: string
 }
@@ -709,9 +713,12 @@ export function foldAgentRunActivityEvent(acc: AgentRunActivityAccumulator, even
   }
 
   if (event.type === 'message.completed') {
-    const content = (event.payload as { content?: unknown }).content
+    const payload = event.payload as { content?: unknown; displayContent?: unknown }
+    const content = payload.content
     if (typeof content !== 'string') return false
     acc.completedContent = content
+    if (typeof payload.displayContent === 'string') acc.completedDisplayContent = payload.displayContent
+    else if (acc.completedDisplayContent !== undefined) acc.completedDisplayContent = undefined
     return true
   }
 
@@ -778,6 +785,7 @@ export function snapshotAgentRunActivity(acc: AgentRunActivityAccumulator): Agen
     steps,
     pendingAnswer,
     finalAnswer,
+    ...(acc.completedDisplayContent !== undefined ? { finalDisplayContent: acc.completedDisplayContent } : {}),
     hasTools,
     completed: acc.completed,
     tailReasoning: acc.pendingReasoning,

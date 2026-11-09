@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 /**
- * 工作空间工具页回归：
- * 1) 计划看板：四列（待开始/进行中/已完成/已取消）计数、卡片点开详情、新建任务；
- * 2) 新建空间两步引导——跳过某一步不丢前面已完成步骤的结果（原型 bug 回归）。
+ * 工作空间工具页回归：计划看板四列（待开始/进行中/已完成/已取消）计数、
+ * 卡片点开详情、新建任务。
+ *
+ * 原第二部分「新建空间两步引导」已随引导弹窗一起移除（一步式创建不再有
+ * 创建后引导），相关流程回归见 tests/project-space-directory.test.tsx。
  *
  * 与 tests/office-proto-recent-view.test.tsx 同款 happy-dom + 手动 act/createRoot 写法，
  * 不引入 testing-library；只 mock preload 桥 window.nxcore。
@@ -11,10 +13,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentSession, AgentWorkspace, PlanItem } from '@nxcore/agent-contract'
+import type { AgentWorkspace, PlanItem } from '@nxcore/agent-contract'
 
 import { PlanPage } from '../src/renderer/src/workbench/workspace/PlanPage'
-import { SetupWizard } from '../src/renderer/src/workbench/workspace/SetupWizard'
 import type { WorkspacePageProps } from '../src/renderer/src/workbench/workspace/contracts'
 
 // React 18 的 act() 需要显式声明测试环境，否则每次状态更新都会打 warning。
@@ -32,20 +33,6 @@ const WORKSPACE: AgentWorkspace = {
   createdAt: ISO,
   updatedAt: ISO,
   lastOpenedAt: ISO,
-}
-
-function makeSession(overrides: Partial<AgentSession> & { id: string }): AgentSession {
-  return {
-    workspaceId: 'ws-1',
-    roomId: null,
-    pageLabel: 'Agent',
-    runtimeId: 'rt-main',
-    title: '工作',
-    status: 'idle',
-    createdAt: ISO,
-    updatedAt: ISO,
-    ...overrides,
-  }
 }
 
 function makePlanItem(overrides: Partial<PlanItem> & { id: string }): PlanItem {
@@ -96,20 +83,10 @@ function pageProps(overrides: Partial<WorkspacePageProps> = {}): WorkspacePagePr
 }
 
 function installNxcore(overrides: {
-  pickAndImport?: () => Promise<unknown>
-  createSession?: (input: unknown) => Promise<unknown>
-  updateSession?: (sessionId: string, input: { title: string }) => Promise<unknown>
   listPlanItems?: (query: unknown) => Promise<unknown>
   createPlanItem?: (input: unknown) => Promise<unknown>
 } = {}) {
   const api = {
-    agent: {
-      createSession: vi.fn(overrides.createSession ?? (async () => ({ id: 'sess-new', title: null }))),
-      updateSession: vi.fn(overrides.updateSession ?? (async (sessionId: string) => ({ id: sessionId }))),
-    },
-    files: {
-      pickAndImport: vi.fn(overrides.pickAndImport ?? (async () => [])),
-    },
     plan: {
       list: vi.fn(overrides.listPlanItems ?? (async () => ({ items: [] }))),
       create: vi.fn(overrides.createPlanItem ?? (async (input: unknown) => input)),
@@ -291,101 +268,5 @@ describe('计划看板', () => {
     expect(create).toHaveBeenCalledTimes(1)
     expect(create.mock.calls[0]![0]).toMatchObject({ workspaceId: 'ws-1', title: '整理 Q3 成本表' })
     expect(bodyText()).toContain('整理 Q3 成本表')
-  })
-})
-
-/* ───────────────── 两步引导 ───────────────── */
-
-const IMPORT_OUTCOMES = [
-  { filename: '需求.docx', fileId: 'f-1', fileVersionId: 'v-1', error: null, skippedReason: null, deduped: false },
-  { filename: '坏文件.zip', fileId: null, fileVersionId: null, error: '不支持的格式', skippedReason: null, deduped: false },
-]
-
-describe('新建空间两步引导', () => {
-  it('导入资料后能创建工作，标题按用户输入落库', async () => {
-    const api = installNxcore({
-      pickAndImport: async () => IMPORT_OUTCOMES,
-      createSession: async () => ({ id: 'sess-new', title: null }),
-    })
-    const onDone = vi.fn()
-    render(<SetupWizard workspace={WORKSPACE} onDone={onDone} />)
-    await flush()
-
-    // 两步引导：资料 / 工作（工作空间内的「智能体」页已移除）。
-    expect(document.querySelectorAll('.wb-setup-steps li')).toHaveLength(2)
-    expect(bodyText()).not.toContain('智能体')
-    // 去说明化：步骤里不再有 hint 说明小字，也没有空态说明块。
-    expect(document.querySelectorAll('.wb-setup-step-hint')).toHaveLength(0)
-    expect(document.querySelectorAll('.wb-setup-step-title')).toHaveLength(0)
-    expect(document.querySelectorAll('.wb-tool-note')).toHaveLength(0)
-    expect(document.querySelector('.ui-modal-desc')).toBeNull()
-
-    await click(buttonByText('选择文件并导入'))
-    await flush()
-    expect(bodyText()).toContain('成功 1')
-    expect(bodyText()).toContain('失败 1')
-
-    await click(buttonByText('下一步'))
-    await flush()
-
-    // 翻到第 2 步后，第 1 步的结果仍在摘要里（关键回归点）。
-    expect(bodyText()).toContain('1 份资料')
-    expect(api.files.pickAndImport).toHaveBeenCalledTimes(1)
-
-    const titleInput = document.querySelector<HTMLInputElement>('input[aria-label="工作名称"]')
-    if (!titleInput) throw new Error('work title input not found')
-    await act(async () => {
-      setInputValue(titleInput, '整理发布计划')
-    })
-    // 步骤条里也有一个同名「添加工作」按钮，这里点表单里的操作按钮。
-    await click(document.querySelector('.wb-setup-work-form .ui-btn'))
-    await flush()
-
-    expect(api.agent.createSession).toHaveBeenCalledWith({ pageLabel: 'Agent', roomId: null, workspaceId: 'ws-1' })
-    expect(api.agent.updateSession).toHaveBeenCalledWith('sess-new', { title: '整理发布计划' })
-    expect(bodyText()).toContain('已创建')
-    expect(bodyText()).toContain('1 项工作')
-
-    await click(buttonByText('完成'))
-    expect(onDone).toHaveBeenCalledTimes(1)
-  })
-
-  it('在最后一步点「跳过本步」：前面已落库的导入不丢（原型 bug 回归）', async () => {
-    const api = installNxcore({
-      pickAndImport: async () => [IMPORT_OUTCOMES[0]],
-    })
-    const onDone = vi.fn()
-    render(<SetupWizard workspace={WORKSPACE} onDone={onDone} />)
-    await flush()
-
-    await click(buttonByText('选择文件并导入'))
-    await flush()
-    await click(buttonByText('下一步'))
-    await flush()
-
-    // 最后一步直接跳过：onDone 应被调用，而第 1 步的结果仍在。
-    await click(buttonByText('跳过本步'))
-    expect(onDone).toHaveBeenCalledTimes(1)
-    expect(api.files.pickAndImport).toHaveBeenCalledTimes(1)
-    expect(bodyText()).toContain('1 份资料')
-  })
-
-  it('导入失败给出可读错误，且不阻塞跳过完成', async () => {
-    installNxcore({
-      pickAndImport: async () => { throw new Error('导入通道不可用') },
-    })
-    const onDone = vi.fn()
-    render(<SetupWizard workspace={WORKSPACE} onDone={onDone} />)
-    await flush()
-
-    await click(buttonByText('选择文件并导入'))
-    await flush()
-    const alert = document.querySelector('[role="alert"]')
-    expect(alert?.textContent).toContain('导入通道不可用')
-
-    await click(buttonByText('跳过本步'))
-    await flush()
-    await click(buttonByText('跳过本步'))
-    expect(onDone).toHaveBeenCalledTimes(1)
   })
 })

@@ -6,7 +6,7 @@ import { HomePageHost } from '../home/HomePageHost'
 import { useActiveTab, useWorkbenchStore } from '../state/store'
 import { cn } from '../ui/cn'
 import { ErrorBoundary } from '../ui/error-boundary'
-import { CreateWorkspaceDialog } from '../workspace/CreateWorkspaceDialog'
+import { useCreateSpaceFlow } from '../workspace/createSpace'
 import { HomeSidebar } from './HomeSidebar'
 import { TabBar } from './TabBar'
 import { CommandPalette } from './CommandPalette'
@@ -45,7 +45,7 @@ export function Workbench() {
 
   /** Agent 生成中的产物进度（pptx 脚本执行 phase 事件；done/error 清除）。 */
   const [generationProgress, setGenerationProgress] = useState<{ title: string; phase: string; slide?: number } | null>(null)
-  const [newSpaceOpen, setNewSpaceOpen] = useState(false)
+  const createSpace = useCreateSpaceFlow()
 
   useEffect(() => { void boot() }, [boot])
 
@@ -65,11 +65,12 @@ export function Workbench() {
   }, [booted, refresh, refreshSessions])
 
   // 全局事件：标签栏/页面里没有 store 入口的跨区域动作走事件（新建空间、搜索）。
+  // 新建空间 = 一步式流程：弹系统目录选择器，选完即建（见 workspace/createSpace.ts）。
   useEffect(() => {
-    const openNewSpace = () => setNewSpaceOpen(true)
+    const openNewSpace = () => { void createSpace() }
     window.addEventListener('everroom:workbench-new-space', openNewSpace)
     return () => window.removeEventListener('everroom:workbench-new-space', openNewSpace)
-  }, [])
+  }, [createSpace])
 
   // 主进程主动发起的预览（排版面板 👁 预览模版原文件等）：实例已在主进程建好，
   // 这里在归属工作空间里打开（激活标签 + 气泡窗接管实例）。不接这条事件，
@@ -291,8 +292,9 @@ export function Workbench() {
       const key = event.key.toLowerCase()
       if (key === 'n') {
         event.preventDefault()
+        // 主页上 ⌘N = 一步式新建项目空间（选目录即建）；空间内 = 新工作草稿。
         if (activeTab.kind === 'workspace') setWorkspaceView(activeTab.id, { kind: 'draft' })
-        else setNewSpaceOpen(true)
+        else void createSpace()
       } else if (key === 'b') {
         event.preventDefault()
         toggleSidebar()
@@ -307,7 +309,7 @@ export function Workbench() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [activeTab, requestCloseTab, setWorkspaceView, toggleSidebar])
+  }, [activeTab, createSpace, requestCloseTab, setWorkspaceView, toggleSidebar])
 
   if (!booted && loading) {
     return (
@@ -381,7 +383,6 @@ export function Workbench() {
         </main>
       </div>
 
-      <CreateWorkspaceDialog open={newSpaceOpen} onOpenChange={setNewSpaceOpen} />
       <CommandPalette />
       <Toaster />
     </div>

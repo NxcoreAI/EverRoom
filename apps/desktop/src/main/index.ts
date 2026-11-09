@@ -2747,8 +2747,11 @@ function registerFilesHandlers(
   )
   handle(FILES_CHANNELS.pickPaths, () => bridge.pickImportPaths())
   // 「+ → 导入文件」：选择框直选文件 → 文件引擎导入 → 本轮对话附件。
-  handle(FILES_CHANNELS.pickAgentAttachments, (event) =>
-    bridge.pickAgentAttachments(BrowserWindow.fromWebContents(event.sender)))
+  handle(FILES_CHANNELS.pickAgentAttachments, (event, options?: { workspaceId?: string }) =>
+    bridge.pickAgentAttachments(
+      BrowserWindow.fromWebContents(event.sender),
+      typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : undefined,
+    ))
   handle(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
@@ -2768,7 +2771,10 @@ function registerFilesHandlers(
   )
   handle(
     FILES_CHANNELS.importAgentAttachments,
-    (_event, paths: string[]) => bridge.importAgentAttachments(paths),
+    (_event, paths: string[], options?: { workspaceId?: string }) => bridge.importAgentAttachments(
+      paths,
+      typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : undefined,
+    ),
   )
   handle(FILES_CHANNELS.listHighRiskReviews, () => ({ items: highRiskImports.list() }))
   handle(

@@ -522,7 +522,9 @@ export function useAgentSession(
       return
     }
     if (event.type === 'message.completed') {
-      const content = (event.payload as { content?: unknown }).content
+      const payload = event.payload as { content?: unknown; displayContent?: unknown }
+      const content = typeof payload.content === 'string' ? payload.content : undefined
+      const displayContent = typeof payload.displayContent === 'string' ? payload.displayContent : undefined
       if (typeof content === 'string') assistantContentByRun.current.set(event.runId, content)
       setMessages((current) => {
         const streamId = `stream-${event.runId}`
@@ -534,12 +536,21 @@ export function useAgentSession(
             runId: event.runId,
             role: 'assistant',
             content,
+            ...(displayContent !== undefined ? { displayContent } : {}),
             createdAt: event.occurredAt,
             streaming: false,
           }]
         }
         return current.map((message) => message.id === streamId
-          ? { ...message, content: typeof content === 'string' ? content : message.content, streaming: false }
+          ? {
+              ...message,
+              content: typeof content === 'string' ? content : message.content,
+              // 分级答复：事件带 displayContent 时气泡切到默认展示层。
+              ...(displayContent !== undefined && displayContent !== (message as { displayContent?: string }).displayContent
+                ? { displayContent }
+                : {}),
+              streaming: false,
+            }
           : message)
       })
       return

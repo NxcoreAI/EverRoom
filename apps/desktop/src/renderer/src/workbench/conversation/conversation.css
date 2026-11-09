@@ -295,14 +295,12 @@
   min-height: 76px;
   max-height: 200px;
 }
-/* hero 里的弹层（模型/「+」/思考档位/@）：锚回输入框左缘，而不是主区 gutter。 */
+/* hero 里的弹层（模型/「+」/@）：锚回输入框左缘，而不是主区 gutter。 */
 .wb-hero-input .agent-composer-popover {
   left: 0;
   right: 0;
 }
 .wb-hero-input .agent-composer-popover.agent-model-picker,
-.wb-hero-input .agent-composer-popover.agent-permission-mode-picker,
-.wb-hero-input .agent-composer-popover.agent-thinking-level-picker,
 .wb-hero-input .agent-composer-popover.agent-add-menu {
   right: auto;
   left: 0;
@@ -1098,10 +1096,10 @@
 
 .wb-conversation .agent-prompt-actions {
   min-height: 32px;
-  gap: 6px;
+  gap: 12px;
 }
 
-/* 模型 / 权限 / 附件入口：幽灵按钮，等高的底栏控件语言。 */
+/* 模型入口：幽灵按钮，等高的底栏控件语言；推理等级后缀用更弱的前景。 */
 .wb-conversation .agent-model-tier-toggle {
   height: 28px;
   padding: 0 8px;
@@ -1117,15 +1115,8 @@
 .wb-conversation .agent-model-tier-toggle[data-tier='primary'],
 .wb-conversation .agent-model-tier-toggle[data-tier='lite'],
 .wb-conversation .agent-model-tier-toggle[data-channel] { color: var(--ui-text); font-weight: 550; }
-.wb-conversation .agent-model-tier-toggle[data-danger='true'] { color: var(--ui-danger); }
-.wb-conversation .agent-model-tier-toggle[data-danger='true']:hover:not(:disabled) {
-  background: var(--ui-danger-soft);
-  color: var(--ui-danger-hover);
-}
+.wb-conversation .agent-model-tier-effort { color: var(--ui-text-3); }
 .wb-conversation .agent-model-tier-toggle:focus-visible { outline: 2px solid var(--ui-accent-line); outline-offset: 2px; }
-/* 连接器按钮：复用档位钮的 ghost 语言（类名同源），无下拉箭头，仅图标+文字。 */
-.wb-conversation .agent-connectors-toggle { color: var(--ui-text-2); }
-.wb-conversation .agent-connectors-toggle:hover:not(:disabled) { color: var(--ui-text); }
 
 .wb-conversation .agent-composer-context { color: var(--ui-text-3); font-size: var(--ui-text-xs); }
 .wb-conversation .agent-composer-context > button { border-radius: var(--ui-radius-xs); color: var(--ui-text-3); }
@@ -1214,10 +1205,8 @@
   background: var(--ui-surface);
   box-shadow: var(--ui-shadow-md);
 }
-/* 模型 / 权限 / 「+」弹层是 max-content 宽，只锚左缘，不拉伸。 */
+/* 模型弹层（两级菜单）与「+」弹层是 max-content 宽，只锚左缘，不拉伸。 */
 .wb-conversation .agent-composer-popover.agent-model-picker,
-.wb-conversation .agent-composer-popover.agent-permission-mode-picker,
-.wb-conversation .agent-composer-popover.agent-thinking-level-picker,
 .wb-conversation .agent-composer-popover.agent-add-menu {
   right: auto;
   left: var(--wb-gutter);
@@ -1231,6 +1220,12 @@
 .wb-conversation .agent-model-option:hover { background: var(--ui-hover); }
 .wb-conversation .agent-model-option small { color: var(--ui-text-3); }
 .wb-conversation .agent-model-option > svg { color: var(--ui-accent); }
+/* root 面板入口行（模型/推理等级）：与选项行同一 hover/圆角语言。 */
+.wb-conversation .agent-model-cell { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
+.wb-conversation .agent-model-cell:hover,
+.wb-conversation .agent-model-cell:focus-visible { background: var(--ui-hover); outline: 0; }
+.wb-conversation .agent-model-cell-value { color: var(--ui-text-3); }
+.wb-conversation .agent-model-cell-chevron { color: var(--ui-text-3); }
 .wb-conversation .agent-mention-option { border-radius: var(--ui-radius-sm); color: var(--ui-text); }
 .wb-conversation .agent-mention-option:hover,
 .wb-conversation .agent-mention-option[data-active='true'] { background: var(--ui-hover); }
@@ -1472,4 +1467,14 @@
 .wb-note-chip-edit-hint {
   color: var(--ui-text-3);
   font-size: var(--ui-text-2xs);
+}
+
+/* 分级答复详情区（answer-tiering）：主题变量对齐气泡内其它次要信息。 */
+.wb-conversation .agent-answer-details-body {
+  color: var(--ui-text-2);
+  border-left-color: var(--ui-border);
+}
+
+.wb-conversation .agent-message .agent-markdown del {
+  color: var(--ui-text-3);
 }

@@ -143,8 +143,6 @@ interface WorkbenchStore {
   tabs: WindowTab[]
   activeTabId: string
   sidebarCollapsed: boolean
-  /** 刚创建、还没走完三步引导的工作空间 id（引导弹窗由工作空间标签渲染）。 */
-  pendingSetupWorkspaceId: string | null
   /** 设置页默认打开的分区 id（`settings-account` 等）：账号菜单等入口可直达某个分区。 */
   settingsSection: string | null
   /** Office「AI 修改」浮层转发来的待注入消息：工作台先激活目标工作空间标签，
@@ -207,8 +205,10 @@ interface WorkbenchStore {
   /** 消费（取走）待打开文件；没有或目标不符时返回 null。 */
   consumePendingBubbleFile(tabId: string): OfficeFile | null
   createWorkspace(input: CreateAgentWorkspaceInput): Promise<AgentWorkspace | null>
-  /** 关闭三步引导（完成/全部跳过）。 */
-  finishWorkspaceSetup(): void
+  /** 接管已有目录为项目空间（一步式创建流程：目录里已有空间标记时走这里）。 */
+  adoptWorkspace(input: { dir: string; name?: string }): Promise<AgentWorkspace | null>
+  /** 新空间（新建/接管）入表并打开标签；createWorkspace 与 adoptWorkspace 共用。 */
+  registerWorkspace(created: AgentWorkspace): void
   updateWorkspaceMeta(id: string, input: UpdateAgentWorkspaceInput): Promise<boolean>
   renameWorkspace(id: string, name: string): Promise<boolean>
   deleteWorkspace(id: string): Promise<boolean>
@@ -249,7 +249,6 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   tabs: normalizeTabs([HOME_TAB]),
   activeTabId: HOME_TAB_ID,
   sidebarCollapsed: false,
-  pendingSetupWorkspaceId: null,
   settingsSection: null,
   pendingAgentAsk: null,
   pendingBubbleFile: null,
@@ -452,12 +451,7 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
   async createWorkspace(input) {
     try {
       const created = await workbenchApi.createWorkspace(input)
-      set((state) => ({
-        workspaces: [...state.workspaces.filter((workspace) => workspace.id !== created.id), created],
-        error: null,
-        pendingSetupWorkspaceId: created.id,
-      }))
-      get().openWorkspaceTab(created.id)
+      get().registerWorkspace(created)
       return created
     } catch (error) {
       set({ error: errorMessage(error, '创建工作空间失败') })
@@ -465,8 +459,24 @@ export const useWorkbenchStore = create<WorkbenchStore>()((set, get) => ({
     }
   },
 
-  finishWorkspaceSetup() {
-    set({ pendingSetupWorkspaceId: null })
+  async adoptWorkspace(input) {
+    try {
+      const adopted = await workbenchApi.adoptSpace(input)
+      get().registerWorkspace(adopted)
+      return adopted
+    } catch (error) {
+      set({ error: errorMessage(error, '打开项目空间失败') })
+      return null
+    }
+  },
+
+  /** 新空间（新建/接管）入表并打开标签；createWorkspace 与 adoptWorkspace 共用。 */
+  registerWorkspace(created: AgentWorkspace) {
+    set((state) => ({
+      workspaces: [...state.workspaces.filter((workspace) => workspace.id !== created.id), created],
+      error: null,
+    }))
+    get().openWorkspaceTab(created.id)
   },
 
   async updateWorkspaceMeta(id, input) {

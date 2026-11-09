@@ -555,8 +555,10 @@ function saasCompatibleSession(
   } = session
   return {
     ...rest,
-    // noteCards / displayContent 是批注卡片的本地展示扩展（agent-contract），
-    // 服务端消息 schema 拒收未知属性（422: "property noteCards should not exist"）。
+    // noteCards / displayContent 是本地展示扩展（agent-contract）：批注卡片与
+    // assistant 答复分级（[[details]] 拆分的默认展示层）。服务端消息 schema
+    // 拒收未知属性（422: "property noteCards should not exist"），上行剥离；
+    // content 始终是完整答复，云端会话回看不受影响。
     messages: session.messages.map(({
       authorAgentId: _authorAgentId,
       noteCards: _noteCards,

@@ -83,7 +83,6 @@ function resetStore(): void {
     tabs: [{ id: HOME_TAB_ID, kind: 'home', page: 'recent' }],
     activeTabId: HOME_TAB_ID,
     sidebarCollapsed: false,
-    pendingSetupWorkspaceId: null,
     pendingBubbleFile: null,
   })
 }

@@ -332,4 +332,58 @@ describe("agent workspaces", () => {
     expect(untouched).toMatchObject({ description: boundaryDescription, goals: boundaryGoals });
     await app.close();
   });
+
+  it("one-step creation takes over an existing directory and reports conflicts in Chinese", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    // 桌面端一步式创建：只传「目录」，名字取目录名（渲染端 basename），external 就地接管。
+    const externalDir = join(config.dataDir, "MyProject");
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/agent/workspaces",
+      headers,
+      payload: { name: "MyProject", path: externalDir },
+    });
+    expect(created.statusCode).toBe(201);
+    const workspace = created.json<AgentWorkspace>();
+    expect(workspace).toMatchObject({
+      name: "MyProject",
+      path: externalDir,
+      rootMode: "external",
+      description: null,
+      goals: [],
+    });
+
+    // 同一目录再建 → space_marker_conflict（标记里是别的 spaceId），返回可读中文
+    //（桌面端直接展示 message）。
+    const taken = await app.inject({
+      method: "POST",
+      url: "/v1/agent/workspaces",
+      headers,
+      payload: { name: "另一个名字", path: externalDir },
+    });
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json<{ error: string; message: string }>()).toMatchObject({
+      error: "space_marker_conflict",
+      message: expect.stringContaining("另一个项目空间") as string,
+    });
+
+    // 已注册空间的目录（带 marker）再建 → space_marker_conflict 同样给出中文提示。
+    // 先 list 一次让默认空间目录（Workspace/inbox + 标记）落盘。
+    await app.inject({ method: "GET", url: "/v1/agent/workspaces", headers });
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/v1/agent/workspaces",
+      headers,
+      payload: { name: "撞标记", path: join(config.dataDir, "Workspace", "inbox") },
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json<{ error: string; message: string }>()).toMatchObject({
+      error: "space_marker_conflict",
+      message: expect.stringContaining("另一个项目空间") as string,
+    });
+    await app.close();
+  });
 });

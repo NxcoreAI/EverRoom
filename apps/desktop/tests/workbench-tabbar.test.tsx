@@ -49,7 +49,6 @@ function resetStore(activeTabId: string, tabs = [{ id: HOME_TAB_ID, kind: 'home'
     tabs,
     activeTabId,
     sidebarCollapsed: false,
-    pendingSetupWorkspaceId: null,
   })
 }
 

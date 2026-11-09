@@ -367,7 +367,7 @@ export function officePlugin(
       + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
       + "本环境没有独立的 Markdown 文稿库——用户要落成文件的文档一律用本工具，聊天里随口的短答复直接用文字回复即可。"
       + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
-      + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
+      + "生成完成后在回复中告知文件名即可，一句带过。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -482,7 +482,7 @@ export function officePlugin(
     description: "生成本地排版的一份新 .xlsx 电子表格并保存到文件库，"
       + "适合数据清单、预算、对比表、统计汇总等结构化数据。title 用作默认文件名（<title>.xlsx，可用 fileName 覆盖）。"
       + `sheets 是工作表数组。${SHEETS_GUIDE}`
-      + "生成完成后桌面端会自动打开预览；在回复中告知文件名与表结构即可。",
+      + "生成完成后在回复中告知文件名即可，一句带过。",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -1797,7 +1797,7 @@ export function officePlugin(
       "Word 的 html 入参必须是受限 HTML 子集（仅标题/段落/列表/表格/链接/强调/pre/code/blockquote 标签）；"
       + "长文用 h2/h3 分节；表格首行用 th、单元格纯文本；不要输出 markdown 或解释性文字。",
       "Excel 的 sheets→rows 用 JSON 二维数组；数字必须是 JSON number；每个表首行放表头。",
-      "生成成功后在回复中告知文件名；桌面端会自动打开预览，文档在文件库可见。",
+      "生成成功后在回复中告知文件名即可，一句带过；不要复述预览、入库等界面会自动呈现的信息，不要罗列表结构或章节清单。",
       "用户要求修改“我正开着的/这份 Word 或 Excel”时：Word 先 office_read 拿段落原文、Excel 先 sheets_read 看结构，"
       + "再用 office_edit / sheets_edit 按原文片段或单元格地址改；不要用 office_create/sheets_create 重建一份新文件。"
       + "office_edit 是字节级兜底（要求文件已打开）；Word/Excel 能用 word_agent_* / sheets_agent_* 时优先走 headless 通道路线。"

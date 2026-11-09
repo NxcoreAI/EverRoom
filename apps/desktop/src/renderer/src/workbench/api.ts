@@ -9,6 +9,7 @@ import type {
   AgentSpaceCacheGcResult,
   AgentSpaceCacheStats,
   AgentSpaceDefaultRoot,
+  AgentSpaceDetectResult,
   AgentSpaceLayout,
   AgentSpaceReconcileReport,
   AgentSpaceRepairReport,
@@ -78,6 +79,16 @@ export const workbenchApi = {
     const bridge = workspaceBridge()
     if (typeof bridge.defaultRoot !== 'function') return null
     return bridge.defaultRoot(name)
+  },
+
+  /**
+   * 判定目录是否已是项目空间（读 `.everoffice` 标记）。
+   * 一步式创建流程用：探测失败按「普通目录」处理（创建失败时网关会给可读错误）。
+   */
+  async detectSpace(dir: string): Promise<AgentSpaceDetectResult | null> {
+    const bridge = window.nxcore?.workspace
+    if (typeof bridge?.detect !== 'function') return null
+    return bridge.detect(dir).catch(() => null)
   },
 
   /** 空间目录快照（路径 + 健康）；未绑定目录时网关 409，调用方按空态渲染。 */

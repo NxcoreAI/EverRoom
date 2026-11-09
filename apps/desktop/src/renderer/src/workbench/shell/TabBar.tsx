@@ -57,7 +57,6 @@ export function TabBar() {
               <IconButton
                 label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
                 icon={sidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
-                active={!sidebarCollapsed}
                 aria-expanded={!sidebarCollapsed}
                 onClick={() => toggleSidebar()}
               />

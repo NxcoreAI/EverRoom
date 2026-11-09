@@ -1435,9 +1435,11 @@ export interface NxcoreDesktopApi {
     /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。
      *  workspaceId = 归属工作空间（产物库按空间隔离，缺省归 default）。 */
     importArtifacts(files: File[], roomId: string, workspaceId?: string): Promise<Array<{ fileId: string; originalName: string }>>
-    importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
+    /** 拖拽/直选导入对话附件；workspaceId = 归属工作空间（附件按空间落库，缺省归 default，
+     *  Agent 的 file_search/library_browse 只查本空间——不传会「找不到刚拖进来的文件」）。 */
+    importAgentAttachments(files: File[], workspaceId?: string): Promise<AgentAttachmentReference[]>
     /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
-    pickAgentAttachments(): Promise<AgentAttachmentReference[]>
+    pickAgentAttachments(workspaceId?: string): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>

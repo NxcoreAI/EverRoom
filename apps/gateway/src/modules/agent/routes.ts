@@ -110,42 +110,53 @@ const LocalAgentTarget = Type.Object({
   }, { additionalProperties: false }),
 });
 
-/** AgentService 的工作区入参校验错误 → 400 响应体（沿用其余路由的 error/message 风格）。 */
-function workspaceValidationErrorPayload(error: unknown): { error: string; message: string } | null {
+/**
+ * AgentService 的工作区错误 → HTTP 响应（沿用其余路由的 error/message 风格）。
+ *
+ * 入参校验类 → 400；目录冲突类（与 workspace-layout 的 SPACE_ERROR_STATUS 同一套
+ * 文案与状态码）→ 409。桌面端一步式创建（选目录即建空间）直接把 message 展示给用户。
+ */
+function workspaceErrorPayload(
+  error: unknown,
+): { status: number; body: { error: string; message: string } } | null {
   if (!(error instanceof Error)) return null;
+  // 目录落盘的系统级错误（只读卷/权限/磁盘满）也转成可读 400，
+  // 与 workspace-layout 路由对 EACCES/EPERM/EROFS/ENOSPC 的处理保持一致。
+  const systemCode = (error as NodeJS.ErrnoException).code;
+  if (systemCode === "EACCES" || systemCode === "EPERM" || systemCode === "EROFS" || systemCode === "ENOSPC") {
+    return { status: 400, body: { error: "space_root_not_writable", message: "目录不可写（只读卷 / 权限不足 / 磁盘已满）" } };
+  }
+  const conflict = (errorName: string, message: string) => ({ status: 409, body: { error: errorName, message } });
+  const invalid = (errorName: string, message: string) => ({ status: 400, body: { error: errorName, message } });
   switch (error.message) {
     case "agent_workspace_name_required":
-      return { error: "invalid_workspace_name", message: "Workspace name is required" };
+      return invalid("invalid_workspace_name", "Workspace name is required");
     case "agent_workspace_path_invalid":
-      return { error: "invalid_workspace_path", message: "Workspace path must be an absolute path" };
+      return invalid("invalid_workspace_path", "Workspace path must be an absolute path");
     case "agent_workspace_last_opened_at_invalid":
-      return { error: "invalid_last_opened_at", message: "lastOpenedAt must be an ISO timestamp" };
+      return invalid("invalid_last_opened_at", "lastOpenedAt must be an ISO timestamp");
     case "agent_workspace_description_invalid":
-      return { error: "invalid_workspace_description", message: "Workspace description must be a string or null" };
+      return invalid("invalid_workspace_description", "Workspace description must be a string or null");
     case "agent_workspace_description_too_long":
-      return {
-        error: "invalid_workspace_description",
-        message: "Workspace description must be at most 2000 characters",
-      };
-    // 项目空间目录（modules/workspace-layout）：目录落盘失败要能被客户端分辨。
+      return invalid("invalid_workspace_description", "Workspace description must be at most 2000 characters");
+    // 项目空间目录（modules/workspace-layout）：目录被占用/身份不一致是冲突而不是非法输入。
     case "space_marker_conflict":
-      return {
-        error: "space_marker_conflict",
-        message: "The target directory already belongs to another project space",
-      };
+      return conflict("space_marker_conflict", "该目录已经是另一个项目空间（space.everoffice 里的 spaceId 与当前空间不一致）");
     case "space_marker_exists":
-      return {
-        error: "space_marker_exists",
-        message: "The target directory is already a project space (.everoffice/space.json)",
-      };
+      return conflict("space_marker_exists", "该目录已存在 space.everoffice，请改用「打开已有项目空间」");
+    case "space_path_taken":
+      return conflict("space_path_taken", "该目录已绑定到另一个项目空间");
+    case "space_already_registered":
+      return conflict("space_already_registered", "这个项目空间已经注册过了（spaceId 已存在），如需另存请选择「作为副本注册」");
+    case "space_marker_invalid":
+      return invalid("space_marker_invalid", "目录里的 space.everoffice 无法解析");
+    case "space_marker_unsupported":
+      return conflict("space_marker_unsupported", "该空间的标记版本比本应用新，请升级后再操作（当前只读）");
     case "agent_workspace_goals_invalid":
     case "agent_workspace_goals_too_many":
     case "agent_workspace_goal_empty":
     case "agent_workspace_goal_too_long":
-      return {
-        error: "invalid_workspace_goals",
-        message: "Workspace goals must be at most 12 non-empty strings, each at most 200 characters",
-      };
+      return invalid("invalid_workspace_goals", "Workspace goals must be at most 12 non-empty strings, each at most 200 characters");
     default:
       return null;
   }
@@ -257,8 +268,8 @@ export function agentRoutes(
         try {
           return reply.code(201).send(service.createWorkspace(request.body));
         } catch (error) {
-          const invalid = workspaceValidationErrorPayload(error);
-          if (invalid) return reply.code(400).send(invalid);
+          const mapped = workspaceErrorPayload(error);
+          if (mapped) return reply.code(mapped.status).send(mapped.body);
           throw error;
         }
       },
@@ -282,8 +293,8 @@ export function agentRoutes(
           return service.updateWorkspace(request.params.id, request.body)
             ?? reply.code(404).send({ error: "not_found", message: "Agent workspace not found" });
         } catch (error) {
-          const invalid = workspaceValidationErrorPayload(error);
-          if (invalid) return reply.code(400).send(invalid);
+          const mapped = workspaceErrorPayload(error);
+          if (mapped) return reply.code(mapped.status).send(mapped.body);
           throw error;
         }
       },
