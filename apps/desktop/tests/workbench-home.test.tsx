@@ -313,7 +313,6 @@ function resetStore(patch: {
     tabs: [HOME_TAB],
     activeTabId: HOME_TAB_ID,
     sidebarCollapsed: false,
-    pendingSetupWorkspaceId: null,
     settingsSection: null,
   })
 }

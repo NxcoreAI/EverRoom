@@ -14,7 +14,6 @@ import {
   sessionDisplayTitle,
 } from '../types'
 import { Hint, IconButton } from '../ui/primitives'
-import { SetupWizard } from '../workspace/SetupWizard'
 import { BubbleWindow } from '../workspace/BubbleWindow'
 import { LibraryPage } from '../workspace/LibraryPage'
 import { OverviewPage } from '../workspace/OverviewPage'
@@ -36,8 +35,6 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
   const workspace = useWorkspace(tab.workspaceId)
   const sessions = useWorkspaceSessions(tab.workspaceId)
   const setWorkspaceView = useWorkbenchStore((state) => state.setWorkspaceView)
-  const pendingSetupWorkspaceId = useWorkbenchStore((state) => state.pendingSetupWorkspaceId)
-  const finishWorkspaceSetup = useWorkbenchStore((state) => state.finishWorkspaceSetup)
   const bubble = useWorkspaceBubble(tab.id)
 
   // ⌘J：面板收起时打开「资料与文件」浏览（没有文件也能开），已展开时收起。
@@ -176,10 +173,6 @@ export function WorkspaceTabHost({ tab, active }: { tab: WorkspaceTab; active: b
           </div>
         ) : null}
       </div>
-
-      {pendingSetupWorkspaceId === workspace.id ? (
-        <SetupWizard workspace={workspace as AgentWorkspace} onDone={finishWorkspaceSetup} />
-      ) : null}
 
       {bubble.visible ? (
         <BubbleWindow

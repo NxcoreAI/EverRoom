@@ -3,7 +3,8 @@
  * 项目空间目录化（P0）渲染层回归：
  * 1) 侧栏「工作空间操作」菜单的「在访达中打开」：reveal 目标来自
  *    `nxcore.workspace.layout`（失败回落 `workspace.path`）；
- * 2) 新建弹窗：不选目录时显示默认落点 `<dataDir>/Workspace/<slug>` 预览（来自 `workspace.defaultRoot`）。
+ * 2) 一步式新建项目空间：点按钮直接弹目录选择器，选完即建（目录名 = 空间名），
+ *    已是项目空间的目录走「打开/接管」而不是报错。
  *
  * 与 tests/workbench-workspace-tools.test.tsx 同款 happy-dom + 手动 act/createRoot 写法。
  */
@@ -11,9 +12,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentSpaceLayout, AgentWorkspace } from '@nxcore/agent-contract'
+import type { AgentSpaceDetectResult, AgentSpaceLayout, AgentWorkspace } from '@nxcore/agent-contract'
 
-import { CreateWorkspaceDialog } from '../src/renderer/src/workbench/workspace/CreateWorkspaceDialog'
+import { useCreateSpaceFlow } from '../src/renderer/src/workbench/workspace/createSpace'
 import { WorkspaceSidebar } from '../src/renderer/src/workbench/shell/WorkspaceSidebar'
 import { useWorkbenchStore } from '../src/renderer/src/workbench/state/store'
 import { onWorkbenchToast } from '../src/renderer/src/workbench/shell/toast'
@@ -85,7 +86,10 @@ function installNxcore(overrides: {
   repair?: () => Promise<{ spaceId: string; createdDirectories: string[]; createdMarker: boolean; readonly: boolean }>
   reveal?: (dir: string) => Promise<boolean>
   defaultRoot?: (name: string) => Promise<{ root: string; slug: string; exists: boolean } | null>
-  reconcileLibrary?: () => Promise<{ spaceId: string; scanned: number; added: string[]; missing: string[]; restored: string[]; failed: never[] }>
+  detect?: (dir: string) => Promise<AgentSpaceDetectResult>
+  create?: (input: { name: string; path?: string | null }) => Promise<AgentWorkspace>
+  adopt?: (input: { dir: string; name?: string }) => Promise<AgentWorkspace>
+  reconcileLibrary?: (workspaceId: string) => Promise<{ spaceId: string; scanned: number; added: string[]; missing: string[]; restored: string[]; failed: never[] }>
   cacheStats?: () => Promise<{ spaceId: string; bound: boolean; tmpBytes: number; derivedBytes: number; objectsBytes: number; totalBytes: number; tmpFiles: number; derivedFiles: number; objectFiles: number }>
   gcCache?: () => Promise<{ spaceId: string; removedTmp: number; removedDerived: number; removedObjects: number; purgedTrash: number; freedBytes: number }>
   scratchFiles?: () => Promise<{
@@ -114,6 +118,20 @@ function installNxcore(overrides: {
         root: `/Users/wang/Library/Application Support/EverOffice/Workspace/${name.trim().toLowerCase().replace(/\s+/gu, '-')}`,
         slug: name.trim().toLowerCase().replace(/\s+/g, '-'),
         exists: false,
+      }))),
+      detect: vi.fn(overrides.detect ?? (async (): AgentSpaceDetectResult => ({ status: 'missing' as const }))),
+      create: vi.fn(overrides.create ?? (async (input: { name: string; path?: string | null }) => ({
+        ...WORKSPACE,
+        id: 'ws-new',
+        name: input.name,
+        path: input.path ?? null,
+        rootMode: input.path ? 'external' as const : 'managed' as const,
+      }))),
+      adopt: vi.fn(overrides.adopt ?? (async (input: { dir: string }) => ({
+        ...WORKSPACE,
+        id: 'ws-adopted',
+        path: input.dir,
+        rootMode: 'external' as const,
       }))),
       pickDirectory: vi.fn(overrides.pickDirectory ?? (async () => null)),
       reconcileLibrary: vi.fn(overrides.reconcileLibrary ?? (async () => ({
@@ -156,6 +174,9 @@ function installNxcore(overrides: {
         truncated: false,
       }))),
       relocate: vi.fn(overrides.relocate ?? (async () => ({}))),
+    },
+    agent: {
+      listSessions: vi.fn(async () => []),
     },
   }
   ;(window as unknown as { nxcore?: unknown }).nxcore = api
@@ -273,26 +294,124 @@ describe('WorkspaceSidebar · 在访达中打开', () => {
   })
 })
 
-describe('CreateWorkspaceDialog', () => {
-  it('previews the default directory under the app Workspace root', async () => {
-    const api = installNxcore()
+describe('一步式新建项目空间（useCreateSpaceFlow）', () => {
+  /** 挂载一个真正走 hook 的组件；流程本身不渲染 UI，全部走桥 + store + toast。 */
+  async function runFlow(): Promise<void> {
+    let trigger: (() => void) | null = null
+    function FlowButton() {
+      const flow = useCreateSpaceFlow()
+      trigger = () => { void flow() }
+      return <button type="button" onClick={() => { void flow() }}>新建项目空间</button>
+    }
     await act(async () => {
       root = createRoot(container)
-      root.render(<CreateWorkspaceDialog open onOpenChange={vi.fn()} />)
+      root.render(<FlowButton />)
+    })
+    if (!trigger) throw new Error('流程触发器未挂载')
+    await act(async () => {
+      trigger()
     })
     await flush()
+  }
 
-    // Modal 走 Radix portal（挂到 document.body），所以查 document 而不是 container。
-    const input = document.querySelector('#wb-newspace-name') as HTMLInputElement | null
-    expect(input).toBeTruthy()
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-      setter?.call(input, 'Feishu work')
-      input?.dispatchEvent(new Event('input', { bubbles: true }))
+  it('选中普通目录：以目录名就地创建，并在后台对账资料', async () => {
+    const api = installNxcore({
+      pickDirectory: async () => '/Users/wang/Desktop/连接器项目',
+      reconcileLibrary: async () => ({
+        spaceId: 'ws-new',
+        scanned: 3,
+        added: ['方案.docx', '报价.xlsx'],
+        missing: [],
+        restored: [],
+        failed: [],
+      }),
     })
-    await flush(12, 30)
+    const toasts: string[] = []
+    const offToast = onWorkbenchToast((message) => toasts.push(message))
+    await runFlow()
 
-    expect(api.workspace.defaultRoot).toHaveBeenCalledWith('Feishu work')
-    expect(document.body.textContent).toContain('/EverOffice/Workspace/feishu-work')
+    expect(api.workspace.pickDirectory).toHaveBeenCalledTimes(1)
+    expect(api.workspace.detect).toHaveBeenCalledWith('/Users/wang/Desktop/连接器项目')
+    expect(api.workspace.create).toHaveBeenCalledWith({
+      name: '连接器项目',
+      path: '/Users/wang/Desktop/连接器项目',
+    })
+    expect(api.workspace.reconcileLibrary).toHaveBeenCalledWith('ws-new')
+    expect(toasts.some((message) => message.includes('已创建项目空间「连接器项目」'))).toBe(true)
+    expect(toasts).toContain('已把「2」份目录内文件收进资料')
+    // 创建后直接打开该空间的标签。
+    expect(useWorkbenchStore.getState().tabs.some((tab) =>
+      tab.kind === 'workspace' && tab.workspaceId === 'ws-new')).toBe(true)
+    offToast()
+  })
+
+  it('取消选择器：什么都不发生（不建空间、不报错）', async () => {
+    const api = installNxcore({ pickDirectory: async () => null })
+    await runFlow()
+
+    expect(api.workspace.create).not.toHaveBeenCalled()
+    expect(useWorkbenchStore.getState().error).toBeNull()
+  })
+
+  it('目录已是注册过的项目空间：直接打开，不再创建', async () => {
+    const api = installNxcore({
+      pickDirectory: async () => ROOT,
+      detect: async () => ({
+        status: 'space' as const,
+        root: ROOT,
+        spaceId: WORKSPACE.id,
+        name: WORKSPACE.name,
+        slug: 'feishu-work',
+        layoutVersion: 2,
+        readonly: false,
+      }),
+    })
+    const toasts: string[] = []
+    const offToast = onWorkbenchToast((message) => toasts.push(message))
+    await runFlow()
+
+    expect(api.workspace.create).not.toHaveBeenCalled()
+    expect(api.workspace.adopt).not.toHaveBeenCalled()
+    expect(toasts.some((message) => message.includes('已是项目空间'))).toBe(true)
+    expect(useWorkbenchStore.getState().activeTabId).toBe('ws:ws-feishu')
+    offToast()
+  })
+
+  it('目录有空间标记但未注册：走接管（adopt）', async () => {
+    const api = installNxcore({
+      pickDirectory: async () => '/Users/wang/Desktop/孤儿空间',
+      detect: async () => ({
+        status: 'space' as const,
+        root: '/Users/wang/Desktop/孤儿空间',
+        spaceId: 'orphan-id',
+        name: '孤儿空间',
+        slug: 'orphan',
+        layoutVersion: 2,
+        readonly: false,
+      }),
+    })
+    const toasts: string[] = []
+    const offToast = onWorkbenchToast((message) => toasts.push(message))
+    await runFlow()
+
+    expect(api.workspace.adopt).toHaveBeenCalledWith({ dir: '/Users/wang/Desktop/孤儿空间' })
+    expect(api.workspace.create).not.toHaveBeenCalled()
+    expect(toasts.some((message) => message.includes('已接管目录为项目空间「飞书相关工作」'))).toBe(true)
+    offToast()
+  })
+
+  it('创建失败：错误进 store.error，不打成功 toast', async () => {
+    const api = installNxcore({
+      pickDirectory: async () => '/System/只读目录',
+      create: async () => { throw new Error('目录不可写（只读卷 / 权限不足 / 磁盘已满）') },
+    })
+    const toasts: string[] = []
+    const offToast = onWorkbenchToast((message) => toasts.push(message))
+    await runFlow()
+
+    expect(useWorkbenchStore.getState().error).toContain('目录不可写')
+    expect(toasts).toHaveLength(0)
+    expect(api.workspace.reconcileLibrary).not.toHaveBeenCalled()
+    offToast()
   })
 })
