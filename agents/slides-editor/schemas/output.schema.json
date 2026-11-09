@@ -8,7 +8,7 @@
     "pages": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 4,
+      "maxItems": 12,
       "items": {
         "additionalProperties": false,
         "type": "object",

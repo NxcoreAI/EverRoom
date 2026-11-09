@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import type {
   DocumentBlockSummary,
   DocumentMutationOperation,
@@ -123,15 +124,19 @@ export function collectDocumentReferences(content: TiptapJsonContent): Array<{
   const references: Array<{ roomId: string; documentId: string; blockId: string }> = [];
   const visit = (node: TiptapJsonContent) => {
     if (node.type === "documentBlockReference") {
-      const roomId = node.attrs?.targetRoomId;
+      const rawRoomId = node.attrs?.targetRoomId;
       const documentId = node.attrs?.targetDocumentId;
       const blockId = node.attrs?.targetBlockId;
-      if (typeof roomId !== "string" || !roomId.trim()
-        || typeof documentId !== "string" || !documentId.trim()
+      // Room 已删除：缺 targetRoomId 不再视为非法引用，按工作区 scope 归一
+      //（块引用管线以非空 scope 字符串为分区键，工作区统一落频道 sentinel）。
+      const roomId = typeof rawRoomId === "string" && rawRoomId.trim()
+        ? rawRoomId
+        : WORKSPACE_DOCUMENT_CHANNEL;
+      if (typeof documentId !== "string" || !documentId.trim()
         || typeof blockId !== "string" || !blockId.trim()) {
         throw new DocumentServiceError(
           "INVALID_BLOCK_REFERENCE",
-          "Document block references require targetRoomId, targetDocumentId, and targetBlockId",
+          "Document block references require targetDocumentId and targetBlockId",
         );
       }
       references.push({ roomId, documentId, blockId });

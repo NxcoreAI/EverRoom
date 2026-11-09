@@ -5,11 +5,23 @@ export interface PendingShellApproval {
   runId: string
   toolName: string
   command: string
-  /** "shell"（pi 档 bash 审批）| "tool"（ACP 渠道会话工具审批）；缺省按 shell 展示。 */
+  /** "shell"（pi 档 bash 审批）| "tool"（ACP 渠道会话工具审批）| "card"（通用决策卡）；缺省按 shell 展示。 */
   kind?: string
   cwd?: string
   reason?: string
   requestedAt: string
+  /** kind="card" 时的卡片载荷（confirm 计划卡 / question 提问卡）。 */
+  card?: {
+    kind: 'confirm' | 'question'
+    title: string
+    body?: string
+    plan?: string[]
+    options?: string[]
+    allowText?: boolean
+    palette?: string[]
+    fonts?: { heading?: string; body?: string }
+    notes?: string[]
+  }
 }
 
 function requestedApproval(event: AgentEvent): PendingShellApproval | null {
@@ -30,6 +42,7 @@ function requestedApproval(event: AgentEvent): PendingShellApproval | null {
     ...(typeof payload.cwd === 'string' && payload.cwd ? { cwd: payload.cwd } : {}),
     ...(typeof payload.reason === 'string' && payload.reason ? { reason: payload.reason } : {}),
     requestedAt: event.occurredAt,
+    ...(payload.card && typeof payload.card === 'object' ? { card: payload.card as PendingShellApproval['card'] } : {}),
   }
 }
 
@@ -38,6 +51,9 @@ function resolvedApprovalId(event: AgentEvent): string | null {
   const approvalId = (event.payload as Record<string, unknown>).approvalId
   return typeof approvalId === 'string' ? approvalId : null
 }
+
+/** run 终态：挂起审批/卡片随 run 生灭——gateway 重启或超时后，旧事件的卡片不得复生。 */
+const RUN_TERMINAL_EVENTS = new Set(['run.completed', 'run.failed', 'run.cancelled', 'run.interrupted'])
 
 export function applyShellApprovalEvent(
   approvals: PendingShellApproval[],
@@ -53,8 +69,11 @@ export function applyShellApprovalEvent(
   }
 
   const resolvedId = resolvedApprovalId(event)
-  if (!resolvedId) return approvals
-  return approvals.filter((approval) => approval.approvalId !== resolvedId)
+  if (resolvedId) return approvals.filter((approval) => approval.approvalId !== resolvedId)
+  if (RUN_TERMINAL_EVENTS.has(event.type)) {
+    return approvals.filter((approval) => approval.runId !== event.runId)
+  }
+  return approvals
 }
 
 export function reducePendingShellApprovals(events: AgentEvent[]): PendingShellApproval[] {

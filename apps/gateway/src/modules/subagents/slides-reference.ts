@@ -56,8 +56,23 @@ function pdfTitles(pdfPath: string, pageCount: number): string[] {
   return titles;
 }
 
+/** 无扩展名路径（工作区上传件是 sha256 hash 路径）按文件头嗅探真实格式。 */
+export function sniffExt(path: string): string {
+  const head = readFileSync(path).subarray(0, 12);
+  if (head.subarray(0, 5).toString("latin1") === "%PDF-") return ".pdf";
+  if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47) return ".png";
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return ".jpg";
+  if (head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP") return ".webp";
+  if (head[0] === 0x50 && head[1] === 0x4b) return ".pptx"; // zip 容器：pptx 或改后缀的旧 ppt 都交 soffice
+  return "";
+}
+
 async function imagesForPath(path: string, dir: string, index: number): Promise<{ images: Buffer[]; titles: string[]; pageCount: number }> {
-  const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+  const dotIndex = path.lastIndexOf(".");
+  let ext = dotIndex === -1 ? "" : path.slice(dotIndex).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) && ext !== ".pdf" && ext !== ".pptx" && ext !== ".ppt") {
+    ext = sniffExt(path);
+  }
   if (IMAGE_EXTENSIONS.has(ext)) {
     return { images: [readFileSync(path)], titles: [`参考图 ${index + 1}`], pageCount: 1 };
   }

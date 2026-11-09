@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizeTree } from "../schema.js";
 import { compileTree } from "../compile.js";
+import { measureDefects } from "../measure.js";
 import { contractFromStyleParams } from "../layout-contract.js";
 import { treeSignature } from "../similarity.js";
 import { visualRichnessIssues } from "./richness.js";
@@ -285,5 +286,143 @@ describe("v2 group: richness 与签名", () => {
     ]);
     expect(treeSignature(make("text"))).not.toBe(treeSignature(make("icon")));
     expect(treeSignature(make("text"))).toContain("g:row:1");
+  });
+});
+
+describe("v2 group: 统一权重规则（父 weights 优先，缺省从子节点 weight 推导）", () => {
+  it("仅子节点 weight：row 按 weight 比例分宽", () => {
+    const result = compile([
+      {
+        type: "group", slot: GROUP_SLOT, direction: "row",
+        children: [
+          { type: "text", token: "body", text: "左", weight: 2 },
+          { type: "text", token: "body", text: "右", weight: 1 },
+        ],
+      },
+    ]);
+    const [left, right] = texts(result);
+    expect(left!.w / right!.w).toBeGreaterThan(1.9);
+    expect(left!.w / right!.w).toBeLessThan(2.1);
+    expect(right!.x).toBe(left!.x + left!.w + 24);
+  });
+
+  it("父 weights 与子 weight 同时存在：父级优先，子 weight 被忽略", () => {
+    const result = compile([
+      {
+        type: "group", slot: GROUP_SLOT, direction: "row", weights: [1, 1],
+        children: [
+          { type: "text", token: "body", text: "左", weight: 5 },
+          { type: "text", token: "body", text: "右" },
+        ],
+      },
+    ]);
+    const [left, right] = texts(result);
+    expect(left!.w).toBe(right!.w);
+  });
+
+  it("row/column 嵌套：外层 row 按父 weights 分宽，内层 column 按子 weight 分高", () => {
+    const result = compile([
+      {
+        type: "group", slot: GROUP_SLOT, direction: "row", weights: [1, 2],
+        children: [
+          { type: "text", token: "body", text: "窄栏" },
+          {
+            type: "group", direction: "column",
+            children: [
+              { type: "text", token: "body", text: "上", weight: 1 },
+              { type: "text", token: "body", text: "下", weight: 3 },
+            ],
+          },
+        ],
+      },
+    ]);
+    const [narrow, top, bottom] = texts(result);
+    // 外层：usable = 1152 - 24 = 1128 → 376 / 752
+    expect(narrow!.w).toBe(376);
+    expect(top!.w).toBe(752);
+    // 内层 column：usable = 592 - 16 = 576 → 144 / 432
+    expect(top!.h).toBe(144);
+    expect(bottom!.h).toBe(432);
+    expect(bottom!.y).toBe(top!.y + top!.h + 16);
+  });
+});
+
+describe("v2 text: fit=shrink 编译期缩字", () => {
+  const BODY = (chars: number, fit?: "shrink"): Record<string, unknown> => ({
+    type: "text", token: "body", text: "字".repeat(chars),
+    slot: { col: [1, 3], row: [1, 4] },
+    ...(fit ? { fit } : {}),
+  });
+  const allSizes = (result: ReturnType<typeof compile>): number[] =>
+    result.spec.elements
+      .flatMap((element) => (element.type === "text" ? element.paragraphs ?? [] : []))
+      .flatMap((paragraph) => paragraph.runs.map((run) => run.sizePt ?? 12));
+
+  it("无需缩字：fits 时不缩，字号原样", () => {
+    const result = compile([BODY(10, "shrink")]);
+    expect(allSizes(result)).toEqual([20]);
+    expect(result.defects).toHaveLength(0);
+  });
+
+  it("15% 内可容纳：取能容纳的最大档，全部 run 同比例", () => {
+    // 1.0 档 324px、0.95 档 307.8px 均超 288；0.9 档（18pt，8 行×32.4=259.2px）装下
+    const result = compile([BODY(85, "shrink")]);
+    expect(allSizes(result)).toEqual([18]);
+    expect(measureDefects(result, CONTRACT).filter((defect) => defect.type === "overflow")).toHaveLength(0);
+  });
+
+  it("缩到 15% 仍溢出：按最小档落元素，缺陷照常上报", () => {
+    const result = compile([BODY(300, "shrink")]);
+    expect(allSizes(result)).toEqual([17]);
+    const overflow = measureDefects(result, CONTRACT).find((defect) => defect.type === "overflow");
+    expect(overflow).toBeTruthy();
+  });
+
+  it("场景字号下限：缩字不低于场景 floor（near 档 body 16 → 下限 14，不是 13）", () => {
+    const near = contractFromStyleParams(STYLE, "reading");
+    const tree = normalizeTree({
+      version: 2, role: "content", composition: "swiss",
+      nodes: [BODY(140, "shrink")],
+    });
+    const result = compileTree(tree, near);
+    const sizes = result.spec.elements
+      .flatMap((element) => (element.type === "text" ? element.paragraphs ?? [] : []))
+      .flatMap((paragraph) => paragraph.runs.map((run) => run.sizePt ?? 12));
+    expect(sizes).toEqual([14]);
+  });
+
+  it("混排：同一缩放比例作用于全部 run，字号比例与全文保留", () => {
+    const result = compile([
+      {
+        type: "text", token: "body", fit: "shrink",
+        slot: { col: [1, 3], row: [1, 8] },
+        runs: [
+          { text: "标".repeat(20), token: "h1" },
+          { text: "正".repeat(50), token: "body" },
+        ],
+      },
+    ]);
+    // 1.0/0.95 档放不下，0.9 档（h1 36pt、body 18pt）装下：同一步、同一比例
+    const sizes = allSizes(result);
+    expect(sizes).toEqual([36, 18]);
+    const text = result.spec.elements
+      .flatMap((element) => (element.type === "text" ? element.paragraphs ?? [] : []))
+      .flatMap((paragraph) => paragraph.runs.map((run) => run.text))
+      .join("");
+    expect(text).toBe("标".repeat(20) + "正".repeat(50));
+    expect(result.defects.filter((defect) => defect.type === "overflow")).toHaveLength(0);
+  });
+
+  it("默认 fit=none 不缩：溢出保持原字号（现行为不变）", () => {
+    const result = compile([BODY(300)]);
+    expect(allSizes(result)).toEqual([20]);
+    expect(measureDefects(result, CONTRACT).some((defect) => defect.type === "overflow")).toBe(true);
+  });
+
+  it("校验与落页同一实际字号：编译是纯函数，两次调用产物一致", () => {
+    const tree = page([BODY(85, "shrink")]);
+    const first = compileTree(tree, CONTRACT);
+    const second = compileTree(tree, CONTRACT);
+    expect(JSON.stringify(first.spec)).toBe(JSON.stringify(second.spec));
   });
 });

@@ -1,13 +1,16 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { agentDocumentMarkdown } from "./agent-markdown.js";
 import { documentBodyContent } from "./content-model.js";
 import { DocumentServiceError, type DocumentService } from "./service.js";
 import type { DocumentIndexBackfillReadTrigger } from "./index-backfill/read-trigger.js";
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
 const JsonDocument = Type.Object({ type: Type.Literal("doc") }, { additionalProperties: true });
+const ScopeId = Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]));
 const BlockReference = Type.Object({
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
+  // 省略/null = 工作区作用域（旧桌面仍可带真实 roomId）。
+  roomId: ScopeId,
   documentId: Type.String({ minLength: 1, maxLength: 128 }), blockId: Type.String({ minLength: 1, maxLength: 128 }),
 });
 function errorPayload(error: DocumentServiceError) {
@@ -259,14 +262,24 @@ export function documentRoutes(
         schema: {
           tags: ["documents"],
           body: Type.Object({
-            sourceRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+            // 省略/null = 工作区作用域（旧桌面仍可带真实 roomId）。
+            sourceRoomId: ScopeId,
             references: Type.Array(BlockReference, { maxItems: 200 }),
           }),
         },
       },
       async (request, reply) => {
         try {
-          return { resolutions: service.resolveBlockReferences(request.body) };
+          // 作用域归一：块引用管线仍以「非空 scope 字符串」为分区键，工作区落频道 sentinel。
+          return {
+            resolutions: service.resolveBlockReferences({
+              sourceRoomId: request.body.sourceRoomId ?? WORKSPACE_DOCUMENT_CHANNEL,
+              references: request.body.references.map((reference) => ({
+                ...reference,
+                roomId: reference.roomId ?? WORKSPACE_DOCUMENT_CHANNEL,
+              })),
+            }),
+          };
         } catch (error) {
           if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
           throw error;

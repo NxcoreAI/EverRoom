@@ -1,8 +1,8 @@
 # 幻灯片布局语法（v2 唯一写入格式）
 
-状态：权威正文 · 2026-10-22
+状态：权威正文 · 2026-10-29（weights 统一：父级优先、缺省从子节点 weight 推导；`fit:"shrink"` 编译期缩字 ≤15%、守场景下限；`focus` 不改图框比例，不能消除 `image_ar`；完整呈现图片不得改 `cover`）
 
-本文件是布局语法的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能与组件参考 `components.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责，旧模式契约见 `skills/layout-tree-skill/legacy.md`。
+本文件是布局语法与组件参考的权威来源。`scripts/render-layout-skills.mjs` 从这里生成 layouter 的基础技能 `SKILL.md`、设计指引 `design-guide.md` 与按展示用途拆分的组件参考 `components/*.md`；语法变更在本文件维护。任务目标、内容保真、设计与自审流程由 SYSTEM.md 负责。
 
 写入格式为 **v2 页面**（`version: 2` + `composition` + `nodes`），`group` 使用原生 `children` 分区。
 
@@ -25,7 +25,7 @@
 |---|---|---|
 | `version` | `2` | 必填。 |
 | `role` | 照抄输入的 `role` | 内容语义标签，不改写。 |
-| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。语义内容模式由 Layouter 根据实际设计选择；旧模式等于输入的 composition。 |
+| `composition` | `immersive / hero-data / editorial / swiss / poster / chapter` | 必填。由 Layouter 根据实际设计选择。 |
 | `safeArea` | `content`（默认）/ `full` | 图片与色块用节点 `bleed` 出血。 |
 | `grid` | `cols 1~12`、`rows 1~12`、`gutter 0~48`、`rowGutter 0~48`、`margin 0~96` | 可省略，用风格卡默认（12 列 × 8 行）。 |
 | `footer` | `left? / center? / right?` 各 ≤120 字；`pageNumbers?`；`tone?` `text \| muted \| inverse` | 语法可省略，使用规则见 SYSTEM.md。仅显式写 `pageNumbers:true` 时网关填入页码；省略 footer 不生成页码与页脚线。`inverse` 适用于深色页且不绘制页脚线。 |
@@ -63,12 +63,12 @@
 | `text` | 字符串 ≤2000 字 | `text`、`runs`、`paragraphs` 三者至少一个。 |
 | `runs` | `[{ text, token?, bold?, tone?, font?, letterSpacing? }]` | 行内混排。`font` 取 `heading / body / serif`。 |
 | `paragraphs` | `[{ runs, align?, lineSpacingPct?, spaceBeforePt?, spaceAfterPt? }]` | 多段混排；`runs` 非空。 |
-| `tone` | `text / muted / primary / accent / inverse / inverseMuted / surface / primarySoft / divider / chart1~chart6` | 缺省 `text`。 |
+| `tone` | `text / muted / primary / accent / inverse / inverseMuted / surface / primarySoft / divider / chart1~chart6` | 缺省 `text`。`inverse` / `inverseMuted` 是深底亮字口径（深色页、压图、深色面板用，对应 `styleTokens.palette.onDarkText`）；其余 tone 通常是深色字。 |
 | `align` | `left / center / right` | 缺省 `left`。 |
 | `valign` | `top / middle / bottom` | 缺省 `top`。 |
 | `letterSpacing` | -4~12 | 可省略。 |
 | `lineHeightPct` | 60~160 | 缺省 110。 |
-| `fit` | `none / shrink / ellipsis` | 缺省 `none`；`shrink` 自动缩字。 |
+| `fit` | `none / shrink / ellipsis` | 缺省 `none` 原字号。`shrink`：溢出时按同一比例缩全部 run（保留字号比例与段落结构），最多缩小 15%，且不低于场景字号下限；已低于下限的 run 保持原字号。缩到下限仍放不下照常报 `overflow`。标题与正文同规则：缺口 ≤15% 且扩区不可行时可用它收口（缩字不删字，内容保真无损）；缺口更大必须扩区或换承载结构。 |
 | `maxLines` | 1~4 | 配合 `ellipsis` 截断。 |
 | `direction` | `horizontal`（默认）/ `vertical` | `vertical` 是中文单字竖排。 |
 
@@ -83,8 +83,9 @@
 ```
 
 - `url` 必填，≤500 字符，只接受 `http(s)://` 直链或 `everroom-material://` 素材引用。
-- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。
-- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。
+- `fit`：`cover`（默认，裁切填满）或 `contain`（完整呈现，可能留空带）。两者都不变形；框比例尽量贴近素材。要求完整呈现的图片不得为通过 `image_ar` 检查改成 `cover`。
+- **压图文字规则（overlap 检查）**：文字与图片同区叠压时，文字须是浅色口径——`inverse` / `inverseMuted`（深底亮字），或放进 overlay 分组有意压放；默认 `text` / `muted` / `primary` 等深色字压图会报 `overlap`。实际色号以输入 `styleTokens.palette` 为准（`onDarkText` 即压图文字色）。
+- `focus`：`{ x?, y? }`（0~100）把 cover 裁切对准画面主体。只改变裁切位置，不改变图框比例；不能用它消除 `image_ar` 比例检查。
 - `caption` ≤40 字，只留一处。
 - `grayscale / duotone / radius`：`true` 才生效；`mask` 取 `circle / rounded`。
 - `scrim`：`{ color?, opacity? }`（`color` 是色号，`opacity` 0~1，缺省 0.55），给压图文字留可读底。
@@ -122,7 +123,7 @@
 - 首行默认表头（primary 底反白）；`header: false` 时按普通行。
 - 单元格是字符串，或对象 `{ "text", "bold"?, "tone"?, "fill"?, "align"?, "span"? }`；单元格 ≤120 字。
 - `style` 三选一：`banded`（蓝底表头 + 隔行，默认）、`outline`（白底 + 主色边框）、`minimal`（无底色，仅横线）。
-- `colWidths` 是列宽比例；按内容分配。`fontSize` 可选，8~20，缺省继承引擎字号。
+- `colWidths` 是列宽比例；按内容分配。`fontSize` 可选，8~20，缺省继承引擎字号。表格行高按单元格折行预算，超框在校验期报 `overflow`（附实测 `requiredHeight`/`availableHeight`）；缺口 ≤15% 时 `fontSize` 降 1pt（下限 8）通常可收口——缩字号不删数据，内容保真无损。
 - 结构化表格 block 使用 `table`，保留表头、行列顺序和全部单元格。
 
 ## stats / chart / shape
@@ -182,7 +183,7 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 | 字段 | 取值 | 说明 |
 |---|---|---|
 | `direction` | `row / column / overlay` | 必填。主轴方向。 |
-| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column；缺省均分。悬殊比例用 1.6/1、2/1 这一档。 |
+| `weights` | 正数数组，0.1~20，个数 = children 数 | 仅 row/column。显式父级 `weights` 优先；未提供时按各子节点 `weight` 推导（缺省 1）。`row` 的 weights 沿主轴分配宽度，`column` 的分配高度；加大一个子节点的权重会压缩兄弟节点。悬殊比例用 1.6/1、2/1 这一档。 |
 | `gapScale` | 0~4 | 缝隙 = 主题 gutter（row）/ rowGutter（column）× gapScale。overlay 不写。 |
 | `pad` | 0~48 | 帧内边距（px）。先扣内边距再分区。 |
 | `justify` | `start / center / end` | 仅 column。子区域划分不变，内容未铺满时整组按 justify 平移。 |
@@ -215,6 +216,68 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 - 组件只读 `frame / theme / skin`：不含客户名、品牌色或参考页文案。样式由 deck 的 `styleTokens` 决定。
 - 字段名照抄本文档；未知字段报错。
 - `style` 可选，使用语义枚举，缺省继承 `styleTokens.componentDefaults`。
+- 存在语义匹配且完整内容预检通过的组件时，默认采用它承载主内容；不采用时在 `designIntent` 说明候选名称、具体不适用原因与替代表达。
+- 栏头（`indexHeader`/`sectionHeader`）、结论框（`calloutBox`）等辅助组件不能替代主内容的组件化表达。
+- 纯文字封面、章节、引语、收尾页，以及真实明细表（`table` 节点）的既有用法不受「默认采用」约束。
+
+## 按展示用途选组件
+
+先确定这一页要让观众看懂什么（顺序、比较、层级、规模…），再按下表选主表达组件；每个组件只有一个主要用途，实际使用允许跨类。选中后读该类别的参数文档 `skills/layout-tree-skill/components/<文档>`，核对参数、素材要求、条目容量与槽位下限（同一类别同一对话读一次即可）。
+
+| 展示用途 | 文档 | 组件 | 适用条件 |
+|---|---|---|---|
+| 导航与章节组织 | `navigation.md` | `agenda`、`sectionHeader`、`indexHeader` | 目录、章节分隔、编号开篇；不承载论据 |
+| 要点、卖点与产品介绍 | `points.md` | `pointList`、`featureCards`、`bentoGrid`、`categoryCards`、`featureRail` | 平行要点或多卖点陈列；并列本身是一种内容关系，也适用于无层级结构的清单 |
+| 时间与顺序推进 | `sequence.md` | `timeline`、`eraRail`、`steps`、`chevron` | 有时间节点用 `timeline`/`eraRail`，操作步骤用 `steps`，单向阶段推进用 `chevron` |
+| 层级与组织结构 | `hierarchy.md` | `orgChart`、`pyramid`、`layeredStack` | 人员/组织归属用 `orgChart`，重要性分层用 `pyramid`，架构堆叠用 `layeredStack` |
+| 转化、汇聚与循环 | `conversion.md` | `funnel`、`radialFunnel`、`cycle` | 逐级收窄转化用 `funnel`，中心辐射汇聚用 `radialFunnel`（汇聚不等于逐级收窄），闭环流程用 `cycle` |
+| 比较、定位与选择 | `comparison.md` | `comparison`、`prosCons`、`matrix2x2`、`venn`、`competitorBoard`、`pricingTiers` | 两方对照用 `comparison`；`prosCons` 仅限明确的利弊清单（优势/风险），泛化的比较不等于利弊 |
+| 指标、进度与财务 | `metrics.md` | `stats`、`kpiRows`、`progress`、`financialBoard` | 数值标签成组用 `stats`/`kpiRows`，完成度用 `progress`，财务结构用 `financialBoard` |
+| 人物与团队介绍 | `people.md` | `persona`、`teamGrid`、`founderProfile` | 单人画像用 `persona`/`founderProfile`，团队陈列用 `teamGrid` |
+| 引用与外部背书 | `quotes.md` | `quote`、`quotes`、`logoWall` | 单条金句用 `quote`，多条评价用 `quotes`，客户/合作方标识用 `logoWall` |
+| 结论强调与视觉叙事 | `emphasis.md` | `calloutBox`、`fullBleedQuote`、`photoTriptych` | 单点结论框用 `calloutBox`，整页金句用 `fullBleedQuote`，三图并置叙事用 `photoTriptych` |
+
+边界：趋势与分布用 `chart` 节点、逐格读取的明细用 `table` 节点；二者可与上表组件**同页组合**，但上游已定型的 table/chart 内容契约优先，须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+
+## 设计指引（语义内容布局）
+
+### 内容契约与必留
+
+- `message` 是页面主标题，完整展示。`blocks` 是待呈现的内容；`mustShow` 决定必留范围，`priority` 与 `focusRefs` 决定主次。
+- 上游已完成文案精炼，沿用其短句，不补写解释段落或装饰性口号。message 与标题 block 相同时共用一个标题节点，绑定到该 block；多个 block 承载相同文字时可共用节点，分别绑定，避免重复上屏。
+- `relations` 及其 `basis` 说明内容之间的关系。为每项关系选择图上可指认的线索，保持其原意：比较有明确的两端标签与对应维度，先后有方向或编号，层级有字号、位置或面积主次。平等对照可以等宽同色；确有侧重点时才用面积、底色或强调区分，视觉权重须符合内容。
+- `constraints.verbatimRefs` 标记逐字保留的来源。排版本身保留普通文案、数值、单位、引用归属、表格行列及图表分类与序列对应关系；可拆分、分组和调整换行。
+- `content.notes` 原样写入树的 `notes`。`omissions` 是上游已记录的取舍；本轮以必留内容为底线，不通过转入备注或隐藏内容来解决拥挤。
+- 图片从实际 `materials` 中取用，遵守 block 的素材引用与 fit 要求。图片保持比例，`contain` 完整呈现，`cover` 的裁切保留主体。
+
+### 构图与选型
+
+先理解这一页要让观众记住什么，再决定如何组织空间。表达结构先于排版，按四步决策：
+
+1. **先定展示用途**：根据核心内容与主关系确定这一页要让观众看懂什么（顺序、比较、层级、规模、指标…），不只按页面 `role` 判断。
+2. **按用途选主表达组件**：优先查「按展示用途选组件」索引；输入的 `componentCandidates` 是按本页实际 blocks 预检过的参考（`feasible:true` 附 `validatedSlot`/`suggestedSlot`/`validatedGrid` 与可直接使用的 `template` 参数；预检只对声明的完整内容组、该网格与该参数有效），候选列表不是全部可用组件。选中后读该类别的参数文档核对该组件的参数与素材要求；主表达组件先占主区域，标题与辅助信息随后布局，装不装得下交给校验回答。
+3. **按需补辅助表达**：指标用 `stats`/`kpiRows`、单点结论用 `calloutBox`、引用背书用 `quote`/`logoWall`、章节与栏头组织用 `sectionHeader`/`indexHeader`。
+4. **装不下时如实处理**：优先换更大区域或更少条目（必留条目完整迁移）；确实无合适组件时可用原子节点，但须在 `designIntent` 说明主关系如何表达。容量不足如实报告缺口；不得为通过校验把结构化表达退化为长文本。
+
+在此基础上自主选择合法 `composition` 和节点结构。重点与关系决定模块数量；相同用途的连续页可以保持一致，结构变化应服务于内容和全册节奏。
+
+选型边界：
+
+- `pointList` 只承载无层级结构的要点清单；并列（parallel）本身是一种内容关系，可用并列类组件承载。
+- 趋势、分布用 `chart` 节点；逐格读取的明细用 `table` 节点。图表、表格可与组件**同页组合**；已定型的 table/chart 内容块须保留原有行列、分类和序列对应关系，不得因组件选型擅自转换或丢失数据。
+- 栏头（`indexHeader`/`sectionHeader`）、结论框（`calloutBox`）等辅助组件不能替代主内容的组件化表达。
+- 纯文字封面、章节、引语、收尾页，以及真实明细表的既有用法不受「默认采用」约束。
+- 静态容量（条目上限、单条字数、槽位下限）只作参考，以 `componentCandidates` 预检和最终校验的实测 `hint` 为准；禁止截断必留内容。
+- `density` 是本页信息量的预期：`sparse` 页保持单焦点与少容器，`dense` 页优先结构化承载（组件、表格、图表、统计），不用大段正文占位。
+- 主内容不采用候选组件时，在 `designIntent` 的取舍里说明候选名称、具体不适用原因与替代表达（内容形态不匹配、槽位不足或内容超出容量）。
+
+### 空间分配
+
+空间按内容量分配：内容多的一侧占更大区域，短文案优先紧凑分组。区域需求用输入里的实测数字——`blockNeeds`（各内容块按 3/6/12 列宽的实测高度、表格/图表的建议槽位）与候选的 `validatedSlot`——第一棵树照数字分区，不做字数估算；校验缺陷附实测 `frame`/`requiredHeight`，按反馈调整 slot 跨度或 `weights`。卡片大部分为空、标题与正文被空带隔开、重心偏向一角时，收紧容器、重排分区或调整图文比例。`pad` 控制内边距，父级 `weights` 分配子区域，`justify`/`valign` 只调内容位置、不增加容量；居中不解决装不下。留白须服务聚焦、分组或节奏，避免用新增文案或装饰填空。
+
+全册页脚默认规则：除 `cover`、`closing` 外，写 `footer:{pageNumbers:true}`，为页码与页脚线留出底部空间；深色页用合适的 `tone`。明确的任务或风格约定优先于此默认值。`neighbors` 只有内容摘要时，按本页网格与主题建立稳定边距，不据此声称已核对邻页标题基线或构图。
+
+设计完成须同时满足：必留内容完整、主焦点与关系可指认、空间与内容量匹配、主题与页脚规则一致、几何校验通过。`ok=true` 仅证明结构与几何合格；视觉质量按 SYSTEM.md「视觉自审」判据验收。
 
 ## 组件样式（style）与 styleTokens
 
@@ -333,54 +396,56 @@ slot 栅格表达不了的自由版式，用 `group` 把一块 slot 切成 v2 �
 
 「约几元素」用于估算编译后的元素预算；组件选择依据其信息语义和实际容量。
 
+「槽位下限」是该组件还给得出正常版面的经验最小值（列×行，12 列 × 8 行口径）。低于它时组件先按角色下限有限收缩（正文至 16pt、标题至 20pt、注释至 12pt），仍装不下报 `overflow`，并在缺陷 `hint` 里给出本页内容量下的实测需求（如「至少需要约 640×320px（6 列 × 4 行）」）。**装不下时的处理顺序：先扩大槽位 → 再减条目 → 最后换更简单的节点/组件**；不要靠缩字号、删必留内容或增加装饰绕过。
+
 ### 27 个核心组件
 
-| 组件 | 形态与语义 | 参数 | 条目与上限 | 约几元素 |
-|---|---|---|---|---|
-| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（`h`/`v`，缺省 h）、`axis?`（`line`/`dots`/`none`）、`items: [{ label, text }]` | 3~6 条；`label` ≤24 字、`text` ≤80 字 | 10~19 |
-| `steps` | 大编号 + 标题 + 说明横排——有序步骤 | `connector?`（`line`/`gap`/`none`）、`items: [{ title, text? }]` | 3~5 步；`title` ≤24 字、`text` ≤80 字 | 6~15 |
-| `stats` | 大数字 + 标签的指标卡横排——量化基本面 | `layout?`（`row`/`column`/`grid`）、`items: [{ value, unit?, label }]` | 2~4 项；`value` ≤16 字、`unit` ≤8 字、`label` ≤40 字 | 6~12 |
-| `featureCards` | 图标或图片 + 标题 + 正文的卡片行——并列卖点 | `items: [{ title, body?, icon?, image? }]` | 2~4 张；`title` ≤30 字、`body` ≤200 字；给 `image`（http(s) 直链或 `everroom-material://`）时顶部画圆角图块，`icon` 不画 | 4~16 |
-| `quote` | 大引号 + 居中引文 + 署名——引用定调 | `text`、`author?` | `text` ≤200 字、`author` ≤40 字 | 2~3 |
-| `comparison` | 2~4 方对照，中央分隔随 `style.separator`——多方横评 | `sides: [{ title, tag?, points }]`、`featured?`（重点列下标，0 起） | 2~4 方；`title` ≤24 字、`tag` ≤8 字；每方 2~5 点，单点 ≤60 字；点是字符串或 `{ text, mark: "yes"\|"mid"\|"no" }` | 6~20 |
-| `matrix2x2` | 四块面板田字格 + 四边轴标——双维度交叉定位 | `quadrants: [{ title, points? }] ×4`、`axes?: { top?, right?, bottom?, left? }` | 象限固定 4 个；`title` ≤24 字；每象限 1~4 点，单点 ≤40 字；轴标各 ≤20 字 | 8~20 |
-| `prosCons` | 左优势右风险两栏，钩/叉图标打头——利弊清单 | `pros`、`cons`: 字符串数组 | 各 2~5 条，单条 ≤60 字 | 4+2×条数 |
-| `agenda` | 大编号 + 条目纵列，超四条分两栏——目录 | `items`: 字符串数组 | 4~8 条，单条 ≤24 字 | 2×条数 |
-| `chevron` | 箭头形横排相扣，文字压箭头上——单向推进 | `form?`、`items: [{ title, text? }]` | 3~5 段；`title` ≤16 字、`text` ≤40 字 | 6~15 |
-| `pyramid` | 顶三角 + 梯形逐层加宽——层级与体量 | `form?`、`items: [{ title, text? }]`（顶到底） | 3~5 层；`title` ≤16 字、`text` ≤40 字 | 6~15 |
-| `funnel` | 横条逐级收窄，每级阶段 + 数值——转化收窄 | `form?`、`items: [{ stage, value? }]` | 3~4 级；`stage` ≤16 字、`value` ≤16 字 | 6~12 |
-| `venn` | 两交叠圆 + 两侧与交集标签——交集关系 | `a`、`b`、`both?` | 各 ≤10 字 | 3~4 |
-| `calloutBox` | 主题色底板 + 一句加粗结论——单点强调 | `text`、`icon?`、`form?` | `text` ≤120 字 | 2~3 |
-| `cycle` | 中央圆环 + 节点圆均匀分布——循环互驱 | `marker?`、`items: [{ title }]` | 3~5 个；每题 ≤6 字 | 1+2×个数 |
-| `progress` | 标签行 + 轨道条与前景条——完成度 | `fill?`、`items: [{ label, value, unit?, target? }]` | 2~4 项；`label` ≤24 字、`unit` ≤8 字；`value` / `target` 是 0~100 数字 | 4×项数 |
-| `orgChart` | 根在上、子横排、细线连接——隶属结构 | `connector?`、`root`、`children`: `{ title, subtitle? }` | 子节点 2~4 个；`title` ≤20 字、`subtitle` ≤30 字 | 10~16 |
-| `persona` | 左头像圆 + 右姓名/角色/要点——人物画像 | `person: { name, role? }`、`points`、`image?` | 要点 2~5 条，单条 ≤40 字；`name` ≤24 字、`role` ≤40 字 | 4~6 |
-| `bentoGrid` | 两列格子拼版，`wide` 占整行——信息拼贴 | `items: [{ title, body?, icon?, image?, wide? }]` | 3~5 格；`title` ≤24 字、`body` ≤120 字；`wide: true` 占整行 | 6~20 |
-| `layeredStack` | 整宽横条逐层堆叠，左标题右说明——分层堆叠 | `items: [{ title, text? }]` | 3~5 层；`title` ≤16 字、`text` ≤60 字 | 6~15 |
-| `teamGrid` | 圆头像 + 姓名 + 职位（主色）+ 两行简介——团队网格 | `avatar?`、`members: [{ name, role?, bio?, image? }]` | 2~6 人（≤4 人单行，5~6 人两行各 3）；`name` ≤16 字、`role` ≤24 字、`bio` ≤48 字 | ~4×人数 |
-| `quotes` | 星级 + 引文 + 条目分隔（随 `style.separator`）+ 头像署名——评价墙 | `items: [{ text, name, role?, avatar?, rating? }]` | 2~3 条；`text` ≤90 字、`name` ≤16 字、`role` ≤28 字；`rating` 是 1~5 整数 | 6~10×条数 |
-| `pricingTiers` | 套餐定价卡，`featured` 档垫板描边上浮 + 实心按钮 | `tiers: [{ name, price, unit?, features, cta? }]`、`featured`（必填，恰一个） | 2~4 档；`name` ≤12 字、`price` ≤12 字、`unit` ≤10 字、`cta` ≤8 字；每档 2~4 条特性，单条 ≤24 字 | ~7×档数+3 |
-| `logoWall` | 灰度图标/文字字标网格——客户墙 | `monochrome?`、`logos: [{ image?, text? }]`（二选一，至少一个） | 4~8 个；`text` ≤20 字；图自动灰度 contain | ≤8 |
-| `pointList` | 刻度要点纵列：可选衬线序号 + 粗标签 + 静音正文，条目分隔随 `style.separator`——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true` | 2~5 条；`label` ≤12 字、`body` ≤140 字；`numbered` 只接受 `true` | 5~17 |
-| `indexHeader` | 衬线序号（主色）+ 标题 + 右侧小注，底部分隔随 `style.separator`——并列栏统一栏头 | `num`（1~2 字，如 壹/儒/01）、`title`、`note?` | `title` ≤12 字、`note` ≤12 字 | 3~4 |
-| `eraRail` | 脊线压区域顶，刻度下挂衬线年代 + 静音短注，`highlight` 条目主色——年代轴、节奏带 | `items: [{ era, note }]`、`highlight?`（重点条下标） | 3~6 条；`era` ≤8 字、`note` ≤12 字，各限一行 | 1+3×条数 |
+| 组件 | 形态与语义 | 参数 | 条目与上限 | 约几元素 | 槽位下限（列×行） |
+|---|---|---|---|---|---|
+| `timeline` | 轴线串节点，上标签下说明——进程与先后 | `direction?`（`h`/`v`，缺省 h）、`axis?`（`line`/`dots`/`none`）、`items: [{ label, text }]` | 3~6 条；`label` ≤24 字、`text` ≤80 字 | 10~19 | 8×4 |
+| `steps` | 大编号 + 标题 + 说明横排——有序步骤 | `connector?`（`line`/`gap`/`none`）、`items: [{ title, text? }]` | 3~5 步；`title` ≤24 字、`text` ≤80 字 | 6~15 | 8×4 |
+| `stats` | 大数字 + 标签的指标卡横排——量化基本面 | `layout?`（`row`/`column`/`grid`）、`items: [{ value, unit?, label }]` | 2~4 项；`value` ≤16 字、`unit` ≤8 字、`label` ≤40 字 | 6~12 | 6×3 |
+| `featureCards` | 图标或图片 + 标题 + 正文的卡片行——并列卖点 | `items: [{ title, body?, icon?, image? }]` | 2~4 张；`title` ≤30 字、`body` ≤200 字；给 `image`（http(s) 直链或 `everroom-material://`）时顶部画圆角图块，`icon` 不画 | 4~16 | 8×4 |
+| `quote` | 大引号 + 居中引文 + 署名——引用定调 | `text`、`author?` | `text` ≤200 字、`author` ≤40 字 | 2~3 | 6×3 |
+| `comparison` | 2~4 方对照，中央分隔随 `style.separator`——多方横评 | `sides: [{ title, tag?, points }]`、`featured?`（重点列下标，0 起） | 2~4 方；`title` ≤24 字、`tag` ≤8 字；每方 2~5 点，单点 ≤60 字；点是字符串或 `{ text, mark: "yes"\|"mid"\|"no" }` | 6~20 | 8×4 |
+| `matrix2x2` | 四块面板田字格 + 四边轴标——双维度交叉定位 | `quadrants: [{ title, points? }] ×4`、`axes?: { top?, right?, bottom?, left? }` | 象限固定 4 个；`title` ≤24 字；每象限 1~4 点，单点 ≤40 字；轴标各 ≤20 字 | 8~20 | 8×6 |
+| `prosCons` | 左优势右风险两栏，钩/叉图标打头——利弊清单 | `pros`、`cons`: 字符串数组 | 各 2~5 条，单条 ≤60 字 | 4+2×条数 | 6×4 |
+| `agenda` | 大编号 + 条目纵列，超四条分两栏——目录 | `items`: 字符串数组 | 4~8 条，单条 ≤24 字 | 2×条数 | 4×6 |
+| `chevron` | 箭头形横排相扣，文字压箭头上——单向推进 | `form?`、`items: [{ title, text? }]` | 3~5 段；`title` ≤16 字、`text` ≤40 字 | 6~15 | 10×3 |
+| `pyramid` | 顶三角 + 梯形逐层加宽——层级与体量 | `form?`、`items: [{ title, text? }]`（顶到底） | 3~5 层；`title` ≤16 字、`text` ≤40 字 | 6~15 | 6×4 |
+| `funnel` | 横条逐级收窄，每级阶段 + 数值——转化收窄 | `form?`、`items: [{ stage, value? }]` | 3~4 级；`stage` ≤16 字、`value` ≤16 字 | 6~12 | 6×4 |
+| `venn` | 两交叠圆 + 两侧与交集标签——交集关系 | `a`、`b`、`both?` | 各 ≤10 字 | 3~4 | 6×4 |
+| `calloutBox` | 主题色底板 + 一句加粗结论——单点强调 | `text`、`icon?`、`form?` | `text` ≤120 字 | 2~3 | 5×2 |
+| `cycle` | 中央圆环 + 节点圆均匀分布——循环互驱 | `marker?`、`items: [{ title }]` | 3~5 个；每题 ≤6 字 | 1+2×个数 | 6×4 |
+| `progress` | 标签行 + 轨道条与前景条——完成度 | `fill?`、`items: [{ label, value, unit?, target? }]` | 2~4 项；`label` ≤24 字、`unit` ≤8 字；`value` / `target` 是 0~100 数字 | 4×项数 | 6×3 |
+| `orgChart` | 根在上、子横排、细线连接——隶属结构 | `connector?`、`root`、`children`: `{ title, subtitle? }` | 子节点 2~4 个；`title` ≤20 字、`subtitle` ≤30 字 | 10~16 | 8×4 |
+| `persona` | 左头像圆 + 右姓名/角色/要点——人物画像 | `person: { name, role? }`、`points`、`image?` | 要点 2~5 条，单条 ≤40 字；`name` ≤24 字、`role` ≤40 字 | 4~6 | 6×4 |
+| `bentoGrid` | 两列格子拼版，`wide` 占整行——信息拼贴 | `items: [{ title, body?, icon?, image?, wide? }]` | 3~5 格；`title` ≤24 字、`body` ≤120 字；`wide: true` 占整行 | 6~20 | 10×5 |
+| `layeredStack` | 整宽横条逐层堆叠，左标题右说明——分层堆叠 | `items: [{ title, text? }]` | 3~5 层；`title` ≤16 字、`text` ≤60 字 | 6~15 | 8×4 |
+| `teamGrid` | 圆头像 + 姓名 + 职位（主色）+ 两行简介——团队网格 | `avatar?`、`members: [{ name, role?, bio?, image? }]` | 2~6 人（≤4 人单行，5~6 人两行各 3）；`name` ≤16 字、`role` ≤24 字、`bio` ≤48 字 | ~4×人数 | 10×4 |
+| `quotes` | 星级 + 引文 + 条目分隔（随 `style.separator`）+ 头像署名——评价墙 | `items: [{ text, name, role?, avatar?, rating? }]` | 2~3 条；`text` ≤90 字、`name` ≤16 字、`role` ≤28 字；`rating` 是 1~5 整数 | 6~10×条数 | 8×4 |
+| `pricingTiers` | 套餐定价卡，`featured` 档垫板描边上浮 + 实心按钮 | `tiers: [{ name, price, unit?, features, cta? }]`、`featured`（必填，恰一个） | 2~4 档；`name` ≤12 字、`price` ≤12 字、`unit` ≤10 字、`cta` ≤8 字；每档 2~4 条特性，单条 ≤24 字 | ~7×档数+3 | 10×5 |
+| `logoWall` | 灰度图标/文字字标网格——客户墙 | `monochrome?`、`logos: [{ image?, text? }]`（二选一，至少一个） | 4~8 个；`text` ≤20 字；图自动灰度 contain | ≤8 | 8×3 |
+| `pointList` | 刻度要点纵列：可选衬线序号 + 粗标签 + 静音正文，条目分隔随 `style.separator`——分类词条、要点清单 | `items: [{ label, body }]`、`numbered?: true` | 2~5 条；`label` ≤12 字、`body` ≤140 字；`numbered` 只接受 `true` | 5~17 | 5×4 |
+| `indexHeader` | 衬线序号（主色）+ 标题 + 右侧小注，底部分隔随 `style.separator`——并列栏统一栏头 | `num`（1~2 字，如 壹/儒/01）、`title`、`note?` | `title` ≤12 字、`note` ≤12 字 | 3~4 | 4×2 |
+| `eraRail` | 脊线压区域顶，刻度下挂衬线年代 + 静音短注，`highlight` 条目主色——年代轴、节奏带 | `items: [{ era, note }]`、`highlight?`（重点条下标） | 3~6 条；`era` ≤8 字、`note` ≤12 字，各限一行 | 1+3×条数 | 8×2 |
 
 ### 10 个页面原子
 
 页面原子只用下表的字段。它们不走核心组件的参数校验：内容放不下时报叶子缺陷（`LAYOUT_LEAF_INVALID`）。以下容量描述用于选型；必留信息超出容量时改用其他合法节点完整承载。`style` 语义同核心组件。
 
-| 组件 | 形态与语义 | 参数 | 条目与上限 |
-|---|---|---|---|
-| `founderProfile` | 创始人履历：左轨节点 + 章节正文 + 底部技能条 | `personName`（必填）、`role?`、`subtitle?`、`variant?`（`timeline` 默认 / `resume` 左轨更宽）、`showHeader?`（`false` 时只画正文，页面已有 `sectionHeader`）、`sections: [{ label?, heading, bullets?, columns?, timeline?, weight? }]`、`skills?: [{ title, text }]` | `sections` 每段给 `bullets` 或 `columns: [{ title, meta?, text }]`（columns 画横向公司时间轴，`timeline: false` 关掉）；`weight` 0.5~2.2（引擎夹取）；正文每行不足 44px 或单栏文字超高时报错 |
-| `radialFunnel` | 中心辐射 → 漏斗汇聚 → 结论 | `centerTitle`（必填）、`centerSubtitle?`、`satellites: string[]`、`bridge?`、`conclusionTitle`（必填）、`conclusionBody?`、`footnote?` | `satellites` 最多画 6 个（超出丢弃）；`bridge` 是中心与结论之间的桥接字 |
-| `kpiRows` | 左标签胶囊 + 大数字 + 注脚，逐行列出 | `rows: [{ label, value, note? }]` | 行高不足 28px 报错 |
-| `categoryCards` | 四栏「标题条 + 图形 + 指标」卡，无照片时的图像卡替代 | `items: [{ title, metric, note?, imageUrl? }]` | `title` 画顶部标题条；给 `imageUrl` 时卡片下半画图，否则画 `metric` 大数字 |
-| `featureRail` | 产品特征页：左侧参数块 + 中间曲线节点 + 右侧说明 | `params: [{ label, value }]`、`features: [{ title, text }]`、`imageUrl?` | 每行不足 54px 或说明文字超高时报错；给 `imageUrl` 时左上画图与同心圆注记 |
-| `sectionHeader` | 三枚 chevron + 标题 + 副标题的章节头 | `title`（必填）、`subtitle?`、`marker?` | `marker: false` 不画 chevron；标题超宽报错 |
-| `photoTriptych` | 三张满版图片并排，标签压在图上 | `images: [{ url, label? }]`、`overlay?`、`labelMode?`（`overlay` 默认 / `none`） | `images` 最多画 3 张（超出丢弃）；`overlay: true` 压一层深色罩 |
-| `competitorBoard` | 竞品行：厂商 / 产品图 / 特点胶囊 / 市场数据 | `competitors: [{ name, imageUrl?, tags: string[], facts: string[] }]` | 最多画 3 家（超出丢弃）；表头固定为厂商/产品/特点/市场情况；行高不足 60px 或 `facts` 超高时报错 |
-| `fullBleedQuote` | 满版图片 + 居中大字，文字位置由组件锁住 | `imageUrl`（必填）、`kicker?`、`titleLines: string[]`、`subtitle?`、`caption?`、`overlay?` | `titleLines` 逐行居中，引擎按最长行自动缩字；`overlay: false` 关掉压暗罩（默认压） |
-| `financialBoard` | 财务页：左财务表 + 右销量柱 + 底部资金用途 | `columns: string[]`、`rows: string[][]`、`chart: { categories: string[], values: number[] }`、`funding: [{ label, value }]`、`caption?` | `rows` 首列左对齐、其余居中；`chart.values` 与 `chart.categories` 一一对应；`funding` 每项一条底部格子 |
+| 组件 | 形态与语义 | 参数 | 条目与上限 | 槽位下限（列×行） |
+|---|---|---|---|---|
+| `founderProfile` | 创始人履历：左轨节点 + 章节正文 + 底部技能条 | `personName`（必填）、`role?`、`subtitle?`、`variant?`（`timeline` 默认 / `resume` 左轨更宽）、`showHeader?`（`false` 时只画正文，页面已有 `sectionHeader`）、`sections: [{ label?, heading, bullets?, columns?, timeline?, weight? }]`、`skills?: [{ title, text }]` | `sections` 每段给 `bullets` 或 `columns: [{ title, meta?, text }]`（columns 画横向公司时间轴，`timeline: false` 关掉）；`weight` 0.5~2.2（引擎夹取）；正文每行不足 44px 或单栏文字超高时报错 | 10×6 |
+| `radialFunnel` | 中心辐射 → 漏斗汇聚 → 结论 | `centerTitle`（必填）、`centerSubtitle?`、`satellites: string[]`、`bridge?`、`conclusionTitle`（必填）、`conclusionBody?`、`footnote?` | `satellites` 最多画 6 个（超出丢弃）；`bridge` 是中心与结论之间的桥接字 | 10×6 |
+| `kpiRows` | 左标签胶囊 + 大数字 + 注脚，逐行列出 | `rows: [{ label, value, note? }]` | 行高不足 28px 报错 | 6×4 |
+| `categoryCards` | 四栏「标题条 + 图形 + 指标」卡，无照片时的图像卡替代 | `items: [{ title, metric, note?, imageUrl? }]` | `title` 画顶部标题条；给 `imageUrl` 时卡片下半画图，否则画 `metric` 大数字 | 10×4 |
+| `featureRail` | 产品特征页：左侧参数块 + 中间曲线节点 + 右侧说明 | `params: [{ label, value }]`、`features: [{ title, text }]`、`imageUrl?` | 每行不足 54px 或说明文字超高时报错；给 `imageUrl` 时左上画图与同心圆注记 | 10×5 |
+| `sectionHeader` | 三枚 chevron + 标题 + 副标题的章节头 | `title`（必填）、`subtitle?`、`marker?` | `marker: false` 不画 chevron；标题超宽报错 | 10×2 |
+| `photoTriptych` | 三张满版图片并排，标签压在图上 | `images: [{ url, label? }]`、`overlay?`、`labelMode?`（`overlay` 默认 / `none`） | `images` 最多画 3 张（超出丢弃）；`overlay: true` 压一层深色罩 | 10×4 |
+| `competitorBoard` | 竞品行：厂商 / 产品图 / 特点胶囊 / 市场数据 | `competitors: [{ name, imageUrl?, tags: string[], facts: string[] }]` | 最多画 3 家（超出丢弃）；表头固定为厂商/产品/特点/市场情况；行高不足 60px 或 `facts` 超高时报错 | 10×5 |
+| `fullBleedQuote` | 满版图片 + 居中大字，文字位置由组件锁住 | `imageUrl`（必填）、`kicker?`、`titleLines: string[]`、`subtitle?`、`caption?`、`overlay?` | `titleLines` 逐行居中，引擎按最长行自动缩字；`overlay: false` 关掉压暗罩（默认压） | 10×6 |
+| `financialBoard` | 财务页：左财务表 + 右销量柱 + 底部资金用途 | `columns: string[]`、`rows: string[][]`、`chart: { categories: string[], values: number[] }`、`funding: [{ label, value }]`、`caption?` | `rows` 首列左对齐、其余居中；`chart.values` 与 `chart.categories` 一一对应；`funding` 每项一条底部格子 | 10×6 |
 
 ## Composition 硬约束（validate 会拒收）
 

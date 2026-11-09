@@ -262,6 +262,10 @@ export function converterOfExtension(
     case "eml": return emlToMarkdown;
     case "html":
     case "htm": return htmlToMarkdown;
+    // 纯文本家族：正文即内容，去 BOM 后原样返回（markdown 表格/标题自然进 blocks 管线）。
+    case "md":
+    case "markdown":
+    case "txt": return (buffer) => buffer.toString("utf8").replace(/^﻿/, "");
     default: return null;
   }
 }

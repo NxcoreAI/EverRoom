@@ -141,7 +141,6 @@ export type SlidesStyleStage =
 /** 风格会话持久化行（slides_style_sessions 表的 JSON 语义）。 */
 export interface SlidesStyleSessionData {
   id: string;
-  roomId: string;
   draftDocumentId: string | null;
   instruction: string;
   /** 用户累积反馈（「不要太蓝」等），逐条进入下轮生图提示词。 */

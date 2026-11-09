@@ -50,6 +50,14 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 /**
+ * 代理请求体上限：多模态请求（base64 图片）远超 Fastify 默认的 1 MiB。
+ * 默认值下 `read` 工具读几张图就会让整条 LLM 请求被网关自己以 413
+ * "Request body is too large" 拒掉（run 以 `413 "request_error"` 失败）。
+ * 与文件上传量级对齐；上游中转站自身的大小限制仍会原样透传。
+ */
+const AI_RELAY_BODY_LIMIT = 32 * 1024 * 1024;
+
+/**
  * new-api 中转链路的 gateway 侧端点：
  * - 会话端点（仅桌面主进程调用）：接收 SaaS 签发的短期令牌，进程内存持有；
  *   变更后 refresh() 重发 runtime config onChange，让槽位重写即时生效。
@@ -89,7 +97,7 @@ export function aiRelayRoutes(options: {
       return { ok: true };
     });
 
-    app.all("/ai-relay/*", async (request, reply) => {
+    app.all("/ai-relay/*", { bodyLimit: AI_RELAY_BODY_LIMIT }, async (request, reply) => {
       const session = sessions.current();
       if (!session) {
         return reply.code(503).send({

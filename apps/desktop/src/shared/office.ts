@@ -7,6 +7,8 @@ export interface OfficeAgentFileEvent {
   /** 缺省 docx（旧事件无此字段）。 */
   format?: OfficeAgentFileFormat
   phase?: 'rendering' | 'saved' | 'importing'
+  /** phase=rendering 时的实时页数（脚本执行 addSlide 计数，逐页推进）。 */
+  slide?: number
   /** done：fileEntryId，渲染层用它自动打开预览。 */
   fileId?: string
   originalName?: string
@@ -56,6 +58,11 @@ export interface OfficeAgentAskEvent {
   excerpt?: string
   /** 选区锚点（Word 顶层块索引区间）：文档侧据此重新高亮原文。 */
   anchor?: OfficeAskAnchor
+  /**
+   * 极简条 AI 快捷能力（WPS 式）：'document' | 'workbook' | 'page' 表示指令
+   * 作用于全文/整簿/当前页，没有选区锚点；缺省 = 经典选区浮层转发。
+   */
+  scope?: 'document' | 'workbook' | 'page'
 }
 
 /**

@@ -78,19 +78,24 @@ describe("StyleParams → component elements", () => {
       .toContain("#e8e4da");
   });
 
-  it("palette.accent → single emphasis slot (tick); accent=primary makes it primary", () => {
-    const accent = json(compile({ ...STATS, style: { accent: "accent" } }));
+  it("palette.accent → single emphasis slot (数值强调); accent=primary makes it primary", () => {
+    const PROGRESS = { type: "component", name: "progress", items: [{ label: "营收目标", value: 72 }, { label: "新客获取", value: 45 }] };
+    const accent = json(compile(PROGRESS));
     expect(accent).toContain("#c9a063");
-    const primary = json(compile({ ...STATS, style: { accent: "primary" } }));
+    const primary = json(compile({ ...PROGRESS, style: { accent: "primary" } }));
     expect(primary).toContain("#2447b0");
     expect(primary).not.toContain("#c9a063");
   });
 
   it("palette.primary / text / textMuted → structural marks and text runs", () => {
-    const out = compile({ ...STATS, style: { accent: "primary" } });
-    expect(json(out)).toContain("#2447b0");
-    expect(json(out)).toContain("#16181d");
-    expect(json(out)).toContain("#63676f");
+    const POINTS = {
+      type: "component", name: "pointList", numbered: true,
+      items: [{ label: "品类聚焦", body: "只做冷萃" }, { label: "渠道直连", body: "去掉中间商" }],
+    };
+    const out = compile({ ...POINTS, style: { accent: "primary" } });
+    expect(json(out)).toContain("#2447b0"); // 序号强调位
+    expect(json(out)).toContain("#16181d"); // 标签正文色
+    expect(json(out)).toContain("#63676f"); // 正文静音色
   });
 
   it("decoration.divider none → no hairline separators anywhere in the component", () => {
@@ -101,13 +106,15 @@ describe("StyleParams → component elements", () => {
     expect(none.filter((el) => el.h === 1).length).toBe(0);
   });
 
-  it("component type roles 取场景阶梯的 hero，风格卡的 typeScale 不参与", () => {
+  it("component type roles 固定在设计基准，风格卡的 typeScale 不参与、框高不缩放", () => {
     const out = texts(compile({ ...STATS }));
-    const valueRun = out.flatMap((el) => el.paragraphs).flatMap((p) => p.runs).find((run) => run.text === "2.83");
-    // value = 场景阶梯 hero × 1.55 × frameScale；内容区高 540 → frameScale≈0.9375。
-    const frameScale = 540 / 576;
-    const contract = contractFromStyleParams(BASE);
-    expect(valueRun?.sizePt).toBe(Math.round(contract.theme.typeScale.hero * 1.55 * frameScale));
+    const runs = out.flatMap((el) => el.paragraphs).flatMap((p) => p.runs);
+    const valueRun = runs.find((run) => run.text === "2.83");
+    const labelRun = runs.find((run) => run.text === "2020 GDP");
+    // 核心数据 56–80pt 按数字长度适配；标签固定 14pt。
+    expect(valueRun?.sizePt).toBeLessThanOrEqual(80);
+    expect(valueRun?.sizePt).toBeGreaterThanOrEqual(56);
+    expect(labelRun?.sizePt).toBe(14);
     // 同一份风格卡改 typeScale：产物不变（字号不吃风格卡）。
     const bigger = texts(compile({ ...STATS }, { typography: { ...BASE.typography, typeScale: { hero: 56 } } }));
     expect(bigger.flatMap((el) => el.paragraphs).flatMap((p) => p.runs).find((run) => run.text === "2.83")?.sizePt)

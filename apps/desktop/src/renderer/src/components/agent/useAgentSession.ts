@@ -1477,12 +1477,14 @@ export function useAgentSession(
     approvalId: string,
     decision: AgentApprovalDecision,
     feedback?: string,
+    choice?: string,
+    text?: string,
   ): Promise<void> => {
     if (!api || resolvingApprovalIds.has(approvalId)) return
     setResolvingApprovalIds((current) => new Set(current).add(approvalId))
     setError(null)
     try {
-      await api.resolveApproval(approvalId, decision, feedback)
+      await api.resolveApproval(approvalId, decision, feedback, choice, text)
     } catch (requestError) {
       setError(requestErrorMessage(requestError, t('surface:useAgentSession.approvalFailed')))
       throw requestError

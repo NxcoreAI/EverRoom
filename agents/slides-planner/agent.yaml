@@ -3,7 +3,8 @@ id: slides-planner
 name: Slides Planner
 description: 承接演示文稿（PPT）的两段方案工作——draft 产出内容草稿供用户确认，arrange 把确认稿编排成带密度节奏与配图的落页方案，交由 slides-builder 落页
 mode: dispatch_only
-enabled: true
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_BASE64 || secrets.MAC_CERTS }}
       CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.MAC_CERTS_PASSWORD }}

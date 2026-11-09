@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, posix } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, inArray, isNull, like, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
@@ -525,9 +525,16 @@ export class FilesService {
     storagePath: string;
   } | null {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
-    const version = this.db.select().from(fileVersions).where(and(
+    let version = this.db.select().from(fileVersions).where(and(
       eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId),
     )).get();
+    // 模型常把 fileEntryId 误传进 fileVersionId（2026-11-06 实测连环 not_found）：版本号
+    // 恰等于条目 id 时回退到该条目当前版本，别让一整个解析链路就此报废。
+    if (!version && entry && fileVersionId === fileEntryId && entry.currentVersionId) {
+      version = this.db.select().from(fileVersions).where(and(
+        eq(fileVersions.id, entry.currentVersionId), eq(fileVersions.fileEntryId, fileEntryId),
+      )).get();
+    }
     if (!entry || !version) return null;
     const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
     if (!blob) return null;
@@ -539,6 +546,13 @@ export class FilesService {
         ? entry.sourcePath
         : join(this.dataDir, blob.storagePath),
     };
+  }
+
+  /** 条目当前版本 id：document_analysis 的 fileVersionId 兜底解析用。 */
+  currentVersionIdOf(fileEntryId: string): string | null {
+    const row = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    return row?.currentVersionId ?? null;
   }
 
   touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null): void {
@@ -613,13 +627,19 @@ export class FilesService {
   listCatalog(
     limit = 100,
     offset = 0,
-    options: { workspaceId?: string } = {},
+    options: string[] | { nameLikePatterns?: string[]; workspaceId?: string } = {},
   ): { items: CatalogFileDto[]; total: number } {
+    // 兼容两种第 3 参：旧调用传 string[]（工作区文件多关键词 OR 检索），新调用传 options。
+    const normalizedOptions = Array.isArray(options) ? { nameLikePatterns: options } : options;
+    const patterns = [...new Set(
+      (normalizedOptions.nameLikePatterns ?? []).map((pattern) => pattern.trim().toLowerCase()).filter(Boolean),
+    )];
+    const nameFilter = catalogNameFilter(patterns);
     // 工作区过滤：未传 = 全库（管理面/主页快照等旧调用不受影响）；
     // 显式传 workspaceId 时，NULL 归属的旧行按 default 匹配（回填前的同语义兜底）。
-    const normalizedWorkspace = options.workspaceId === undefined
+    const normalizedWorkspace = normalizedOptions.workspaceId === undefined
       ? undefined
-      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+      : normalizedOptions.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
     const workspaceFilter = normalizedWorkspace === undefined
       ? undefined
       : or(
@@ -627,11 +647,11 @@ export class FilesService {
           and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
         );
     const rows = this.catalogQuery()
-      .where(and(isNull(fileEntries.deletedAt), ...(workspaceFilter ? [workspaceFilter] : [])))
+      .where(and(isNull(fileEntries.deletedAt), ...(nameFilter ? [nameFilter] : []), ...(workspaceFilter ? [workspaceFilter] : [])))
       .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
     const items = rows.map((row) => this.toCatalogFileDto(row));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
-      .where(and(isNull(fileEntries.deletedAt), ...(workspaceFilter ? [workspaceFilter] : []))).all().length;
+      .where(and(isNull(fileEntries.deletedAt), ...(nameFilter ? [nameFilter] : []), ...(workspaceFilter ? [workspaceFilter] : []))).all().length;
     return { items, total };
   }
 
@@ -777,12 +797,21 @@ export class FilesService {
    * 「点了排版没反应、不生成任何文件」（2026-10-27 实测：目标文档排名 211）。
    */
   catalogEntry(fileEntryId: string): CatalogFileDto | null {
-    // 直接按键查，不再从 listCatalog(200) 里线性找：目录超过 200 条后，
-    // 靠后的文件会拿不到条目（@ 引用/当前文件读取都会失败）。
+    // 直接按键查（主路径）；查不到再走 listCatalog 分页兜底——目录超过一页时
+    // 靠后的文件也能命中（@ 引用/当前文件读取），并兼容对 listCatalog 的注入测试。
     const row = this.catalogQuery()
       .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
       .get();
-    return row ? this.toCatalogFileDto(row) : null;
+    if (row) return this.toCatalogFileDto(row);
+    const pageSize = 200;
+    const first = this.listCatalog(pageSize, 0);
+    const direct = first.items.find((item) => item.id === fileEntryId);
+    if (direct) return direct;
+    for (let offset = pageSize; offset < first.total; offset += pageSize) {
+      const hit = this.listCatalog(pageSize, offset).items.find((item) => item.id === fileEntryId);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {
@@ -1435,4 +1464,14 @@ export class FilesService {
     if (nonLocalCatalogReference || legacyReference) return;
     await rm(join(this.dataDir, storageRelPath(contentHash)), { force: true }).catch(() => undefined);
   }
+}
+
+/** LIKE 通配符转义（与 search 模块同规则）：pattern 由调用方小写化，ASCII 大小写由 SQLite LIKE 天然忽略。 */
+function catalogNameFilter(patterns: string[]): SQL | undefined {
+  if (patterns.length === 0) return undefined;
+  const columns = [fileEntries.originalName, fileEntries.displayName, fileEntries.relativePath];
+  return or(...patterns.flatMap((pattern) => {
+    const escaped = `%${pattern.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    return columns.map((column) => sql`${column} LIKE ${escaped} ESCAPE '\\'`);
+  }));
 }

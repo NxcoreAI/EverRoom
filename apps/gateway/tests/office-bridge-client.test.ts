@@ -40,6 +40,24 @@ async function startStub(
 }
 
 describe("OfficeBridgeClient", () => {
+  it("fillPage 走 /v1/office-edit apply 且携带 page 载荷（超时放宽到 5 分钟）", async () => {
+    // stub 故意延迟 150ms 才应答：常规 30s 超时下必达——这里只锁请求契约；
+    // 放宽的真实意义在带大图首页（30s 内栅格化不完）不再被打成超时失败。
+    const stub = await startStub(200, { ok: true, applied: true });
+    try {
+      const result = await stub.client.fillPage({ fileId: "file-1", slideIndex: 0, specJson: "{}" });
+      expect(result.ok).toBe(true);
+      expect(stub.recorded[0]?.url).toBe("/v1/office-edit");
+      expect(stub.recorded[0]?.body).toMatchObject({
+        mode: "apply",
+        fileId: "file-1",
+        page: { slideIndex: 0, specJson: "{}" },
+      });
+    } finally {
+      await stub.close();
+    }
+  });
+
   it("generate 透传 deferDone（pptx 骨架入库阶段不广播 done）", async () => {
     const stub = await startStub(200, { fileEntryId: "file-1", originalName: "deck.pptx" });
     try {

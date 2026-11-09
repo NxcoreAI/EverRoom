@@ -52,7 +52,7 @@ export interface SlidesStyleStageResult {
 
 export interface SlidesStyleStageInput {
   task: "style" | "style_select";
-  run: { runId: string; sessionId: string; roomId: string };
+  run: { runId: string; sessionId: string };
   instruction: string;
   title?: string;
   draftDocumentId?: string;
@@ -244,7 +244,7 @@ async function runStyleImages(
 ): Promise<SlidesStyleStageResult> {
   // 活跃会话在挑图阶段：重入默认只是把候选卡再亮出来（用户说「继续/看候选」），
   // 只有明确表达不满意（regenerate）才累积反馈重新生成——不烧配额。
-  const active = deps.sessions.findActive(input.run.roomId);
+  const active = deps.sessions.findActive();
   // 同 Room 换了草稿（新一轮 PPT 流程）不能续用旧会话：风格会话绑着草稿，
   // generate 按会话取草稿，复用绑着旧草稿的会话会让后续阶段读错文档。
   const requestedDraftId = input.draftDocumentId?.trim() || null;
@@ -276,7 +276,6 @@ async function runStyleImages(
     session = { ...reusable, feedback, generation: reusable.generation + 1 };
   } else {
     session = deps.sessions.create({
-      roomId: input.run.roomId,
       draftDocumentId: input.draftDocumentId?.trim() || null,
       instruction: input.instruction,
     });
@@ -384,8 +383,8 @@ async function runStyleSelect(
   const sessionId = input.styleSessionId?.trim() ?? "";
   if (!sessionId) return failed("slides_style_session_required", "缺少 styleSessionId：先经 task=style 产出纵览候选并由用户挑选。");
   const session = deps.sessions.byId(sessionId);
-  if (!session || session.roomId !== input.run.roomId) {
-    return failed("slides_style_session_not_found", "风格会话不存在或不属于当前 Room。");
+  if (!session) {
+    return failed("slides_style_session_not_found", "风格会话不存在；请重新发起风格生成。");
   }
   if (session.stage !== "images_ready") {
     return failed("slides_style_stage_conflict", `风格会话当前阶段是 ${session.stage}，不能重复提取。`);

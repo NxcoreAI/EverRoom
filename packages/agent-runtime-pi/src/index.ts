@@ -69,6 +69,36 @@ export const DEFAULT_PI_BUILTIN_TOOLS: PiBuiltinToolName[] = [
   "ls",
 ];
 
+/** 通用决策卡：agent 主动请求用户确认计划（confirm）或回答问题（question）。 */
+export interface PiAgentCardRequest {
+  approvalId: string;
+  input: StartRuntimeRunInput;
+  /** confirm = 计划/操作确认卡；question = 提问卡（等用户回答）。 */
+  card: {
+    kind: "confirm" | "question";
+    title: string;
+    body?: string;
+    /** confirm：计划/步骤列表（按序展示）。 */
+    plan?: string[];
+    /** question：可选答案（按钮）；不传或 allowText 时用户可自由输入。 */
+    options?: string[];
+    allowText?: boolean;
+    /** confirm：设计决策展示——色板（hex，按 主色/次色/强调 顺序）。 */
+    palette?: string[];
+    /** confirm：标题/正文字体名。 */
+    fonts?: { heading?: string; body?: string };
+    /** confirm：其他风格要点（如「深色封面 + 浅色内容页」）。 */
+    notes?: string[];
+  };
+  timeoutMs?: number;
+}
+
+export interface PiAgentCardDecision {
+  /** confirm：approved/denied；question：选项文本或用户输入。 */
+  choice: string;
+  text?: string;
+}
+
 export interface PiAgentRuntimeConfig {
   provider: string;
   model: string;
@@ -257,7 +287,7 @@ interface ActivePiRun {
   autoContinues: number;
   /** 正在自动续写：期间不能被 start() 的收尾逻辑提前判完成。 */
   continuing: boolean;
-  /** 连续相同调用的计数（原地打转守卫）。 */
+  /** 连续相同调用的计数（原地打转守卫，取代 main 侧 identicalStreak 简版）。 */
   repeated: RepeatedCallState;
   repeatLimitExceeded: boolean;
   /** 已就空转 / 打转向模型纠偏过一次（第二次命中才中止）。 */
@@ -555,6 +585,7 @@ function compactHistoricalToolState(session: AgentSession): boolean {
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
   private readonly sessions = new Map<string, PiSessionHandle>();
+  private readonly pendingAgentCards = new Map<string, { resolve: (decision: PiAgentCardDecision) => void; timer: ReturnType<typeof setTimeout>; kind: "confirm" | "question" }>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 
@@ -637,6 +668,72 @@ export class PiAgentRuntime implements AgentRuntime {
   /** edit/write 文件变更审批（ask_before_write 档；其余档在入口直接放行）。 */
   async requestEditApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "edit", toolName: request.toolName ?? "edit" });
+  }
+
+  /**
+   * 通用决策卡：把 confirm/question 卡片作为 approval.requested(kind:"card") 事件
+   * 推进当前 run 的事件流，挂起等待用户在 UI 上作答（resolveApproval 带 choice/text
+   * 回填）。与 bash 审批共用同一条阻塞往返管道，超时按拒绝/空答收口。
+   */
+  async requestAgentCard(request: PiAgentCardRequest): Promise<PiAgentCardDecision> {
+    const active = this.activeRuns.get(request.input.runId);
+    const timeoutMs = Math.max(1_000, request.timeoutMs ?? 10 * 60_000);
+    active?.queue.push({
+      type: "approval.requested",
+      payload: {
+        approvalId: request.approvalId,
+        kind: "card",
+        toolName: request.card.kind === "confirm" ? "agent_confirm" : "agent_ask_user",
+        command: request.card.title,
+        cwd: null,
+        timeoutMs,
+        card: request.card,
+      },
+    });
+    const decision = await new Promise<PiAgentCardDecision>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAgentCards.delete(request.approvalId);
+        resolve({ choice: request.card.kind === "confirm" ? "denied" : "", text: "timeout" });
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingAgentCards.set(request.approvalId, { resolve, timer, kind: request.card.kind });
+    });
+    active?.queue.push({
+      type: "approval.resolved",
+      payload: {
+        approvalId: request.approvalId,
+        approved: request.card.kind === "confirm" ? decision.choice === "approved" : decision.choice !== "" || Boolean(decision.text),
+        choice: decision.choice,
+        ...(decision.text ? { text: decision.text } : {}),
+      },
+    });
+    return decision;
+  }
+
+  /**
+   * run 被取消/中止时把挂起的决策卡按形态收口：confirm 按取消、question 按空答，
+   * 工具拿到正常结果而不是 "Pi tool execution aborted"——卡片挂起期间用户点重试/停止
+   * 不会再把工具标成失败（2026-11-06 实测：confirm 卡挂起时 run 被重试取消，工具行
+   * 显示 aborted，用户以为确认功能坏了）。
+   */
+  private cancelPendingAgentCards(reason: string): void {
+    for (const pending of this.pendingAgentCards.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(pending.kind === "confirm"
+        ? { choice: "denied", text: reason }
+        : { choice: "", text: reason });
+    }
+    this.pendingAgentCards.clear();
+  }
+
+  /** UI 侧回填决策卡作答（gateway 的 resolveApproval 路由转发到这里）。 */
+  resolveAgentCard(approvalId: string, decision: PiAgentCardDecision): boolean {
+    const pending = this.pendingAgentCards.get(approvalId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pendingAgentCards.delete(approvalId);
+    pending.resolve(decision);
+    return true;
   }
 
   private async requestToolApproval(request: PiBashApprovalRequest & { kind: "shell" | "edit" }): Promise<boolean> {
@@ -803,6 +900,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
+    this.cancelPendingAgentCards("run_cancelled");
     try {
       await active.handle.session.abort();
       await this.finish(runId, "cancelled");
@@ -821,6 +919,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async dispose(): Promise<void> {
     const activeRuns = [...this.activeRuns.entries()];
+    this.cancelPendingAgentCards("runtime_disposed");
     await Promise.all(activeRuns.map(async ([runId, active]) => {
       active.cancelled = true;
       try {
@@ -1093,6 +1192,14 @@ export class PiAgentRuntime implements AgentRuntime {
             `当前界面 locale：${responseLanguage}。除非用户明确要求本次输出使用另一种语言，所有 Agent 生成的自然语言内容（包括聊天答复、总结、文档标题和文档正文）都必须使用 ${responseLanguage} 对应的主要语言；代码、路径、引用、专有名词和用户原文保持原样。`,
           );
         }
+        const workspaceId = context.current?.workspaceId?.trim();
+        if (workspaceId) {
+          const workspaceLabel = context.current?.workspaceLabel?.trim();
+          lines.push(
+            `当前工作区：${workspaceLabel || workspaceId}（workspaceId: ${workspaceId}）。文件检索与产物入库默认作用于该工作区（未指定 workspaceId 的工具按会话归属自动落到这里）；除非用户明确要求，不要把检索范围或产物落到其他工作区。`,
+          );
+        }
+
         // 用户画像：长期记忆沉淀的「关于用户本人」的稳定信息。放在语言约定之后、
         // 工具说明之前——它是先验认知，不是本轮任务，所以给的是「怎么用」而不是指令。
         const userProfile = context.current?.userProfilePrompt?.trim();
@@ -1186,9 +1293,10 @@ export class PiAgentRuntime implements AgentRuntime {
       active.handle.session.setActiveToolsByName(
         this.activeToolNamesFor(input, active.handle.toolNames),
       );
-      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照，
-      // 提示词只保留「直接创建、不追问归属」的工作区级指引。
-      const roomContext = "工作区文稿一律按工作区级文稿创建，用户要求创建、保存或写入文档时直接调用 document_write_begin，不需要用户先选择或确认归属，也不要只用文字追问归属。";
+      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照。
+      // 2026-11 Markdown 文稿链路下线后不再注入「直接调 document_write_begin」的
+      // 指引——那会诱导模型调用不存在的工具。正式文稿一律 office_create 生成。
+      const roomContext = "工作区的正式文稿（Word/Excel/PPT）由对应 Office 工具直接生成或修改：用户要求创建或写入文档时，按格式选 office_create / sheets_create / slides_create，不需要用户先选择或确认归属，也不要只用文字追问归属。";
       const documentContext = input.activeDocument
         ? [
             `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
@@ -1198,10 +1306,10 @@ export class PiAgentRuntime implements AgentRuntime {
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
         : input.activeFile
-          // 有 Office 页签时不要再说“没有活动文档，去调 document_list”：
-          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜文稿。
-          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先调 document_list。"
-          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+          // 有 Office 页签时不要再说“没有活动文稿，去翻文稿库”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜。
+          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先去搜索文档。"
+          : "当前视口没有已确认的活动文稿；若用户明确要求修改已有文件，先用 file_search 定位 fileId 再走对应的读写工具。";
       // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
       // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
       const activeFileContext = buildActiveFileContext(input.activeFile);
@@ -1218,8 +1326,8 @@ export class PiAgentRuntime implements AgentRuntime {
         : [
             `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
             "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
-            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。文档正文一律先经 document_draft 生成；修改或续写已有文档时不要先调用 document_read——直接调用 document_draft（网关会读取权威版本组装素材并为本轮代签读取凭证），随后凭返回的 invocationId 完成 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。仅当用户询问文档内容本身时才使用 document_read。",
-            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
+            "如果用户本轮明确要求创建或修改文档，必须在本轮重新完成所需工具链：新文稿按格式直接用 office_create / sheets_create / slides_create 生成；修改已有文件先 file_search 定位，再走 word_agent_* / sheets_agent_* / slides_read + slides_edit。除非本轮工具返回不可恢复错误，不要把生成推迟到下一轮。",
+            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或操作句柄；这些都是 Agent 应通过工具获取和组织的内部参数。",
           ].join("\n");
       const prompt = [
         `当前工作区：${input.pageLabel}`,
@@ -1585,6 +1693,7 @@ export class PiAgentRuntime implements AgentRuntime {
   private async abortForToolLimit(runId: string): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
+    this.cancelPendingAgentCards("run_aborted");
     try {
       await active.handle.session.abort();
     } catch {

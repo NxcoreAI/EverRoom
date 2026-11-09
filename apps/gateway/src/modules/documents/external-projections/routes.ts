@@ -1,10 +1,13 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import { DocumentServiceError } from "../errors.js";
+import { roomScopeId } from "../room-scope.js";
 import type { ExternalDocumentProjectionService } from "./service.js";
 
+const ScopeId = Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]);
 const Context = Type.Object({
-  roomId: Type.String({ minLength: 1, maxLength: 128 }),
+  // 省略/null = 工作区级操作（P0-2d）；旧桌面仍可传真实 roomId。
+  roomId: Type.Optional(ScopeId),
   sessionId: Type.String({ minLength: 1, maxLength: 128 }),
   runId: Type.String({ minLength: 1, maxLength: 128 }),
 });
@@ -34,7 +37,8 @@ export function externalDocumentProjectionRoutes(
           resourceId: Type.String({ minLength: 1, maxLength: 128 }),
         }),
         body: Type.Object({
-          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          // 省略/null = 工作区作用域（service 归一为 scope sentinel 落库）。
+          roomId: Type.Optional(ScopeId),
           relativePath: Type.String({ minLength: 1, maxLength: 2048 }),
           sourceHash: Type.String({ minLength: 16, maxLength: 128 }),
           title: Type.String({ minLength: 1, maxLength: 120 }),
@@ -102,18 +106,24 @@ export function externalDocumentProjectionRoutes(
     }, async (request, reply) => {
       try {
         const context = request.body.command.context;
+        const normalizedContext = { ...context, roomId: context.roomId ?? null };
         const operation = service.getOperation(request.body.operationId);
         if (!operation) return reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" });
-        if (context.roomId !== operation.roomId || context.sessionId !== operation.sessionId || context.runId !== operation.runId) {
+        if (normalizedContext.roomId !== operation.roomId
+          || context.sessionId !== operation.sessionId
+          || context.runId !== operation.runId) {
           return reply.code(403).send({ error: "OPERATION_FORBIDDEN", message: "Operation belongs to another Agent run" });
         }
         authorizeContext?.({
           capabilityId: operation.capabilityId,
           agentSessionId: context.sessionId,
           runId: context.runId,
-          roomId: context.roomId,
+          roomId: roomScopeId(normalizedContext.roomId),
         });
-        return await service.prepare(request.body);
+        return await service.prepare({
+          ...request.body,
+          command: { ...request.body.command, context: normalizedContext },
+        });
       } catch (error) {
         if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
         throw error;
@@ -131,17 +141,18 @@ export function externalDocumentProjectionRoutes(
       },
     }, async (request, reply) => {
       try {
+        const normalizedContext = { ...request.body.context, roomId: request.body.context.roomId ?? null };
         const preparationOperation = service.getOperationForPreparation(request.body.preparationId);
         if (!preparationOperation) {
           return reply.code(404).send({ error: "VAULT_PATCH_PREPARATION_NOT_FOUND", message: "Vault patch preparation not found" });
         }
         authorizeContext?.({
           capabilityId: preparationOperation.capabilityId,
-          agentSessionId: request.body.context.sessionId,
-          runId: request.body.context.runId,
-          roomId: request.body.context.roomId,
+          agentSessionId: normalizedContext.sessionId,
+          runId: normalizedContext.runId,
+          roomId: roomScopeId(normalizedContext.roomId),
         });
-        return await service.complete(request.body);
+        return await service.complete({ ...request.body, context: normalizedContext });
       } catch (error) {
         if (error instanceof DocumentServiceError) return reply.code(error.statusCode).send(errorPayload(error));
         throw error;

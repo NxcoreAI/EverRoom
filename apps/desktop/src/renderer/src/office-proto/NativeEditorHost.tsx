@@ -59,32 +59,71 @@ export function NativeEditorHost({
   const instanceRef = useRef<string | null>(null)
   const real = realCatalog !== undefined
 
+  /**
+   * 2026-11-06 修复「agent 对话区文件点击后重复打开、闪烁、关不掉」：
+   * 主进程每次 files.openOriginal 都会广播 office:preview-request → Workbench
+   * 用 catalogToOfficeFile 生成全新的 file 对象 → openFileInWorkspace 写
+   * pendingBubbleFile → 气泡窗 openFile 用新对象替换同 id 的文件 → 本组件拿到
+   * 新的 realCatalog 引用 → open 回调失效 → useEffect 重跑 → 再次 openOriginal。
+   * 这是一条约 12ms 一轮的跨进程反馈环（日志累计 9 万次 open.reuse）；
+   * 每轮 setStatus('opening') 把 loader 打回来，就是肉眼看到的闪烁；用户关掉
+   * 标签后下一轮广播又把它加回来，所以「关不掉」。
+   *
+   * 断点放在这里：同一「打开键」在一次挂载周期内只真正调用一次 openOriginal。
+   * 键只由稳定标量组成（fileId / catalog.id / contentHash / name），换文件或
+   * 内容变化时仍会正常重开。
+   */
+  const openedKeyRef = useRef<string | null>(null)
+  const inFlightKeyRef = useRef<string | null>(null)
+  // 对象引用每次渲染都变：只放 ref，不进 useCallback 依赖。
+  const catalogRef = useRef(realCatalog)
+  catalogRef.current = realCatalog
+  const specRef = useRef(spec)
+  specRef.current = spec
+  const catalogId = realCatalog?.id ?? ''
+  const catalogHash = realCatalog?.contentHash ?? ''
+  const catalogName = realCatalog?.originalName ?? ''
+  const openKey = real
+    ? `${fileId}|${catalogId}|${catalogHash}|${catalogName}`
+    : `${fileId}|mock|${title}`
+
   const open = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
-    if (realCatalog) {
-      const files = window.nxcore?.files
-      if (!files?.openOriginal) return { ok: false, error: '文件服务尚未就绪，请稍后重试。' }
-      const editable = isEditableName(realCatalog.originalName)
-      const result = await files.openOriginal(
-        realCatalog.id,
-        realCatalog.originalName,
-        realCatalog.contentHash,
-        editable ? { editable: true } : undefined,
-      )
-      if (result.openedWith !== 'office') {
-        return {
-          ok: false,
-          error: result.legacyFallback
-            ? '旧版 Office 格式转换失败，已交给系统默认应用打开。'
-            : '该格式不支持内置预览，已交给系统默认应用打开。',
+    // 已成功打开 / 正在打开同一份文件：直接复用现有实例，不再发 IPC（断环）。
+    if (openedKeyRef.current === openKey || inFlightKeyRef.current === openKey) return { ok: true }
+    inFlightKeyRef.current = openKey
+    try {
+      const catalog = catalogRef.current
+      if (catalog) {
+        const files = window.nxcore?.files
+        if (!files?.openOriginal) return { ok: false, error: '文件服务尚未就绪，请稍后重试。' }
+        const editable = isEditableName(catalog.originalName)
+        const result = await files.openOriginal(
+          catalog.id,
+          catalog.originalName,
+          catalog.contentHash,
+          editable ? { editable: true } : undefined,
+        )
+        if (result.openedWith !== 'office') {
+          return {
+            ok: false,
+            error: result.legacyFallback
+              ? '旧版 Office 格式转换失败，已交给系统默认应用打开。'
+              : '该格式不支持内置预览，已交给系统默认应用打开。',
+          }
         }
+        instanceRef.current = result.instanceId
+      } else {
+        const currentSpec = specRef.current
+        if (!window.desktop?.office || !currentSpec) return { ok: false, error: '原型 Office 桥不可用。' }
+        const result = await window.desktop.office.open({ fileId, title, spec: currentSpec })
+        if (!result.ok) return { ok: false, error: result.error ?? '未知错误' }
       }
-      instanceRef.current = result.instanceId
+      openedKeyRef.current = openKey
       return { ok: true }
+    } finally {
+      if (inFlightKeyRef.current === openKey) inFlightKeyRef.current = null
     }
-    if (!window.desktop?.office || !spec) return { ok: false, error: '原型 Office 桥不可用。' }
-    const result = await window.desktop.office.open({ fileId, title, spec })
-    return result.ok ? { ok: true } : { ok: false, error: result.error ?? '未知错误' }
-  }, [fileId, realCatalog, spec, title])
+  }, [fileId, openKey, title])
 
   const activate = useCallback(async () => {
     if (real) {
@@ -102,8 +141,12 @@ export function NativeEditorHost({
 
   useEffect(() => {
     let cancelled = false
-    setStatus('opening')
-    setError(null)
+    // 已打开过就不再把状态打回 opening：否则 loader 与编辑区每轮交替，就是
+    // 肉眼可见的闪烁，且第二个 useEffect 会因 status 反复重建全部观测器。
+    if (openedKeyRef.current !== openKey) {
+      setStatus('opening')
+      setError(null)
+    }
     void open()
       .then((result) => {
         if (cancelled) return
@@ -121,7 +164,7 @@ export function NativeEditorHost({
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, openKey])
 
   // 实例就绪后才上报矩形：open 之前发出的 setWorkspaceBounds 没有监听者。
   useEffect(() => {

@@ -19,6 +19,18 @@
 4. **不许靠删信息过校验**：缺陷说"来源未交代"就补 block 或记 omissions；确实要删可选来源，必须写清 disposition 与原因。必留来源（mustShow=true）永远不能降级、不能移进讲稿。
 5. **修不动的如实说**：内容本身支撑不住时，不要编数字——按缺陷原样返回该页并让校验继续报错，网关会让整轮失败重试，而不是静默产出缺内容的页。
 
+## 修复后的自检清单（网关只做确定性校验，不过就整批失败）
+
+提交前逐页检查，任何一条不满足就继续改，不要提交：
+
+1. 页面 ID 与页序等于 sources 的 pageId 顺序；只返回 repairPageIds 点名的页。
+2. sources 里每条来源都被交代：被 block.sourceRefs 引用（同时出现在 content.sourceRefs 中）或写进 omissions（omission.sourceRef 必须出现在 content.sourceRefs 中）；mustShow=true 的来源由 mustShow=true 的 block 展示。
+3. block 文本里的每个数字都能在它引用的来源原文里找到；表格/图表数值同样保真，不写测算值。
+4. metric 的 value+unit 拼接后原样出现在来源原文里（来源「1.2亿」→ value「1.2亿」、unit 留空；来源「44%」→ value「44」、unit「%」），不补来源没有的单位。
+5. content.notes 里逐字包含所有 disposition="notes" 的 omission 来源原文；verbatimRefs 由 mustShow block 完整包含原文。
+6. 每页都有 message；content 只含 id / sourceRefs / role / message / blocks / relations / focusRefs / constraints / notes / omissions，不要加额外字段。
+7. 保留 original 的必留信息与表达质量：不要为了过校验删信息或写空话。
+
 ## 提交
 
 结束前必须调用 `subagent_submit_result`，提交 `{schemaVersion:"storyboard/v3", pages:[所有 repairPageIds 对应的完整页面]}`。完成条件：逐项解决 defects，完整保留必留信息，返回每个指定页，没有修改范围外页面。最终文本不会被解析为结构化结果。

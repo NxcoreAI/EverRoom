@@ -255,7 +255,7 @@ export interface SubagentFrameworkConfig {
    * invocation 同时在飞，与交互链路共用一个 4~8 的窗口时，页级调用会互相排队。
    */
   slidesMaxConcurrent?: number;
-  /** 非 slides 子代理（交互链路，如 context-room / doc-writer）的并发上限；缺省沿用 `maxConcurrent`。 */
+  /** 非 slides 子代理（交互链路，如 doc-writer）的并发上限；缺省沿用 `maxConcurrent`。 */
   defaultMaxConcurrent?: number;
   /**
    * 影子/旁路作业（slides-editor 的 storyboard 阴影压缩）的并发上限。
@@ -348,24 +348,6 @@ function parsePositiveInteger(name: string, value: string): number {
   return Number(value);
 }
 
-/** 带范围校验的正整数配置：格式/范围错误都报 `Invalid <name>: <value>`。 */
-function parseBoundedInteger(name: string, value: string, minimum: number, maximum: number): number {
-  const parsed = parsePositiveInteger(name, value);
-  if (parsed < minimum || parsed > maximum) {
-    throw new Error(`Invalid ${name}: ${value}`);
-  }
-  return parsed;
-}
-
-/** 归档开关：缺省开启；1/true/on/yes 开，0/false/off/no 关，其余报错。 */
-function parseArchiveEnabled(value: string | undefined): boolean {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) return true;
-  if (["1", "true", "on", "yes"].includes(normalized)) return true;
-  if (["0", "false", "off", "no"].includes(normalized)) return false;
-  throw new Error(`Invalid NXCORE_AGENT_DEBUG_ARCHIVE: ${value}`);
-}
-
 /** Return the first non-empty environment value, allowing renamed variables to fall back safely. */
 function firstEnvValue(env: NodeJS.ProcessEnv, ...names: string[]): string {
   for (const name of names) {
@@ -438,6 +420,15 @@ function parseBoolean(name: string, value: string): boolean {
     throw new Error(`Invalid ${name}: expected "true" or "false"`);
   }
   return value === "true";
+}
+
+/** 归档开关：缺省开启；1/true/on/yes 开，0/false/off/no 关，其余报错。 */
+function parseArchiveEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return true;
+  if (["1", "true", "on", "yes"].includes(normalized)) return true;
+  if (["0", "false", "off", "no"].includes(normalized)) return false;
+  throw new Error(`Invalid NXCORE_AGENT_DEBUG_ARCHIVE: ${value}`);
 }
 
 function inferMcpWebSocketUrl(baseUrl: string): string {
@@ -550,7 +541,10 @@ export function loadConfig(
     aiBaseUrl: env.NXCORE_AI_BASE_URL?.trim() ?? "",
     aiApiKey: env.NXCORE_AI_API_KEY?.trim() ?? "",
     aiApi: env.NXCORE_AI_API ?? "openai-completions",
-    aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "8192"),
+    // 主档输出上限：主 Agent 要一次产出整册 pptxgenjs 脚本（实测 5~15 页 deck 脚本
+    // 2~4 万 token），8192 会在工具参数中途截断（stopReason=length）并把重试轮
+    // 的上下文顶爆窗口。maxTokens 只是请求上限、按实际用量计费，给足即可。
+    aiMaxTokens: parsePositiveInteger("NXCORE_AI_MAX_TOKENS", env.NXCORE_AI_MAX_TOKENS ?? "65536"),
     aiBackgroundMaxTokens: parsePositiveInteger(
       "NXCORE_AI_BACKGROUND_MAX_TOKENS",
       env.NXCORE_AI_BACKGROUND_MAX_TOKENS ?? "8192",
@@ -639,23 +633,17 @@ export function loadConfig(
     officeBridgeUrl: env.NXCORE_OFFICE_BRIDGE_URL?.trim() ?? "",
     officeBridgeToken: env.NXCORE_OFFICE_BRIDGE_TOKEN?.trim() ?? "",
     agentDebugArchiveEnabled: parseArchiveEnabled(env.NXCORE_AGENT_DEBUG_ARCHIVE),
-    agentDebugArchiveDays: parseBoundedInteger(
+    agentDebugArchiveDays: parsePositiveInteger(
       "NXCORE_AGENT_DEBUG_ARCHIVE_DAYS",
       env.NXCORE_AGENT_DEBUG_ARCHIVE_DAYS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_DAYS),
-      1,
-      3_650,
     ),
-    agentDebugArchiveRuns: parseBoundedInteger(
+    agentDebugArchiveRuns: parsePositiveInteger(
       "NXCORE_AGENT_DEBUG_ARCHIVE_RUNS",
       env.NXCORE_AGENT_DEBUG_ARCHIVE_RUNS ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_RUNS),
-      1,
-      100_000,
     ),
-    agentDebugArchiveMaxMb: parseBoundedInteger(
+    agentDebugArchiveMaxMb: parsePositiveInteger(
       "NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB",
       env.NXCORE_AGENT_DEBUG_ARCHIVE_MAX_MB ?? String(DEFAULT_AGENT_DEBUG_ARCHIVE_MAX_MB),
-      64,
-      65_536,
     ),
   };
 
@@ -827,9 +815,26 @@ export function loadConfig(
           maxTokens: rawConfig.aiLiteMaxTokens,
         }
       : null,
-    // 布局代理（slides-layouter）直接用主模型：主模型已具备视觉能力，自审直接看
-    // 渲染图，不再需要独立的多模态视觉档（vlm 槽仍供给 perception / 视觉复检等
-    // 其他链路，见 config.vlm）。
+    // 审页档（slides-reviewer 专用，多模态）：model 可来自 env 专用键，也可由
+    // runtime config 的 vlm 槽（SaaS 套餐下发的视觉模型）apply 补齐。恒建对象
+    // 使 apply 可打补丁；model 仍空时消费端回退 backgroundPi（主模型多模态时开箱可用）。
+    // 输出上限/窗口/思考档支持独立 env 键：审页模型常是 qwen 系视觉模型，
+    // 输出上限远小于主模型；沿用主模型档会让长思考把输出预算吃满（2026-10 实测）。
+    slidesReviewerPi: pi
+      ? {
+          ...pi,
+          model: rawConfig.aiSlidesReviewerModel,
+          ...(rawConfig.aiSlidesReviewerMaxTokens === undefined
+            ? {}
+            : { maxTokens: rawConfig.aiSlidesReviewerMaxTokens }),
+          ...(rawConfig.aiSlidesReviewerContextWindow === undefined
+            ? {}
+            : { contextWindow: rawConfig.aiSlidesReviewerContextWindow }),
+          ...(rawConfig.aiSlidesReviewerReasoning === undefined
+            ? {}
+            : { reasoning: rawConfig.aiSlidesReviewerReasoning }),
+        }
+      : null,
     subagents: {
       enabled: rawConfig.subagentsEnabled,
       definitionsDir: resolve(rawConfig.subagentsDir || bundledAgentDefinitionsDir()),

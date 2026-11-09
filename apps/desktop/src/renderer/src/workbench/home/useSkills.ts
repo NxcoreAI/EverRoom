@@ -7,6 +7,9 @@ import { useCallback, useEffect, useState } from 'react'
  * 与子 Agent 清单的 `skills`，正文永远是 SKILL.md 本身。网关只多做一件事：
  * 记住用户关掉了哪些（`agent_skill_states`），并在装配运行时按它过滤。
  *
+ * 页面只展示主 Agent（内置）与用户新增的技能；子 Agent 的技能属于内部实现，
+ * 在这里统一隐藏（网关侧清单与启停语义不变）。
+ *
  * 归一函数接受 `unknown`（桥可能缺失、形状可能不同）：异常形状降级为空清单，
  * 由页面区分「加载失败」和「真的没有」。
  */
@@ -124,6 +127,8 @@ export function useSkills(): {
       const skills = items
         .map(toSkill)
         .filter((skill): skill is SkillItemView => skill !== null)
+        // 子 Agent 技能是内部实现细节，技能页不展示（启停仍由网关管理）。
+        .filter((skill) => skill.ownerKind !== 'subagent')
         .sort(compareSkills)
       setState({
         status: 'ready',
@@ -194,8 +199,8 @@ export function useSkills(): {
 }
 
 /**
- * 排序：内置 Agent → 子 Agent → 自定义技能（发布物在前，自己加的在后），
- * 同类按归属 Agent 分组，再按技能名。
+ * 排序：内置 Agent → 自定义技能（发布物在前，自己加的在后），同类按技能名。
+ * （子 Agent 技能已在加载时隐藏，不参与排序。）
  */
 const OWNER_KIND_RANK: Record<SkillOwnerKind, number> = { builtin: 0, subagent: 1, user: 2 }
 

@@ -45,6 +45,8 @@ export interface ArrangeBatchFailure {
   batch: ArrangeBatch;
   status: string;
   errorCode: string;
+  /** 失败详情（如语义契约的具体缺陷），用于用户可见提示与重试注入。 */
+  errorMessage?: string;
   invocationId?: string;
 }
 
@@ -273,7 +275,6 @@ export function mergeArrangeBatchPlans(input: {
 
 /** checkpoint key：草稿/指令/风格/来源任一变化都必须是新的编排，不能复用旧批次。 */
 export function arrangeBatchCheckpointKey(fingerprint: {
-  roomId: string;
   draftDocumentId: string;
   instruction: string;
   sourcesHash: string;
@@ -292,7 +293,6 @@ export function arrangeBatchCheckpointKey(fingerprint: {
   };
   return createHash("sha256")
     .update(JSON.stringify(stable({
-      roomId: fingerprint.roomId,
       draftDocumentId: fingerprint.draftDocumentId,
       instruction: fingerprint.instruction,
       sourcesHash: fingerprint.sourcesHash,
@@ -315,6 +315,13 @@ export interface ArrangeBatchRunError {
   status: string;
   errorCode: string;
   invocationId?: string;
+  /** 失败详情（如语义契约的具体缺陷），用于用户可见提示与重试注入。 */
+  errorMessage?: string;
+  /**
+   * 是否值得整批重跑。确定性失败（如 semantic-v3 内容契约校验不过）设 false：
+   * 同样的确认稿与模型再排一次只会复现同类错误，重试纯属空转。
+   */
+  retryable?: boolean;
 }
 
 export interface ArrangeBatchesOutcome {
@@ -375,9 +382,15 @@ export async function runArrangeBatches(input: {
           break;
         }
         if (outcome.invocationId && firstInvocationId === null) firstInvocationId = outcome.invocationId;
-        failure = { batch, status: outcome.status, errorCode: outcome.errorCode, ...(outcome.invocationId ? { invocationId: outcome.invocationId } : {}) };
-        // 用户取消/运行时中断没有重试意义，直接让下一批处理。
-        if (outcome.status === "cancelled" || outcome.status === "interrupted") break;
+        failure = {
+          batch,
+          status: outcome.status,
+          errorCode: outcome.errorCode,
+          ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+          ...(outcome.invocationId ? { invocationId: outcome.invocationId } : {}),
+        };
+        // 用户取消/运行时中断/确定性失败没有重试意义，直接让下一批处理。
+        if (outcome.status === "cancelled" || outcome.status === "interrupted" || outcome.retryable === false) break;
       }
       if (failure) failures.push(failure);
     }

@@ -15,6 +15,7 @@ import type { GatewayDatabase } from "../../../infrastructure/database/client.js
 import { agentDocumentExports } from "../../../infrastructure/database/schema.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
+import { roomScopeId } from "../room-scope.js";
 import { readArtifact, storeArtifact } from "../import/artifact-store.js";
 import {
   LarkCliError,
@@ -48,7 +49,8 @@ export class ExportServiceError extends Error {
 }
 
 export interface CreateExportInput {
-  roomId: string;
+  /** 省略/null = 工作区文稿（落库列 agent_document_exports.room_id 是 NOT NULL，写 scope sentinel）。 */
+  roomId?: string | null | undefined;
   documentId: string;
   version?: number | undefined;
   provider: ExternalDocumentProvider;
@@ -321,7 +323,8 @@ export class AgentDocumentExportService {
     this.db.insert(agentDocumentExports).values({
       id: runId,
       requestId: randomUUID(),
-      roomId: input.roomId,
+      // 历史列 NOT NULL：工作区导出统一落 scope sentinel，不伪造 Room 记录。
+      roomId: roomScopeId(input.roomId ?? null),
       documentId: input.documentId,
       version,
       provider: input.provider,
