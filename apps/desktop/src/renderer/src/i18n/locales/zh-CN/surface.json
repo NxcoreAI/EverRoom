@@ -2267,5 +2267,6 @@
   "agentChat.cardSubmit": "提交回答",
   "agentChat.cardAnswerPlaceholder": "输入你的回答…",
   "agentChat.cardConfirmFeedbackPlaceholder": "补充说明（可选，取消时反馈给 AI）…",
-  "agentChat.cardFonts": "字体"
+  "agentChat.cardFonts": "字体",
+  "agentChat.answerDetailsToggle": "查看详情"
 }

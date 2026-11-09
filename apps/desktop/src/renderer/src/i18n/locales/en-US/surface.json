@@ -2267,5 +2267,6 @@
   "agentChat.cardSubmit": "Submit answer",
   "agentChat.cardAnswerPlaceholder": "Type your answer…",
   "agentChat.cardConfirmFeedbackPlaceholder": "Additional note (optional, sent to the AI when cancelling)…",
-  "agentChat.cardFonts": "Fonts"
+  "agentChat.cardFonts": "Fonts",
+  "agentChat.answerDetailsToggle": "View details"
 }
