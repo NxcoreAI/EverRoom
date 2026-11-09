@@ -104,7 +104,6 @@ export function HomeSidebar() {
         <img className="wb-sidebar-brand-mark" src={everroomAppIcon} alt="" aria-hidden="true" draggable={false} />
         <div className="wb-sidebar-brand-text">
           <strong>EverOffice</strong>
-          <span>Agent 工作台</span>
         </div>
       </div>
 
