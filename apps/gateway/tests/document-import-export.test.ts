@@ -2,6 +2,8 @@ import { mkdtemp, readFile, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import Fastify from 'fastify'
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
 import { createDatabase, type GatewayDatabase } from '../src/infrastructure/database/client.js'
 import {
   agentDocumentExports,
@@ -16,10 +18,12 @@ import {
   DocumentImportService,
   ImportServiceError,
 } from '../src/modules/documents/import/service.js'
+import { documentImportRoutes } from '../src/modules/documents/import/routes.js'
 import type { ImportActionRunner } from '../src/modules/documents/import/oo-runner.js'
 import {
   AgentDocumentExportService,
 } from '../src/modules/documents/agent-export/service.js'
+import { agentDocumentExportRoutes } from '../src/modules/documents/agent-export/routes.js'
 import type { OpenConnectorCliConfig } from '../src/config.js'
 
 const connectorConfig: OpenConnectorCliConfig = {
@@ -1116,5 +1120,159 @@ describe('import service error mapping', () => {
       expect(serviceError.statusCode).toBe(422)
       return true
     })
+  })
+})
+
+/**
+ * Room 已删除：导入/导出的 roomId 全部可省略，缺省落工作区作用域；
+ * 显式传 roomId 的旧桌面路径保持原行为（兼容）。
+ */
+describe('document import/export workspace scope (Room removed)', () => {
+  async function createWorkspaceDocument(documents: DocumentService): Promise<string> {
+    const document = await documents.import({
+      id: `doc-${Math.random().toString(36).slice(2, 12)}`,
+      roomId: null,
+      title: '工作区文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '工作区正文' }] }] } as never,
+    })
+    return document.id
+  }
+
+  it('commit 省略 roomId 走工作区导入：不写 document_room_imports，DTO 与旧路径同形', async () => {
+    const { imports } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const result = await imports.commit({ runId: preview.runId })
+
+    expect(result.relation).toBe('primary')
+    expect(result.roomImportId).toBeNull()
+    expect(result.document.roomId).toBeNull()
+    expect(result.document.version).toBe(1)
+    expect(result.documentId).toBe(result.document.id)
+    // 工作区路径不产生 Room 时代的导入关联行。
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
+    // 旧桌面读取的 run 视图仍可用（targetRoomId 恒 null）。
+    expect(result.run.status).toBe('succeeded')
+    expect(result.run.targetRoomId).toBeNull()
+  })
+
+  it('commit 显式 roomId 保持旧 Room 行为（写 document_room_imports）', async () => {
+    const { imports } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const result = await imports.commit({ runId: preview.runId, roomId })
+
+    expect(result.roomImportId).toBeTruthy()
+    // Phase 2i 起文稿本身恒为工作区级（roomId=null），Room 只保留在导入关联行上做旧版兼容。
+    expect(result.document.roomId).toBeNull()
+    const rows = db.select().from(documentRoomImports).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.roomId).toBe(roomId)
+    expect(rows[0]!.relation).toBe('primary')
+  })
+
+  it('commit 无 roomId 重导同一来源：正文未变走 noChange，不再落新文档', async () => {
+    let bodySuffix = ''
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.fetch_document': () => ({
+        document: {
+          document_id: 'tokA',
+          revision_id: 5,
+          title: '远端需求文档',
+          url: 'https://vyi-tech.feishu.cn/docx/tokA',
+          content: `# 远端需求文档\n\n这是导入的正文段落。${bodySuffix}`,
+        },
+      }),
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const first = await imports.preview('feishu', 'tokA')
+    const committed = await imports.commit({ runId: first.runId })
+
+    const again = await imports.preview('feishu', 'tokA')
+    const second = await imports.commit({ runId: again.runId })
+    expect(second.noChange).toBe(true)
+    expect(second.documentId).toBe(committed.documentId)
+
+    // 远端内容变了：追加新版本（不新开文稿）。
+    bodySuffix = '\n\n新增段落。'
+    const changed = await imports.preview('feishu', 'tokA')
+    const third = await imports.commit({ runId: changed.runId })
+    expect(third.noChange).toBeUndefined()
+    expect(third.documentId).toBe(committed.documentId)
+    expect(third.document.version).toBe(2)
+  })
+
+  it('POST /v1/document-import/runs 省略 roomId 返回 200 并导入工作区；显式 roomId 仍兼容', async () => {
+    const harness = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const app = Fastify()
+    await app.register(documentImportRoutes(harness.imports))
+
+    const preview = await harness.imports.preview('feishu', 'tokA')
+    const workspace = await app.inject({
+      method: 'POST',
+      url: '/v1/document-import/runs',
+      payload: { runId: preview.runId },
+    })
+    expect(workspace.statusCode).toBe(200)
+    const workspaceBody = workspace.json() as Record<string, unknown>
+    expect(workspaceBody.roomImportId).toBeNull()
+    expect(workspaceBody.relation).toBe('primary')
+    expect((workspaceBody.document as { roomId: string | null }).roomId).toBeNull()
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
+
+    // 旧桌面：roomId 传入时仍走 Room 路径。
+    const legacyPreview = await harness.imports.preview('feishu', 'tokB')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/v1/document-import/runs',
+      payload: { runId: legacyPreview.runId, roomId },
+    })
+    expect(legacy.statusCode).toBe(200)
+    expect((legacy.json() as { roomImportId: string | null }).roomImportId).toBeTruthy()
+    await app.close()
+  })
+
+  it('导出省略 roomId 落 scope sentinel（列 NOT NULL），显式 roomId 保持原值', async () => {
+    const harness = await createHarness({ connector: null, lark: null })
+    const workspaceDocumentId = await createWorkspaceDocument(harness.documents)
+    const runId = await harness.exports_.createRun({
+      documentId: workspaceDocumentId,
+      provider: 'feishu',
+      mode: 'create',
+    })
+    const row = db.select().from(agentDocumentExports).all().find((item) => item.id === runId)!
+    expect(row.roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+    expect(harness.exports_.getRun(runId).roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const legacyRunId = await harness.exports_.createRun({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    const legacyRow = db.select().from(agentDocumentExports).all().find((item) => item.id === legacyRunId)!
+    expect(legacyRow.roomId).toBe(roomId)
+  })
+
+  it('POST /v1/agent/document-exports 省略 roomId 可创建任务（旧桌面携带 roomId 仍兼容）', async () => {
+    const harness = await createHarness({ connector: null, lark: null })
+    const app = Fastify()
+    await app.register(agentDocumentExportRoutes(harness.exports_))
+    const workspaceDocumentId = await createWorkspaceDocument(harness.documents)
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/agent/document-exports',
+      payload: { documentId: workspaceDocumentId, provider: 'feishu', mode: 'create' },
+    })
+    expect(created.statusCode).toBe(200)
+    expect((created.json() as { roomId: string }).roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/v1/agent/document-exports',
+      payload: { roomId, documentId, provider: 'feishu', mode: 'create' },
+    })
+    expect(legacy.statusCode).toBe(200)
+    expect((legacy.json() as { roomId: string }).roomId).toBe(roomId)
+    await app.close()
   })
 })

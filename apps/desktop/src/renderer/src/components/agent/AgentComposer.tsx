@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Brain, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
+import { ArrowLeft, Bot, Brain, Cable, Check, ChevronDown, Clock, CornerDownLeft, Feather, FileText, FilePlus2, Folder, FolderOpen, FolderPlus, History, LoaderCircle, Lock, MessagesSquare, Plus, Quote, Search, ShieldCheck, Square, Terminal, Unlock, X, Zap } from 'lucide-react'
 import {
   forwardRef,
   useEffect,
@@ -83,6 +83,17 @@ export interface ComposerSubmitPayload {
   attachments: AgentAttachmentReference[]
   mountedDirectories: AgentMountedDirectory[]
   mentioned: MentionedItem[]
+}
+
+/**
+ * AgentComposer 的命令式句柄：textarea 之外，宿主还可以借它把文件
+ * 「灌」进输入区（对话区的整区拖拽落点用：文件落在消息区也进附件栏）。
+ */
+export interface AgentComposerHandle {
+  /** 弹系统选择框选文件并导入为附件（「+ → 导入文件」同链路）。 */
+  pickFiles: () => Promise<void>
+  /** 直接导入一组本机文件（拖拽落点用；导入失败会 toast 原因）。 */
+  importFiles: (files: File[]) => Promise<void>
 }
 
 /**
@@ -178,6 +189,8 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop: () => void
   /** 提交本轮内容：文件附件（文件引擎引用）+ 挂载目录 + @ 提及。 */
   onSubmit: (payload: ComposerSubmitPayload) => void
+  /** 打开「连接器」弹窗（操作栏多一个连接器按钮；不传则不渲染该按钮）。 */
+  onOpenConnectors?: () => void
 }>(function AgentComposer({
   active,
   available,
@@ -217,6 +230,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   onStop,
   onSubmit,
   onSelectExternalConversation,
+  onOpenConnectors,
 }, ref) {
   const { t, formatDate } = useLocale()
   const [attachments, setAttachments] = useState<AgentAttachmentReference[]>([])
@@ -225,6 +239,7 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   /** 「+」菜单开合；导入文件时禁用以免双击重复弹框。 */
   const [addMenuOpen, setAddMenuOpen] = useState(false)
   const [importingFiles, setImportingFiles] = useState(false)
+  const [draggingFiles, setDraggingFiles] = useState(false)
   const shellRef = useRef<HTMLFormElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const externalResultsRef = useRef<HTMLDivElement>(null)
@@ -263,7 +278,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
   const overlayRef = useRef<HTMLDivElement>(null)
   const mentionHints = useRef(new Map<string, MentionedItem>())
 
-  useImperativeHandle(ref, () => textareaRef.current as HTMLTextAreaElement)
+  /**
+   * 命令式句柄：兼容旧用法（直接当 textarea 用，取 .focus() 等），
+   * 同时暴露 pickFiles / importFiles 给宿主（对话区整区拖拽落点）。
+   * 实现经 ref 中转取「最新一次渲染」的闭包，避免句柄冻结在首帧版本。
+   */
+  const importApiRef = useRef<{ pickFiles: () => Promise<void>; importFiles: (files: File[]) => Promise<void> }>({ pickFiles: async () => undefined, importFiles: async () => undefined })
+  useImperativeHandle(ref, (): HTMLTextAreaElement & AgentComposerHandle => {
+    const textarea = textareaRef.current as (HTMLTextAreaElement & AgentComposerHandle) | null
+    const handle: AgentComposerHandle = {
+      pickFiles: () => importApiRef.current.pickFiles(),
+      importFiles: (files) => importApiRef.current.importFiles(files),
+    }
+    if (!textarea) return handle as HTMLTextAreaElement & AgentComposerHandle
+    return Object.assign(textarea, handle)
+  })
 
   const resizeTextarea = () => {
     const textarea = textareaRef.current
@@ -570,6 +599,13 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
     } finally {
       setImportingFiles(false)
     }
+  }
+
+  // 命令式句柄取最新实现（importFiles/importDroppedFiles 是每次渲染重建的闭包，
+  // 直接在 useImperativeHandle 里引用会冻结在首帧；这里每帧同步到 ref）。
+  importApiRef.current = {
+    pickFiles: () => importFiles(),
+    importFiles: (files) => importDroppedFiles(files),
   }
 
   const mentionTrigger = matchMentionTrigger(value, caret)
@@ -934,12 +970,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
       data-menu-open={String(menuOpen)}
       data-lift={String(externalPickerOpen || (agentPickerOpen && mentionOptionCount > 0))}
       onSubmit={submit}
+      data-dragging={String(draggingFiles)}
       onDragOver={(event) => {
-        if (!controlsDisabled && event.dataTransfer.types.includes('Files')) event.preventDefault()
+        if (controlsDisabled || !event.dataTransfer.types.includes('Files')) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+        if (!draggingFiles) setDraggingFiles(true)
+      }}
+      onDragLeave={(event) => {
+        // 离开 shell 本体（进入子元素不算）：收起高亮。dropEffect 保留默认。
+        if (draggingFiles && !event.currentTarget.contains(event.relatedTarget as Node)) setDraggingFiles(false)
       }}
       onDrop={(event) => {
         if (controlsDisabled) return
         event.preventDefault()
+        setDraggingFiles(false)
         void importDroppedFiles([...event.dataTransfer.files])
       }}
     >
@@ -1550,6 +1595,21 @@ export const AgentComposer = forwardRef<HTMLTextAreaElement, {
               <Brain aria-hidden="true" />
               <span>{t(activeThinkingOption.labelKey)}</span>
               <ChevronDown aria-hidden="true" className="agent-model-tier-caret" />
+            </button>
+          ) : null}
+          {/* 连接器入口：打开连接器弹窗（选择/授权连接器），与档位钮同一 ghost 语言。 */}
+          {onOpenConnectors ? (
+            <button
+              type="button"
+              className="agent-model-tier-toggle agent-connectors-toggle"
+              title={t('surface:agentComposer.connectorsPickerTitle')}
+              aria-label={t('surface:agentComposer.connectorsPickerTitle')}
+              aria-haspopup="dialog"
+              disabled={controlsDisabled}
+              onClick={onOpenConnectors}
+            >
+              <Cable aria-hidden="true" />
+              <span>{t('surface:agentComposer.connectorsPickerTitle')}</span>
             </button>
           ) : null}
           {/* 占位 flex 撑开发送钮；无引用时不渲染文案。 */}

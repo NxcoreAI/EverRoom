@@ -748,3 +748,137 @@ describe('wireMarkdownAgentAsk', () => {
     )
   })
 })
+
+describe('极简条 AI 快捷能力（scope 载荷）', () => {
+  it('slides scope=page：消息只带页码不带元素目标，事件带 scope 且 anchor 只含页码', async () => {
+    resolveInstance.mockReturnValue({
+      fileId: 'f1',
+      title: '季度汇报.pptx',
+      kind: 'pptx',
+      roomId: 'room-1',
+      workspaceId: 'ws-1',
+    })
+    const op: SlidesAgentAskPayload = {
+      instruction: '美化这一页幻灯片',
+      slideIndex: 2,
+      targets: [],
+      scope: 'page',
+    }
+    const result = await askHook!(11, op)
+    expect(result).toEqual({ ok: true })
+    const message = buildAgentAskMessage('季度汇报.pptx', op)
+    expect(message).toContain('第 3 页')
+    expect(message).not.toContain('选中了元素')
+    expect(message).not.toContain('「')
+    expect(forward).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scope: 'page',
+        anchor: { slideIndex: 2 },
+        message,
+        displayMessage: buildAgentAskDisplayMessage('季度汇报.pptx', op),
+      }),
+    )
+  })
+
+  it('docs scope=document：消息不声称选区，事件不带 anchor', async () => {
+    resolveInstance.mockReturnValue({
+      fileId: 'f2',
+      title: '方案.docx',
+      kind: 'docx',
+      roomId: 'room-2',
+      workspaceId: 'ws-2',
+    })
+    const op: DocsAgentAskPayload = {
+      instruction: '整理全文排版',
+      fromBlockIndex: 0,
+      toBlockIndex: 0,
+      kind: 'text',
+      scope: 'document',
+    }
+    const result = await docsAskHook!(12, op)
+    expect(result).toEqual({ ok: true })
+    const message = buildDocsAgentAskMessage('方案.docx', op)
+    expect(message).toContain('对 Word《方案.docx》执行')
+    expect(message).not.toContain('选中了这段内容')
+    expect(forward).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'document', message }),
+    )
+    const event = forward.mock.calls.at(-1)![0] as { anchor?: unknown }
+    expect(event.anchor).toBeUndefined()
+  })
+
+  it('sheets scope=workbook：消息不声称区域，事件不带 anchor', async () => {
+    resolveInstance.mockReturnValue({
+      fileId: 'f3',
+      title: '预算.xlsx',
+      kind: 'xlsx',
+      roomId: 'room-3',
+      workspaceId: 'ws-3',
+    })
+    const op: SheetsAgentAskPayload = {
+      instruction: '分析这个表格的数据',
+      scope: 'workbook',
+    }
+    const result = await sheetsAskHook!(13, op)
+    expect(result).toEqual({ ok: true })
+    const message = buildSheetsAgentAskMessage('预算.xlsx', op)
+    expect(message).toContain('对 Excel《预算.xlsx》执行')
+    expect(message).not.toContain('选中了这块内容')
+    expect(forward).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'workbook', message }),
+    )
+    const event = forward.mock.calls.at(-1)![0] as { anchor?: unknown }
+    expect(event.anchor).toBeUndefined()
+  })
+
+  it('pdf scope=document：消息不声称页码选区，事件不带 anchor', async () => {
+    resolveInstance.mockReturnValue({
+      fileId: 'f4',
+      title: '年报.pdf',
+      kind: 'pdf',
+      roomId: 'room-4',
+      workspaceId: 'ws-4',
+    })
+    const op: PdfAgentAskPayload = {
+      instruction: '请总结这份文档的主要内容',
+      pageIndex: 0,
+      quads: [],
+      scope: 'document',
+    }
+    const result = await pdfAskHook!(14, op)
+    expect(result).toEqual({ ok: true })
+    const message = buildPdfAgentAskMessage('年报.pdf', op)
+    expect(message).toContain('对 PDF《年报.pdf》执行')
+    expect(message).not.toContain('选中了这段内容')
+    expect(forward).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'document', message }),
+    )
+    const event = forward.mock.calls.at(-1)![0] as { anchor?: unknown }
+    expect(event.anchor).toBeUndefined()
+  })
+
+  it('markdown scope=document：消息不声称选区，事件不带 anchor', async () => {
+    resolveInstance.mockReturnValue({
+      fileId: 'f5',
+      title: '会议纪要.md',
+      kind: 'markdown',
+      roomId: 'room-5',
+      workspaceId: 'ws-5',
+    })
+    const op: MarkdownAgentAskPayload = {
+      instruction: '润色全文，使表达更清晰流畅',
+      blockIndex: 0,
+      scope: 'document',
+    }
+    const result = await markdownAskHook!(15, op)
+    expect(result).toEqual({ ok: true })
+    const message = buildMarkdownAgentAskMessage('会议纪要.md', op)
+    expect(message).toContain('对 Markdown《会议纪要.md》执行')
+    expect(message).not.toContain('选中了这段内容')
+    expect(forward).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: 'document', message }),
+    )
+    const event = forward.mock.calls.at(-1)![0] as { anchor?: unknown }
+    expect(event.anchor).toBeUndefined()
+  })
+})

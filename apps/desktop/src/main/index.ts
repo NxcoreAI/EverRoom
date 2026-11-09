@@ -2304,8 +2304,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
-  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback) =>
-    bridge.resolveApproval(approvalId, decision, feedback))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback, choice, text) =>
+    bridge.resolveApproval(approvalId, decision, feedback, choice, text))
   handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
   handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
   handle(AGENT_CHANNELS.setThinkingLevel, (_event, sessionId, level) =>

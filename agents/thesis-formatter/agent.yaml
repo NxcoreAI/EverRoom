@@ -17,8 +17,7 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent, internal-workflow]
   maxConcurrency: 2
-  # 纯文本判断无工具需求；余量容纳自检重读。
-  maxToolCalls: 8
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟与输出预算兜底。
   # 长任务：实测解析耗时 364–394s 成功、偶发 >480s（模型/中转波动）。留足 15 分钟，
   # 避免「跑了八分钟被杀」——用户看到的就是「没反应」。
   timeoutSeconds: 900

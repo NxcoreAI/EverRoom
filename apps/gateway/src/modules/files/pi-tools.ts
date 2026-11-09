@@ -218,10 +218,10 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
         description: "文件名关键词（子串匹配原始文件名/显示名）；省略 = 最近更新的文件",
       })),
       extension: Type.Optional(Type.Union([
-        Type.String({ minLength: 2, maxLength: 12 }),
+        Type.String({ minLength: 2, maxLength: 160 }),
         Type.Array(Type.String({ minLength: 2, maxLength: 12 }), { minItems: 1, maxItems: 8 }),
       ], {
-        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）。大小写不敏感",
+        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）、逗号分隔或 JSON 数组字符串（自动解析）。大小写不敏感",
       })),
       scope: Type.Optional(Type.Union([
         Type.Literal("all"),
@@ -253,10 +253,22 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
       const files = deps.files();
       if (!files) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
       const query = typeof params.query === "string" ? params.query.trim() : "";
+      // 模型常把数组参数序列化成 JSON 字符串（实测 deepseek："[\"md\",\"txt\"]"）或写成语义
+      // 等价的逗号分隔——扩展名本身不含逗号/括号，直接解开，省一轮校验失败重试。
+      const parseExtensionList = (value: string): string[] => {
+        const trimmed = value.trim();
+        if (trimmed.startsWith("[")) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === "string");
+          } catch { /* 落到逗号分隔 */ }
+        }
+        return trimmed.split(/[,，\s]+/);
+      };
       const rawExtensions = Array.isArray(params.extension)
         ? params.extension
         : typeof params.extension === "string"
-          ? [params.extension]
+          ? parseExtensionList(params.extension)
           : [];
       const extensions = rawExtensions
         .filter((value): value is string => typeof value === "string")

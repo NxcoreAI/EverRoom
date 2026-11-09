@@ -165,6 +165,32 @@ function createPlannerPrewarmTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool 
   };
 }
 
+/** planner 工作区清单调用闸：模型反复列目录是编排超时的另一来源（实测把已知
+ *  文件名全串进一个 query 连查多次）；超过上限直接返回 skip 指令推回产出。 */
+const PLANNER_WORKSPACE_LIST_LIMIT = 4;
+const plannerWorkspaceListByRun = new Map<string, number>();
+
+function createPlannerWorkspaceListTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
+  return {
+    ...tool,
+    execute: async (input, params, signal, onUpdate) => {
+      const count = (plannerWorkspaceListByRun.get(input.runId) ?? 0) + 1;
+      plannerWorkspaceListByRun.set(input.runId, count);
+      if (plannerWorkspaceListByRun.size > 1_000) plannerWorkspaceListByRun.clear();
+      if (count > PLANNER_WORKSPACE_LIST_LIMIT) {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "工作区文件检索已达上限（本批最多 4 次）。请用已返回的素材结果编排；确实缺素材的页写 imagePrompt，不要再列目录。",
+          }),
+          details: { skipped: true, count },
+        };
+      }
+      return tool.execute(input, params, signal, onUpdate);
+    },
+  };
+}
+
 /** arrange 阶段 conversation_search 限额：模型反复查历史而不提交时，明确推回产出。 */
 function createPlannerConversationSearchTool(tool: PiAgentRuntimeTool): PiAgentRuntimeTool {
   return {
@@ -194,16 +220,97 @@ function createPlannerConversationSearchTool(tool: PiAgentRuntimeTool): PiAgentR
   };
 }
 
+export interface WorkspaceFileText {
+  text: string;
+  filename: string;
+}
+export function createWorkspaceFileReadTool(
+  readText: (fileEntryId: string) => Promise<WorkspaceFileText | null>,
+  options?: { mainAgent?: boolean },
+): PiAgentRuntimeTool {
+  const mainAgent = options?.mainAgent === true;
+  return {
+    name: "workspace_file_read",
+    label: "读取工作区文件",
+    description:
+      `按 fileEntryId 读工作区上传文件的文本正文（文档解析出的 Markdown 优先，文本类原文件兜底）。`
+      + `单次最多 ${PLANNER_DOCUMENT_READ_LIMIT} 字符，超出用 offset/limit 分页；fileEntryId 先用 workspace_files_list 查。`
+      + (mainAgent
+        ? "文本类文件（md/txt/csv 等）的内容问题用本工具读正文回答；Office/PDF 附件仍走 document_analysis。"
+        : "编排阶段素材已定型，不需要再读。"),
+    parameters: {
+      type: "object",
+      properties: {
+        fileEntryId: { type: "string", minLength: 1, maxLength: 128, description: "workspace_files_list 返回的 fileEntryId" },
+        offset: { type: "integer", minimum: 0, description: "正文字符偏移（分页时传上一页返回的 nextOffset）" },
+        limit: { type: "integer", minimum: 1, description: `本次返回字符数上限（缺省 ${PLANNER_DOCUMENT_READ_LIMIT}）` },
+      },
+      required: ["fileEntryId"],
+      additionalProperties: false,
+    },
+    executionMode: "sequential",
+    async execute(input, params) {
+      if (!mainAgent && subagentPhase(input) === "arrange") {
+        return {
+          content: JSON.stringify({
+            skipped: true,
+            reason: "编排阶段的结构化输入 draftPages 已包含全部页内容，禁止再读工作区文件；直接基于输入产出方案。",
+          }),
+          details: { skipped: true },
+        };
+      }
+      const fileEntryId = typeof params.fileEntryId === "string" ? params.fileEntryId.trim() : "";
+      if (!fileEntryId) {
+        return { content: JSON.stringify({ error: "缺少 fileEntryId；先调用 workspace_files_list 按文件名查清单。" }) };
+      }
+      const file = await readText(fileEntryId);
+      if (!file) {
+        return {
+          content: JSON.stringify({
+            error: "文件不存在或没有可读的文本内容（图片与未解析的二进制不可读）；用 workspace_files_list 核对 fileEntryId。",
+          }),
+        };
+      }
+      const total = file.text.length;
+      const requestedLimit = typeof params.limit === "number" && Number.isFinite(params.limit) ? Math.floor(params.limit) : PLANNER_DOCUMENT_READ_LIMIT;
+      const limit = Math.max(1, Math.min(requestedLimit, PLANNER_DOCUMENT_READ_LIMIT));
+      const offset = typeof params.offset === "number" && Number.isFinite(params.offset) && params.offset >= 0 ? Math.floor(params.offset) : 0;
+      const start = Math.min(offset, total);
+      const end = Math.min(start + limit, total);
+      const text = file.text.slice(start, end);
+      return {
+        content: JSON.stringify({
+          fileEntryId,
+          filename: file.filename,
+          text,
+          offset: start,
+          totalCharacters: total,
+          truncated: start > 0 || end < total,
+          ...(end < total ? { nextOffset: end } : {}),
+        }),
+      };
+    },
+  };
+}
+
 export function createSlidesPlannerAgentTools(deps: {
   /** createDocumentPiTools 的产物（取文档只读子集）。 */
   documentTools: PiAgentRuntimeTool[];
   /** createWebSearchPiTools 的产物（未配置时传空数组）。 */
   webSearchTools: PiAgentRuntimeTool[];
+  /** 工作区文件清单工具（素材定位）；缺省不注入。 */
+  workspaceFileTools?: PiAgentRuntimeTool[];
+  /** 读工作区上传文件的文本正文（晚绑定注入）。 */
+  readWorkspaceFileText?: (fileEntryId: string) => Promise<WorkspaceFileText | null>;
 }): PiAgentRuntimeTool[] {
   return [
     ...filterTools(deps.documentTools, SLIDES_PLANNER_DOCUMENT_TOOL_ALLOWLIST)
       .map((tool) => (tool.name === "document_read" ? createPlannerDocumentReadTool(tool) : tool)),
     ...filterTools(deps.webSearchTools, SLIDES_PLANNER_WEB_SEARCH_TOOL_ALLOWLIST),
+    ...(deps.workspaceFileTools
+      ? filterTools(deps.workspaceFileTools, new Set(["workspace_files_list"])).map(createPlannerWorkspaceListTool)
+      : []),
+    ...(deps.readWorkspaceFileText ? [createWorkspaceFileReadTool(deps.readWorkspaceFileText)] : []),
     // 配图预热：编排中生图入池（模块内 token 注册表寻址，装配无额外依赖）。
     // 分批编排的预热由网关统一处理：模型在批内调用预热工具时直接跳过，不耗轮次。
     ...filterTools(createSlidesImagePrewarmTools(), SLIDES_PLANNER_PREWARM_TOOL_ALLOWLIST)
@@ -226,10 +333,32 @@ interface ValidateOutcome {
   stats: { elements: number; leaves: number; depth: number; images: number; paths: number };
 }
 
-/** 同一 run 连续校验上限：超过后网关收下当前树（落页时引擎 shrinkToFit 再收敛一次）。 */
-const LAYOUT_VALIDATE_MAX_ROUNDS = 5;
-/** runId → 已执行的 validate 轮次（工具实例跨 run 共享，需按 run 隔离并清理）。 */
-const validateRoundByRun = new Map<string, number>();
+/** 单页几何校验预算（初次设计）：schema 类缺陷单独计数，不消耗几何次数。 */
+const LAYOUT_VALIDATE_GEOMETRY_MAX = 6;
+/** schema 修复独立预算：字段/枚举类错误修 2 次仍失败即 blocked。 */
+const LAYOUT_VALIDATE_SCHEMA_MAX = 2;
+
+interface ValidateBudget {
+  geometry: number;
+  schema: number;
+}
+
+/** runId → 剩余预算（工具实例跨 run 共享，按 run 隔离 = 按单页任务隔离）。 */
+const validateBudgetByRun = new Map<string, ValidateBudget>();
+
+type ValidateNextAction = "repair_schema" | "repair_layout" | "submit" | "blocked";
+
+interface ValidateStatus {
+  stage: "schema_repair" | "geometry_repair" | "validated" | "exhausted";
+  remainingGeometryAttempts: number;
+  remainingSchemaRepairs: number;
+  nextAction: ValidateNextAction;
+}
+
+/** 由缺陷清单判断本轮消耗哪类预算：schema 类缺陷优先（字段错了几何量测不可信）。 */
+function isSchemaRound(defects: LayoutDefect[]): boolean {
+  return defects.some((d) => d.type === "schema");
+}
 
 /** 归一 → 编译 → 量测（契约经 token 从进程内上下文取，模型不回传防漂移）。 */
 export function validateLayoutTree(token: unknown, rawTree: unknown): ValidateOutcome {
@@ -273,8 +402,9 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   name: "slides_layout_validate",
   label: "布局树校验",
   description:
-    "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（节点路径+缺陷类型+改法）。"
-    + "单页最多调用 4 次，只用于提交前确认：第一次 ok=true 立即用 subagent_submit_result 提交，禁止再校验、再改树或再试其他构图变体。有缺陷按 hint 做最小修正；同一缺陷修 2 次仍在就简化结构后校验一次并提交，或交 blocked。",
+    "校验你设计的布局树：结构归一 → 确定性编译 → 量测。返回结构化缺陷清单（路径+类型+改法+实测几何），"
+    + "以及 stage / remainingGeometryAttempts / remainingSchemaRepairs / nextAction——预算由程序记账，"
+    + "严格按 nextAction 执行：repair_schema 只修字段、repair_layout 只修受影响区域、submit 立即提交、blocked 立即交 blocked。",
   parameters: {
     type: "object",
     properties: {
@@ -286,32 +416,62 @@ export const LAYOUTER_VALIDATE_TOOL: PiAgentRuntimeTool = {
   },
   executionMode: "sequential",
   async execute(input, params) {
-    const round = (validateRoundByRun.get(input.runId) ?? 0) + 1;
+    const budget = validateBudgetByRun.get(input.runId) ?? { geometry: LAYOUT_VALIDATE_GEOMETRY_MAX, schema: LAYOUT_VALIDATE_SCHEMA_MAX };
     const outcome = validateLayoutTree(params.token, params.tree);
     if (outcome.ok) {
-      validateRoundByRun.delete(input.runId);
-      return { content: JSON.stringify(outcome) };
+      validateBudgetByRun.delete(input.runId);
+      // 缓存通过树供提交闸对账：deck 会话串行，这一棵就是当前页应提交的树。
+      const context = getDeckLayoutContext(params.token);
+      if (context) {
+        try {
+          context.lastValidatedTreeJson = JSON.stringify(normalizeTree(params.tree));
+        } catch {
+          context.lastValidatedTreeJson = undefined;
+        }
+      }
+      const status: ValidateStatus = {
+        stage: "validated",
+        remainingGeometryAttempts: budget.geometry,
+        remainingSchemaRepairs: budget.schema,
+        nextAction: "submit",
+      };
+      return { content: JSON.stringify({ ...outcome, ...status }) };
     }
-    // 网关收口：同一 run 连续多轮 validate 不收敛时不再让模型空转（实测一页
-    // 连调 17 次 validate 打穿工具预算、480s 超时）。收下当前树并提示提交——
-    // 落页前 finalizeTree 仍会确定性 shrinkToFit + 引擎硬闸兜底，不会把坏树画上去。
-    if (round >= LAYOUT_VALIDATE_MAX_ROUNDS) {
-      validateRoundByRun.delete(input.runId);
+    // 预算由程序记账：成功总是出口；对应类预算耗尽后不再给修复指令，直接收口 blocked。
+    const schemaRound = isSchemaRound(outcome.defects);
+    if (schemaRound ? budget.schema <= 0 : budget.geometry <= 0) {
       return {
         content: JSON.stringify({
           ...outcome,
-          ok: true,
-          forcedSubmission: true,
-          warning: `已连续 ${round} 轮校验未完全收敛。不要再试新构图或继续微调——立即调用 subagent_submit_result 提交当前树（未解决缺陷如实写进结果 notes），提交后结束本页；不要再调用校验。`,
+          stage: "exhausted",
+          remainingGeometryAttempts: Math.max(0, budget.geometry),
+          remainingSchemaRepairs: Math.max(0, budget.schema),
+          nextAction: "blocked",
+          warning: "校验预算已耗尽，不再提供修复轮次。立即调用 subagent_submit_result 提交 status:\"blocked\"（reason 写明剩余缺陷与已尝试的调整），结束本页；不要再调用校验。",
         }),
       };
     }
-    validateRoundByRun.set(input.runId, round);
-    if (validateRoundByRun.size > 1_000) {
-      const oldest = validateRoundByRun.keys().next().value;
-      if (typeof oldest === "string") validateRoundByRun.delete(oldest);
+    if (schemaRound) budget.schema -= 1;
+    else budget.geometry -= 1;
+    validateBudgetByRun.set(input.runId, budget);
+    if (validateBudgetByRun.size > 1_000) {
+      const oldest = validateBudgetByRun.keys().next().value;
+      if (typeof oldest === "string") validateBudgetByRun.delete(oldest);
     }
-    return { content: JSON.stringify({ ...outcome, round }) };
+    const status: ValidateStatus = schemaRound
+      ? {
+          stage: "schema_repair",
+          remainingGeometryAttempts: budget.geometry,
+          remainingSchemaRepairs: Math.max(0, budget.schema),
+          nextAction: budget.schema > 0 ? "repair_schema" : "blocked",
+        }
+      : {
+          stage: "geometry_repair",
+          remainingGeometryAttempts: Math.max(0, budget.geometry),
+          remainingSchemaRepairs: budget.schema,
+          nextAction: budget.geometry > 0 ? "repair_layout" : "blocked",
+        };
+    return { content: JSON.stringify({ ...outcome, ...status }) };
   },
 };
 
@@ -361,7 +521,19 @@ export function createSlidesTreeResultValidator(): SubagentResultValidator {
     if (input?.content) {
       const errors = checkSemanticBindings(input.content, normalized.v2, result, (input.materials ?? []).map(m => m.url));
       const context = getDeckLayoutContext(input.deckToken);
-      if (context) errors.push(...checkSemanticRendered(input.content, compileTree(normalized, context.contract).spec));
+      if (context) {
+        const compiled = compileTree(normalized, context.contract);
+        errors.push(...checkSemanticRendered(input.content, compiled.spec));
+        // 树复用对账：与最后一次 validate 通过的树逐字一致时，几何结论直接复用 validate
+        // （同一棵树、同口径量测）；不一致 = 模型重抄引入漂移，复检并把对账事实写进错误，
+        // 指导模型原样重交校验通过的那棵，而不是继续在漂移树上修补。
+        if (JSON.stringify(normalized) !== context.lastValidatedTreeJson) {
+          const geometry = measureDefects(compiled, context.contract, { imageArs: context.imageArs });
+          for (const defect of geometry.slice(0, 3)) {
+            errors.push(`几何未过（提交树与最后校验通过的树不一致——原样重交校验通过的那棵，不要在提交时改动槽位/权重/结构）：${defect.path} ${defect.detail}`);
+          }
+        }
+      }
       if (errors.length) {
         const attempts = counterKey ? (rejections.get(counterKey) ?? 0) + 1 : 1;
         if (counterKey) rejections.set(counterKey, attempts);
@@ -374,4 +546,5 @@ export function createSlidesTreeResultValidator(): SubagentResultValidator {
     }
   };
 }
+
 

@@ -96,13 +96,14 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
         tags: ["document-import"],
         body: Type.Object({
           runId: Type.String(idText),
-          roomId: Type.String(idText),
+          // 省略/null = 导入工作区文稿库（不写 document_room_imports）；旧桌面仍可传 Room。
+          roomId: Type.Optional(Type.Union([Type.String(idText), Type.Null()])),
           targetDocumentId: Type.Optional(Type.String(idText)),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        return await service.commitToRoom(request.body);
+        return await service.commit(request.body);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);

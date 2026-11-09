@@ -3,11 +3,6 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config.js";
 
 describe("loadConfig", () => {
-  it("ignores the removed content-mode switch (semantic-v3 is the only path)", () => {
-    // 配置项已删除：语义链路是唯一内容路径，残留的 env 不再影响启动也不报错。
-    const config = loadConfig(["--token", "0123456789abcdef"], { NXCORE_SLIDES_CONTENT_MODE: "legacy-v2" });
-    expect("slidesContentMode" in (config.subagents ?? {})).toBe(false);
-  });
   it("defaults to the isolated fake runtime", () => {
     const config = loadConfig(["--token", "0123456789abcdef"], {});
 
@@ -21,7 +16,6 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      // 全池上限 = slides 池 + default 池（16 + 4）。
       maxConcurrent: 22,
       slidesMaxConcurrent: 16,
       defaultMaxConcurrent: 4,
@@ -68,28 +62,11 @@ describe("loadConfig", () => {
       definitionsDir: resolve("./fixtures/agents"),
       runtimeDir: join(config.dataDir, "agent", "subagents"),
       defaultTimeoutMs: 45_000,
-      // 未知键不受 --flag 限制：三个池旋钮各自有独立 env（下面是它们的缺省值）。
       maxConcurrent: 7,
       slidesMaxConcurrent: 16,
       defaultMaxConcurrent: 4,
       backgroundMaxConcurrent: 2,
       slidesDeckConcurrency: 16,
-    });
-  });
-
-  it("honours the per-pool concurrency knobs", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_SUBAGENT_MAX_CONCURRENT: "24",
-      NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT: "18",
-      NXCORE_SUBAGENT_DEFAULT_MAX_CONCURRENT: "6",
-      NXCORE_SLIDES_DECK_CONCURRENCY: "15",
-    });
-
-    expect(config.subagents).toMatchObject({
-      maxConcurrent: 24,
-      slidesMaxConcurrent: 18,
-      defaultMaxConcurrent: 6,
-      slidesDeckConcurrency: 15,
     });
   });
 

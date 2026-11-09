@@ -52,6 +52,7 @@ const ERROR_MESSAGE_KEYS: Record<string, string> = {
   slides_office_generation_failed: 'surface:agentChat.SLIDES_ERROR_OFFICE_GENERATION',
   slides_layout_agents_unavailable: 'surface:agentChat.SLIDES_ERROR_AGENTS_UNAVAILABLE',
   slides_layout_apply_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_APPLY',
+  slides_layout_design_failed: 'surface:agentChat.SLIDES_ERROR_DESIGN_FAILED',
   slides_layout_tail_failed: 'surface:agentChat.SLIDES_ERROR_LAYOUT_TAIL',
   slides_storyboard_unavailable: 'surface:agentChat.SLIDES_ERROR_STORYBOARD_UNAVAILABLE',
   slides_page_images_generation_failed: 'surface:agentChat.SLIDES_ERROR_PAGE_IMAGES',
@@ -75,7 +76,7 @@ export interface SlidesProgressCardProps {
   runId?: string
   toolStatus?: DisplayAgentToolStatus
   onAction?: (prompt: string, displayText: string) => void
-  onOpenDraft?: (documentId: string, roomId?: string) => void
+  onOpenDraft?: (documentId: string) => void
   cancelledRunIds?: ReadonlySet<string>
   interruptedRunIds?: ReadonlySet<string>
   /** 已完成旧卡收成一行回执。 */
@@ -121,8 +122,16 @@ function useDeckOpener(
       state.fileEntryId,
       state.fileName ?? title,
       undefined,
-      { editable: true, roomId: state.roomId },
-    ).catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
+      { editable: true, focusWindow: true },
+    )
+      .then((result) => {
+        // 实例已存在时 registry 复用并直接返回，不切视图——点了像「没反应」。
+        // 打开成功后显式激活该实例并把窗口带到前台。
+        if (result?.openedWith === 'office' && result.instanceId) {
+          void window.nxcore?.office?.setActiveInstance(result.instanceId)
+        }
+      })
+      .catch(() => onError(t('surface:agentChat.SLIDES_OPEN_FAILED')))
   }
 }
 
@@ -148,6 +157,8 @@ export function SlidesProgressCard({
     state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0,
   )
   const [styleIndex, setStyleIndex] = useState(0)
+  /** 风格确认时的本轮生成页数（'' = 全部按大纲）。 */
+  const [pageCount, setPageCount] = useState('')
   const [expandedPages, setExpandedPages] = useState<ReadonlySet<number>>(new Set())
 
   const pages = state.pages ?? []
@@ -160,8 +171,10 @@ export function SlidesProgressCard({
   const isInProgress = SLIDES_IN_PROGRESS_STAGES.has(state.stage)
   const completed = state.stage === 'page_applied' && state.completed !== false && !running
   const partial = state.stage === 'page_applied' && state.completed === false
-  const failedPages = state.failedPages ?? []
-  const warnings = state.warnings ?? []
+  // 重试跑起来后不显示上一轮的失败详情（红字横幅/失败页/警告）：当前载荷还是旧的，
+  // 新一轮结果没落地前展示失败会误导「这次也失败了」。终态（running=false）才显示。
+  const failedPages = running ? [] : (state.failedPages ?? [])
+  const warnings = running ? [] : (state.warnings ?? [])
   const elapsed = useElapsedLabel(startedAt, completedAt, running)
   // 阶段翻转/新一批图到来：清掉局部状态、重新展开、按新阶段决定是否弹大图。
   const stageKey = `${state.stage}:${state.generation ?? ''}:${state.documentId ?? state.styleSessionId ?? ''}`
@@ -173,6 +186,7 @@ export function SlidesProgressCard({
     // 新阶段需要用户做决定时重新出现（关掉的卡不该错过下一个决策点）。
     if (SLIDES_WAITING_STAGES.has(state.stage)) setDismissed(false)
     setExpandedPages(new Set())
+    setPageCount('')
     setStylePickerOpen(state.stage === 'style_images_ready' && (state.styleCandidates?.length ?? 0) > 0)
   }
 
@@ -188,7 +202,7 @@ export function SlidesProgressCard({
   const openDeck = useDeckOpener(state, title, setOpenError)
   const openDraft = () => {
     if (!state.documentId) return
-    onOpenDraft?.(state.documentId, state.roomId)
+    onOpenDraft?.(state.documentId)
   }
 
   const phaseText = (() => {
@@ -199,7 +213,9 @@ export function SlidesProgressCard({
       case 'style_generating': return t('surface:agentChat.SLIDES_PHASE_STYLE_GENERATING', { count: 3 })
       case 'style_extracting': return t('surface:agentChat.SLIDES_PHASE_STYLE_EXTRACTING')
       case 'planning': return t('surface:agentChat.SLIDES_PHASE_PLANNING')
-      case 'failed': return t('surface:agentChat.SLIDES_FAILED_PHASE')
+      case 'failed': return running
+        ? t('surface:agentChat.SLIDES_DECK_PROGRESS', { done: doneCount, total })
+        : t('surface:agentChat.SLIDES_FAILED_PHASE')
       case 'draft_ready': return t('surface:agentChat.SLIDES_DRAFT_READY')
       case 'style_images_ready': return t('surface:agentChat.SLIDES_STYLE_PICK_PHASE')
       case 'style_card_ready': return t('surface:agentChat.SLIDES_STYLE_CARD_PHASE')
@@ -218,7 +234,7 @@ export function SlidesProgressCard({
   })()
 
   if (compact) {
-    const compactFailed = state.stage === 'failed'
+    const compactFailed = state.stage === 'failed' && !running
     const compactStopped = !compactFailed && (stopped || interrupted)
     const failedText = compactFailed
       ? (state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
@@ -246,6 +262,22 @@ export function SlidesProgressCard({
             }))}
           >
             {t('surface:agentChat.SLIDES_RETRY')}
+          </button>
+        ) : null}
+        {tone === 'done' && state.documentId ? (
+          <button
+            type="button"
+            className="agent-slides-receipt-open"
+            aria-label={t('surface:agentChat.SLIDES_REGENERATE_LABEL', { title })}
+            onClick={() => runAction('regenerate', () => ({
+              prompt: t('surface:agentChat.SLIDES_REGENERATE_PROMPT', {
+                documentId: state.documentId ?? '',
+                title,
+              }),
+              display: t('surface:agentChat.SLIDES_REGENERATE_DISPLAY'),
+            }))}
+          >
+            {t('surface:agentChat.SLIDES_REGENERATE')}
           </button>
         ) : null}
         {state.fileEntryId ? (
@@ -529,15 +561,39 @@ export function SlidesProgressCard({
             ) : null}
         </details>
         <div className="agent-slides-actions">
+          <label className="agent-slides-page-count">
+            <span>{t('surface:agentChat.SLIDES_PAGE_COUNT_LABEL')}</span>
+            <select
+              value={pageCount}
+              disabled={busy || pendingAction !== null}
+              aria-label={t('surface:agentChat.SLIDES_PAGE_COUNT_LABEL')}
+              onChange={(event) => setPageCount(event.target.value)}
+            >
+              <option value="">{t('surface:agentChat.SLIDES_PAGE_COUNT_ALL')}</option>
+              {[1, 2, 3, 5, 8, 10, 12, 15, 20, 25, 30].map((count) => (
+                <option key={count} value={String(count)}>
+                  {t('surface:agentChat.SLIDES_PAGE_COUNT_N', { count })}
+                </option>
+              ))}
+            </select>
+            {pageCount ? (
+              <em className="agent-slides-page-count-note">{t('surface:agentChat.SLIDES_PAGE_COUNT_NO_COVER')}</em>
+            ) : null}
+          </label>
           <button
             type="button"
             className="agent-slides-action is-primary"
             aria-label={t('surface:agentChat.SLIDES_STYLE_CONFIRM_LABEL', { title })}
             disabled={busy || pendingAction === 'style-confirm' || !state.styleSessionId}
             onClick={() => runAction('style-confirm', () => ({
-              prompt: t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT', {
-                sessionId: state.styleSessionId ?? '',
-              }),
+              prompt: pageCount
+                ? t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT_PAGES', {
+                  sessionId: state.styleSessionId ?? '',
+                  pages: pageCount,
+                })
+                : t('surface:agentChat.SLIDES_STYLE_CONFIRM_PROMPT', {
+                  sessionId: state.styleSessionId ?? '',
+                }),
               display: t('surface:agentChat.SLIDES_STYLE_CONFIRM_DISPLAY'),
             }))}
           >
@@ -695,7 +751,7 @@ export function SlidesProgressCard({
         </>
       )
     }
-  } else if (state.stage === 'failed') {
+  } else if (state.stage === 'failed' && !running) {
     const errorText = state.errorCode && ERROR_MESSAGE_KEYS[state.errorCode]
       ? t(ERROR_MESSAGE_KEYS[state.errorCode]!)
       : (state.errorMessage || t('surface:agentChat.SLIDES_ERROR_UNKNOWN'))

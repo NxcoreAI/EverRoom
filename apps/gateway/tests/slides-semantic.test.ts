@@ -174,11 +174,10 @@ describe("semantic content contract", () => {
     const validate = ajv.compile(schema("slides-planner"));
     const draftPages = [{ title: "标题", points: Array(12).fill("完整内容") }];
     // draft 阶段不带语义字段：宽松 draftPages 合法。
-    expect(validate({ instruction: "生成", roomId: "room", phase: "draft", draftPages })).toBe(true);
+    expect(validate({ instruction: "生成", phase: "draft", draftPages })).toBe(true);
     // 网关预取的文档正文随 draft 输入下发（sourceDocuments），必须过输入 schema。
     expect(validate({
       instruction: "生成",
-      roomId: "room",
       phase: "draft",
       sourceDocuments: [{
         documentId: "doc-1",
@@ -190,16 +189,15 @@ describe("semantic content contract", () => {
     })).toBe(true);
     expect(validate({
       instruction: "生成",
-      roomId: "room",
       phase: "draft",
       sourceDocuments: [{ documentId: "doc-1", title: "x", version: 2 }],
     })).toBe(false);
     // arrange 阶段必带 contentMode+sources（唯一内容路径，无回退）。
-    expect(validate({ instruction: "生成", roomId: "room", phase: "arrange", draftPages })).toBe(false);
-    expect(validate({ instruction: "生成", roomId: "room", phase: "arrange", draftPages, contentMode: "semantic-v3", sources: assignContentSources(draftPages, "d") })).toBe(true);
+    expect(validate({ instruction: "生成", phase: "arrange", draftPages })).toBe(false);
+    expect(validate({ instruction: "生成", phase: "arrange", draftPages, contentMode: "semantic-v3", sources: assignContentSources(draftPages, "d") })).toBe(true);
     const editor = ajv.compile(schema("slides-editor"));
     // 修复器没有可选模式：缺语义字段一律拒绝。
-    expect(editor({ instruction: "修复", roomId: "r", draftPages: [] })).toBe(false);
+    expect(editor({ instruction: "修复", draftPages: [] })).toBe(false);
   });
   it("exposes Editor tool argument properties to providers and still validates the selected version", () => {
     const schema = JSON.parse(readFileSync(resolve("../../agents/slides-editor/schemas/output.schema.json"), "utf8"));
@@ -209,7 +207,9 @@ describe("semantic content contract", () => {
     expect(validate({ schemaVersion: "storyboard/v3", pages: [semanticCases[0]!.page] })).toBe(true);
     expect(validate({})).toBe(false);
     expect(validate({ schemaVersion: "storyboard/v2", pages: [semanticCases[0]!.page] })).toBe(false);
-    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(5).fill(semanticCases[0]!.page) })).toBe(false);
+    // 修复批量与输入 repairPageIds 对齐（12）：满批可交，超批仍拒。
+    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(12).fill(semanticCases[0]!.page) })).toBe(true);
+    expect(validate({ schemaVersion: "storyboard/v3", pages: Array(13).fill(semanticCases[0]!.page) })).toBe(false);
   });
 });
 
@@ -256,7 +256,7 @@ describe("semantic assembly", () => {
   const plan = () => ({ title: "Deck", contentContext: { mode: "semantic-v3", revision: 1, sources: fixture.sources, sourceHash: semanticHash(fixture.sources) }, pages: [{ title: fixture.page.message, content: structuredClone(fixture.page) }] });
   it("assembles without a second understanding invocation or a deterministic skeleton", async () => {
     const repair = vi.fn();
-    const result = await assembleSemanticPlan({ plan: plan(), instruction: "讲清收益", roomId: "room", repair });
+    const result = await assembleSemanticPlan({ plan: plan(), instruction: "讲清收益", repair });
     expect(repair).not.toHaveBeenCalled();
     expect(result.storyboard.schemaVersion).toBe("storyboard/v3");
     expect((result.plan.pages as any[])[0]).not.toHaveProperty("skeleton");
@@ -265,13 +265,13 @@ describe("semantic assembly", () => {
   it("bounds repair to two rounds and never falls back to form mapping", async () => {
     const input = plan(); input.pages[0]!.content.blocks = [];
     const repair = vi.fn(async () => ({ status: "completed", result: { structuredOutput: { schemaVersion: "storyboard/v3", pages: [] } } }) as any);
-    await expect(assembleSemanticPlan({ plan: input, instruction: "修复", roomId: "r", repair })).rejects.toThrow("semantic_content_invalid");
+    await expect(assembleSemanticPlan({ plan: input, instruction: "修复", repair })).rejects.toThrow("semantic_content_invalid");
     expect(repair).toHaveBeenCalledTimes(2);
   });
   it("canonicalizes an invented page ID only when all provenance belongs to its confirmed position", async () => {
     const input = plan(); input.pages[0]!.content.id = "page-1-content";
     const repair = vi.fn();
-    const result = await assembleSemanticPlan({ plan: input, instruction: "生成", roomId: "r", repair });
+    const result = await assembleSemanticPlan({ plan: input, instruction: "生成", repair });
     expect(result.storyboard.pages[0]!.id).toBe(fixture.page.id);
     expect(result.report.warnings).toHaveLength(1);
     expect(repair).not.toHaveBeenCalled();
@@ -281,10 +281,10 @@ describe("semantic assembly", () => {
     const input = plan(); input.pages[0]!.content.id = "invented";
     input.pages[0]!.content.blocks[0]!.sourceRefs = ["unknown"];
     const repair = vi.fn(async (_input: Record<string, any>) => ({ status: "failed" }) as any);
-    await expect(assembleSemanticPlan({ plan: input, instruction: "修复", roomId: "r", repair })).rejects.toThrow("semantic_content_invalid");
+    await expect(assembleSemanticPlan({ plan: input, instruction: "修复", repair })).rejects.toThrow("semantic_content_invalid");
     expect(repair.mock.calls[0]![0].priorStoryboard.pages[0].id).toBe("invented");
   });
-  it("scopes feedback and sources to four pages and repairs all eight within two rounds", async () => {
+  it("repairs every failing page in one round instead of only the first four", async () => {
     const sources = assignContentSources(Array.from({ length: 8 }, () => fixture.draft), "draft");
     const sourceIds = [...new Set(sources.map(s => s.pageId))];
     const valid = sourceIds.map(id => {
@@ -296,11 +296,15 @@ describe("semantic assembly", () => {
       const ids = input.repairPageIds as string[];
       expect(input.sources.every((s: any) => ids.includes(s.pageId))).toBe(true);
       expect(ids.every(id => input.defects.some((d: string) => d.startsWith(`[${id}]`)))).toBe(true);
-      expect(input.defects).toHaveLength(12);
+      // 缺陷预算覆盖满批：每页至少一条，总量不超过 24。
+      expect(input.defects.length).toBeGreaterThanOrEqual(ids.length);
+      expect(input.defects.length).toBeLessThanOrEqual(24);
       return { status: "completed", result: { structuredOutput: { schemaVersion: "storyboard/v3", pages: valid.filter(p => ids.includes(p.id)) } } } as any;
     });
-    await assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", roomId: "r", repair });
-    expect(repair.mock.calls.map(([input]) => input.repairPageIds)).toEqual([sourceIds.slice(0, 4), sourceIds.slice(4)]);
+    await assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", repair });
+    // 一轮就覆盖全部 8 个出错页；不再出现「只修前 4 页、第二轮补剩下 4 页」。
+    expect(repair.mock.calls).toHaveLength(1);
+    expect(repair.mock.calls.map(([input]) => input.repairPageIds)).toEqual([sourceIds]);
   });
   it("rejects reordered known identities instead of silently rewriting them", async () => {
     const sources = assignContentSources([fixture.draft, fixture.draft], "draft");
@@ -310,24 +314,24 @@ describe("semantic assembly", () => {
       return { ...structuredClone(fixture.page), id, sourceRefs: refs, blocks: fixture.page.blocks.map((b, i) => ({ ...b, sourceRefs: [refs[i]!] })) };
     }).reverse();
     const repair = vi.fn(async (_input: Record<string, any>) => ({ status: "failed" }) as any);
-    await expect(assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", roomId: "r", repair })).rejects.toThrow("semantic_content_invalid");
+    await expect(assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", repair })).rejects.toThrow("semantic_content_invalid");
     expect(repair.mock.calls[0]![0].priorStoryboard.pages.map((p: any) => p.id)).toEqual([...sourceIds].reverse());
   });
   it("accepts a named-page repair and pins persisted mode across restart", async () => {
     const input = plan(); input.pages[0]!.content.blocks = [];
     const repair = vi.fn(async () => ({ status: "completed", result: { structuredOutput: { schemaVersion: "storyboard/v3", pages: [fixture.page, { ...fixture.page, id: "outside-scope" }] } } }) as any);
-    const result = await assembleSemanticPlan({ plan: JSON.parse(JSON.stringify(input)), instruction: "修复", roomId: "r", repair });
+    const result = await assembleSemanticPlan({ plan: JSON.parse(JSON.stringify(input)), instruction: "修复", repair });
     expect(result.storyboard.pages).toEqual([fixture.page]);
     expect(repair).toHaveBeenCalledTimes(1);
   });
   it("retains the saved contract when image confirmation resumes without images", async () => {
     const saved = plan();
-    const session = { id: "images", roomId: "r", draftDocumentId: "d", stage: "confirm", plan: JSON.parse(JSON.stringify(saved)), pages: [] };
-    const outcome = await decidePageImages({ roomId: "r", draftDocumentId: "d", decision: "skip" }, { sessions: { byDraftId: () => session } as any, images: {} as any });
+    const session = { id: "images", draftDocumentId: "d", stage: "confirm", plan: JSON.parse(JSON.stringify(saved)), pages: [] };
+    const outcome = await decidePageImages({ draftDocumentId: "d", decision: "skip" }, { sessions: { byDraftId: () => session } as any, images: {} as any });
     expect(outcome.kind).toBe("build");
     if (outcome.kind === "build") {
       expect(outcome.plan.contentContext).toEqual(saved.contentContext);
-      expect((await assembleSemanticPlan({ plan: outcome.plan, instruction: "keep", roomId: "r", repair: vi.fn() })).report.passed).toBe(true);
+      expect((await assembleSemanticPlan({ plan: outcome.plan, instruction: "keep", repair: vi.fn() })).report.passed).toBe(true);
     }
   });
   it("targets later-page defects instead of spending repair budget on the first four pages", async () => {
@@ -339,7 +343,7 @@ describe("semantic assembly", () => {
     });
     const pages = structuredClone(valid); pages[7]!.blocks.pop();
     const repair = vi.fn(async (_input: Record<string, unknown>) => ({ status: "completed", result: { structuredOutput: { schemaVersion: "storyboard/v3", pages: [valid[7]] } } }) as any);
-    await assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", roomId: "r", repair });
+    await assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", repair });
     expect(repair.mock.calls[0]![0].repairPageIds).toEqual([sourceIds[7]]);
   });
 });

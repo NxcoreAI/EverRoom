@@ -1,6 +1,6 @@
 /**
- * pricingTiers：定价卡。名称微标签 + 衬线大价格 + 特性 + 底部 CTA；
- * featured 档浅色底 + 强调描边，非重点档用风格卡卡面；卡内内容上下分布填满。
+ * pricingTiers：定价卡。名称微标签 + 大价格 + 特性 + 底部 CTA；
+ * featured 档浅强调底 + 一条强调边，非重点档用风格卡卡面；卡内内容上下分布填满。
  */
 
 import { splitColumns, type Frame } from "../../grid.js";
@@ -54,17 +54,13 @@ export function expandPricingTiers(
   });
   rendered.forEach(({ tier, cell, isFeatured, box, nameH, priceH, featureHs, topBlock }) => {
     if (isFeatured) {
-      // featured 用一块 ink 反白卡承担全页最强对比；暖纸页面上唯一的深色块。
+      // featured：浅强调底 + 一条强调边（不叠反白/顶条/阴影）；文字用正常档色。
       const radius = Math.min(50000, Math.round((skin.radius / Math.max(1, Math.min(cell.w, cell.h))) * 100000));
       elements.push({
-        type: "shape", shape: "roundRect", fill: skin.colors.text,
+        type: "shape", shape: "roundRect", fill: skin.colors.emphasisSoft,
+        stroke: { color: skin.colors.emphasis, widthPt: 1.25 },
         x: Math.round(cell.x), y: Math.round(cell.y), w: Math.round(cell.w), h: Math.round(cell.h),
         ...(radius ? { adj: radius } : {}),
-        ...(theme.decoration.cardShadow !== "none" ? { shadow: theme.decoration.cardShadow } : {}),
-      });
-      elements.push({
-        type: "shape", shape: "rect", fill: skin.colors.emphasis,
-        x: Math.round(box.x), y: Math.round(cell.y), w: Math.round(box.w), h: 4,
       });
     } else {
       elements.push(...skin.paint(cell));
@@ -74,28 +70,25 @@ export function expandPricingTiers(
       { runs: [skin.micro(tier.name, isFeatured ? skin.colors.emphasis : skin.colors.muted)] },
     ]));
     // 价格
-    const priceColor = isFeatured ? skin.colors.inverse : skin.colors.text;
     const priceRuns = skin.numeral !== "none"
-      ? (skin.numeralRun(tier.price, priceSize, priceColor) ?? [])
-      : [{ text: tier.price, sizePt: priceSize, bold: true, color: priceColor, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }];
+      ? (skin.numeralRun(tier.price, priceSize, skin.colors.text) ?? [])
+      : [{ text: tier.price, sizePt: priceSize, bold: true, color: skin.colors.text, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }];
     elements.push(textElement({ x: box.x, y: box.y + nameH + Math.round(m.tightGap * 0.6), w: box.w, h: priceH }, [{
       runs: [
         ...priceRuns,
-        ...(tier.unit ? [{ text: ` ${tier.unit}`, sizePt: Math.round(m.body * 0.85), color: isFeatured ? skin.colors.inverseMuted : skin.colors.muted, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }] : []),
+        ...(tier.unit ? [{ text: ` ${tier.unit}`, sizePt: Math.round(m.body * 0.85), color: skin.colors.muted, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }] : []),
       ],
     }]));
     const ruleY = box.y + topBlock - Math.round(m.gap * 0.25);
     const rule = skin.dividerH(box, ruleY);
-    if (rule) {
-      elements.push(rule.type === "shape" && isFeatured ? { ...rule, fill: skin.colors.inverseMuted } : rule);
-    }
+    if (rule) elements.push(rule);
     // 特性
     let y = box.y + topBlock;
     tier.features.forEach((feature) => {
       const h = featureHs[tier.features.indexOf(feature)] ?? Math.round(m.body * 1.8);
       elements.push({ type: "icon", icon: "check", color: skin.colors.emphasis, x: Math.round(box.x), y: Math.round(y + 4), w: checkSize, h: checkSize });
       elements.push(textElement({ x: box.x + checkSize + 12, y, w: box.w - checkSize - 12, h }, [
-        { runs: skin.body(feature, featureSize, isFeatured ? skin.colors.inverseMuted : skin.colors.muted) },
+        { runs: skin.body(feature, featureSize, skin.colors.muted) },
       ]));
       y += h;
     });

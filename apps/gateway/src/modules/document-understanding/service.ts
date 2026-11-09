@@ -4,6 +4,7 @@ import { extname } from "node:path";
 import { and, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { fileEntries, parsedDocuments } from "../../infrastructure/database/schema.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import type { FilesService } from "../files/service.js";
 import { converterOfExtension } from "@nxcore/connectors-module/converters.js";
 import type { DocumentOcrClient } from "../vision/vlm-client.js";
@@ -20,11 +21,15 @@ import {
   type ParsedDocumentResult,
 } from "./types.js";
 
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
 const SUPPORTED_EXTENSIONS = new Set([
   "pdf",
   "doc", "docx", "docm", "dot", "dotx", "dotm", "rtf",
   "xls", "xlsx", "xlsm", "xlsb", "xlt", "xltx", "xltm", "xla", "xlam", "ods",
   "ppt", "pptx", "pptm", "pot", "potx", "potm", "pps", "ppsx", "ppsm", "sldx", "sldm", "odp",
+  // 纯文本：正文即 markdown，file_read / 解析管线直接可用。
+  "md", "markdown", "txt",
 ]);
 
 function extensionOf(filename: string): string {
@@ -193,7 +198,9 @@ export class DocumentUnderstandingService {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly files: FilesService,
-    private visual: DocumentOcrClient | null = null,
+    private visual: (DocumentOcrClient & {
+      analyze?(image: { buffer: Buffer; mime: string }, prompt: string, signal?: AbortSignal): Promise<unknown>;
+    }) | null = null,
     private readonly dataDir: string | null = null,
   ) {}
 
@@ -214,6 +221,14 @@ export class DocumentUnderstandingService {
     return row ? dtoOf(row, true) : null;
   }
 
+  /** fileVersionId 兜底：模型误传 fileEntryId 时回退条目当前版本（与 getVersionContext 同口径）。 */
+  resolveVersionId(fileVersionId: string): string {
+    if (this.get(fileVersionId)) return fileVersionId;
+    const entry = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileVersionId)).get();
+    return entry?.currentVersionId ?? fileVersionId;
+  }
+
   markdownForFile(fileEntryId: string): string | null {
     const row = this.db.select({ markdown: parsedDocuments.markdown })
       .from(fileEntries)
@@ -230,17 +245,20 @@ export class DocumentUnderstandingService {
     const context = this.files.getVersionContext(fileEntryId, fileVersionId);
     if (!context) throw new Error("document_file_version_not_found");
     if (!this.supports(context.entry.originalName)) return null;
-    const existing = this.get(fileVersionId);
+    // getVersionContext 会把误传的 fileEntryId 回退成真实版本：后续查/写一律用真实 id，
+    // 产物落库键与 artifact 工具的查询口径保持一致。
+    const versionId = context.version.id;
+    const existing = this.get(versionId);
     if (existing) return existing;
 
-    const active = this.parseInFlight.get(fileVersionId);
+    const active = this.parseInFlight.get(versionId);
     if (active) return active;
-    const parsing = this.parseVersionOnce(fileEntryId, fileVersionId, context);
-    this.parseInFlight.set(fileVersionId, parsing);
+    const parsing = this.parseVersionOnce(fileEntryId, versionId, context);
+    this.parseInFlight.set(versionId, parsing);
     try {
       return await parsing;
     } finally {
-      if (this.parseInFlight.get(fileVersionId) === parsing) {
+      if (this.parseInFlight.get(versionId) === parsing) {
         this.parseInFlight.delete(fileVersionId);
       }
     }
@@ -339,6 +357,84 @@ export class DocumentUnderstandingService {
     const stored = this.get(fileVersionId);
     if (!stored) throw new Error("document_artifact_persist_failed");
     return { ...stored, deduplicated: stored.id !== id };
+  }
+
+  /** 纯图片的按需视觉描述：VLM 产中文结构化描述并按解析产物落库（preview/content_search 随即可用）。 */
+  async describeImageVersion(fileEntryId: string, fileVersionId: string): Promise<ParsedDocumentResult> {
+    if (!this.visual || typeof this.visual.analyze !== "function") throw new Error("vlm_not_configured");
+    const context = this.files.getVersionContext(fileEntryId, fileVersionId);
+    if (!context) throw new Error("document_file_version_not_found");
+    const extension = extensionOf(context.entry.originalName);
+    if (!IMAGE_EXTENSIONS.has(extension)) throw new Error("document_format_not_supported：仅支持图片");
+    const versionId = context.version.id;
+    const existing = this.get(versionId);
+    if (existing) return existing;
+    const buffer = await readFile(context.storagePath);
+    const mime = `image/${extension === "jpg" ? "jpeg" : extension}`;
+    const prompt = [
+      "你是演示文稿配图评估助手。看这张图，用中文输出 JSON（只输出 JSON）：",
+      '{"主体":"画面里有什么（产品/部件/人物/场景，含品牌或型号线索）",',
+      '"构图":"横竖与主体位置、留白区域（能否压字/作背景）",',
+      '"色调":"主色与明暗（适合深底还是浅底页面）",',
+      '"配图建议":"适合作 PPT 哪类页（封面/产品页/氛围图），一句话"}',
+    ].join("\n");
+    let description: string;
+    try {
+      const analyzed = await this.visual.analyze!({ buffer, mime }, prompt) as Record<string, unknown>;
+      description = [
+        `主体：${String(analyzed.主体 ?? "（未识别）")}`,
+        `构图：${String(analyzed.构图 ?? "")}`,
+        `色调：${String(analyzed.色调 ?? "")}`,
+        `配图建议：${String(analyzed.配图建议 ?? "")}`,
+      ].join("\n");
+    } catch {
+      throw new Error("image_vlm_failed：视觉模型调用失败，稍后重试或换图");
+    }
+    const markdown = `【图片视觉描述】${context.entry.originalName}\n${description}`;
+    const blocks = blocksOf(markdown, "legacy-office", extension);
+    const artifact: CanonicalDocumentArtifact = {
+      schemaVersion: DOCUMENT_ARTIFACT_SCHEMA_VERSION,
+      document: {
+        fileEntryId,
+        fileVersionId: versionId,
+        contentHash: context.version.contentHash,
+        filename: context.entry.originalName,
+        format: "legacy-office",
+        parserRevision: DOCUMENT_PARSER_REVISION,
+        visualRevision: "image-vlm@1",
+        visualModel: this.visual.model,
+      },
+      pages: [],
+      blocks,
+      tables: [],
+      assets: [],
+      warnings: ["image-description-artifact", "page-rendering-not-run"],
+      quality: {
+        status: "partial",
+        nativeTextCoverage: 0,
+        ocrCoverage: 0,
+        visualCoverage: 1,
+        requiresReview: false,
+      },
+    };
+    const now = new Date();
+    const id = `pdoc-${randomUUID()}`;
+    this.db.insert(parsedDocuments).values({
+      id,
+      fileVersionId: versionId,
+      parserRevision: DOCUMENT_PARSER_REVISION,
+      format: "legacy-office",
+      artifact: artifact as unknown as Record<string, unknown>,
+      markdown,
+      quality: artifact.quality as unknown as Record<string, unknown>,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing().run();
+    // 描述进全文索引：content_search 从此能按画面内容命中图片。
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
+    const stored = this.get(versionId);
+    if (!stored) throw new Error("document_artifact_persist_failed");
+    return stored;
   }
 
   async analyzePdfVisuals(

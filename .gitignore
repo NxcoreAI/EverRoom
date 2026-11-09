@@ -6,7 +6,8 @@ dist/
 out/
 release/
 screenshots/
-
+.omc/
+.omx/
 # Agent bundles are product source assets and must be committed with the app.
 !agents/
 !agents/**

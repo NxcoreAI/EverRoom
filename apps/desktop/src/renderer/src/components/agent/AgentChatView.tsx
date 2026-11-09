@@ -11,12 +11,14 @@ import {
   type SlidesProgressState,
   type SlidesTaskEntry,
 } from './SlidesProgressCard'
+import { slidesFailureSuppressed } from './slides/slidesState'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
   AGENT_CHAT_WHEEL_UP_DETACH_PX,
   isGeometryClampScroll,
   isNestedScrollerWheel,
+  wheelDownChaseBand,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
@@ -378,11 +380,11 @@ export function AgentChatView({
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
-  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
+  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string, choice?: string, text?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   /** 卡片动作两段式：prompt 是运行时技术指令，displayText 是用户人话（气泡/标题）。 */
   onSlidesAction?: (prompt: string, displayText: string) => void
-  onOpenDraft?: (documentId: string, roomId?: string) => void
+  onOpenDraft?: (documentId: string) => void
   /** 用户主动停止的 run：卡片显示「已停止」。 */
   cancelledRunIds?: ReadonlySet<string>
   /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
@@ -495,11 +497,17 @@ export function AgentChatView({
   )
   const slidesTaskCards = useMemo(() => {
     const cards: Array<{ entry: SlidesTaskEntry; compact: boolean }> = []
-    if (slidesSelection.primary) cards.push({ entry: slidesSelection.primary, compact: false })
-    for (const entry of slidesSelection.waiting) cards.push({ entry, compact: false })
-    for (const entry of slidesSelection.receipts) cards.push({ entry, compact: true })
+    // run 终止后仍是 failed 才亮失败卡（失败不许消失）；运行中的失败先压住。
+    const suppressed = (entry: SlidesTaskEntry): boolean => slidesFailureSuppressed(entry, runCompletedAtByRun)
+    if (slidesSelection.primary && !suppressed(slidesSelection.primary)) cards.push({ entry: slidesSelection.primary, compact: false })
+    for (const entry of slidesSelection.waiting) {
+      if (!suppressed(entry)) cards.push({ entry, compact: false })
+    }
+    for (const entry of slidesSelection.receipts) {
+      if (!suppressed(entry)) cards.push({ entry, compact: true })
+    }
     return cards
-  }, [slidesSelection])
+  }, [slidesSelection, runCompletedAtByRun])
 
   // 配图后台逐张生成轮询：轮询状态以 documentId 为 key，切换文档即清 state/ref；
   // 响应校验 documentId 与 updatedAt，旧响应不得覆盖新广播（修 P1-7 串台）。
@@ -564,8 +572,8 @@ export function AgentChatView({
   const handleSlidesAction = (prompt: string, displayText: string) => {
     onSlidesAction?.(prompt, displayText)
   }
-  const handleOpenDraft = (documentId: string, roomId?: string) => {
-    onOpenDraft?.(documentId, roomId)
+  const handleOpenDraft = (documentId: string) => {
+    onOpenDraft?.(documentId)
   }
 
   const activeHasAssistant = activeRunId
@@ -899,7 +907,8 @@ export function AgentChatView({
             return
           }
           const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          if (distance <= AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
+          // 追赶带随本次位移放款：流式爆发时固定 32px 永远追不上底部（生成进行中滑不到底）。
+          if (distance <= wheelDownChaseBand(event.deltaY) && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (

@@ -15,6 +15,10 @@ export interface OfficeGenerateInput {
   html?: string | null;
   /** pptx：每页一个 PageSpec JSON 字符串。 */
   pages?: string[] | null;
+  /** pptx（pptx skill 路径）：整册 pptxgenjs 构建脚本，桌面 vm 沙箱执行，优先于 pages。 */
+  script?: string | null;
+  /** pptx：skill 的 apply_theme.js 源码（从网关 agents 目录读取，单一事实源）。 */
+  applyThemeJs?: string | null;
   /** xlsx：sheets→rows。 */
   sheets?: OfficeSheetBridgeInput[] | null;
   /** md：Markdown 正文（桌面端纯文本落盘，无渲染引擎）。 */
@@ -196,6 +200,7 @@ export class OfficeBridgeClient {
       versionDeduped: data.versionDeduped === true,
       roomRequested: data.roomRequested === true,
       originalName: str("originalName"),
+      ...(Array.isArray(data.warnings) ? { warnings: (data.warnings as unknown[]).filter((w): w is string => typeof w === "string") } : {}),
     };
   }
 
@@ -269,7 +274,8 @@ export class OfficeBridgeClient {
       mode: "apply",
       fileId: input.fileId,
       page: { slideIndex: input.slideIndex, specJson: input.specJson },
-    });
+    // 与整册 generate 同级预算：嵌大图 + 栅格化 + 保存，30s 会把首页落页打成超时失败。
+    }, 5 * 60_000);
     return { ...(data as unknown as OfficeSlidesEditResult), ok: data.ok !== false };
   }
 
@@ -553,7 +559,7 @@ export class OfficeBridgeClient {
     return parsed.data ?? {};
   }
 
-  private async postEdit(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async postEdit(body: Record<string, unknown>, timeoutMs = 30_000): Promise<Record<string, unknown>> {
     const response = await fetch(`${this.config.baseUrl}/v1/office-edit`, {
       method: "POST",
       headers: {
@@ -562,17 +568,22 @@ export class OfficeBridgeClient {
         Accept: "application/json",
       },
       body: JSON.stringify(body),
-      // 活会话事务（内存应用 + 一次静默保存），不是分钟级的生成链路。
-      signal: AbortSignal.timeout(30_000),
+      // 常规 op 事务是内存应用 + 一次静默保存；fillPage 走整册 builder/merge 管线
+      // + 实时重绘（带大图首页可超 30s），由调用方放宽。
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const parsed = await response.json().catch(() => ({})) as {
       message?: unknown;
+      code?: unknown;
       data?: Record<string, unknown>;
     };
     if (!response.ok) {
-      throw new Error(
-        typeof parsed.message === "string" ? parsed.message : `Office edit failed (${response.status})`,
-      );
+      // 桌面端 422 带结构化 code（not_open/not_editable）：挂在 Error 上，
+      // 调用方按 code 判定，不再对中文文案跑正则（not_editable 文案会被 not_open 正则误伤）。
+      const message = typeof parsed.message === "string" ? parsed.message : `Office edit failed (${response.status})`;
+      const error = new Error(message) as Error & { code?: string };
+      if (typeof parsed.code === "string" && parsed.code) error.code = parsed.code;
+      throw error;
     }
     return parsed.data ?? {};
   }

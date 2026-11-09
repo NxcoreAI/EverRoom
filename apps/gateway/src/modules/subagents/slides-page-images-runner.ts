@@ -59,7 +59,7 @@ export class SlidesPageImageRunner {
 
   /** 启动（或续跑）某会话的生成。返回循环结束的 Promise；生产侧 fire-and-forget。 */
   start(
-    input: { roomId: string; draftDocumentId: string },
+    input: { draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
   ): Promise<void> {
     const existing = this.active.get(deps.sessionId);
@@ -77,7 +77,7 @@ export class SlidesPageImageRunner {
   }
 
   private async loop(
-    input: { roomId: string; draftDocumentId: string },
+    input: { draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
     entry: RunningEntry,
   ): Promise<void> {
@@ -157,7 +157,7 @@ export class SlidesPageImageRunner {
 
   /** 兜底落账：未完成页 failed:true + patch + 广播（广播失败不影响循环退出）。 */
   private failUnfinishedPages(
-    input: { roomId: string; draftDocumentId: string },
+    input: { draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
   ): void {
     try {
@@ -181,10 +181,10 @@ export class SlidesPageImageRunner {
 
   /** 会话有效性：存在、id 未变、仍在 review/settling（accept 等图期不中断；skip 落定或覆盖重建即停）。 */
   private readSession(
-    input: { roomId: string; draftDocumentId: string },
+    input: { draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
   ): SlidesPageImageSessionData | null {
-    const session = deps.sessions.byDraftId(input.roomId, input.draftDocumentId);
+    const session = deps.sessions.byDraftId(input.draftDocumentId);
     if (!session || session.id !== deps.sessionId) return null;
     if (session.stage !== "review" && session.stage !== "settling") return null;
     return session;
@@ -192,7 +192,7 @@ export class SlidesPageImageRunner {
 
   /** 写前重读合并：只动目标页，保留期间用户对其他页的打回/重生成结果。 */
   private patchPage(
-    input: { roomId: string; draftDocumentId: string },
+    input: { draftDocumentId: string },
     deps: SlidesPageImagesStageDeps & { sessionId: string },
     pageIndex: number,
     fields: Partial<Pick<SlidesPageImagePage, "contentHash" | "failed" | "rejected">>,

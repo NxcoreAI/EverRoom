@@ -1059,6 +1059,7 @@ export interface NxcoreDesktopApi {
     pageImagesStatus(documentId: string): Promise<import('./slides').SlidesPageImagesStatus | null>
   }
   subagents: {
+    dispatchSelectionRewrite(input: SubagentSelectionRewriteInput): Promise<{ invocationId: string }>
     getSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     cancelSubagentInvocation(invocationId: string): Promise<SubagentInvocation>
     listRunSubagentInvocations(rootRunId: string): Promise<import('@nxcore/agent-contract').SubagentInvocationNode[]>
@@ -1193,6 +1194,8 @@ export interface NxcoreDesktopApi {
       approvalId: string,
       decision: AgentApprovalDecision,
       feedback?: string,
+      choice?: string,
+      text?: string,
     ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
@@ -1254,6 +1257,122 @@ export interface NxcoreDesktopApi {
     unsubscribe(workspaceId?: string): Promise<void>
     onEvent(listener: (frame: AgentSocketFrame) => void): () => void
   }
+  documents: {
+    list(roomId: string): Promise<RoomDocument[]>
+    listTrash(roomId: string): Promise<RoomDocument[]>
+    get(documentId: string): Promise<RoomDocument>
+    readMarkdown(documentId: string): Promise<{ markdown: string }>
+    listBlocks(documentId: string): Promise<DocumentBlockList>
+    listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
+    listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
+    getVersionSnapshot(documentId: string, version: number): Promise<DocumentVersionSnapshot>
+    getDiff(documentId: string, fromVersion: number | null, toVersion: number): Promise<DocumentDiffResult>
+    versionChangeSummary(documentId: string, version: number): Promise<{ version: number; summary: string; source: 'ai' | 'local' }>
+    listDocumentComments(documentId: string): Promise<{ items: LocalDocumentComment[] }>
+    createDocumentComment(documentId: string, input: { body: string; parentId?: string | null; blockId?: string | null; quotedText?: string | null }): Promise<LocalDocumentComment>
+    resolveDocumentComment(documentId: string, commentId: string, resolved: boolean): Promise<LocalDocumentComment>
+    deleteDocumentComment(documentId: string, commentId: string): Promise<void>
+    getOverview(documentId: string): Promise<DocumentOverviewView>
+    generateOverview(documentId: string): Promise<DocumentOverviewView>
+    getSectionPreview(documentId: string, input: DocumentSectionPreviewInput): Promise<DocumentSectionPreviewResult>
+    restoreVersion(documentId: string, version: number, baseVersion: number): Promise<RoomDocument>
+    resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): Promise<ResolveDocumentBlockReferencesResult>
+    listOperations(filters?: {
+      roomId?: string
+      documentId?: string
+      sessionId?: string
+      status?: DocumentOperationStatus
+    }): Promise<DocumentOperationSummary[]>
+    startOperation(input: StartDocumentOperationInput): Promise<DocumentOperation>
+    getOperation(operationId: string, context?: { roomId: string | null; sessionId: string; runId: string }): Promise<DocumentOperation>
+    executeOperationCommand(
+      operationId: string,
+      input: DocumentOperationCommandInput,
+    ): Promise<DocumentOperationCommandResult>
+    storeImage(documentId: string, input: StoreDocumentImageInput): Promise<StoredDocumentImage>
+    import(input: ImportRoomDocumentInput): Promise<RoomDocument>
+    save(documentId: string, input: SaveRoomDocumentInput): Promise<RoomDocument>
+    delete(documentId: string): Promise<void>
+    move(documentId: string, fromRoomId: string, roomId: string): Promise<MovedRoomDocument>
+    moveMany(documentIds: string[], fromRoomId: string, roomId: string): Promise<MoveRoomDocumentsResult>
+    restore(documentId: string): Promise<RoomDocument>
+    deletePermanently(documentId: string): Promise<void>
+    emptyTrash(roomId: string): Promise<void>
+    exportPdf(input: ExportDocumentPdfInput): Promise<ExportDocumentPdfResult>
+    subscribe(roomId: string): Promise<void>
+    unsubscribe(roomId?: string): Promise<void>
+    onEvent(listener: (frame: DocumentEventFrame) => void): () => void
+    onOperationChanged(listener: (operationId: string) => void): () => void
+    onReady(listener: (roomId: string) => void): () => void
+  }
+  externalDocuments: {
+    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
+     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
+    importBatch(input: {
+      provider: ExternalDocumentProvider
+      connectionName?: string
+      remoteDocumentIds: string[]
+      mode: DocumentImportBatchMode
+      roomId?: string
+      /** true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
+      forceNew?: boolean
+    }): Promise<{ batchId: string; total: number }>
+    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
+    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
+    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
+    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
+    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string | null
+      relation: 'primary' | 'candidate'
+      /** 远端内容与已应用快照相同：未创建候选/记录。 */
+      noChange?: boolean
+      documentId: string
+    }>
+    importRun(runId: string): Promise<DocumentImportRunView>
+    cancelImportRun(runId: string): Promise<DocumentImportRunView>
+    importHistory(documentId: string): Promise<{
+      entries: DocumentImportHistoryEntry[]
+      commentDiff: DocumentImportCommentDiffSummary | null
+      comments: ExternalDocumentCommentView[]
+    }>
+    importDiff(roomImportId: string): Promise<{
+      candidateTitle: string
+      currentTitle: string
+      appliedVersion: number | null
+      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
+      commentsComparable: boolean
+    }>
+    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
+    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
+    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
+      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
+    }>
+    checkExternalUpdate(documentId: string): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string | null
+      relation: 'primary' | 'candidate'
+      noChange?: boolean
+      documentId: string
+    }>
+    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
+    createExport(input: {
+      roomId: string
+      documentId: string
+      version?: number
+      provider: ExternalDocumentProvider
+      mode: AgentDocumentExportMode
+      target?: AgentDocumentExportTarget | null
+    }): Promise<AgentDocumentExportRunView>
+    getExport(exportId: string): Promise<AgentDocumentExportRunView>
+    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
+    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
+    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
+    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
+  }
   sources: {
     list(): Promise<DataSourceSummary[]>
     listFiles(id: string): Promise<SourceFileSummary[]>
@@ -1298,7 +1417,7 @@ export interface NxcoreDesktopApi {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string; focusWindow?: boolean },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */

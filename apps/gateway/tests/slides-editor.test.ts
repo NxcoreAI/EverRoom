@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -327,29 +327,29 @@ describe("SlidesStoryboardStore", () => {
     const store = new SlidesStoryboardStore(database.db);
     const board = fixture();
     const report = buildShadowReport(board, drafts);
-    store.save({ roomId: "room-1", draftDocumentId: "doc-1", draftHash: "hash-1", storyboard: board, report });
-    const found = store.byDraft("room-1", "doc-1");
+    store.save({ draftDocumentId: "doc-1", draftHash: "hash-1", storyboard: board, report });
+    const found = store.byDraft("doc-1");
     expect(found?.draftHash).toBe("hash-1");
     expect(found?.report.pageCount).toBe(3);
-    store.save({ roomId: "room-1", draftDocumentId: "doc-1", draftHash: "hash-1", storyboard: board, report });
-    expect(store.byDraftHash("room-1", "doc-1", "hash-1")?.draftHash).toBe("hash-1");
-    expect(store.byDraft("room-1", "doc-1")?.report.pageCount).toBe(3);
+    store.save({ draftDocumentId: "doc-1", draftHash: "hash-1", storyboard: board, report });
+    expect(store.byDraftHash("doc-1", "hash-1")?.draftHash).toBe("hash-1");
+    expect(store.byDraft("doc-1")?.report.pageCount).toBe(3);
   });
   it("persists semantic and legacy experiments separately without migrating existing records", () => {
     const dir = mkdtempSync(join(tmpdir(), "nxcore-slides-storyboard-")); dirs.push(dir);
     const database = createDatabase(join(dir, "gateway.sqlite"), resolve("drizzle"));
     const store = new SlidesStoryboardStore(database.db);
     const legacy = fixture();
-    store.save({ roomId: "r", draftDocumentId: "d", draftHash: "same-source", storyboard: legacy, report: buildShadowReport(legacy, drafts) });
+    store.save({ draftDocumentId: "d", draftHash: "same-source", storyboard: legacy, report: buildShadowReport(legacy, drafts) });
     const { page, sources } = semanticCases[0]!;
     const storyboard = { schemaVersion: "storyboard/v3" as const, title: "Deck", pages: [page], sources };
     const report = checkSemanticStoryboard([page], sources);
-    expect(() => store.save({ roomId: "r", draftDocumentId: "d", draftHash: "same-source", storyboard, report })).toThrow("key_required");
-    const first = store.save({ roomId: "r", draftDocumentId: "d", draftHash: "semantic-v3:style-a", storyboard, report });
-    const second = store.save({ roomId: "r", draftDocumentId: "d", draftHash: "semantic-v3:style-b", storyboard, report });
+    expect(() => store.save({ draftDocumentId: "d", draftHash: "same-source", storyboard, report })).toThrow("key_required");
+    const first = store.save({ draftDocumentId: "d", draftHash: "semantic-v3:style-a", storyboard, report });
+    const second = store.save({ draftDocumentId: "d", draftHash: "semantic-v3:style-b", storyboard, report });
     expect(first.id).not.toBe(second.id);
-    expect(store.byDraftHash("r", "d", "same-source")?.storyboard.schemaVersion).toBe("storyboard/v2");
-    expect(store.byDraftHash("r", "d", "semantic-v3:style-a")?.storyboard).toEqual(storyboard);
+    expect(store.byDraftHash("d", "same-source")?.storyboard.schemaVersion).toBe("storyboard/v2");
+    expect(store.byDraftHash("d", "semantic-v3:style-a")?.storyboard).toEqual(storyboard);
   });
 });
 
@@ -388,7 +388,6 @@ describe("页级修复的边界（只收被点名的页）", () => {
   it("修复输入只带被打回的页与缺陷清单（不把整册再发一遍）", () => {
     const input = buildEditorRepairInput({
       instruction: "复盘",
-      roomId: "room-1",
       title: "季度汇报",
       draftPages: [{ title: "封面", points: [] }, { title: "业绩", points: ["营收涨两成"] }],
       priorStoryboard: base,
@@ -399,5 +398,17 @@ describe("页级修复的边界（只收被点名的页）", () => {
     expect((input.priorStoryboard as { pages: unknown[] }).pages.length).toBe(1);
     expect(input.repairPageIds).toEqual(["page-02"]);
     expect((input.defects as string[])[0]).toContain("形态");
+  });
+});
+
+describe("编辑器 schema 批量口径一致", () => {
+  it("输出 pages 上限不小于输入 repairPageIds 上限（v2 每 4 页的旧限曾拒收 5+ 页修复）", () => {
+    const readSchema = (name: string) =>
+      JSON.parse(readFileSync(resolve("../../agents/slides-editor/schemas", name), "utf8")) as {
+        properties: Record<string, { maxItems?: number; items?: { maxItems?: number } }>;
+      };
+    const outputPages = readSchema("output.schema.json").properties.pages!.maxItems!;
+    const repairIds = readSchema("input.schema.json").properties.repairPageIds!.maxItems!;
+    expect(outputPages).toBeGreaterThanOrEqual(repairIds);
   });
 });

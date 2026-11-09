@@ -26,7 +26,6 @@ function imagesReturning(hash: string) {
 function register(images: { generateImage: ReturnType<typeof vi.fn> } = imagesReturning("a".repeat(64))) {
   const token = newPrewarmToken();
   registerPrewarm(token, {
-    roomId: "room-1",
     draftDocumentId: "draft-1",
     stylePalette: null,
     images: images as never,
@@ -56,7 +55,6 @@ describe("预热池", () => {
     const { token, images } = register();
     const slowToken = newPrewarmToken();
     registerPrewarm(slowToken, {
-      roomId: "room-1",
       draftDocumentId: "draft-1",
       stylePalette: null,
       images: { generateImage: () => new Promise(() => {}) } as never,
@@ -120,7 +118,6 @@ describe("预热池", () => {
 function fakeSessions(plan: Record<string, unknown>, pages: SlidesPageImagePage[]) {
   let session: SlidesPageImageSessionData = {
     id: "session-1",
-    roomId: "room-1",
     draftDocumentId: "draft-1",
     styleSessionId: null,
     stage: "confirm",
@@ -151,7 +148,7 @@ describe("预热交接", () => {
     const runner = { isRunning: () => false, start: vi.fn(async () => {}), abort: vi.fn(), settle: vi.fn(async () => {}) };
     const ready = new Map([[0, { contentHash: hash, imagePrompt: PROMPT }]]);
     const outcome = openPageImagesConfirm(
-      { roomId: "room-1", draftDocumentId: "draft-1", styleSessionId: null, plan, stylePalette: null },
+      { draftDocumentId: "draft-1", styleSessionId: null, plan, stylePalette: null },
       {
         sessions: sessions as unknown as SlidesPageImageSessionStore,
         images: imagesReturning(hash) as never,
@@ -178,7 +175,7 @@ describe("预热交接", () => {
     const inflight = new Map([[0, Promise.resolve(hash)]]);
     const runner = new SlidesPageImageRunner();
     await runner.start(
-      { roomId: "room-1", draftDocumentId: "draft-1" },
+      { draftDocumentId: "draft-1" },
       {
         sessions: sessions as unknown as SlidesPageImageSessionStore,
         images: images as never,
@@ -201,7 +198,7 @@ describe("预热交接", () => {
     const images = imagesReturning("e".repeat(64));
     const runner = new SlidesPageImageRunner();
     await runner.start(
-      { roomId: "room-1", draftDocumentId: "draft-1" },
+      { draftDocumentId: "draft-1" },
       {
         sessions: sessions as unknown as SlidesPageImageSessionStore,
         images: images as never,

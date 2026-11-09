@@ -110,13 +110,18 @@ export interface GenOfficeDocsRuntime {
             blockType?: string
             /** 'queue' = 攒成批注一起发；缺省立即发送。 */
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
   ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
-  /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
+  /**
+   * AI 页签论文排版面板：embed 宿主接管（wcId 反查文件；payload 不带 id）。
+   * Room 已删除：本仓库不再返回 no_room，联合类型保留兼容旧契约。
+   */
   setDocsThesisPanelHook(
     hook:
       | ((
@@ -294,6 +299,8 @@ export interface GenOfficeSheetsRuntime {
             /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'workbook' = 极简条快捷能力（整簿作用，无选区锚点）。 */
+            scope?: 'workbook'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -407,6 +414,8 @@ export interface GenOfficeSlidesRuntime {
             /** 选区纯文本摘要（≤200 字）。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'page' = 极简条快捷能力（当前页作用，无元素目标）。 */
+            scope?: 'page'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -491,6 +500,8 @@ export interface GenOfficeMarkdownRuntime {
             offset?: number
             /** 'queue' = 攒成批注一起发；缺省立即发送。 */
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -551,6 +562,8 @@ export interface GenOfficePdfRuntime {
             quads: number[][]
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,

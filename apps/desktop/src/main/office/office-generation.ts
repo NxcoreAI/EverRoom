@@ -1,3 +1,4 @@
+import { runAgentPptxScript } from './agent-pptx-script'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -87,6 +88,8 @@ export interface SlidesAgentAskPayload {
   excerpt?: string
   /** 'queue' = 攒成批注一起发；缺省立即发送。 */
   mode?: 'now' | 'queue'
+  /** 'page' = 极简条快捷能力（当前页作用，无元素目标）。 */
+  scope?: 'page'
 }
 
 /** fork NodeDescriptor.type（RenderNodeType）→ 中文类型名。 */
@@ -114,8 +117,11 @@ function describeAskTarget(target: SlidesAgentAskPayload['targets'][number]): st
  * 也不带工具提示——编辑路线由 SYSTEM.md 路由表与工具描述兜底。
  */
 export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): string {
-  const targets = op.targets.map(describeAskTarget).join('、')
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'page') {
+    return `对 PPT《${title}》第 ${op.slideIndex + 1} 页执行：${instruction}。`
+  }
+  const targets = op.targets.map(describeAskTarget).join('、')
   const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 40)}」）` : ''
   return `我在 PPT《${title}》第 ${op.slideIndex + 1} 页选中了元素 ${targets}${excerpt}：${instruction}。`
 }
@@ -123,6 +129,9 @@ export function buildAgentAskMessage(title: string, op: SlidesAgentAskPayload): 
 /** 同一请求的用户可见文案：只留页码与用户原话，元素 id / fileId 不出现在社交层。 */
 export function buildAgentAskDisplayMessage(title: string, op: SlidesAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'page') {
+    return `关于 PPT《${title}》第 ${op.slideIndex + 1} 页：${instruction}。`
+  }
   return `关于 PPT《${title}》第 ${op.slideIndex + 1} 页选中的内容：${instruction}。`
 }
 
@@ -164,10 +173,15 @@ export function wireSlidesAgentAsk(
       fileId: instance.fileId,
       instruction: op.instruction,
       ...(op.excerpt ? { excerpt: op.excerpt } : {}),
-      anchor: {
-        slideIndex: op.slideIndex,
-        elementIds: op.targets.map((item) => item.id),
-      },
+      // 极简条快捷能力（scope=page）作用于当前页：anchor 只带页码，无元素目标。
+      ...(op.scope === 'page'
+        ? { scope: op.scope, anchor: { slideIndex: op.slideIndex } }
+        : {
+          anchor: {
+            slideIndex: op.slideIndex,
+            elementIds: op.targets.map((item) => item.id),
+          },
+        }),
       message: buildAgentAskMessage(instance.title, op),
       displayMessage: buildAgentAskDisplayMessage(instance.title, op),
     })
@@ -192,6 +206,8 @@ export interface DocsAgentAskPayload {
   blockType?: string
   /** 'queue' = 攒成批注一起发；缺省立即发送。 */
   mode?: 'now' | 'queue'
+  /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+  scope?: 'document'
 }
 
 const DOCS_ASK_KIND_LABEL: Record<DocsAgentAskPayload['kind'], string> = {
@@ -222,6 +238,9 @@ function describeDocsAskScope(op: DocsAgentAskPayload): string {
  */
 export function buildDocsAgentAskMessage(title: string, op: DocsAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'document') {
+    return `对 Word《${title}》执行：${instruction}。`
+  }
   return `我在 Word《${title}》${describeDocsAskScope(op)}选中了这段内容：${instruction}。`
 }
 
@@ -268,11 +287,17 @@ export function wireDocsAgentAsk(
       fileId: instance.fileId,
       instruction: op.instruction,
       ...(op.excerpt ? { excerpt: op.excerpt } : {}),
-      anchor: {
-        fromBlockIndex: op.fromBlockIndex,
-        toBlockIndex: op.toBlockIndex,
-        kind: op.kind,
-      },
+      // 极简条快捷能力（scope=document）作用于全文：没有选区锚点，不带 anchor，
+      // 渲染层也不会在文档里画高亮。
+      ...(op.scope === 'document'
+        ? { scope: op.scope }
+        : {
+          anchor: {
+            fromBlockIndex: op.fromBlockIndex,
+            toBlockIndex: op.toBlockIndex,
+            kind: op.kind,
+          },
+        }),
       message: buildDocsAgentAskMessage(instance.title, op),
       displayMessage: buildDocsAgentAskDisplayMessage(instance.title, op),
     })
@@ -295,6 +320,8 @@ export interface SheetsAgentAskPayload {
   /** 选区纯文本摘要（≤200 字）：批注卡片显示原文，Agent 重新读工作簿后交叉校验。 */
   excerpt?: string
   mode?: 'now' | 'queue'
+  /** 'workbook' = 极简条快捷能力（整簿作用，无选区锚点）。 */
+  scope?: 'workbook'
 }
 
 function describeSheetsAskScope(op: SheetsAgentAskPayload): string {
@@ -308,8 +335,11 @@ function describeSheetsAskScope(op: SheetsAgentAskPayload): string {
  * 不预设修改（sheetId 是 sheets_agent_read/edit 的定位依据，Agent 决定要用时自然能取到）。
  */
 export function buildSheetsAgentAskMessage(title: string, op: SheetsAgentAskPayload): string {
-  const sheetId = op.sheetId?.trim() ? `（sheetId=${op.sheetId.trim()}）` : ''
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'workbook') {
+    return `对 Excel《${title}》执行：${instruction}。`
+  }
+  const sheetId = op.sheetId?.trim() ? `（sheetId=${op.sheetId.trim()}）` : ''
   const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 40)}」）` : ''
   return `我在 Excel《${title}》${describeSheetsAskScope(op)}${sheetId} 选中了这块内容${excerpt}：${instruction}。`
 }
@@ -355,7 +385,14 @@ export function wireSheetsAgentAsk(
       fileId: instance.fileId,
       instruction: op.instruction,
       ...(op.excerpt ? { excerpt: op.excerpt } : {}),
-      ...(op.range ? { anchor: { sheetId: op.sheetId, sheetName: op.sheetName, range: op.range } } : {}),
+      // 极简条快捷能力（scope=workbook）作用于整簿：没有选区锚点，不带 anchor。
+      ...(op.scope === 'workbook'
+        ? { scope: op.scope }
+        : {
+          ...(op.range
+            ? { anchor: { sheetId: op.sheetId, sheetName: op.sheetName, range: op.range } }
+            : {}),
+        }),
       message: buildSheetsAgentAskMessage(instance.title, op),
       displayMessage: buildSheetsAgentAskDisplayMessage(instance.title, op),
     })
@@ -377,6 +414,8 @@ export interface PdfAgentAskPayload {
   excerpt?: string
   /** 'queue' = 攒成批注一起发；缺省立即发送。 */
   mode?: 'now' | 'queue'
+  /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+  scope?: 'document'
 }
 
 /**
@@ -385,6 +424,9 @@ export interface PdfAgentAskPayload {
  */
 export function buildPdfAgentAskMessage(title: string, op: PdfAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'document') {
+    return `对 PDF《${title}》执行：${instruction}。`
+  }
   const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 60)}」）` : ''
   return `我在 PDF《${title}》第 ${op.pageIndex + 1} 页选中了这段内容${excerpt}：${instruction}。`
 }
@@ -392,6 +434,9 @@ export function buildPdfAgentAskMessage(title: string, op: PdfAgentAskPayload): 
 /** 用户可见文案：只留页码与用户原话，quads / 文件 id 不上社交层。 */
 export function buildPdfAgentAskDisplayMessage(title: string, op: PdfAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'document') {
+    return `关于 PDF《${title}》：${instruction}。`
+  }
   return `关于 PDF《${title}》第 ${op.pageIndex + 1} 页选中的内容：${instruction}。`
 }
 
@@ -429,7 +474,10 @@ export function wirePdfAgentAsk(
       fileId: instance.fileId,
       instruction: op.instruction,
       ...(op.excerpt ? { excerpt: op.excerpt } : {}),
-      anchor: { pageIndex: op.pageIndex, quads: op.quads },
+      // 极简条快捷能力（scope=document）作用于全文：没有选区锚点，不带 anchor。
+      ...(op.scope === 'document'
+        ? { scope: op.scope }
+        : { anchor: { pageIndex: op.pageIndex, quads: op.quads } }),
       message: buildPdfAgentAskMessage(instance.title, op),
       displayMessage: buildPdfAgentAskDisplayMessage(instance.title, op),
     })
@@ -452,6 +500,8 @@ export interface MarkdownAgentAskPayload {
   offset?: number
   /** 'queue' = 攒成批注一起发；缺省立即发送。 */
   mode?: 'now' | 'queue'
+  /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+  scope?: 'document'
 }
 
 /**
@@ -460,6 +510,9 @@ export interface MarkdownAgentAskPayload {
  */
 export function buildMarkdownAgentAskMessage(title: string, op: MarkdownAgentAskPayload): string {
   const instruction = op.instruction.trim().replace(/[。.!！]+$/, '')
+  if (op.scope === 'document') {
+    return `对 Markdown《${title}》执行：${instruction}。`
+  }
   const excerpt = op.excerpt?.trim() ? `（原文摘要「${clipAskText(op.excerpt, 60)}」）` : ''
   return `我在 Markdown《${title}》第 ${op.blockIndex} 块选中了这段内容${excerpt}：${instruction}。`
 }
@@ -506,7 +559,10 @@ export function wireMarkdownAgentAsk(
       fileId: instance.fileId,
       instruction: op.instruction,
       ...(op.excerpt ? { excerpt: op.excerpt } : {}),
-      anchor: { fromBlockIndex: op.blockIndex, offset: op.offset },
+      // 极简条快捷能力（scope=document）作用于全文：没有选区锚点，不带 anchor。
+      ...(op.scope === 'document'
+        ? { scope: op.scope }
+        : { anchor: { fromBlockIndex: op.blockIndex, offset: op.offset } }),
       message: buildMarkdownAgentAskMessage(instance.title, op),
       displayMessage: buildMarkdownAgentAskDisplayMessage(instance.title, op),
     })
@@ -922,4 +978,30 @@ export async function generateMarkdownFromText(
   const bytes = Buffer.from(input.markdown, 'utf8')
   onPhase?.('saved')
   return { filePath: await writeGeneratedTempFile(bytes, '.md'), bytes, title }
+}
+
+/**
+ * pptx skill 脚本路径：agent 写的整册 pptxgenjs 脚本经 vm 沙箱执行产出 deck.pptx，
+ * 见 agent-pptx-script.ts。applyThemeJs 由网关从 agents 目录带下来（单一事实源）。
+ */
+export async function generatePptxFromAgentScript(
+  input: { title: string; script: string; applyThemeJs?: string | null },
+  onPhase?: (phase: DocxGenerationPhase) => void,
+  resolveMaterial?: GenOfficeMaterialResolver['resolveMaterial'],
+  onSlide?: (slideCount: number) => void,
+): Promise<GeneratedPptx> {
+  const title = input.title.trim().slice(0, 120)
+  if (!title) throw new Error('演示标题不能为空')
+  if (!input.script.trim()) throw new Error('生成脚本不能为空')
+  onPhase?.('rendering')
+  const run = await runAgentPptxScript(input.script, {
+    ...(input.applyThemeJs ? { applyThemeJs: input.applyThemeJs } : {}),
+    resolveMaterial: resolveMaterial ?? null,
+    ...(onSlide ? { onSlide } : {}),
+  })
+  if (!run.ok) {
+    throw new Error(`PPT 脚本生成失败：${run.error}${run.consoleTail.length > 0 ? `；脚本输出尾部：${run.consoleTail.slice(-5).join(' | ')}` : ''}`)
+  }
+  onPhase?.('saved')
+  return { filePath: await writeGeneratedTempFile(run.bytes, '.pptx'), bytes: run.bytes, title, warnings: run.warnings }
 }

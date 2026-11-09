@@ -80,10 +80,11 @@ function sweep(): void {
 }
 
 export interface SlidesPrewarmRegisterInput {
-  roomId: string;
   draftDocumentId: string;
   stylePalette: { primary?: string; accent?: string; background?: string } | null;
   images: Pick<SlidesStyleImageGenerator, "generateImage">;
+  /** 试看轮的预热页范围（1 基页序）：范围外页不预热，配图留给整册生成。 */
+  allowedPages?: ReadonlySet<number>;
 }
 
 export function newPrewarmToken(): string {
@@ -120,6 +121,9 @@ export function enqueuePrewarmImage(token: string, pageIndex: number, imagePromp
   const prompt = imagePrompt.trim();
   if (!Number.isInteger(pageIndex) || pageIndex < 1 || pageIndex > 32) {
     return { ok: false, reason: "pageIndex 须为该页在 pages 中的序号（1~32 的整数）" };
+  }
+  if (hit.ctx.style.allowedPages && !hit.ctx.style.allowedPages.has(pageIndex)) {
+    return { ok: false, reason: "本轮是试看：只预热落页范围内的内容页；范围外页的配图在整册生成时再作" };
   }
   if (prompt.length < 8 || prompt.length > 600) {
     return { ok: false, reason: "imagePrompt 须为 8~600 字的生图提示词定稿" };

@@ -24,6 +24,7 @@ import { createDatabase } from "../src/infrastructure/database/client.js";
  * 1. 草稿阶段确实把风格跑掉了（否则省不下时间）；
  * 2. 用户紧接着调 style 时**不重跑生图**（否则白烧一套配额，比不预热更糟）。
  */
+// 去 Room：run 只有 runId/sessionId——无 roomId、无 availableRooms。
 const run = { runId: "run-1", sessionId: "session-1" };
 
 const planFixture = {

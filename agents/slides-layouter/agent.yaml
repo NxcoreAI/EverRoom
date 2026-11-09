@@ -1,14 +1,14 @@
 schemaVersion: 1
 id: slides-layouter
 name: Slides Layouter
-description: 单页布局设计与视觉自审；依据内容重点和关系自主组织 v2 页面，经校验后交由网关编译渲染。
+description: 单页布局设计与视觉自审；依据内容重点和关系用 pptx skill（pptxgenjs）组织本页构建规格，交由网关执行合成 PPTX。
 mode: dispatch_only
-enabled: true
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 
-skills:
-  - ./skills/layout-tree-skill
+skills: []
 
 mcp: []
 
@@ -17,18 +17,15 @@ outputSchema: ./schemas/output.schema.json
 
 policy:
   allowedCallers: [primary-agent]
-  # 必须 ≥ 单册页级窗口（NXCORE_SLIDES_DECK_CONCURRENCY，缺省 16），且 ≤ slides 池容量
-  # （NXCORE_SUBAGENT_SLIDES_MAX_CONCURRENT，缺省 16）。两者不匹配时的表现：单页 dispatch 被
-  # subagent_concurrency_limit 秒拒 → 秒级退避耗尽 → 抛错 → 该页落 v2 兜底页并告警。
-  # 旧值 8 是改造前的页级窗口；页级窗口上调到 16 后这里必须同步放开，否则 >8 页的册会掉兜底页。
+  # 跨册并行额度：deck 续会话模式下单册内严格串行（每册一条 pi 会话链，窗口恒 1），
   maxConcurrency: 16
-  # 不设工具调用上限：单页是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
-  # abort 会把已收敛的树一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
+  # 不设工具调用上限：单页是「读资料 → 生成规格 → 自检修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的规格一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
   # 冒烟测试期放宽到 1800s：单页设计 + 视觉自审一轮不再被墙钟提前打断。
   timeoutSeconds: 1800
   model:
     # 与主 Agent 同底座（主模型，deepseek 系；已具备视觉能力，自审直接看渲染图）。
-    # 输出预算 131072 覆盖「整页 v2 树 + 校验修复轮」；思考档位按 A/B 结论调整
+    # 输出预算 131072 覆盖「整页 operations 规格 + 被拒重试轮」；思考档位按 A/B 结论调整
     # （DeepSeek 系 reasoning:"off" 会显式发 thinking:disabled，不再烧输出预算）。
     reasoning: "low"
     maxTokens: 131072

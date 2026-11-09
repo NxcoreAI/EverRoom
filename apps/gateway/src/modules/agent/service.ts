@@ -50,7 +50,7 @@ import {
 } from "@nxcore/agent-contract";
 import type { AgentPermissionMode } from "@nxcore/agent-contract";
 import type { AgentRuntime, RuntimeAttachment, RuntimeEvent } from "@nxcore/agent-runtime";
-import type { PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
+import type { PiAgentCardDecision, PiAgentCardRequest, PiBashApprovalRequest } from "@nxcore/agent-runtime-pi";
 import type { AcpPermissionApprovalRequest, AcpPermissionDecision } from "../local-agents/acp-runtime.js";
 import {
   defaultPermissionModeForProvider,
@@ -229,6 +229,9 @@ function toSession(row: typeof agentSessions.$inferSelect): AgentSession {
     updatedAt: row.updatedAt.toISOString(),
   };
 }
+
+/** 选区重写完成后的宽限期：doc-writer-dispatcher 复用（旧管线保留）。 */
+export const SELECTION_REWRITE_OPERATION_GRACE_MS = 10 * 60 * 1000;
 
 function toWorkspace(row: typeof agentWorkspaces.$inferSelect): AgentWorkspace {
   return {
@@ -704,6 +707,40 @@ export class AgentService {
     }
     pending.resolve(approved);
     return { approvalId, decision };
+  }
+
+  /** 通用决策卡（confirm/question）：工具侧挂起等待用户在 UI 作答。 */
+  requestAgentCard(runId: string, card: PiAgentCardRequest["card"]): Promise<PiAgentCardDecision> {
+    const runtime = this.runRuntimes.get(runId) as (AgentRuntime & {
+      requestAgentCard?: (request: PiAgentCardRequest) => Promise<PiAgentCardDecision>;
+    }) | undefined;
+    const run = this.db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get();
+    if (!runtime?.requestAgentCard || !run) {
+      return Promise.resolve({ choice: card.kind === "confirm" ? "denied" : "", text: "run_not_active" });
+    }
+    return runtime.requestAgentCard({
+      approvalId: randomUUID(),
+      input: {
+        runId,
+        sessionId: run.sessionId,
+        runtimeSessionRef: null,
+        prompt: "",
+        pageLabel: "Agent",
+        roomId: null,
+      },
+      card,
+    });
+  }
+
+  /** 决策卡作答回填（UI → resolveApproval 路由转发）。 */
+  resolveAgentCard(approvalId: string, decision: PiAgentCardDecision): boolean {
+    for (const runtime of this.runRuntimes.values()) {
+      const withCards = runtime as AgentRuntime & {
+        resolveAgentCard?: (approvalId: string, decision: PiAgentCardDecision) => boolean;
+      };
+      if (withCards.resolveAgentCard?.(approvalId, decision)) return true;
+    }
+    return false;
   }
 
   /** 审批回填统一入口：先查 pi bash 审批，再查 ACP 工具审批。 */
@@ -2257,6 +2294,8 @@ export class AgentService {
         attachments,
         ...(activeDocument ? { activeDocument } : {}),
       }) : undefined;
+      const runWorkspaceName = this.db.select({ name: agentWorkspaces.name })
+        .from(agentWorkspaces).where(eq(agentWorkspaces.id, runWorkspaceId)).get()?.name ?? null;
       runtimeRun = await selectedRuntime.start({
         runId,
         sessionId,
@@ -2273,6 +2312,7 @@ export class AgentService {
         ...(userProfilePrompt ? { userProfilePrompt } : {}),
         pageLabel: runPageLabel,
         workspaceId: runWorkspaceId,
+        ...(runWorkspaceName ? { workspaceLabel: runWorkspaceName } : {}),
         toolsEnabled: input.toolsEnabled !== false,
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
