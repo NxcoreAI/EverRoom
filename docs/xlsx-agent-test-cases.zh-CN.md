@@ -404,7 +404,7 @@
 
 ### XL-V-05 插入图片（位图 + SVG）
 - 优先级：P2
-- 提示词：`把 /Users/nxcore/EverRoom/everroom.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。`
+- 提示词：`把 /Users/nxcore/EverOffice/everoffice.svg 这张图插到「编制说明」下方；再插一张 PNG 做对比。`
 - 期望行为：`add_image {path}`（本地绝对路径或公网 URL，≤20MB，不收 base64/dataURL）。**SVG 走「矢量 + 位图回退」**：渲染层先光栅化出 PNG，写盘时 `xl/media/` 同时出现 `.svg` 与 `.png`，drawing 里位图是主 `a:blip`、矢量挂在 `asvg:svgBlip` 扩展上
 - 期望效果：两张图都进文件；SVG 那条有 2 份 media + 2 条关系 + `Extension="svg"` 的 content-type；PNG 那条只有 1 份
 - 判定标准：解包能同时看到 `xl/media/*.svg` 与回退 `*.png`；Excel 里可见且放大不失真（矢量）；旧版 Excel / 预览 / 导出 PDF 仍有图（走回退）
@@ -503,7 +503,7 @@
 
 ### XL-H-03 重启后继续编辑
 - 优先级：P1
-- 前置：重启 EverRoom，不打开该文件
+- 前置：重启 EverOffice，不打开该文件
 - 提示词：`把那份财报「部门汇总」的人数合计补到「编制说明」最后一行。`
 - 期望行为：重启后仍能按 fileId 建隐藏会话
 - 期望效果：写入成功；版本链继续递增（不重置）；无重复条目

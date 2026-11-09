@@ -315,6 +315,53 @@ describe("ai relay proxy", () => {
     }
   });
 
+  it("forwards multimodal request bodies larger than Fastify's 1 MiB default", async () => {
+    // 回归：默认 bodyLimit（1 MiB）下，带 base64 图片的 LLM 请求会被网关自己 413，
+    // 表现为 agent run 以 `413 "request_error"` 失败。
+    let forwardedBytes = 0;
+    const upstream = Fastify({ bodyLimit: 16 * 1024 * 1024 });
+    upstream.post("/v1/chat/completions", (request, reply) => {
+      forwardedBytes = Buffer.byteLength(JSON.stringify(request.body));
+      return reply.send({ ok: true });
+    });
+    await upstream.listen({ port: 0, host: "127.0.0.1" });
+    const address = upstream.server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const sessions = new AiRelaySessionStore();
+    sessions.set({
+      baseUrl: `http://127.0.0.1:${port}`,
+      token: "sk-relay-51",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      proxyOrigin: "http://127.0.0.1:49152",
+    });
+    const app = sessionApp({ sessions });
+
+    try {
+      const payload = {
+        model: "qwen-vl",
+        messages: [{
+          role: "user",
+          content: [{
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${"A".repeat(2 * 1024 * 1024)}` },
+          }],
+        }],
+      };
+      const response = await app.inject({
+        method: "POST",
+        url: "/ai-relay/v1/chat/completions",
+        headers: { authorization: "Bearer gw-token-51" },
+        payload,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(forwardedBytes).toBeGreaterThan(1024 * 1024);
+    } finally {
+      await app.close();
+      await upstream.close();
+    }
+  });
+
   it("returns 503 while no active session", async () => {
     const app = sessionApp({ sessions: new AiRelaySessionStore() });
     try {
@@ -343,7 +390,7 @@ describe("runtime config relay slot rewrite", () => {
     // 内置 JSON 只声明 model：relay 激活即补齐代理出口与会话令牌，四要素
     // 直接完整（applyRuntimeConfig/inheritPrimaryDefaults 下游继承退化为兜底）。
     expect(slotOf("primary")).toMatchObject({
-      model: "deepseek-v4-flash",
+      model: "deepseek-v4.1-flash",
       baseUrl: "http://127.0.0.1:49152/ai-relay/v1",
       apiKey: "gw-self-token-51",
     });
@@ -450,7 +497,7 @@ describe("runtime config relay plan models", () => {
 
     const snapshot = manager.snapshot(false);
     expect(snapshot.config.primary?.model).toBe("saas-main-x");
-    expect(snapshot.config.background?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.background?.model).toBe("deepseek-v4.1-flash");
     expect(snapshot.config.vlm?.model).toBe("qwen3-vl-flash");
     // 未下发 lite：保持内置未配置态，lite 档不可用。
     expect(snapshot.config.lite).toBeUndefined();
@@ -483,7 +530,7 @@ describe("runtime config relay plan models", () => {
     manager.refresh();
 
     const snapshot = manager.snapshot(false);
-    expect(snapshot.config.primary?.model).toBe("deepseek-v4-flash");
+    expect(snapshot.config.primary?.model).toBe("deepseek-v4.1-flash");
     expect(snapshot.config.lite).toBeUndefined();
   });
 

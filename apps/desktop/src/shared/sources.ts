@@ -613,8 +613,8 @@ export interface OfficeWorkspaceBounds {
   height: number
 }
 
-/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
+/** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf / markdown 运行时）。 */
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf' | 'markdown'
 
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
@@ -647,6 +647,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
+  if (extension === '.md' || extension === '.markdown') return 'markdown'
   return null
 }
 
@@ -958,74 +959,6 @@ export interface NxcoreDesktopApi {
     disconnect(provider: 'feishu'): Promise<AgentAuthEnvironmentStatus>
     onEvent(listener: (frame: AgentAuthEventFrame) => void): () => void
   }
-  externalDocuments: {
-    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
-    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
-     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
-    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
-    importBatch(input: {
-      provider: ExternalDocumentProvider
-      connectionName?: string
-      remoteDocumentIds: string[]
-      mode: DocumentImportBatchMode
-      roomId?: string
-      /** true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
-      forceNew?: boolean
-    }): Promise<{ batchId: string; total: number }>
-    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
-    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
-    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
-    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
-    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
-    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
-      run: DocumentImportRunView
-      roomImportId: string | null
-      relation: 'primary' | 'candidate'
-      /** 远端内容与已应用快照相同：未创建候选/记录。 */
-      noChange?: boolean
-      documentId: string
-    }>
-    importRun(runId: string): Promise<DocumentImportRunView>
-    cancelImportRun(runId: string): Promise<DocumentImportRunView>
-    importHistory(documentId: string): Promise<{
-      entries: DocumentImportHistoryEntry[]
-      commentDiff: DocumentImportCommentDiffSummary | null
-      comments: ExternalDocumentCommentView[]
-    }>
-    importDiff(roomImportId: string): Promise<{
-      candidateTitle: string
-      currentTitle: string
-      appliedVersion: number | null
-      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
-      commentsComparable: boolean
-    }>
-    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
-    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
-    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
-      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
-    }>
-    checkExternalUpdate(documentId: string): Promise<{
-      run: DocumentImportRunView
-      roomImportId: string | null
-      relation: 'primary' | 'candidate'
-      noChange?: boolean
-      documentId: string
-    }>
-    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
-    createExport(input: {
-      roomId: string
-      documentId: string
-      version?: number
-      provider: ExternalDocumentProvider
-      mode: AgentDocumentExportMode
-      target?: AgentDocumentExportTarget | null
-    }): Promise<AgentDocumentExportRunView>
-    getExport(exportId: string): Promise<AgentDocumentExportRunView>
-    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
-    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
-    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
-    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
-  }
   mcp: {
     listServers(): Promise<McpServersSnapshot>
     saveServers(servers: import('./mcp').McpServersMutation): Promise<McpServersSnapshot>
@@ -1216,9 +1149,9 @@ export interface NxcoreDesktopApi {
     setSkillEnabled(skillId: string, enabled: boolean): Promise<AgentSkillDto>
     /** 手写一个用户技能（落在网关数据目录的 agent/skills 下）。 */
     createSkill(input: CreateAgentSkillInput): Promise<AgentSkillDto>
-    /** 从一个含 SKILL.md 的本地文件夹导入技能。 */
-    importSkillDirectory(sourceDirectory: string): Promise<AgentSkillDto>
-    /** 选择技能文件夹（系统选择器，返回绝对路径；取消为 null）。 */
+    /** 从一个含 SKILL.md 的本地文件夹或 zip 压缩包导入技能。 */
+    importSkillDirectory(source: string): Promise<AgentSkillDto>
+    /** 选择技能来源（系统选择器，接受文件夹与 .zip，返回绝对路径；取消为 null）。 */
     pickSkillDirectory(): Promise<string | null>
     /** 删除一个用户技能（内置/子 Agent 技能会 409）。 */
     deleteSkill(skillId: string): Promise<void>
@@ -1266,6 +1199,8 @@ export interface NxcoreDesktopApi {
       approvalId: string,
       decision: AgentApprovalDecision,
       feedback?: string,
+      choice?: string,
+      text?: string,
     ): Promise<{ approvalId: string; decision: string }>
     getPermissionMode(sessionId: string): Promise<AgentPermissionModeState>
     setPermissionMode(sessionId: string, mode: AgentPermissionMode): Promise<{ mode: AgentPermissionMode; applied: boolean }>
@@ -1331,6 +1266,7 @@ export interface NxcoreDesktopApi {
     list(roomId: string): Promise<RoomDocument[]>
     listTrash(roomId: string): Promise<RoomDocument[]>
     get(documentId: string): Promise<RoomDocument>
+    readMarkdown(documentId: string): Promise<{ markdown: string }>
     listBlocks(documentId: string): Promise<DocumentBlockList>
     listBlockBacklinks(documentId: string, blockId?: string): Promise<DocumentBlockBacklinkList>
     listVersions(documentId: string, options?: DocumentVersionListOptions): Promise<DocumentVersionSummary[]>
@@ -1374,6 +1310,74 @@ export interface NxcoreDesktopApi {
     onOperationChanged(listener: (operationId: string) => void): () => void
     onReady(listener: (roomId: string) => void): () => void
   }
+  externalDocuments: {
+    importSearch(provider: ExternalDocumentProvider, query: string): Promise<ExternalDocumentSearchResponse>
+    /** 连接器页按连接列举（飞书云空间+知识库 / Notion 共享页面）；cachedOnly 时读上次缓存；
+     *  mode=full 全量替换（重新拉取/对账），mode=delta 增量合并、不可用回退全量。 */
+    importList(provider: ExternalDocumentProvider, connectionName?: string, cachedOnly?: boolean, mode?: 'full' | 'delta'): Promise<ExternalDocumentListResponse>
+    importBatch(input: {
+      provider: ExternalDocumentProvider
+      connectionName?: string
+      remoteDocumentIds: string[]
+      mode: DocumentImportBatchMode
+      roomId?: string
+      /** true：跳过来源去重，同来源一律新建（UI"创建新的"）。 */
+      forceNew?: boolean
+    }): Promise<{ batchId: string; total: number }>
+    importBatchStatus(batchId: string): Promise<DocumentImportBatchView>
+    /** 面板重挂载找回进行中批次（按 provider+连接名查最近一条 running，无则 null）。 */
+    activeImportBatch(provider: ExternalDocumentProvider, connectionName?: string): Promise<DocumentImportBatchView | null>
+    cancelImportBatch(batchId: string): Promise<DocumentImportBatchView>
+    importPreview(provider: ExternalDocumentProvider, remoteDocumentId: string): Promise<ExternalDocumentPreview>
+    importCommit(input: { runId: string; roomId: string; targetDocumentId?: string }): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string | null
+      relation: 'primary' | 'candidate'
+      /** 远端内容与已应用快照相同：未创建候选/记录。 */
+      noChange?: boolean
+      documentId: string
+    }>
+    importRun(runId: string): Promise<DocumentImportRunView>
+    cancelImportRun(runId: string): Promise<DocumentImportRunView>
+    importHistory(documentId: string): Promise<{
+      entries: DocumentImportHistoryEntry[]
+      commentDiff: DocumentImportCommentDiffSummary | null
+      comments: ExternalDocumentCommentView[]
+    }>
+    importDiff(roomImportId: string): Promise<{
+      candidateTitle: string
+      currentTitle: string
+      appliedVersion: number | null
+      hunks: Array<{ type: 'ctx' | 'add' | 'del'; text: string }>
+      commentsComparable: boolean
+    }>
+    /** 候选 vs 当前版本的结构化 diff（复用版本 diff UI 契约）。 */
+    importStructuredDiff(roomImportId: string): Promise<ImportCandidateDiffView>
+    searchExportTargets(provider: ExternalDocumentProvider, query: string): Promise<{
+      items: Array<{ remoteId: string; title: string; url: string; updatedAt: string | null; ownerName: string | null }>
+    }>
+    checkExternalUpdate(documentId: string): Promise<{
+      run: DocumentImportRunView
+      roomImportId: string | null
+      relation: 'primary' | 'candidate'
+      noChange?: boolean
+      documentId: string
+    }>
+    applyCandidate(roomImportId: string): Promise<{ documentId: string; version: number }>
+    createExport(input: {
+      roomId: string
+      documentId: string
+      version?: number
+      provider: ExternalDocumentProvider
+      mode: AgentDocumentExportMode
+      target?: AgentDocumentExportTarget | null
+    }): Promise<AgentDocumentExportRunView>
+    getExport(exportId: string): Promise<AgentDocumentExportRunView>
+    confirmExport(exportId: string): Promise<AgentDocumentExportRunView>
+    retryExport(exportId: string): Promise<AgentDocumentExportRunView>
+    cancelExport(exportId: string): Promise<AgentDocumentExportRunView>
+    listExports(documentId?: string): Promise<{ items: AgentDocumentExportRunView[] }>
+  }
   sources: {
     list(): Promise<DataSourceSummary[]>
     listFiles(id: string): Promise<SourceFileSummary[]>
@@ -1409,7 +1413,7 @@ export interface NxcoreDesktopApi {
     }>
     /** 在系统文件管理器中定位文件本体。 */
     reveal(fileId: string): Promise<void>
-    /** 把文件本体按原始文件名复制到 ~/Downloads/EverRoom/（同名覆盖）并在系统文件管理器中定位。 */
+    /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
     exportReveal(fileId: string, originalName: string): Promise<void>
     /** DOCX/XLSX/XLSM/PPTX 用内置 Office 预览标签打开（可多开，instanceId=fileId）；其他格式走操作系统默认查看器。
      * originalName/contentHash 缺省时（Context Room 等只带 fileId 的入口）由主进程向网关补齐。
@@ -1418,7 +1422,7 @@ export interface NxcoreDesktopApi {
       fileId: string,
       originalName?: string,
       contentHash?: string,
-      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string; focusWindow?: boolean },
     ): Promise<
       | { openedWith: 'office'; instanceId: string; kind: OfficePreviewKind; title: string }
       /** legacyFallback：旧版 .doc/.xls/.ppt 转换失败，已交给系统默认应用。 */
@@ -1436,9 +1440,11 @@ export interface NxcoreDesktopApi {
     /** 产物库导入：本地 Office 文件以 artifact-imported 直达 Room 产物库（成功项逐个回报）。
      *  workspaceId = 归属工作空间（产物库按空间隔离，缺省归 default）。 */
     importArtifacts(files: File[], roomId: string, workspaceId?: string): Promise<Array<{ fileId: string; originalName: string }>>
-    importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
+    /** 拖拽/直选导入对话附件；workspaceId = 归属工作空间（附件按空间落库，缺省归 default，
+     *  Agent 的 file_search/library_browse 只查本空间——不传会「找不到刚拖进来的文件」）。 */
+    importAgentAttachments(files: File[], workspaceId?: string): Promise<AgentAttachmentReference[]>
     /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
-    pickAgentAttachments(): Promise<AgentAttachmentReference[]>
+    pickAgentAttachments(workspaceId?: string): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
@@ -1507,7 +1513,7 @@ export interface NxcoreDesktopApi {
       result?: { fileEntryId: string; originalName: string; report?: Record<string, unknown> }
       error?: string
     }>
-    /** 导出 PDF：本机无 LibreOffice 时 unavailable=true（UI 需给出可执行说明）。 */
+    /** 导出 PDF：内置渲染引擎与 LibreOffice 均不可用时 unavailable=true（UI 需给出可执行说明）。 */
     exportPdf(workspaceId: string, fileEntryId: string): Promise<
       { unavailable: true } | { unavailable: false; path: string }
     >

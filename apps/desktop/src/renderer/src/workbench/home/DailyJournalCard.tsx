@@ -49,11 +49,6 @@ function useTypewriter(text: string, nonce: string): string {
   return text.slice(0, count)
 }
 
-function timeLabel(timestamp: number): string {
-  const date = new Date(timestamp)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
-
 export interface DailyJournalCardProps {
   /** 动作按钮的回调：`open-file` / `ask-agent` 的落地在页面里。 */
   onAction?: (action: JournalActionDto) => void
@@ -68,14 +63,6 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
   const shown = useTypewriter(summary, entry ? `${entry.id}#${entry.version}` : '')
   const typing = shown.length < summary.length
 
-  // 副标题：条数 + 更新时间。没读到数据时不编数字。
-  const subtitle = [
-    journal.state === 'ready' || journal.state === 'empty' || journal.state === 'failed'
-      ? `基于 ${journal.signalCount} 条记忆`
-      : null,
-    journal.fetchedAt ? `更新于 ${timeLabel(journal.fetchedAt)}` : null,
-  ].filter(Boolean).join(' · ')
-
   return (
     <section className="wb-journal-card" aria-labelledby={titleId}>
       <header className="wb-journal-head">
@@ -83,7 +70,6 @@ export function DailyJournalCard({ onAction }: DailyJournalCardProps) {
         {/* 用 div 而不是 span 包 h2：h2 是流内容，塞进 span 里是非法嵌套。 */}
         <div className="wb-journal-title">
           <h2 className="wb-journal-name" id={titleId}>今日洞察</h2>
-          {subtitle ? <span className="wb-journal-sub">{subtitle}</span> : null}
         </div>
         <Button
           variant="ghost"

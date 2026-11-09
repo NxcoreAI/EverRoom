@@ -9,17 +9,12 @@ import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import websocket from "@fastify/websocket";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
-import {
-  bundledAgentDefinitionsDir,
-  DEFAULT_BACKGROUND_MAX_CONCURRENT,
-  DEFAULT_DEFAULT_MAX_CONCURRENT,
-  DEFAULT_SLIDES_DECK_CONCURRENCY,
-  DEFAULT_SLIDES_MAX_CONCURRENT,
-  type GatewayConfig,
-} from "../config.js";
+import { bundledAgentDefinitionsDir, type GatewayConfig } from "../config.js";
 import { createDatabase } from "../infrastructure/database/client.js";
 import { agentEvents, agentMessages, agentSessions, agentWorkspaces, gatewayMetadata } from "../infrastructure/database/schema.js";
 import { asc, eq, inArray } from "drizzle-orm";
+import { AgentDebugArchive } from "../modules/agent-debug/archive.js";
+import { AgentDebugTraceStore } from "../modules/agent-debug/trace-store.js";
 import { channelAgentIdFromAgentId } from "@nxcore/agent-contract";
 import { systemRoutes } from "../modules/system/routes.js";
 import { AgentEventBroker } from "../modules/agent/event-broker.js";
@@ -56,12 +51,10 @@ import { DocumentCommentService } from "../modules/documents/comments.js";
 import { documentCommentRoutes } from "../modules/documents/comment-routes.js";
 import { documentOverviewRoutes } from "../modules/documents/overview-routes.js";
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
-import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import type { DocumentIllustrationPorts } from "../modules/documents/capabilities/office-plugin.js";
-import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
 import { ExternalDocumentProjectionService } from "../modules/documents/external-projections/service.js";
 import { externalDocumentProjectionRoutes } from "../modules/documents/external-projections/routes.js";
 import { DocumentImportService } from "../modules/documents/import/service.js";
@@ -91,16 +84,18 @@ import { registerWebSearchAgentIfMissing } from "../modules/agent/runtime-factor
 import { connectorSessionRoutes } from "../modules/connectors/session-routes.js";
 import type { AgentRuntime } from "@nxcore/agent-runtime";
 import { DocumentServiceError } from "../modules/documents/errors.js";
-import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
 import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
-import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
-import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
+import { createAgentCardTools } from "../modules/agent/agent-card-tools.js";
+import { createWorkspaceFileCatalog, createWorkspaceFilePreviewTool, createWorkspaceImagesDescribeTool, createWorkspaceFileTextReader, createWorkspaceFilesPiTools, createWorkspaceFilesReadBatchTool, type WorkspaceFileCatalog } from "../modules/agent/workspace-files-tools.js";
+import { createWorkspaceImageMaterialSearch } from "../modules/subagents/workspace-materials.js";
+import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator, createWorkspaceFileReadTool } from "../modules/subagents/slides-agent-tools.js";
 import { DocumentIndexBackfillWorker } from "../modules/documents/index-backfill/worker.js";
 import { DocumentIndexBackfillReadTrigger } from "../modules/documents/index-backfill/read-trigger.js";
 import { IndexBackfillLlm } from "../modules/documents/index-backfill/llm.js";
 import { DataMigrationService } from "../modules/data-migrations/service.js";
 import { SearchService } from "../modules/search/service.js";
+import { createContentSearchPiTool } from "../modules/search/pi-tools.js";
 import { MemoryService } from "../modules/memory/service.js";
 import { MemoryDistiller, type CapturedSegment, type DistillCursor, type DistillSignals } from "../modules/memory/distill.js";
 import { MemoryModelUnavailableError, isMemoryModelUnavailable } from "../modules/memory/model-errors.js";
@@ -172,9 +167,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
-import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
-import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
-import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
+import { createSubagentPiTools } from "../modules/subagents/tools.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
 import { subagentRoutes } from "../modules/subagents/routes.js";
 import { AgentSkillStateStore } from "../modules/skills/state-store.js";
@@ -183,7 +176,7 @@ import { SkillService } from "../modules/skills/service.js";
 import { skillRoutes } from "../modules/skills/routes.js";
 import { AgentStatusService } from "../modules/agent/status-service.js";
 import { AgentDebugService } from "../modules/agent-debug/service.js";
-import { agentDebugRoutes } from "../modules/agent-debug/routes.js";
+import { agentDebugRoutes, agentDebugTraceRoutes, debugAgentsFromStatusSnapshot } from "../modules/agent-debug/routes.js";
 import { AgentDebugUsageStore } from "../modules/agent-debug/usage-store.js";
 import { createReferencedAgentConversationTools } from "../modules/agent/reference-tools.js";
 import { createLocalAgentDispatchTools } from "../modules/local-agents/dispatch-tools.js";
@@ -514,10 +507,6 @@ export async function createServer(config: GatewayConfig) {
       isFeishuDisabled: () => connectorTombstones.has("feishu", "default"),
     },
   );
-  // 共享读凭证权威（doc-writer-subagent-plan §5.3）：document_draft 代发的 receipt 与
-  // patch_begin 的 requireLatest 必须落在同一实例；registry 由 create-server 显式构建后
-  // 注入 host，避免 host 内部自建私有实例。
-  const documentReadAuthority = new DocumentReadAuthority((documentId) => documentService.get(documentId));
   // 评论服务在 host 之前构建并共享单实例：registry 的 AI 审阅工具与 REST 路由共用。
   const documentCommentService = new DocumentCommentService(db, (documentId) => Boolean(documentService.get(documentId)));
   // PPT 逐页进度上报器（只报不定）：早于 documentMcpHost 构建共享单实例——
@@ -543,12 +532,6 @@ export async function createServer(config: GatewayConfig) {
     documentService,
     undefined,
     createBuiltinDocumentCapabilityRegistry(
-      documentService,
-      undefined,
-      documentOperationService,
-      documentReadAuthority,
-      documentCommentService,
-      (event) => documentService.broker.publish(event),
       // agent 写 Word：桌面注入 NXCORE_OFFICE_BRIDGE_URL/TOKEN 后启用。
       officeBridgeClient,
       // PPT 逐页进度上报：set_page 成功落页即广播快照。
@@ -577,18 +560,51 @@ export async function createServer(config: GatewayConfig) {
     documentMcpHost.capabilities,
   );
   await documentMcpHost.capabilities.recover();
-  const agentResolver = createAgentResolver(config);
+  // Agent 调试页（独立浏览器调试台）的内存 trace：不落库、不参与业务链路，
+  // 仅在 runtime 边界旁路记录，供 /v1/agent-debug/* 只读查询。
+  // run 终态后异步落到 dataDir/agent-debug/main（重启后仍可回放）；归档关闭时只留内存缓冲。
+  const agentDebugArchiveConfig = config.agentDebugArchive;
+  const agentDebugStore = new AgentDebugTraceStore(
+    agentDebugArchiveConfig?.enabled === false
+      ? undefined
+      : new AgentDebugArchive({
+          dir: join(config.dataDir, "agent-debug", "main"),
+          ...(agentDebugArchiveConfig
+            ? {
+                retentionDays: agentDebugArchiveConfig.retentionDays,
+                maxRuns: agentDebugArchiveConfig.maxRuns,
+                maxBytes: agentDebugArchiveConfig.maxBytes,
+              }
+            : {}),
+          warn: (message, error) => app.log.warn({ err: error }, message),
+        }),
+  );
+  // 调试页 run 列表补全会话标题：唯一 sessionId 一次 inArray 查询；查不到为 null。
+  const agentDebugSessionTitles = (
+    sessionIds: readonly string[],
+  ): ReadonlyMap<string, string | null> => {
+    const titles = new Map<string, string | null>();
+    if (sessionIds.length === 0) return titles;
+    try {
+      const rows = db
+        .select({ id: agentSessions.id, title: agentSessions.title })
+        .from(agentSessions)
+        .where(inArray(agentSessions.id, [...sessionIds]))
+        .all();
+      for (const row of rows) titles.set(row.id, row.title ?? null);
+    } catch (error) {
+      app.log.warn({ err: error }, "agent debug session titles lookup failed");
+    }
+    return titles;
+  };
+  const agentResolver = createAgentResolver(config, agentDebugStore);
   // 格式映射 agent：就绪即 attach（映射生成依赖它；未配置 AI 时保持 pending 语义）。
   const subagentConfig = config.subagents ?? {
     enabled: true,
     definitionsDir: bundledAgentDefinitionsDir(),
     runtimeDir: resolve(config.dataDir, "agent", "subagents"),
     defaultTimeoutMs: 300_000,
-    maxConcurrent: DEFAULT_SLIDES_MAX_CONCURRENT + DEFAULT_DEFAULT_MAX_CONCURRENT + DEFAULT_BACKGROUND_MAX_CONCURRENT,
-    slidesMaxConcurrent: DEFAULT_SLIDES_MAX_CONCURRENT,
-    defaultMaxConcurrent: DEFAULT_DEFAULT_MAX_CONCURRENT,
-    backgroundMaxConcurrent: DEFAULT_BACKGROUND_MAX_CONCURRENT,
-    slidesDeckConcurrency: DEFAULT_SLIDES_DECK_CONCURRENCY,
+    maxConcurrent: 4,
   };
   const subagentRegistry = new SubagentRegistry(
     db,
@@ -597,7 +613,7 @@ export async function createServer(config: GatewayConfig) {
     app.log,
   );
   await subagentRegistry.initialize();
-  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls);
+  const subagentRuntimeManager = new SubagentRuntimeManager(config, subagentConfig, externalCalls, agentDebugStore);
   // 「技能」页：清单来自 bundle 与子 Agent 清单，启停状态落 agent_skill_states。
   // 注册表是晚绑定的（上面刚建好），用惰性取值避免把它的初始化顺序搬到这里。
   const skillService = new SkillService({
@@ -610,29 +626,18 @@ export async function createServer(config: GatewayConfig) {
   });
   // 子 Agent 的技能读取工具按闸门过滤（被停用的技能不给读）。
   subagentRuntimeManager.setSkillGate(skillService);
-  // doc-writer 输出的跨字段校验（doc-writer-subagent-plan §3.4）：baseVersion 回显、
-  // hunks 目标 ∈ blockIndex、分块预算。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentResultValidator("doc-writer", createDocWriterResultValidator());
-  // doc-writer 研究工具面（用户决策：与主 Agent 同等的工具使用）——检索/读取/
-  // 分析类全给，写入/调度/通知类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
-  subagentRuntimeManager.registerAgentTools("doc-writer", () => createDocWriterAgentTools({
-    documentTools: createDocumentPiTools(documentMcpHost),
-    analysisTools: subagentConfig.enabled
-      ? createSubagentPiTools(subagentRegistry, subagentOrchestrator)
-      : [],
-    webSearchTools: config.webSearch
-      ? createWebSearchPiTools(agentResolver, externalCalls)
-      : [],
-  }));
   // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
-  // 落页；edit：slides-builder 直改）——方案代理拿只读面（无 PPT 工具、不落页；
-  // 素材检索也不在工具面，arrange 前由网关按页预取随输入下发），
+  // 落页；edit：slides-builder 直改）——方案代理拿只读检索面（无 PPT 工具、不落页），
   // 落页代理只拿 PPT 四件套（方案已带内容，不再检索）；写入/调度类由工厂内 allowlist 拒绝。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
     webSearchTools: config.webSearch
       ? createWebSearchPiTools(agentResolver, externalCalls)
       : [],
+    // 用户上传的资料在文件库而非文稿表：planner 靠这两个工具读到原件（filesService
+    // 晚绑定，回调首次 dispatch 执行时已创建）。
+    workspaceFileTools: createWorkspaceFilesPiTools(() => workspaceFilesRef.current),
+    readWorkspaceFileText,
   }));
   subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
     documentTools: createDocumentPiTools(documentMcpHost),
@@ -640,9 +645,8 @@ export async function createServer(config: GatewayConfig) {
   // slides-layouter（每页布局树设计代理）工具面：只有 slides_layout_validate——
   // 归一→编译→量测的确定性环，契约经 deck-contract-context 按 token 取用。须在首次 dispatch 前注册。
   subagentRuntimeManager.registerAgentTools("slides-layouter", () => createSlidesLayouterAgentTools());
-  // 布局代理的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
+  // layouter/reviewer 的提交期树校验：validate 过的好树在 submit 一步被模型抄坏过（2026-10-17
   // 深圳 deck 第 6 页，根节点 direction 丢失静默兜底）——坏树在 submit 处拒收，让模型当场重交。
-  // 审页代理已砍：布局代理写完页面用渲染图自审，不再有独立的 slides-reviewer。
   subagentRuntimeManager.registerAgentResultValidator("slides-layouter", createSlidesTreeResultValidator());
   for (const developerAgent of subagentRegistry.listAvailable()) {
     agentResolver.register({
@@ -660,9 +664,6 @@ export async function createServer(config: GatewayConfig) {
     subagentRuntimeManager,
     app.log,
   );
-  // doc-writer 的 rewrite task 派发器：唯一消费方是 POST /v1/documents/selection-rewrite
-  // （Phase 2i-2 把划词改写从已删的 context-rooms 模块接回家，见文档路由装配处）。
-  const docWriterDispatcher = new DocWriterAgentDispatcher(subagentOrchestrator);
   // Room 创建整理走 internal_workflow 异步调度；logger 供失败降级日志。
   // 写作风格服务提前创建（仅需 db）：dispatcher 与 agentService 的注入
   // provider 在此接线，worker/路由仍在文档 worker 附近启动注册。
@@ -672,32 +673,14 @@ export async function createServer(config: GatewayConfig) {
   // let + 热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会让速览/
   // 章节预览在首次登录后一直 503（下方 onChange 重建）。
   let documentOverviewRuntime = createDocumentOverviewRuntime(config);
-  // 改写信任收口（agent-architecture-optimization-plan §3）：documents 插件经
-  // CapabilityBackend 注入 resolver——从 subagent_invocations 完成态取替换文本并复核授权。
-  // 与 writingStyleProvider 同款 provider 注入模式；documents 模块不直接依赖
-  // subagents / context-rooms，模块边界只在此装配点跨越。
-  // M2：内容生产者已迁至 doc-writer，授权判定随迁（isSelectionRewriteInvocationAuthorized
-  // 现校验 agentDefinitionId === "doc-writer"）；结果优先读 structuredOutput.replacementText。
-  documentService.resolveSelectionRewriteContent = createSelectionRewriteContentResolver({
-    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
-    isInvocationAuthorized: (invocation) => isSelectionRewriteInvocationAuthorized(
-      invocation,
-      { capabilityId: "document.selection-rewrite" },
-    ),
-    getDocument: (documentId) => documentService.get(documentId),
-  });
-  // 引用透传（doc-writer-subagent-plan M3/V2）：write_append / patch_hunk 的
-  // invocationId → 草稿内容解析；授权绑定本 run 的 document_draft 派发。
-  documentService.resolveDocWriterDraft = createDocWriterDraftResolver({
-    getInvocation: (invocationId) => subagentOrchestrator.getInvocation(invocationId),
-  });
   let resolveFileMarkdown: ((fileId: string) => Promise<string | null>) | undefined;
+  let resolveFileCurrentVersionId: ((fileEntryId: string) => string | null) | undefined;
   let resolveAgentConversation: ((threadId: string, query: string) => Promise<string | null>) | undefined;
   const recoveredSubagentInvocations = subagentOrchestrator.initialize();
   if (recoveredSubagentInvocations > 0) {
     app.log.info({ recoveredSubagentInvocations }, "subagent invocations interrupted after restart");
   }
-  // 渠道会话（Claude Code / Codex 整段锁定）的 EverRoom 工具 MCP host：
+  // 渠道会话（Claude Code / Codex 整段锁定）的 EverOffice 工具 MCP host：
   // token-in-path 鉴权，文档能力复用 documentMcpHost 的全量 document_* 读写。
   const gatewayLoopbackHost = ["0.0.0.0", "::"].includes(config.host) ? "127.0.0.1" : config.host;
   // 渠道 MCP 注入 URL 必须用 listen 后的实际绑定地址：桌面 main 以 --port 0 拉起网关，
@@ -716,7 +699,7 @@ export async function createServer(config: GatewayConfig) {
   );
   // 提前实例化：主 Agent 的 local_agent_dispatch 工具（@ 点名本机 Agent）需要闭包它。
   // MCP 注入仅限渠道锁定会话（activeAgentId 非内置档位）；@ 点名派发的子任务
-  // 走最小材料模型，不开放 EverRoom 工具。人工审批与 MCP 注入同一判据：
+  // 走最小材料模型，不开放 EverOffice 工具。人工审批与 MCP 注入同一判据：
   // 渠道会话的 CLI 工具权限走 UI 审批，派发子任务维持 mutationAllowed 自动应答。
   const isChannelAgentSession = (sessionId: string): boolean => {
     const session = db.select({ activeAgentId: agentSessions.activeAgentId })
@@ -731,12 +714,21 @@ export async function createServer(config: GatewayConfig) {
       return channelMcpHost.mcpServersForRun(input);
     },
     (input) => isChannelAgentSession(input.sessionId),
+    agentDebugStore,
   );
   const localAgentDispatchStore = new LocalAgentDispatchStore(db);
   // dispatch 工具先于 AgentService 构建，run 级分发来源用晚绑定引用接线。
   const localAgentDispatchSourceRef: { current: ((runId: string) => LocalAgentDispatchSource | undefined) | null } = {
     current: null,
   };
+  // 工作区文件/图片的晚绑定 ref：filesService 在文件后段才创建，而工具装配先于它。
+  // 主 Agent 的 workspace_files_list 与 slides 素材预取都经这里取用户自己的图片。
+  const workspaceFilesRef: { current: WorkspaceFileCatalog | null } = { current: null };
+  const workspaceMaterialsRef: {
+    current: ReturnType<typeof createWorkspaceImageMaterialSearch> | null;
+  } = { current: null };
+  // 工作区文件正文读取器（主 Agent 与 slides-planner 共用；filesService 晚绑定）。
+  const readWorkspaceFileText = createWorkspaceFileTextReader(() => filesService);
   // 项目空间目录（单写者）：创建空间时落 `<dataDir>/Workspace/<slug>`，默认空间补 `Workspace/inbox`。
   const workspaceLayoutService = new WorkspaceLayoutService({
     dataDir: config.dataDir,
@@ -829,10 +821,29 @@ export async function createServer(config: GatewayConfig) {
     externalCalls,
     skills: skillService,
     ...(connectorMcp ? { connectorMcp: { url: connectorMcp.url } } : {}),
+    workspaceFiles: () => workspaceFilesRef.current,
     memory: memoryService,
     // 项目空间根（P2，方案 §8.5）：会话所属空间绑了目录，这一轮 run 的 cwd 就是空间根。
     projectRoot: (input) => spaceAgentRoots.resolve(input.workspaceId),
     tools: [
+      // 文本类工作区文件（md/txt/csv 等）的正文直读：document_analysis 只覆盖
+      // Office/PDF，md 文件在解析子代理那边永远产不出 artifact。
+      createWorkspaceFileReadTool(readWorkspaceFileText, { mainAgent: true }),
+      // 批量预览（图片描述/文本前缀）与内容检索：消灭「逐个读文件/逐张视觉分析」
+      // 的串行模式——图片描述在导入时已解析落库，这里零推理直读。
+      createWorkspaceFilePreviewTool(() => filesService, readWorkspaceFileText),
+      createWorkspaceFilesReadBatchTool(() => filesService, readWorkspaceFileText),
+      // 图片按需视觉描述（VLM → 落库缓存）：descriptionMissing 的图一次补齐，
+      // 终结「bash+PIL 挖图片字节」的替代行为。
+      // 通用交互卡：计划确认（agent_confirm）与向用户提问（agent_ask_user）。
+      ...createAgentCardTools((runId, card) => agentService.requestAgentCard(runId, card)),
+      createWorkspaceImagesDescribeTool(
+        () => filesService,
+        (fileEntryId, fileVersionId) =>
+          documentUnderstandingService.describeImageVersion(fileEntryId, fileVersionId)
+            .then((parsed) => parsed.markdown),
+      ),
+      createContentSearchPiTool(() => searchService),
       ...createDocumentExportPiTools(agentDocumentExportService),
       ...createDocumentImportPiTools(documentImportService),
       // 当前浏览的 Office 文件（file_entries）正文读取：filesService 与本服务
@@ -850,53 +861,29 @@ export async function createServer(config: GatewayConfig) {
       ...(subagentConfig.enabled
         ? createSubagentPiTools(subagentRegistry, subagentOrchestrator, {
             resolveFileMarkdown: async (fileId) => resolveFileMarkdown?.(fileId) ?? null,
-            // document_draft 组装与代发凭证（doc-writer-subagent-plan §4/§5.3）：
-            // 读权威文档快照 + 以主 run 名义签发 read receipt（与 document_read 同构）。
+            // slides_draft 的草稿读写数据源：读权威文档快照（sourceDocumentIds 预取
+            // 与 generate 阶段读回用户确认的草稿）。
             resolveDocumentForDraft: (documentId) => documentService.readDocumentForAgent(documentId),
-            // dispatch 期软租约：agent 修改中文档只读（编辑器 writing 态 + 保存
-            // DOCUMENT_BUSY），patch_begin 接管前由工具侧清除。
-            setDocumentModificationLease: (documentId, value) =>
-              documentService.setAgentModificationLease(documentId, value),
-            inferMaterialSources: (runId, material) => inferMaterialSourcesFromReads(
-              documentReadAuthority,
-              (documentId) => {
-                try {
-                  return documentService.readDocumentForAgent(documentId);
-                } catch {
-                  return null;
-                }
-              },
-              runId,
-              material,
-            ),
-            issueDraftReadReceipt: (context, documentId, version, blockIds) =>
-              documentReadAuthority.issue(context, documentId, version, blockIds),
             // PPT 逐页进度：create 编排方案产出后登记，落页即广播快照。
             slidesProgress,
+            // PPT 生成检查点必须挂 DB：regenerateDeck 复用凭据与批次断点跨重启才不丢
+            //（漏传时工厂兜底成内存 store，重启即「没有可复用的生成记录」）。
             slidesCheckpoints: new SlidesGenerationCheckpointStore(db),
             // PPT 无模版风格管线（纵览图→提取→风格卡→自校）。
             slidesStyle: subagentConfig.enabled ? () => slidesStyleDepsRef.current : null,
-            // slides 语义内容链路（storyboard/v3）：内容契约装配——storyboard 落库 + 实验隔离 hash。
+            // slides 编辑层影子模式（M1）：默认开启，不改变可见产物；关闭只需在装配层不传本项。
             slidesEditor: subagentConfig.enabled
-              ? {
-                  store: new SlidesStoryboardStore(db), active: true,
-                  generationConfig: () => ({
-                    // 内容链路实际用到的模型：planner/editor 走 background，layouter 走主模型。
-                    models: [config.backgroundPi, config.pi].map(model => model ? {
-                      provider: model.provider, model: model.model, baseUrl: model.baseUrl,
-                      api: model.api, reasoning: model.reasoning, maxTokens: model.maxTokens,
-                      contextWindow: model.contextWindow, temperature: model.temperature,
-                    } : null),
-                    slidesReasoning: subagentConfig.slidesReasoning,
-                  }),
-                }
+              ? { store: new SlidesStoryboardStore(db), active: true }
               : null,
             // 布局树落页装配（generate 尾部）：与 office-plugin 共享同一批实例；
             // readMaterialBlob 供图片 AR 解析（everroom-material:// 按 hash 回源）。
             slidesLayoutOffice: subagentConfig.enabled
               ? {
                   bridge: officeBridgeClient,
-                  deckConcurrency: subagentConfig.slidesDeckConcurrency ?? DEFAULT_SLIDES_DECK_CONCURRENCY,
+                  // 页级窗口与 slides 池容量对齐（NXCORE_SLIDES_DECK_CONCURRENCY）。
+                  ...(subagentConfig.slidesDeckConcurrency === undefined
+                    ? {}
+                    : { deckConcurrency: subagentConfig.slidesDeckConcurrency }),
                   readMaterialBlob: async (hash) => {
                     const content = await slideImageStore.readByHash(hash).catch(() => null);
                     return content ? new Uint8Array(content.buffer) : null;
@@ -916,13 +903,14 @@ export async function createServer(config: GatewayConfig) {
                   },
                 }
               : null,
-            // PPT 草稿文档：planner 内容方案 → 落成 Room 可编辑文档（用户确认后再生成）。
-            createSlidesDraftDocument: async ({ roomId, title, markdown }) => {
+            // PPT 草稿文档：planner 内容方案 → 落成工作区可编辑文档（用户确认后再生成）。
+            createSlidesDraftDocument: async ({ title, markdown }) => {
               const documentId = randomUUID();
-              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId, title, markdown });
+              // 去 Room 后草稿一律为工作区级文稿（roomId 为 null）。
+              const prepared = documentService.prepareAgentDocumentDraft({ documentId, roomId: null, title, markdown });
               await documentService.import({
                 id: prepared.documentId,
-                roomId: prepared.roomId,
+                roomId: null,
                 title: prepared.title,
                 contentJson: prepared.content,
                 origin: "native",
@@ -933,6 +921,13 @@ export async function createServer(config: GatewayConfig) {
             trashSlidesDraftDocument: async (documentId) => {
               await documentService.delete(documentId);
             },
+            // 草稿复活：generate 再入（如"再生成"）时草稿已被回收——先还原再读。
+            restoreSlidesDraftDocument: async (documentId) => {
+              await documentService.restore(documentId);
+            },
+            // 本地素材预取：用户工作区里的图片（晚绑定 filesService）。命中以
+            // everroom-material://<hash> 下发，planner 可直接放进页面 materials。
+            searchMaterials: (query, limit) => workspaceMaterialsRef.current?.(query, limit) ?? [],
          })
         : []),
       // 计划（任务 / todo）：agent 可以建任务、读认领包、认领、推进、放回。
@@ -1069,6 +1064,18 @@ export async function createServer(config: GatewayConfig) {
   }
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记。
   const filesService = new FilesService(db, config.dataDir);
+  // 回填工作区文件/图片目录：Agent 工具装配早于 filesService 创建（晚绑定）。
+  // listCatalog 第 3 参是 options 对象：把目录接口的 (patterns, workspaceId) 适配过去。
+  const workspaceFiles = createWorkspaceFileCatalog({
+    listCatalog: (limit, offset, nameLikePatterns, workspaceId) => filesService.listCatalog(limit, offset, {
+      ...(nameLikePatterns?.length ? { nameLikePatterns } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+    }),
+    catalogStoragePathOf: (fileEntryId) => filesService.catalogStoragePathOf(fileEntryId),
+  });
+  workspaceFilesRef.current = workspaceFiles;
+  workspaceMaterialsRef.current = createWorkspaceImageMaterialSearch(() => workspaceFiles);
+  resolveFileCurrentVersionId = (fileEntryId) => filesService.currentVersionIdOf(fileEntryId);
   // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
   const thesisFormatService = new ThesisFormatService({
     db,
@@ -1193,6 +1200,8 @@ export async function createServer(config: GatewayConfig) {
     planLeaseReaper.stop();
     await agentSchedulerService.dispose();
     await agentResolver.dispose();
+    // running run 收尾为 interrupted 后等待写盘队列排空。
+    await agentDebugStore.dispose();
     await notificationMcpHost.close();
     // 退出前先把未提炼的会话段冲刷掉（带超时，尽力而为），再停定时器。
     await memoryDistiller.flushAll().catch(() => undefined);
@@ -1229,6 +1238,12 @@ export async function createServer(config: GatewayConfig) {
     invocations: subagentOrchestrator,
     usage: new AgentDebugUsageStore(db),
   })));
+  // 调试页 Agent 目录复用同一份 status 快照；store 观测到的本机 CLI Agent 由路由合并。
+  await app.register(agentDebugTraceRoutes(
+    agentDebugStore,
+    () => debugAgentsFromStatusSnapshot(agentStatusService.snapshot()),
+    { sessionTitles: agentDebugSessionTitles },
+  ));
   const reloadMcpRuntimes = async (): Promise<void> => {
     const primary = agentResolver.reload(BUILTIN_AGENT_IDS.primary);
     await agentService.replaceRuntime(primary.current);
@@ -1250,7 +1265,7 @@ export async function createServer(config: GatewayConfig) {
   // MCP 端点。REST（/v1/agent-access/*，连接页）走全局 bearer；MCP 端点
   // /v1/mcp/agents 以连接 token 自鉴权（auth 插件已豁免全局 bearer）。
   // 产物入库走 files 管线（sourceKind=agent-generated，CAS sha256 去重），
-  // 与渠道 MCP 互不影响：渠道面向 EverRoom 自己拉起的 CLI，这里面向用户
+  // 与渠道 MCP 互不影响：渠道面向 EverOffice 自己拉起的 CLI，这里面向用户
   // 自行安装的外部工具。
   const agentAccessImportArtifact = async (input: {
     filename: string;
@@ -1327,9 +1342,6 @@ export async function createServer(config: GatewayConfig) {
     documentService,
     () => versionSummaryRuntime,
     indexBackfillReadTrigger,
-    // 划词改写（Phase 2i-2）：documents 路由只收派发函数，doc-writer 的
-    // subagent 依赖仍留在装配点这一处。
-    (taskInput) => docWriterDispatcher.dispatchDetached({ task: "rewrite", taskInput }),
   ));
   await app.register(documentCommentRoutes(documentCommentService));
   await app.register(documentOverviewRoutes(documentService, () => documentOverviewRuntime));
@@ -1337,19 +1349,7 @@ export async function createServer(config: GatewayConfig) {
   await app.register(documentOperationRoutes(
     documentOperationService,
     documentMcpHost.capabilities,
-    (context) => {
-      // dispatch 子 Agent（doc-writer 划词改写，M2 迁移）溯源：按 completed Invocation 校验。
-      if (context.invocationId) {
-        if (!isSelectionRewriteInvocationAuthorized(
-          subagentOrchestrator.getInvocation(context.invocationId),
-          { capabilityId: context.capabilityId },
-        )) {
-          throw new Error("agent_operation_context_invalid");
-        }
-        return;
-      }
-      agentService.validateDocumentOperationContext(context);
-    },
+    (context) => agentService.validateDocumentOperationContext(context),
   ));
   await app.register(externalDocumentProjectionRoutes(
     externalDocumentProjectionService,
@@ -1698,7 +1698,6 @@ export async function createServer(config: GatewayConfig) {
       "document index backfill worker enabled",
     );
   }
-  // 写作风格生成注入已迁移至 doc-writer（doc-writer-subagent-plan §7）：
   await app.register(processingRoutes(sessionTitleService, conversationSuggestionService));
   await app.register(planRoutes(planService, planStream));
   await app.register(workspaceActivityRoutes(workspaceActivityService));

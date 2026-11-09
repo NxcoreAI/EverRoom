@@ -3,7 +3,7 @@ id: doc-writer
 name: Document Writer
 description: 承接 EverRoom 文档正文的内容生成，包括新建起草、修改建议、续写与选区改写，输出结构化写作产物
 mode: dispatch_only
-enabled: true
+enabled: false  # 2026-11 下线：document_draft/write_*/patch_* 落库链路已移除，向主 Agent 暴露只会诱导其委派无法落稿的写作任务；划词改写等服务端内部链路如需恢复再启用
 
 systemPrompt: ./SYSTEM.md
 
@@ -22,5 +22,5 @@ policy:
   allowedCallers: [primary-agent, internal-workflow]
   maxConcurrency: 2
   timeoutSeconds: 600
-  # 素材自取预算（2026-09-03）：研究工具（文档读取/分析/联网）+ skill read + 提交。
-  maxToolCalls: 24
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟兜底。
+  # enabled 状态见顶部注释（2026-11 已随 document_draft 落库链路下线）。

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./everroom_logo/everroom_full.png" width="320" alt="EverRoom">
+<img src="./everoffice_logo/everoffice_full.png" width="320" alt="EverOffice">
 
 **A local-first workspace for producing Office documents with a governed AI Agent.**
 
@@ -8,21 +8,21 @@ Draft with an Agent · Review every change · Export real Office files
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [Website](https://r.nxcore.ai/)
 
-[![Star History Rank](https://api.star-history.com/badge?repo=NxcoreAI/EverRoom&type=rank)](https://www.star-history.com/nxcoreai/everroom)
-<a href="https://trendshift.io/repositories/178463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-178463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/178463/daily?language=TypeScript" alt="NxcoreAI%2FEverRoom | Trendshift" width="250" height="50"/></a>
+[![Star History Rank](https://api.star-history.com/badge?repo=NxcoreAI/EverOffice&type=rank)](https://www.star-history.com/nxcoreai/everroom)
+<a href="https://trendshift.io/repositories/178463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-178463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/178463/daily?language=TypeScript" alt="NxcoreAI%2FEverOffice | Trendshift" width="250" height="50"/></a>
 
-![Stars](https://img.shields.io/github/stars/NxcoreAI/EverRoom?style=flat&label=stars)
-![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverRoom?filename=apps%2Fdesktop%2Fpackage.json&label=version)
+![Stars](https://img.shields.io/github/stars/NxcoreAI/EverOffice?style=flat&label=stars)
+![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverOffice?filename=apps%2Fdesktop%2Fpackage.json&label=version)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
 > [!IMPORTANT]
-> Everroom is under active development. macOS is the current development target. APIs, storage schemas, and agent contracts may change while the first complete local workflow is being finished.
+> Everoffice is under active development. macOS is the current development target. APIs, storage schemas, and agent contracts may change while the first complete local workflow is being finished.
 
-## What is Everroom?
+## What is Everoffice?
 
-Everroom is a local-first desktop workspace for producing real Office documents with an AI Agent. Bring in the local files, repositories, and connected services that matter, then create and edit Word documents, spreadsheets, and slide decks — yourself in the built-in Office editor, or through Agent sessions that draft, rewrite, and fill them in.
+Everoffice is a local-first desktop workspace for producing real Office documents with an AI Agent. Bring in the local files, repositories, and connected services that matter, then create and edit Word documents, spreadsheets, and slide decks — yourself in the built-in Office editor, or through Agent sessions that draft, rewrite, and fill them in.
 
 The Agent is not a chat box bolted onto a file store. It works inside explicit sessions and runs, receives only the tools and documents needed for the current request, and proposes document changes as reviewable operations. You decide what lands in the file.
 
@@ -35,11 +35,11 @@ The Agent is not a chat box bolted onto a file store. It works inside explicit s
 3. **Review every change.** Agent writes and edits arrive as patches and document operations you can inspect before they become part of the document.
 4. **Keep work moving.** Scoped Agent sessions, scheduled runs, dispatch-only subagents, and notifications carry recurring and long-running work.
 
-## Why Everroom exists
+## Why Everoffice exists
 
 AI agents are good at producing a useful next step when they have the right material and a real place to put it. The hard part is everything around that moment: getting source material in, producing a file colleagues can actually open, and keeping automated edits reviewable instead of letting them silently rewrite your document.
 
-Everroom is built around that gap. It is a local workspace for documents, files, and connected services, with an Agent that works on real Office artifacts. It is not another chat client, a thin RAG screen, or an automation that quietly accumulates unreviewed output.
+Everoffice is built around that gap. It is a local workspace for documents, files, and connected services, with an Agent that works on real Office artifacts. It is not another chat client, a thin RAG screen, or an automation that quietly accumulates unreviewed output.
 
 The product thesis is simple:
 
@@ -50,7 +50,7 @@ Four principles follow from it:
 - **Local-first.** Data, documents, indexes, and credentials stay on the user's device by default.
 - **Review before it lands.** Agent edits are proposed as operations and patches, not silent overwrites.
 - **Automated, but governable.** Agents receive explicit, temporary, and revocable tool permissions.
-- **Replaceable foundations.** Models, connectors, and agent runtimes all plug in through Everroom's own interfaces.
+- **Replaceable foundations.** Models, connectors, and agent runtimes all plug in through Everoffice's own interfaces.
 
 A generated draft is useful only when a person can inspect what changed, correct it, and let the correction flow into the next task.
 
@@ -61,7 +61,7 @@ A generated draft is useful only when a person can inspect what changed, correct
 | **Documents** | Word documents, spreadsheets, and slide decks with versioned, block-aware editing | Human ownership of the final artifact |
 | **Agent** | A scoped worker with explicit tools, sessions, runs, and cancellation | Automation that can be inspected, stopped, and replaced |
 | **Sources** | Local files, folders, and repositories brought into one library; connectors are queried live by the Agent | A single place for the material an Agent may read |
-| **Connectors** | On-demand external retrieval through OpenConnector MCP; no periodic sync or local content copies | External data reached with the user's credentials, never stored by Everroom |
+| **Connectors** | On-demand external retrieval through OpenConnector MCP; no periodic sync or local content copies | External data reached with the user's credentials, never stored by Everoffice |
 | **Schedules** | Recurring Agent runs and dispatch-only subagents | Long-running work that stays visible and interruptible |
 
 Original files and parsed Markdown have one storage owner: documents and Agent runs keep stable references, hashes, and provenance instead of copying the same source into several places.
@@ -78,7 +78,7 @@ An Agent does not edit documents by remote control. It works through the same co
 
 ### Product boundaries
 
-Everroom is deliberately narrow: no autonomous multi-agent swarm, no enterprise administration, and no mandatory cloud synchronization. The focus is trustworthy local document work with an Agent you can review.
+Everoffice is deliberately narrow: no autonomous multi-agent swarm, no enterprise administration, and no mandatory cloud synchronization. The focus is trustworthy local document work with an Agent you can review.
 
 ## Current state
 
@@ -96,9 +96,9 @@ The main branch now contains the Office + Agent surface. Some features require o
 
 ### Open Word, Excel, and PowerPoint files from Finder
 
-The desktop build registers EverRoom as an alternate handler for `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, and `.ppt`. Right-click a document in Finder and pick **Open With → EverRoom** (or make it the default opener for that type). EverRoom imports the file into the local library and opens it in the embedded Office editor — `.docx`, `.xlsx`, `.xlsm`, and `.pptx` are editable. Saving writes the edited bytes back to the original file on disk (so Word, WPS, or Keynote see the change too) and records a new version of that library entry. The file also shows up in the Files page from then on.
+The desktop build registers EverOffice as an alternate handler for `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, and `.ppt`. Right-click a document in Finder and pick **Open With → EverOffice** (or make it the default opener for that type). EverOffice imports the file into the local library and opens it in the embedded Office editor — `.docx`, `.xlsx`, `.xlsm`, and `.pptx` are editable. Saving writes the edited bytes back to the original file on disk (so Word, WPS, or Keynote see the change too) and records a new version of that library entry. The file also shows up in the Files page from then on.
 
-> Dev builds register themselves the first time `pnpm dev` starts the branded Electron app. If Finder still does not list EverRoom, restart the dev app once more so LaunchServices picks up the updated bundle.
+> Dev builds register themselves the first time `pnpm dev` starts the branded Electron app. If Finder still does not list EverOffice, restart the dev app once more so LaunchServices picks up the updated bundle.
 
 ## Quick start
 
@@ -111,8 +111,8 @@ The desktop build registers EverRoom as an alternate handler for `.docx`, `.doc`
 ### Run the desktop app
 
 ```bash
-git clone https://github.com/NxcoreAI/Everroom.git
-cd Everroom
+git clone https://github.com/NxcoreAI/Everoffice.git
+cd Everoffice
 pnpm install
 pnpm dev
 ```
@@ -145,7 +145,7 @@ Subagents can be dispatched only by the primary Agent or internal Gateway workfl
 
 ```dotenv
 NXCORE_SUBAGENTS_ENABLED=true
-NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
+NXCORE_SUBAGENTS_DIR=/absolute/path/to/everoffice-agents
 ```
 
 Each first-level directory represents one Agent and contains an `agent.yaml`, its system prompt, and optional skills. MCP servers reference names already configured in Settings, and `includeTools` must explicitly limit the tools visible to that Agent. Gateway creates an immutable revision when definitions change, so running invocations continue on their original revision.
@@ -175,13 +175,13 @@ pnpm package:win  # Create the Windows x64 NSIS installer
 - `git submodule update --init --recursive` (GenOffice)
 - The packaged-environment variables listed in `apps/desktop/scripts/generate-packaged-env.mjs`; for local test builds use placeholder values, never production secrets
 
-The unsigned installer is written to `release/EverRoom-<version>-windows-x64.exe`. Verify it without installing by running `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs`. For scripted installs, run the NSIS installer with `/S` (silent) and `/D=<dir>` to pick the target directory. Because the build is unsigned, Microsoft Defender SmartScreen may show a warning before the first launch.
+The unsigned installer is written to `release/EverOffice-<version>-windows-x64.exe`. Verify it without installing by running `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs`. For scripted installs, run the NSIS installer with `/S` (silent) and `/D=<dir>` to pick the target directory. Because the build is unsigned, Microsoft Defender SmartScreen may show a warning before the first launch.
 
 </details>
 
 ## Architecture
 
-Everroom keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns local orchestration and persistence; connectors and Agent runtimes sit behind their own contracts.
+Everoffice keeps the product boundary stable while allowing the underlying engines to change. The desktop owns lifecycle and trust boundaries; the Gateway owns local orchestration and persistence; connectors and Agent runtimes sit behind their own contracts.
 
 ### The implementation strategy
 
@@ -236,7 +236,7 @@ On macOS, runtime data is stored under:
 └── open-connector/  # Managed connector runtime and CLI data
 ```
 
-On Windows, the same layout lives under `%APPDATA%\EverRoom\` (that is `C:\Users\<user>\AppData\Roaming\EverRoom\`). Set `NXCORE_DATA_DIR` to relocate it.
+On Windows, the same layout lives under `%APPDATA%\EverOffice\` (that is `C:\Users\<user>\AppData\Roaming\EverOffice\`). Set `NXCORE_DATA_DIR` to relocate it.
 
 See [`apps/gateway/README.md`](./apps/gateway/README.md) for standalone Gateway details. The OpenConnector lifecycle and security boundary are documented in [`docs/open-connector-desktop-integration.zh-CN.md`](./docs/open-connector-desktop-integration.zh-CN.md).
 
@@ -246,14 +246,14 @@ See [`apps/gateway/README.md`](./apps/gateway/README.md) for standalone Gateway 
 - The Gateway listens on loopback and uses a fresh high-entropy token for each desktop session.
 - The renderer receives typed preload APIs only; filesystem, database, provider tokens, and connector credentials stay in trusted processes.
 - Original sources are versioned and content-addressed, and document history records every accepted operation.
-- Cloud providers, remote models, and external Agents are opt-in. Everroom should send only the approved document or task scope.
+- Cloud providers, remote models, and external Agents are opt-in. Everoffice should send only the approved document or task scope.
 - Credentials and sensitive headers are redacted from logs. Managed connector configuration files use restricted permissions.
 - External side effects are separated from read-only context gathering and are intended to pass through explicit preparation and approval boundaries.
 
 ## Repository layout
 
 ```text
-Everroom/
+Everoffice/
 ├── apps/
 │   ├── desktop/          # Electron main, preload, and React renderer
 │   └── gateway/          # Standalone local backend service and modules
@@ -264,7 +264,7 @@ Everroom/
 │   ├── document-model/   # Pure document normalization and block references
 │   └── reality-contract/ # Shared protocol and event types
 ├── submodules/
-│   └── everroom-connectors/  # Connector contract, gateway module, and desktop host
+│   └── everoffice-connectors/  # Connector contract, gateway module, and desktop host
 └── docs/                 # Product, architecture, and implementation notes
 ```
 
@@ -284,7 +284,7 @@ Autonomous multi-agent swarms, enterprise administration, and mandatory cloud sy
 
 ## Acknowledgements
 
-Everroom builds on a number of open-source projects and ideas:
+Everoffice builds on a number of open-source projects and ideas:
 
 - [Electron](https://www.electronjs.org/) and [React](https://react.dev/) for the desktop application foundation.
 - [Fastify](https://fastify.dev/), [TypeBox](https://github.com/sinclairzx81/typebox), [Drizzle ORM](https://orm.drizzle.team/), and [SQLite](https://www.sqlite.org/) for the local service and storage layer.
@@ -292,7 +292,7 @@ Everroom builds on a number of open-source projects and ideas:
 - [OpenConnector](https://github.com/oomol-lab/open-connector) and [`oo-cli`](https://github.com/oomol-lab/oo-cli) from OOMOL for the local connector bridge.
 - [Liminon](https://liminon.ai/) for inspiration around AI workflows and context products.
 
-Everroom is released under the [Apache License 2.0](./LICENSE). Upstream licenses remain applicable to their respective components; see their individual notices and license files where applicable.
+Everoffice is released under the [Apache License 2.0](./LICENSE). Upstream licenses remain applicable to their respective components; see their individual notices and license files where applicable.
 
 ## License and contributing
 

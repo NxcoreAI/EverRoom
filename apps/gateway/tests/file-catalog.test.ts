@@ -211,81 +211,48 @@ describe("unified file catalog", () => {
     test.sqlite.close();
   });
 
-  it("scopes catalog entries to their workspace and defaults missing attribution to default", async () => {
+
+  it("listCatalog 检索词下推：扫描窗口外的老文件仍能按名命中", async () => {
     const test = await catalogForTest();
-    const buffer = Buffer.from("# ws", "utf8");
-    await test.service.importFile({
-      sourceKind: "manual-upload", sourceKey: "manual:ws-a", originalName: "ws-a.md",
-      buffer, workspaceId: "ws-alpha",
+    const target = await test.service.importFile({
+      sourceKind: "manual-upload", sourceKey: "manual:bp1020", originalName: "锥光 BP-1020.md",
+      buffer: Buffer.from("# bp"), deferIngest: true,
     });
-    // 未显式带 workspaceId 的入库（旧客户端/旧链路）归 default。
-    await test.service.importFile({
-      sourceKind: "manual-upload", sourceKey: "manual:ws-b", originalName: "ws-b.md", buffer,
-    });
-
-    // 全库（未传 workspaceId）：两个都在，DTO 暴露归一后的归属。
-    const all = test.service.listCatalog();
-    expect(all.total).toBe(2);
-    expect(all.items.find((item) => item.originalName === "ws-a.md")).toMatchObject({ workspaceId: "ws-alpha" });
-    expect(all.items.find((item) => item.originalName === "ws-b.md")).toMatchObject({ workspaceId: "default" });
-
-    // 按空间过滤：只看到自己名下的。
-    expect(test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" })).toMatchObject({ total: 1 });
-    const alpha = test.service.listCatalog(100, 0, { workspaceId: "ws-alpha" }).items;
-    expect(alpha.map((item) => item.originalName)).toEqual(["ws-a.md"]);
-    // default 过滤同时命中显式 default 与 NULL 归属（迁移前旧行兜底）。
-    const defaults = test.service.listCatalog(100, 0, { workspaceId: "default" }).items;
-    expect(defaults.map((item) => item.originalName)).toEqual(["ws-b.md"]);
-
-    // REST 查询参数同样生效。
-    const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
-    await app.register(filesRoutes(test.service));
-    const response = await app.inject({ method: "GET", url: "/v1/files/catalog?workspaceId=ws-alpha" });
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ total: 1, items: [{ originalName: "ws-a.md", workspaceId: "ws-alpha" }] });
-    await app.close();
+    test.sqlite.prepare("UPDATE file_entries SET updated_at = 1000 WHERE id = ?").run(target.fileEntryId);
+    for (let index = 0; index < 600; index += 1) {
+      await test.service.importFile({
+        sourceKind: "manual-upload", sourceKey: `manual:filler:${index}`, originalName: "filler.md",
+        buffer: Buffer.from("filler"), deferIngest: true,
+      });
+    }
+    // workspace_files_list 对「锥光BP-1020」展开出的模式（token + CJK 段窗，无 ASCII 噪声窗）。
+    const patterns = ["锥光bp-1020", "锥光"];
+    expect(test.service.listCatalog(30, 0, patterns).items.map((item) => item.originalName))
+      .toEqual(["锥光 BP-1020.md"]);
+    // 无检索词仍是默认分页：只回最新一页，老文件不在其中（行为不变）。
+    expect(test.service.listCatalog(30, 0).items.some((item) => item.id === target.fileEntryId)).toBe(false);
     await test.service.dispose();
     test.sqlite.close();
   });
 
-  it("re-import without workspaceId keeps the entry's original workspace (edit-sync / rescan safety)", async () => {
+  it("catalogEntry 目录超过一页时仍能按 id 命中（分页兜底）", async () => {
     const test = await catalogForTest();
-    // Agent 在 ws-alpha 会话里生成 word（office_create → file-imports 带 workspaceId）。
-    const first = await test.service.importFileStream({
-      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
-      stream: Readable.from([Buffer.from("PK\u0003\u0004 v1")]),
-      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      workspaceId: "ws-alpha",
-    });
-    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
-
-    // 用户打开编辑并保存：edit-sync 按 fileEntryId 重导入，不带 workspaceId。
-    // 旧逻辑会把它默默改归 default（重启后文件「跑到」默认空间）；现在必须保留 ws-alpha。
-    const edited = await test.service.importFileStream({
-      sourceKind: "agent-generated", sourceKey: "agent:word:edit:ignored-by-fileEntryId", originalName: "报告.docx",
-      stream: Readable.from([Buffer.from("PK\u0003\u0004 v2")]),
-      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      fileEntryId: first.fileEntryId,
-    });
-    expect(edited.fileEntryId).toBe(first.fileEntryId);
-    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
-
-    // 同 sourceKey 重导入（本地夹重扫路径）同样保留归属。
-    await test.service.importFileStream({
-      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
-      stream: Readable.from([Buffer.from("PK\u0003\u0004 v3")]),
-      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    });
-    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-alpha" });
-
-    // 显式传 workspaceId 才允许迁移归属（重新导入覆盖语义保留给显式入口）。
-    await test.service.importFileStream({
-      sourceKind: "agent-generated", sourceKey: "agent:word:run-1", originalName: "报告.docx",
-      stream: Readable.from([Buffer.from("PK\u0003\u0004 v4")]),
-      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      workspaceId: "ws-beta",
-    });
-    expect(test.service.catalogEntry(first.fileEntryId)).toMatchObject({ workspaceId: "ws-beta" });
+    const deep = {
+      id: "file-deep", originalName: "deep.pptx", displayName: null, sharedTitle: "deep.pptx",
+      sourceKind: "agent-generated", sourceLabel: "Agent 生成", relativePath: null, provider: null,
+      bytes: 1, dataType: "slides", agentCategory: null, summary: null, tags: [],
+      processingState: "ready", clusterId: null, contentHash: "a".repeat(64), currentVersionId: null,
+      parsed: false, updatedAt: new Date().toISOString(),
+    } as never;
+    const pages = new Map<number, { items: never[]; total: number }>([
+      [0, { items: [], total: 250 }],
+      [200, { items: [deep], total: 250 }],
+    ]);
+    vi.spyOn(test.service, "listCatalog").mockImplementation(((limit = 100, offset = 0) => (
+      pages.get(offset) ?? { items: [], total: 250 }
+    )) as never);
+    expect(test.service.catalogEntry("file-deep")).toMatchObject({ id: "file-deep", originalName: "deep.pptx" });
+    expect(test.service.catalogEntry("file-missing")).toBeNull();
     await test.service.dispose();
     test.sqlite.close();
   });

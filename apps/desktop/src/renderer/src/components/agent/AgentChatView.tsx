@@ -1,7 +1,8 @@
-import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw, X } from 'lucide-react'
+import { ArrowDown, Check, ChevronRight, Copy, FileText, Link2, RotateCcw } from 'lucide-react'
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { AgentExecutionTimeline } from './AgentExecutionTimeline'
+import { AgentAnswerDetails } from './AgentAnswerDetails'
 import { AgentShellApproval } from './AgentShellApproval'
 import { ReasoningBlock } from './ReasoningBlock'
 import {
@@ -11,30 +12,26 @@ import {
   type SlidesProgressState,
   type SlidesTaskEntry,
 } from './SlidesProgressCard'
+import { slidesFailureSuppressed } from './slides/slidesState'
 import { AgentAuthChallengeCard, useAgentAuthChallenge } from './AgentAuthChallengeCard'
 import {
   AGENT_CHAT_REPIN_DISTANCE_PX,
   AGENT_CHAT_WHEEL_UP_DETACH_PX,
   isGeometryClampScroll,
   isNestedScrollerWheel,
+  wheelDownChaseBand,
 } from './agentChatScroll'
 import type { PendingShellApproval } from './agentShellApprovals'
 import type { AgentRunActivity } from './agentRunActivity'
+import { agentTurnFilesFromTools } from './agentTurnFiles'
+import { AgentTurnFilesCard } from './AgentTurnFilesCard'
 import { parseAgentNavigationTarget } from './agentNavigation'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { AgentDocumentPicker } from './AgentDocumentPicker'
-import { uiText } from '../context-room/ported/adapters'
-import {
-  findPendingAgentDocumentSelection,
-  type AgentDocumentSelectionItem,
-  type AgentDocumentSelectionSubmission,
-} from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentNoteCard, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
-import type { ActiveDocumentDescriptor } from './activeDocumentContext'
 import type { AgentApprovalDecision } from '@/shared/sources'
 import { writeTextToClipboard } from '@/lib/systemClipboard'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
@@ -113,6 +110,9 @@ function toolNavigationResult(tool: DisplayAgentToolCall): boolean {
   return parsed
 }
 
+/** run → 本轮产生的文件（解析在 agentTurnFiles 内部按工具对象缓存）。 */
+const runTurnFiles = agentTurnFilesFromTools
+
 // react-markdown 每次渲染都全量重解析整条消息：长对话里每个流式渲染帧都会把
 // 全部历史消息重新解析一遍，主线程直接打满（表现为对话区卡死/滚动冻结）。
 // memo 按内容缓存——历史消息内容不变就不再重解析，流式中那条每次只解析一条。
@@ -183,13 +183,11 @@ function AgentResponseByline({ agentId, names }: { agentId?: string | null; name
   )
 }
 
+// 与 agentNavigation 的 pages 集合同步：rooms/docs/sources/diary 等页面已下线，
+// 历史链接里的旧 pageId 走 fallback（直接显示 pageId 字符串）。
 const navigationPageLabels: Record<string, string> = {
   home: 'surface:navigation.home',
   office: 'surface:navigation.office',
-  rooms: 'surface:navigation.contextRoom',
-  docs: 'surface:navigation.documents',
-  sources: 'surface:navigation.sources',
-  diary: 'surface:navigation.diary',
 }
 
 function SessionReference({ link, onOpen }: { link: AgentSessionLink; onOpen: () => void }) {
@@ -329,7 +327,6 @@ function LinkedRunProgress({ agentNamesById, state, failedRunIds }: {
 }
 
 export function AgentChatView({
-  activeDocument,
   activeRunId,
   agentIdByRun,
   agentNamesById,
@@ -351,11 +348,11 @@ export function AgentChatView({
   onSlidesAction,
   onOpenDraft,
   onOpenMention,
-  onSelectDocument,
   onSelectPrompt,
   cancelledRunIds,
   interruptedRunIds,
   failedRunIds,
+  onContinueRun,
   pendingNavigationByRun,
   reasoningByRun = {},
   runCompletedAtByRun,
@@ -367,7 +364,6 @@ export function AgentChatView({
   submitting,
   toolCallsByRun,
 }: {
-  activeDocument: ActiveDocumentDescriptor | null
   activeRunId: string | null
   agentIdByRun: Record<string, string>
   agentNamesById: Record<string, string>
@@ -385,19 +381,20 @@ export function AgentChatView({
   pendingApprovals?: PendingShellApproval[]
   composerNotice?: ReactNode
   onRetryPrompt: (prompt: string, runId: string) => void
-  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string) => void
+  onResolveApproval?: (approvalId: string, decision: AgentApprovalDecision, feedback?: string, choice?: string, text?: string) => void
   onOpenSessionLink: (link: AgentSessionLink) => void
   /** 卡片动作两段式：prompt 是运行时技术指令，displayText 是用户人话（气泡/标题）。 */
   onSlidesAction?: (prompt: string, displayText: string) => void
-  onOpenDraft?: (documentId: string, roomId?: string) => void
+  onOpenDraft?: (documentId: string) => void
   /** 用户主动停止的 run：卡片显示「已停止」。 */
   cancelledRunIds?: ReadonlySet<string>
   /** 网关重启等原因被中断的 run：卡片显示「运行被中断」。 */
   interruptedRunIds?: ReadonlySet<string>
   /** 网关判定失败的 run：时间线标题显示「处理失败」（唯一权威口径）。 */
   failedRunIds?: ReadonlySet<string>
+  /** 上一轮因输出额度耗尽而中断时提供：点「继续」接着做完，无需重述需求。 */
+  onContinueRun?: () => void
   onOpenMention?: (item: MentionedItem) => void
-  onSelectDocument: (selection: AgentDocumentSelectionSubmission) => void
   onSelectPrompt: (prompt: string) => void
   pendingNavigationByRun: Record<string, AgentNavigationTarget>
   reasoningByRun?: Record<string, string>
@@ -413,12 +410,10 @@ export function AgentChatView({
 }) {
   const { t } = useLocale()
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
-  const [dismissedDocumentSelections, setDismissedDocumentSelections] = useState<Set<string>>(() => new Set())
   const [highlightedNotificationTarget, setHighlightedNotificationTarget] = useState<{
     key: string
     messageId: string
   } | null>(null)
-  const handledDocumentSelectionsRef = useRef(new Set<string>())
   const conversationRef = useRef<HTMLDivElement>(null)
   const pinnedToBottomRef = useRef(true)
   const lastScrollTopRef = useRef(0)
@@ -503,11 +498,17 @@ export function AgentChatView({
   )
   const slidesTaskCards = useMemo(() => {
     const cards: Array<{ entry: SlidesTaskEntry; compact: boolean }> = []
-    if (slidesSelection.primary) cards.push({ entry: slidesSelection.primary, compact: false })
-    for (const entry of slidesSelection.waiting) cards.push({ entry, compact: false })
-    for (const entry of slidesSelection.receipts) cards.push({ entry, compact: true })
+    // run 终止后仍是 failed 才亮失败卡（失败不许消失）；运行中的失败先压住。
+    const suppressed = (entry: SlidesTaskEntry): boolean => slidesFailureSuppressed(entry, runCompletedAtByRun)
+    if (slidesSelection.primary && !suppressed(slidesSelection.primary)) cards.push({ entry: slidesSelection.primary, compact: false })
+    for (const entry of slidesSelection.waiting) {
+      if (!suppressed(entry)) cards.push({ entry, compact: false })
+    }
+    for (const entry of slidesSelection.receipts) {
+      if (!suppressed(entry)) cards.push({ entry, compact: true })
+    }
     return cards
-  }, [slidesSelection])
+  }, [slidesSelection, runCompletedAtByRun])
 
   // 配图后台逐张生成轮询：轮询状态以 documentId 为 key，切换文档即清 state/ref；
   // 响应校验 documentId 与 updatedAt，旧响应不得覆盖新广播（修 P1-7 串台）。
@@ -572,8 +573,8 @@ export function AgentChatView({
   const handleSlidesAction = (prompt: string, displayText: string) => {
     onSlidesAction?.(prompt, displayText)
   }
-  const handleOpenDraft = (documentId: string, roomId?: string) => {
-    onOpenDraft?.(documentId, roomId)
+  const handleOpenDraft = (documentId: string) => {
+    onOpenDraft?.(documentId)
   }
 
   const activeHasAssistant = activeRunId
@@ -598,15 +599,6 @@ export function AgentChatView({
     }
     return messages.length
   }, [authChallenge?.id, authChallenge?.startedAt, messages])
-
-  const pendingDocumentSelection = useMemo(() => {
-    if (activeDocument) return null
-    return findPendingAgentDocumentSelection(
-      Object.values(toolCallsByRun).flat(),
-      messages,
-      dismissedDocumentSelections,
-    )
-  }, [activeDocument, dismissedDocumentSelections, messages, toolCallsByRun])
 
   useEffect(() => {
     const reset = () => setCopiedMessageId(null)
@@ -916,7 +908,8 @@ export function AgentChatView({
             return
           }
           const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-          if (distance <= AGENT_CHAT_REPIN_DISTANCE_PX && !pinnedToBottomRef.current) attachChatScroll(element)
+          // 追赶带随本次位移放款：流式爆发时固定 32px 永远追不上底部（生成进行中滑不到底）。
+          if (distance <= wheelDownChaseBand(event.deltaY) && !pinnedToBottomRef.current) attachChatScroll(element)
         }}
       >
           {incomingLink ? (
@@ -936,7 +929,27 @@ export function AgentChatView({
                 activity?.completed && !message.streaming && runCompletedAtByRun[message.runId] ? message.content : ''
               )
               : message.content
-            const finalContent = localizeAgentAnswer(rawFinalContent, t)
+            // 分级答复（answer-tiering）：displayContent 是默认展示层（L0+L1），
+            // 差值折叠为「查看详情」。gateway 拼装的 content 以 displayContent
+            // 为前缀（trim 边界可能有细微空白差，前缀校验失败就不分级——
+            // 保守退化成整段展示，绝不丢内容）。流式期间照常流全文，run 完成
+            // 切分级；无标记的消息 displayContent 为 undefined，行为不变。
+            const tieredDisplay = activity?.finalDisplayContent ?? message.displayContent
+            let displayFinalContent = rawFinalContent
+            let tieredDetails: string | undefined
+            if (
+              tieredDisplay !== undefined && tieredDisplay.trim()
+              && !message.streaming && rawFinalContent.trimStart().startsWith(tieredDisplay.trimEnd())
+              && rawFinalContent.trim().length > tieredDisplay.trim().length
+            ) {
+              const prefixEnd = rawFinalContent.indexOf(tieredDisplay.trimEnd())
+              const rest = prefixEnd >= 0 ? rawFinalContent.slice(prefixEnd + tieredDisplay.trimEnd().length) : ''
+              if (rest.trim()) {
+                displayFinalContent = tieredDisplay
+                tieredDetails = rest
+              }
+            }
+            const finalContent = localizeAgentAnswer(displayFinalContent, t)
             const partialContent = Boolean(
               hasToolActivity && activity && !activity.completed && runCompletedAtByRun[message.runId] && finalContent,
             )
@@ -1068,9 +1081,16 @@ export function AgentChatView({
                 {finalContent ? (
                   <div className="agent-assistant-response">
                     <AgentResponseByline agentId={authorAgentId} names={agentNamesById} />
-                    <article className="agent-message" data-role="assistant"><AssistantMessageContent content={finalContent} /></article>
+                    <article className="agent-message" data-role="assistant">
+                      <AssistantMessageContent content={finalContent} />
+                      {tieredDetails ? <AgentAnswerDetails details={localizeAgentAnswer(tieredDetails, t)} /> : null}
+                    </article>
                   </div>
                 ) : null}
+                {(() => {
+                  const turnFiles = runTurnFiles(tools)
+                  return turnFiles.length > 0 ? <AgentTurnFilesCard files={turnFiles} /> : null
+                })()}
                 {showActions ? (
                   <div className="agent-message-actions">
                     <button type="button" aria-label={t('surface:agentChat.copyResponse')} title={t('surface:agentChat.copyResponse')} onClick={() => void copyMessage(message.id, finalContent)}>
@@ -1120,6 +1140,8 @@ export function AgentChatView({
                   failedRunIds={failedRunIds}
                 />
               ) : null}
+              {/* 本轮文件产物随生成实时出现（工具转终态即有 fileId），不必等正文。 */}
+              <AgentTurnFilesCard files={runTurnFiles(latestTools)} />
             </div>
           ) : null}
           {activeRunId && activeHasAssistant && !latestStreamingMessage && !latestActivity?.hasTools
@@ -1167,34 +1189,15 @@ export function AgentChatView({
             resolvingApprovalIds={resolvingApprovalIds}
             onResolve={onResolveApproval}
           />
-          {/* 等待用户决策 ≠ 执行中：run 挂着正是「agent 在等输入」的正常形态，
-              卡片此时必须可点；busy 只保留「提交通道被占用/会话加载中」。
-              Phase 2i 去 Room：Room 选择/文档归属确认卡已删除，仅保留文档选择卡。 */}
-          {pendingDocumentSelection ? (
-            <AgentDocumentPicker
-              awaitingInput
-              busy={loading || submitting}
-              documents={pendingDocumentSelection.documents}
-              onCancel={() => {
-                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
-                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
-              }}
-              onSelect={(document) => {
-                if (handledDocumentSelectionsRef.current.has(pendingDocumentSelection.toolId)) return
-                handledDocumentSelectionsRef.current.add(pendingDocumentSelection.toolId)
-                setDismissedDocumentSelections((current) => new Set(current).add(pendingDocumentSelection.toolId))
-                onSelectDocument({
-                  document,
-                  originalPrompt: pendingDocumentSelection.originalPrompt,
-                  toolId: pendingDocumentSelection.toolId,
-                })
-              }}
-            />
-          ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
           {error ? (
             <div className="agent-error" role="alert">
               <span>{error}</span>
+              {onContinueRun ? (
+                <button type="button" className="agent-error-retry" onClick={onContinueRun}>
+                  {t('surface:agentChat.continueRun')}
+                </button>
+              ) : null}
               {onRetryError ? (
                 <button type="button" className="agent-error-retry" onClick={onRetryError}>
                   {t('surface:agentComposer.retry')}

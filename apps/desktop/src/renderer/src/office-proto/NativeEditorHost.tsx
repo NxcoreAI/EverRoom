@@ -5,7 +5,7 @@ import type { FileCatalogDto } from '@/shared/ingest'
 
 /**
  * GenOffice 原生编辑器宿主。原生 WebContentsView 永远画在 DOM 之上，z-index
- * 管不了它，只能靠「矩形上报 + 显隐时序」对齐（时序规则取自 EverRoom 的
+ * 管不了它，只能靠「矩形上报 + 显隐时序」对齐（时序规则取自 EverOffice 的
  * officeViewport.ts，原型去掉遮挡扫描）：
  * 1. 挂载后先 open 实例；宿主矩形非零时先 activate 再报矩形
  * 2. 宿主矩形归零（切标签/收面板）上报零尺寸隐藏
@@ -35,11 +35,13 @@ interface Bounds {
 
 const ZERO: Bounds = { x: 0, y: 0, width: 0, height: 0 }
 
-/** 文件库内置预览可编辑的扩展名（PDF 只读；旧格式转换失败会回退系统应用）。 */
+/** 文件库内置预览可编辑的扩展名（PDF 标注随选区工具卡一并开放编辑；
+ * markdown 评论/编辑随 genoffice markdown runtime 开放；
+ * 旧格式转换失败会回退系统应用）。 */
 function isEditableName(name: string): boolean {
   const dot = name.lastIndexOf('.')
   const extension = dot >= 0 ? name.slice(dot).toLowerCase() : ''
-  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx'].includes(extension)
+  return ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsm', '.xlsx', '.pdf', '.md', '.markdown'].includes(extension)
 }
 
 export function NativeEditorHost({
@@ -57,37 +59,107 @@ export function NativeEditorHost({
   const instanceRef = useRef<string | null>(null)
   const real = realCatalog !== undefined
 
+  /**
+   * 2026-11-06 修复「agent 对话区文件点击后重复打开、闪烁、关不掉」：
+   * 主进程每次 files.openOriginal 都会广播 office:preview-request → Workbench
+   * 用 catalogToOfficeFile 生成全新的 file 对象 → openFileInWorkspace 写
+   * pendingBubbleFile → 气泡窗 openFile 用新对象替换同 id 的文件 → 本组件拿到
+   * 新的 realCatalog 引用 → open 回调失效 → useEffect 重跑 → 再次 openOriginal。
+   * 这是一条约 12ms 一轮的跨进程反馈环（日志累计 9 万次 open.reuse）；
+   * 每轮 setStatus('opening') 把 loader 打回来，就是肉眼看到的闪烁；用户关掉
+   * 标签后下一轮广播又把它加回来，所以「关不掉」。
+   *
+   * 断点放在这里：同一「打开键」在一次挂载周期内只真正调用一次 openOriginal。
+   * 键只由稳定标量组成（fileId / catalog.id / contentHash / name），换文件或
+   * 内容变化时仍会正常重开。
+   */
+  const openedKeyRef = useRef<string | null>(null)
+  const inFlightKeyRef = useRef<string | null>(null)
+  /**
+   * 在途 openOriginal 的 promise：activate()/sendBounds() 在实例 id 尚未回来时
+   * 用它等待，而不是静默跳过。
+   *
+   * 2026-11-09「AI 排版模版预览标签点不动」根因：气泡窗 openFile 会用新对象替换
+   * 同 id 文件（realCatalog 引用变化）→ open/activate 回调身份失效 → open effect
+   * 重跑 → 第二轮 open() 命中 inFlightKey 早退【立即】返回 ok → setStatus('ready')
+   * → bounds effect 跑 report() → activate() ——此时第一轮 openOriginal 还在飞，
+   * instanceRef.current 仍为 null，激活被静默跳过。之后 visible=true、矩形去重命中，
+   * report() 永远早退：原生视图再也不会 setVisible，用户点标签只看到空白。
+   */
+  const openingRef = useRef<Promise<void> | null>(null)
+  // 对象引用每次渲染都变：只放 ref，不进 useCallback 依赖。
+  const catalogRef = useRef(realCatalog)
+  catalogRef.current = realCatalog
+  const specRef = useRef(spec)
+  specRef.current = spec
+  const catalogId = realCatalog?.id ?? ''
+  const catalogHash = realCatalog?.contentHash ?? ''
+  const catalogName = realCatalog?.originalName ?? ''
+  const openKey = real
+    ? `${fileId}|${catalogId}|${catalogHash}|${catalogName}`
+    : `${fileId}|mock|${title}`
+
   const open = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
-    if (realCatalog) {
-      const files = window.nxcore?.files
-      if (!files?.openOriginal) return { ok: false, error: '文件服务尚未就绪，请稍后重试。' }
-      const editable = isEditableName(realCatalog.originalName)
-      const result = await files.openOriginal(
-        realCatalog.id,
-        realCatalog.originalName,
-        realCatalog.contentHash,
-        editable ? { editable: true } : undefined,
-      )
-      if (result.openedWith !== 'office') {
-        return {
-          ok: false,
-          error: result.legacyFallback
-            ? '旧版 Office 格式转换失败，已交给系统默认应用打开。'
-            : '该格式不支持内置预览，已交给系统默认应用打开。',
-        }
+    // 已成功打开 / 正在打开同一份文件：直接复用现有实例，不再发 IPC（断环）。
+    if (openedKeyRef.current === openKey || inFlightKeyRef.current === openKey) {
+      // 在途时等实例 id 落地：调用链上的 setStatus('ready') 可能早于 openOriginal
+      // 返回（effect 重跑 + 早退立即 ok），activate() 若拿不到 instanceId 会静默
+      // 跳过且此后再无触发——就是「模版预览标签点不动」的锁死（2026-11-09）。
+      if (inFlightKeyRef.current === openKey && !instanceRef.current) {
+        const flight = openingRef.current
+        if (flight) await flight.catch(() => undefined)
       }
-      instanceRef.current = result.instanceId
       return { ok: true }
     }
-    if (!window.desktop?.office || !spec) return { ok: false, error: '原型 Office 桥不可用。' }
-    const result = await window.desktop.office.open({ fileId, title, spec })
-    return result.ok ? { ok: true } : { ok: false, error: result.error ?? '未知错误' }
-  }, [fileId, realCatalog, spec, title])
+    inFlightKeyRef.current = openKey
+    const run = async (): Promise<{ ok: boolean; error?: string }> => {
+      const catalog = catalogRef.current
+      if (catalog) {
+        const files = window.nxcore?.files
+        if (!files?.openOriginal) return { ok: false, error: '文件服务尚未就绪，请稍后重试。' }
+        const editable = isEditableName(catalog.originalName)
+        const result = await files.openOriginal(
+          catalog.id,
+          catalog.originalName,
+          catalog.contentHash,
+          editable ? { editable: true } : undefined,
+        )
+        if (result.openedWith !== 'office') {
+          return {
+            ok: false,
+            error: result.legacyFallback
+              ? '旧版 Office 格式转换失败，已交给系统默认应用打开。'
+              : '该格式不支持内置预览，已交给系统默认应用打开。',
+          }
+        }
+        instanceRef.current = result.instanceId
+      } else {
+        const currentSpec = specRef.current
+        if (!window.desktop?.office || !currentSpec) return { ok: false, error: '原型 Office 桥不可用。' }
+        const result = await window.desktop.office.open({ fileId, title, spec: currentSpec })
+        if (!result.ok) return { ok: false, error: result.error ?? '未知错误' }
+      }
+      openedKeyRef.current = openKey
+      return { ok: true }
+    }
+    const flight = run()
+    // 在途登记：activate() 等它，instanceId 在 resolve 前必然落地（或整体失败走 error 态）。
+    openingRef.current = flight.then(() => undefined, () => undefined)
+    try {
+      return await flight
+    } finally {
+      if (inFlightKeyRef.current === openKey) inFlightKeyRef.current = null
+    }
+  }, [fileId, openKey, title])
 
   const activate = useCallback(async () => {
     if (real) {
+      // 实例 id 还没回来：等在途的 openOriginal（2026-11-09 修复：此前这里静默
+      // 跳过，模版标签激活一次错过就永远错过——见 openingRef 的注释）。
+      if (!instanceRef.current && openingRef.current) await openingRef.current
       const instanceId = instanceRef.current
-      if (instanceId) await window.nxcore?.office?.setActiveInstance(instanceId)
+      if (!instanceId) return
+      await window.nxcore?.office?.setActiveInstance(instanceId)
       return
     }
     await window.desktop?.office.activate(fileId)
@@ -100,8 +172,12 @@ export function NativeEditorHost({
 
   useEffect(() => {
     let cancelled = false
-    setStatus('opening')
-    setError(null)
+    // 已打开过就不再把状态打回 opening：否则 loader 与编辑区每轮交替，就是
+    // 肉眼可见的闪烁，且第二个 useEffect 会因 status 反复重建全部观测器。
+    if (openedKeyRef.current !== openKey) {
+      setStatus('opening')
+      setError(null)
+    }
     void open()
       .then((result) => {
         if (cancelled) return
@@ -119,7 +195,7 @@ export function NativeEditorHost({
     return () => {
       cancelled = true
     }
-  }, [open])
+  }, [open, openKey])
 
   // 实例就绪后才上报矩形：open 之前发出的 setWorkspaceBounds 没有监听者。
   useEffect(() => {
@@ -143,16 +219,25 @@ export function NativeEditorHost({
       return true
     }
 
-    /// 模态浮层（新建空间对话框、命令面板…）也是 DOM：原生视图会把它们整块盖住。
-    /// Radix 只在打开时挂载并打 data-state=open，所以"有可见浮层"就等于"原生区被挡"。
+    /// 模态浮层（新建空间对话框、命令面板…）与下拉浮层（标签栏「+」菜单、Select 弹层）
+    /// 也是 DOM：原生视图会把它们整块盖住。Radix 只在打开时挂载并打 data-state=open，
+    /// 所以"有可见浮层"就等于"原生区被挡"。菜单必须单列：DropdownMenu/ContextMenu 的
+    /// Content 是 role=menu，不带 aria-modal 也不是 dialog，漏了它就会出现
+    /// 「标签栏 + 菜单被右侧文档原生视图盖住、新建项目空间点不到」（2026-11-05 实测）。
+    /// tooltip 不收：Radix 悬浮提示的 data-state 是 delayed-open/instant-open，
+    /// 且为一条小提示隐藏整块原生区只会造成闪隐。
     const OVERLAY_SELECTOR =
-      '.ui-modal-overlay[data-state="open"], .wb-palette-overlay[data-state="open"], [role="dialog"][data-state="open"], [aria-modal="true"]'
+      '.ui-modal-overlay[data-state="open"], .wb-palette-overlay[data-state="open"], [role="dialog"][data-state="open"], [aria-modal="true"], [role="menu"][data-state="open"], [role="listbox"][data-state="open"]'
     const overlayCoversHost = (): boolean => {
       for (const node of document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)) {
         if (node.closest('.op-native-wrap')) continue
         const rect = node.getBoundingClientRect()
         if (rect.width <= 0 || rect.height <= 0) continue
-        if (window.getComputedStyle(node).visibility === 'hidden') continue
+        const style = window.getComputedStyle(node)
+        // 退场动画 forwards 只压 opacity 的浮层（如授权弹窗 data-open=false）实际
+        // 已不可见：opacity 归零仍 visibility:visible、矩形非零，按可见浮层处理会把
+        // 原生文档区永久锁在隐藏态。透明即不挡。
+        if (style.visibility === 'hidden' || style.opacity === '0') continue
         return true
       }
       return false
@@ -213,7 +298,12 @@ export function NativeEditorHost({
       lastKey = key
       if (!visible) {
         visible = true
-        await activate()
+        const pendingActivate = activate()
+        await pendingActivate
+        // 激活时实例 id 还没落地（openOriginal 在途）且等待也没等到（外部打开链
+        // 不经过本组件的 open）：重置矩形键，下一轮 report 重走激活分支重试，
+        // 不让「错过一次」变成「永远错过」。
+        if (!instanceRef.current) lastKey = ''
       }
       sendBounds(rect)
     }
@@ -293,7 +383,7 @@ export function NativeEditorHost({
             <div className="op-native-error-hint">
               {real
                 ? '请确认文件已成功导入且本地文件完整；可在「所有文件」重新导入后再试。'
-                : '请确认 EverRoom 仓库已执行 prepare:genoffice，或设置 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
+                : '请确认 EverOffice 仓库已执行 prepare:genoffice，或设置 GENOFFICE_RUNTIME_ROOT 指向 genoffice-runtime 目录。'}
             </div>
           </div>
         )}

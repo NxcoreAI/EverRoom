@@ -18,5 +18,5 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent, internal-workflow]
   maxConcurrency: 2
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟兜底。
   timeoutSeconds: 300
-  maxToolCalls: 20

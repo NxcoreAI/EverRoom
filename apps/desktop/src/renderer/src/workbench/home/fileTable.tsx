@@ -1,4 +1,4 @@
-import { Download, ExternalLink, MoreHorizontal, Trash2 } from 'lucide-react'
+import { ChevronDown, Download, ExternalLink, MoreHorizontal, Trash2 } from 'lucide-react'
 
 import type { RealOfficeFile } from '@/office-proto/data'
 import { FileTypeIcon } from '@/office-proto/pages/parts'
@@ -10,16 +10,14 @@ import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from '../ui/m
  *
  * 布局照 everoffice 原型 `FileTable`（`office-proto/pages/parts.tsx`）：表头与行共用
  * 同一份 grid 模板（列宽在 home.css 的 `.wb-home-filetbl*`），整行可点进文件标签，
- * 行尾「⋯」只放本端真实能力——用原应用打开 / 导出定位 / 删除文件，
+ * 行尾「⋯」只放本端真实能力——打开 / 文件位置 / 删除文件，
  * 原型里那三个只弹 toast 的占位项不照搬。
  */
 
 export interface FileRowActions {
   /** 打开文件（进窗口级文件标签）。 */
   onOpen: (item: RealOfficeFile) => void
-  /** 交给系统默认应用打开（转换失败/不受支持格式时的兜底）。 */
-  onOpenOriginal?: (item: RealOfficeFile) => void
-  /** 导出到「下载/EverRoom」并在文件管理器中定位。 */
+  /** 导出到「下载/EverOffice」并在文件管理器中定位。 */
   onExportReveal?: (item: RealOfficeFile) => void
   /** 删除文件（调用方自己弹二次确认）。 */
   onDelete?: (item: RealOfficeFile) => void
@@ -31,7 +29,7 @@ export function FileTableHead() {
     <div className="wb-home-filetbl-head" aria-hidden="true">
       <span />
       <span>文件名</span>
-      <span>修改时间</span>
+      <span className="wb-home-filetbl-sort">修改时间 <ChevronDown size={11} /></span>
       <span>大小</span>
       <span />
     </div>
@@ -39,16 +37,18 @@ export function FileTableHead() {
 }
 
 export function FileTableRow({
-  item, actions, menu = true,
+  item, actions, menu = true, iconSize,
 }: {
   item: RealOfficeFile
   actions: FileRowActions
   /** 「最近」分栏里行尾不放菜单（列宽窄、入口也不在那一屏）。 */
   menu?: boolean
+  /** 类型图标尺寸：所有文件页照原型用 36，最近分栏用紧凑 26。 */
+  iconSize?: number
 }) {
   return (
     <div className="wb-home-filerow" title={item.file.name}>
-      <FileTypeIcon kind={item.file.kind} size={26} />
+      <FileTypeIcon kind={item.file.kind} size={iconSize ?? 26} />
       <span className="wb-home-filerow-name">{item.file.name}</span>
       <span className="wb-home-filerow-time">{item.file.updatedLabel}</span>
       <span className="wb-home-filerow-size">{item.file.sizeLabel}</span>
@@ -84,14 +84,9 @@ function FileRowMenu({ item, actions }: { item: RealOfficeFile; actions: FileRow
         <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpen(item)}>
           打开
         </MenuItem>
-        {actions.onOpenOriginal ? (
-          <MenuItem icon={<ExternalLink size={14} />} onSelect={() => actions.onOpenOriginal?.(item)}>
-            用原应用打开
-          </MenuItem>
-        ) : null}
         {actions.onExportReveal ? (
           <MenuItem icon={<Download size={14} />} onSelect={() => actions.onExportReveal?.(item)}>
-            导出定位
+            文件位置
           </MenuItem>
         ) : null}
         {actions.onDelete ? (

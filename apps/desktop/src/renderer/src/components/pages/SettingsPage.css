@@ -1516,6 +1516,8 @@
 .rc-form-error {
   color: #b4232a;
   font-size: 11px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .rc-form-test {
@@ -2440,12 +2442,22 @@
 }
 
 .settings-page .mcp-config-path {
-  margin: 0 16px 14px;
-  padding: 8px 12px;
+  display: block;
+  margin: 4px 20px 16px;
+  padding: 8px 16px;
   border-radius: var(--ui-radius-sm);
   background: var(--ui-surface-alt);
   color: var(--ui-text-3);
   font-size: 11px;
+  line-height: 1.5;
+  /* 长路径（/Users/…/mcp.json）不得撑破卡片：在任意字符处断行，右侧文字不贴边。 */
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+/* 新增/编辑表单展开时，与下方空态虚线框/服务器列表保持垂直间距（不贴边）。 */
+.settings-page .mcp-server-form {
+  margin: 14px 20px 4px;
 }
 
 .settings-page .mcp-delete-button {
@@ -3063,8 +3075,8 @@
 /* ―― 空态/加载态的呼吸感（卡片内不贴边） ―― */
 .settings-page .local-agent-empty,
 .settings-page .mcp-server-empty {
-  margin: 0 20px 4px;
-  padding: 26px 20px;
+  margin: 12px 20px 16px;
+  padding: 28px 20px;
   text-align: center;
 }
 

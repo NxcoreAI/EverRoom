@@ -122,7 +122,7 @@ export function App() {
         setSourcesReady(true)
         setSourcesError(result.warning ?? (result.sources.length === 0 ? '未发现 gateway runtime manifest' : null))
         nextDelay = result.sources.length > 0 ? SOURCES_REFRESH_MS : SOURCES_RETRY_MS
-        // 当前来源仍可用则保持；live 变不可用（EverRoom 退出）时自动落到历史归档。
+        // 当前来源仍可用则保持；live 变不可用（EverOffice 退出）时自动落到历史归档。
         setSourceId((current) => pickSourceId(result.sources, current))
       } catch (error) {
         if (cancelled) return
@@ -501,7 +501,7 @@ function EmptySources({ error, onRefresh }: { error: string | null; onRefresh: (
       <div className="empty-text">
         <p>未发现 Gateway，也没有可读的本地历史归档。</p>
         <p>
-          EverRoom 未运行：先启动 EverRoom 跑一个 Agent 任务，run 结束后会写入磁盘归档，
+          EverOffice 未运行：先启动 EverOffice 跑一个 Agent 任务，run 结束后会写入磁盘归档，
           下次打开调试页即可直接回看历史 run。
         </p>
         <p>

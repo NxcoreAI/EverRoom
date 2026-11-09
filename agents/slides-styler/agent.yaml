@@ -3,7 +3,8 @@ id: slides-styler
 name: Slides Styler
 description: 无模板幻灯片的视觉设计判断：direction 提供 3 个可比较的纵览图生图方向；settle 复核色板与视觉属性，提交完整风格参数及效果说明。字号由下游负责。
 mode: dispatch_only
-enabled: true
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
 
 systemPrompt: ./SYSTEM.md
 
@@ -17,8 +18,8 @@ outputSchema: ./schemas/output.schema.json
 policy:
   allowedCallers: [primary-agent]
   maxConcurrency: 2
-  # 纯文本判断，无工具调用预算需求；给少量余量容纳重试。
-  maxToolCalls: 8
+  # 不设工具调用上限：纯文本判断工具用量极低（实测 p99=2），墙钟与输出预算
+  # 已足够兜底；硬上限只会误伤重试场景。
   timeoutSeconds: 600
   model:
     # styler 同样走 background 档：风格卡 + 效果说明的 JSON 显式给足输出上限，

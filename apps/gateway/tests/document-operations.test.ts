@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import Fastify from "fastify";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
@@ -15,6 +17,7 @@ import {
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentServiceError } from "../src/modules/documents/errors.js";
 import { DocumentOperationService } from "../src/modules/documents/operations/service.js";
+import { documentOperationRoutes } from "../src/modules/documents/operations/routes.js";
 import { assertDocumentOperationTransition } from "../src/modules/documents/operations/state-machine.js";
 import { DocumentService } from "../src/modules/documents/service.js";
 
@@ -812,5 +815,88 @@ describe("document operation kernel", () => {
     expect(db.select().from(documentBlocks).all()).toEqual([]);
     expect(db.select().from(documentOperationCommands).all()).toEqual([]);
     expect(service.get(operation.id)).toMatchObject({ status: "running", revision: 1, documentId: null });
+  });
+});
+
+describe("POST /v1/document-operations（roomId 可省略/可空）", () => {
+  async function routeHarness() {
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-document-operations-route-"));
+    temporaryDirectories.push(dataDir);
+    const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    disposables.push(() => database.sqlite.close());
+    const broker = new DocumentEventBroker();
+    const operations = new DocumentOperationService(database.db, broker);
+    const started: Array<Record<string, unknown>> = [];
+    const authorized: Array<Record<string, unknown>> = [];
+    const capabilities = {
+      start: (input: Record<string, unknown>) => {
+        started.push(input);
+        return { id: "operation-route-1", status: "running", revision: 1, roomId: (input as { context: { roomId: string | null } }).context.roomId };
+      },
+    };
+    const app = Fastify();
+    await app.register(documentOperationRoutes(
+      operations,
+      capabilities as never,
+      (context) => { authorized.push(context as unknown as Record<string, unknown>); },
+    ));
+    return { app, started, authorized };
+  }
+
+  it("两种溯源形态省略 roomId 都按 null 语义放行，授权注入点收工作区频道", async () => {
+    const { app, started, authorized } = await routeHarness();
+
+    const invocation = await app.inject({
+      method: "POST",
+      url: "/v1/document-operations",
+      payload: {
+        capabilityId: "document.selection-rewrite",
+        context: { documentId: "doc-1", invocationId: "invocation-1" },
+        input: { invocationId: "invocation-1" },
+      },
+    });
+    expect(invocation.statusCode).toBe(200);
+    expect(started[0]).toMatchObject({
+      context: { roomId: null, sessionId: "invocation-1", runId: "invocation-1" },
+    });
+    expect(authorized[0]).toMatchObject({ roomId: WORKSPACE_DOCUMENT_CHANNEL, invocationId: "invocation-1" });
+
+    const session = await app.inject({
+      method: "POST",
+      url: "/v1/document-operations",
+      payload: {
+        capabilityId: "document.selection-rewrite",
+        context: { roomId: null, documentId: "doc-1", sessionId: "session-1", runId: "run-1" },
+        input: {},
+      },
+    });
+    expect(session.statusCode).toBe(200);
+    expect(started[1]).toMatchObject({ context: { roomId: null, sessionId: "session-1", runId: "run-1" } });
+
+    // 旧桌面：显式 roomId 原样透传（落库/回显仍是非空 shape）。
+    const legacy = await app.inject({
+      method: "POST",
+      url: "/v1/document-operations",
+      payload: {
+        capabilityId: "document.edit",
+        context: { roomId: "room-1", sessionId: "session-1", runId: "run-1" },
+        input: {},
+      },
+    });
+    expect(legacy.statusCode).toBe(200);
+    expect(started[2]).toMatchObject({ context: { roomId: "room-1" } });
+
+    // invocation 与 input.invocationId 不一致仍拒绝（授权收口不因去 Room 放松）。
+    const mismatched = await app.inject({
+      method: "POST",
+      url: "/v1/document-operations",
+      payload: {
+        capabilityId: "document.selection-rewrite",
+        context: { invocationId: "invocation-1" },
+        input: { invocationId: "invocation-2" },
+      },
+    });
+    expect(mismatched.statusCode).toBe(400);
+    await app.close();
   });
 });

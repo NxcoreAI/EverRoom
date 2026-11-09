@@ -75,7 +75,6 @@ function PersonaTab({ persona }: {
         <div className="op-agent-avatar sm"><Bot size={17} /></div>
         <div className="op-persona-head-text">
           <div className="op-info-title">{persona.name}</div>
-          <p>{persona.tagline || '还没有简介'}</p>
         </div>
       </div>
       {persona.skills.length > 0 && (
@@ -165,7 +164,7 @@ export function AgentPage() {
 
   return (
     <div className="wb-home-scroll wb-home-agent-host">
-      <PageHead title="智能体" hint="管理本地 Agent 的知识、工具与人格" />
+      <PageHead title="智能体" />
 
       <section className="op-agent-hero">
         <div className="op-agent-avatar"><Bot size={24} /></div>
@@ -177,7 +176,6 @@ export function AgentPage() {
               {state.status === 'error' ? '未连接' : ready ? '运行中' : '连接中'}
             </span>
           </div>
-          <p>{persona?.tagline || (state.status === 'loading' ? '正在读取简介…' : '还没有简介')}</p>
         </div>
         <button className="op-ghost-btn" type="button" title="打开独立的 Agent 调试窗口" onClick={openAgentDebug}>调试</button>
       </section>

@@ -39,7 +39,7 @@ export const FILE_FORMAT_CAPABILITIES: readonly FileFormatCapability[] = [
   ...capability([".txt", ".text"], "document", "plain-text"),
   ...capability([".pdf"], "document", "pdf-unpdf", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".docx", ".docm", ".dotx", ".dotm"], "office-doc", "docx-mammoth", RICH_MEDIA_FILE_MAX_BYTES),
-  ...capability([".doc", ".dot", ".rtf", ".odt"], "office-doc", "legacy-word-text", RICH_MEDIA_FILE_MAX_BYTES),
+  ...capability([".doc", ".dot", ".rtf"], "office-doc", "legacy-word-text", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam"], "spreadsheet", "xlsx-exceljs", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".xls", ".xlsb", ".xlt", ".xla", ".ods"], "spreadsheet", "legacy-sheet-text", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".sldx", ".sldm"], "slides", "pptx-jszip", RICH_MEDIA_FILE_MAX_BYTES),

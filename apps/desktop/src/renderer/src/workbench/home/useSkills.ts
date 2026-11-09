@@ -7,6 +7,9 @@ import { useCallback, useEffect, useState } from 'react'
  * 与子 Agent 清单的 `skills`，正文永远是 SKILL.md 本身。网关只多做一件事：
  * 记住用户关掉了哪些（`agent_skill_states`），并在装配运行时按它过滤。
  *
+ * 页面只展示主 Agent（内置）与用户新增的技能；子 Agent 的技能属于内部实现，
+ * 在这里统一隐藏（网关侧清单与启停语义不变）。
+ *
  * 归一函数接受 `unknown`（桥可能缺失、形状可能不同）：异常形状降级为空清单，
  * 由页面区分「加载失败」和「真的没有」。
  */
@@ -94,7 +97,7 @@ export function useSkills(): {
   setEnabled: (skillId: string, enabled: boolean) => Promise<void>
   /** 手写一个技能（成功后刷新清单）。 */
   createSkill: (input: CreateSkillInput) => Promise<void>
-  /** 选文件夹导入；用户取消返回 false（不算失败）。 */
+  /** 弹出系统选择器，导入一个技能文件夹或 zip 压缩包；用户取消返回 false（不算失败）。 */
   importDirectory: () => Promise<boolean>
   /** 删除一个用户技能（成功后刷新清单）。 */
   removeSkill: (skillId: string) => Promise<void>
@@ -124,6 +127,8 @@ export function useSkills(): {
       const skills = items
         .map(toSkill)
         .filter((skill): skill is SkillItemView => skill !== null)
+        // 子 Agent 技能是内部实现细节，技能页不展示（启停仍由网关管理）。
+        .filter((skill) => skill.ownerKind !== 'subagent')
         .sort(compareSkills)
       setState({
         status: 'ready',
@@ -140,7 +145,7 @@ export function useSkills(): {
 
   const setEnabled = useCallback(async (skillId: string, enabled: boolean) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.setSkillEnabled) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.setSkillEnabled) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     setPending((current) => (current.includes(skillId) ? current : [...current, skillId]))
     // 先改界面再等网关：开关是幂等的布尔写入，失败时会回滚。
     setState((current) => current.status === 'ready'
@@ -166,7 +171,7 @@ export function useSkills(): {
 
   const createSkill = useCallback(async (input: CreateSkillInput) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.createSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.createSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     await bridge.createSkill(input)
     reload()
   }, [reload])
@@ -174,18 +179,19 @@ export function useSkills(): {
   const importDirectory = useCallback(async (): Promise<boolean> => {
     const bridge = window.nxcore?.agent
     if (!bridge?.pickSkillDirectory || !bridge.importSkillDirectory) {
-      throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+      throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     }
-    const directory = await bridge.pickSkillDirectory()
-    if (!directory) return false
-    await bridge.importSkillDirectory(directory)
+    // 选择器同时接受文件夹与 .zip；SKILL.md 的存在性由网关校验。
+    const picked = await bridge.pickSkillDirectory()
+    if (!picked) return false
+    await bridge.importSkillDirectory(picked)
     reload()
     return true
   }, [reload])
 
   const removeSkill = useCallback(async (skillId: string) => {
     const bridge = window.nxcore?.agent
-    if (!bridge?.deleteSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+    if (!bridge?.deleteSkill) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
     await bridge.deleteSkill(skillId)
     reload()
   }, [reload])
@@ -194,8 +200,8 @@ export function useSkills(): {
 }
 
 /**
- * 排序：内置 Agent → 子 Agent → 自定义技能（发布物在前，自己加的在后），
- * 同类按归属 Agent 分组，再按技能名。
+ * 排序：内置 Agent → 自定义技能（发布物在前，自己加的在后），同类按技能名。
+ * （子 Agent 技能已在加载时隐藏，不参与排序。）
  */
 const OWNER_KIND_RANK: Record<SkillOwnerKind, number> = { builtin: 0, subagent: 1, user: 2 }
 

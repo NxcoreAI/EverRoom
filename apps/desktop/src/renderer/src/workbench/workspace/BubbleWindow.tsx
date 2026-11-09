@@ -27,6 +27,9 @@ import './bubble.css'
  * - 「资料与文件」浏览态（activeFileId === null）：列出文件库，点文件在气泡内打开；
  * - 文档态：只挂载激活文件的编辑器。
  *
+ * 最大化态切到绝对定位覆盖层铺满整个工作区，对话区在其下整块隐藏（wb-ws 的
+ * has-max-bubble），还原时回到停靠宽度。
+ *
  * 原生编辑器（WebContentsView）永远盖在 DOM 之上：切文件/切浏览态时旧宿主卸载 → 矩形归零 →
  * 主进程隐藏旧实例；同时分发一次 resize 事件让新宿主立刻重报矩形，避免迟到的 ZERO 把新实例也藏掉。
  */
@@ -62,26 +65,26 @@ export function BubbleWindow({
   const [freezeWidth, setFreezeWidth] = useState<number | null>(null)
 
   // 退场：dock 态直接用已知宽度冻结（别量，能量到动画第一帧的中间值 → 内层会跳一下）；
-  // 最大化态宽度是 clamp 值，只能量一次。
+  // 最大化覆盖层退场走整体淡出（宽度不可插值），内层保持 100% 宽，不需要冻结。
   useLayoutEffect(() => {
     if (!exiting) return
     if (!bubble.maximized) {
       setFreezeWidth(bubble.width)
       return
     }
-    const width = sectionRef.current?.getBoundingClientRect().width
-    if (width) setFreezeWidth(width)
+    setFreezeWidth(null)
   }, [exiting, bubble.maximized, bubble.width])
 
-  // 宽度过渡（展开 / 最大化 / 还原）期间把内层冻结成「目标宽度」，
+  // 宽度过渡（展开 / 还原）期间把内层冻结成「目标宽度」，
   // 面板只做裁剪动画，列表/文字不逐帧重排，避免动画中的抖动。
+  // 最大化是绝对定位全屏覆盖（无宽度动画），解冻让内层跟随 100% 宽。
   useEffect(() => {
     if (exiting) return
-    const parentWidth = sectionRef.current?.parentElement?.getBoundingClientRect().width ?? 0
-    const target = bubble.maximized
-      ? Math.min(1040, Math.max(320, parentWidth - 336))
-      : bubble.width
-    setFreezeWidth(target)
+    if (bubble.maximized) {
+      setFreezeWidth(null)
+      return
+    }
+    setFreezeWidth(bubble.width)
     const timer = window.setTimeout(() => setFreezeWidth(null), 280)
     return () => window.clearTimeout(timer)
   }, [exiting, bubble.maximized, bubble.width])
@@ -155,7 +158,7 @@ export function BubbleWindow({
         style={freezeWidth ? { width: freezeWidth } : undefined}
       >
       <div className="wb-bubble-head">
-        <Hint label={browsing ? '当前正在浏览文件库' : '浏览资料与文件'}>
+        <Hint label={browsing ? '当前正在浏览资料' : '浏览资料与文件'}>
           <IconButton
             label="浏览资料与文件"
             size="sm"
@@ -284,7 +287,7 @@ function BubbleBrowser({ onOpenFile, workspaceId }: {
           <div className="wb-bubble-browser-state"><Spinner size={13} /></div>
         ) : null}
         {library.state === 'unavailable' ? (
-          <div className="wb-bubble-browser-state">文件库暂不可用</div>
+          <div className="wb-bubble-browser-state">资料暂不可用</div>
         ) : null}
         {library.state === 'ready' && items.length === 0 ? (
           <div className="wb-bubble-browser-state">没有匹配的文件</div>

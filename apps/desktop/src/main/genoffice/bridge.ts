@@ -9,7 +9,7 @@ import { loadGenOfficeRuntime, type PreparedGenOfficeRuntime } from './runtime'
 
 /**
  * 原型版 Office 视图桥：把 GenOffice 四个原生编辑器以 WebContentsView 形式
- * 叠在主窗口上（结构参照 EverRoom apps/desktop 的 OfficePreviewRegistry，去掉
+ * 叠在主窗口上（结构参照 EverOffice apps/desktop 的 OfficePreviewRegistry，去掉
  * 版本链/回填/Agent 桥，只保留 open/activate/close/bounds 四个动作）。
  * 渲染层是焦点唯一事实源：谁可见谁上报矩形，主进程把矩形应用到激活实例。
  */

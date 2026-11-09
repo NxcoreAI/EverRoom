@@ -382,30 +382,6 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('agent-auth:event', handleEvent)
     },
   },
-  externalDocuments: {
-    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
-    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
-    importBatch: (input) => invoke('external-documents:import-batch', input),
-    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
-    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
-    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
-    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
-    importCommit: (input) => invoke('external-documents:import-commit', input),
-    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
-    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
-    importHistory: (documentId) => invokeQuietly('external-documents:import-history', documentId),
-    checkExternalUpdate: (documentId) => invoke('external-documents:check-external-update', documentId),
-    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
-    createExport: (input) => invoke('external-documents:create-export', input),
-    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
-    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
-    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
-    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
-    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
-    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
-    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
-    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
-  },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),
     saveServers: (servers) => invoke('mcp:servers:save', servers),
@@ -657,7 +633,7 @@ const api: NxcoreDesktopApi = {
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
-    resolveApproval: (approvalId, decision, feedback) => invoke('agent:resolve-approval', approvalId, decision, feedback),
+    resolveApproval: (approvalId, decision, feedback, choice, text) => invoke('agent:resolve-approval', approvalId, decision, feedback, choice, text),
     getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
     setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
     setThinkingLevel: (sessionId, level) => invoke('agent:set-thinking-level', sessionId, level),
@@ -733,6 +709,7 @@ const api: NxcoreDesktopApi = {
     list: (roomId?: string | null) => invoke('documents:list', roomId),
     listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
+    readMarkdown: (documentId: string) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
     listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
@@ -787,6 +764,30 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('documents:ready', handleEvent)
       return () => ipcRenderer.removeListener('documents:ready', handleEvent)
     },
+  },
+  externalDocuments: {
+    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
+    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
+    importBatch: (input) => invoke('external-documents:import-batch', input),
+    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
+    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
+    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
+    importCommit: (input) => invoke('external-documents:import-commit', input),
+    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
+    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
+    importHistory: (documentId) => invokeQuietly('external-documents:import-history', documentId),
+    checkExternalUpdate: (documentId) => invoke('external-documents:check-external-update', documentId),
+    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
+    createExport: (input) => invoke('external-documents:create-export', input),
+    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
+    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
+    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
+    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
+    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
+    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
+    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
+    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
   },
   sources: {
     list: () => invoke('sources:list'),
@@ -878,12 +879,13 @@ const api: NxcoreDesktopApi = {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-artifacts', paths, roomId, workspaceId)
     },
-    importAgentAttachments: (files: File[]) => {
+    importAgentAttachments: (files: File[], workspaceId?: string) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
-      return invoke('files:import-agent-attachments', paths)
+      return invoke('files:import-agent-attachments', paths, typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined)
     },
     /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
-    pickAgentAttachments: () => invoke<AgentAttachmentReference[]>('files:pick-agent-attachments'),
+    pickAgentAttachments: (workspaceId?: string) =>
+      invoke<AgentAttachmentReference[]>('files:pick-agent-attachments', typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined),
     onImportProgress: (listener) => {
       const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
       ipcRenderer.on('files:import-progress', handleProgress)
@@ -945,7 +947,7 @@ const api: NxcoreDesktopApi = {
       },
     ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
     reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
-    /** 导出 PDF（LibreOffice）；本机未安装时返回 { unavailable: true }。 */
+    /** 导出 PDF（内置渲染引擎；老运行时回退 LibreOffice，两者都不可用才返回 { unavailable: true }）。 */
     exportPdf: (workspaceId: string, fileEntryId: string) =>
       invoke('thesis-format:export:pdf', fileEntryId),
     removeCard: (workspaceId: string, cardId: string) =>
@@ -967,6 +969,13 @@ contextBridge.exposeInMainWorld('desktop', {
   versions: {
     electron: process.versions.electron,
     chrome: process.versions.chrome,
+  },
+  // 渲染端诊断通道（与 nxcore.diagnostics 同走 app:diagnostic-log；
+  // 模块白名单见主进程 logRendererDiagnostic，native-editor-host 用于
+  // 原生编辑器宿主 activate/bounds 决策点诊断，2026-11-09）。
+  diagnostics: {
+    log: (input: { module: string; level: string; event: unknown }) =>
+      ipcRenderer.send('app:diagnostic-log', input),
   },
   office: {
     open: (request: { fileId: string; title: string; spec: unknown }) =>

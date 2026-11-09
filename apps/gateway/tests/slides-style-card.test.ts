@@ -161,7 +161,7 @@ describe("runSelfCheck", () => {
 describe("style card payloads", () => {
   it("composes an images payload with material URLs and direction labels", () => {
     const payload = styleImagesPayload({
-      id: "s1", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      id: "s1", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [
         { contentHash: "a".repeat(64), label: "深空科技", generation: 1 },
         { contentHash: "b".repeat(64), generation: 2 },
@@ -179,7 +179,7 @@ describe("style card payloads", () => {
 
   it("composes a card payload from params", () => {
     const payload = styleCardPayload({
-      id: "s1", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      id: "s1", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [], selectedImageHash: "c".repeat(64),
       styleParams: params, demoImageHash: "d".repeat(64),
       stage: "card_ready", generation: 1,
@@ -198,7 +198,7 @@ describe("style card payloads", () => {
 
   it("缩略图按 styleParams.composition 出家族变体", () => {
     const editorial = styleCardPayload({
-      id: "s2", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      id: "s2", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [], selectedImageHash: "c".repeat(64),
       styleParams: { ...params, composition: "editorial" }, demoImageHash: null,
       stage: "card_ready", generation: 1,
@@ -208,7 +208,7 @@ describe("style card payloads", () => {
     const { composition: _omitted, ...legacyBase } = params;
     void _omitted;
     const legacy = styleCardPayload({
-      id: "s3", roomId: "r1", draftDocumentId: null, instruction: "", feedback: [],
+      id: "s3", draftDocumentId: null, instruction: "", feedback: [],
       overviewImages: [], selectedImageHash: "c".repeat(64),
       styleParams: legacyBase, demoImageHash: null,
       stage: "card_ready", generation: 1,

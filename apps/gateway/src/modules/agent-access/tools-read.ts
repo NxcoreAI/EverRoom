@@ -99,7 +99,7 @@ function noPermission(capability: AgentAccessCapability): AgentAccessState {
   return {
     status: "no_permission",
     requiredCapability: capability,
-    message: `本次连接未授予 ${capability} 能力；请在 EverRoom Agent 连接页调整范围，或向用户补问`,
+    message: `本次连接未授予 ${capability} 能力；请在 EverOffice Agent 连接页调整范围，或向用户补问`,
   };
 }
 
@@ -284,7 +284,7 @@ export function createReadTools(
     name: "everroom_search",
     title: "跨类型搜索",
     description:
-      "搜索 EverRoom 积累：会话消息、文档与文件。每个命中带稳定对象 ID、版本、everroom:// URI 与精读入口；会话命中含 conversationId 与 messageId，用 everroom_fetch 继续精读原文。",
+      "搜索 EverOffice 积累：会话消息、文档与文件。每个命中带稳定对象 ID、版本、everroom:// URI 与精读入口；会话命中含 conversationId 与 messageId，用 everroom_fetch 继续精读原文。",
     inputSchema: {
       type: "object",
       properties: {

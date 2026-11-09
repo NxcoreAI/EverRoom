@@ -232,6 +232,12 @@ export class AcpAgentRuntime implements AgentRuntime {
 
   private readonly sessions = new Map<string, ActiveAcpSession>();
   private readonly runs = new Map<string, string>();
+  /**
+   * run 还没拿到 ACP 会话 id（newSession 未完成）时收到的取消请求。
+   * start() 先返回、drive() 在后台建会话——这段窗口里 cancel() 查 runs 拿不到
+   * sessionId 会静默丢失；这里记下 runId，drive() 登记会话后立即补发 cancel。
+   */
+  private readonly pendingCancels = new Set<string>();
   private child: ChildProcessWithoutNullStreams | null = null;
   private connection: ClientSideConnection | null = null;
   private initResponse: InitializeResponse | null = null;
@@ -244,7 +250,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     private readonly workingDirectory: string,
     installationId: string,
     /**
-     * 渠道会话的 EverRoom MCP 注入源（create-server 按 session 渠道锁定
+     * 渠道会话的 EverOffice MCP 注入源（create-server 按 session 渠道锁定
      * 判定后转发到这里）；派发子任务不注入。loadSession 时适配器可能忽略
      * 该参数（claude 内存 session 持有首轮配置），故 token 需跨 run 稳定。
      */
@@ -352,7 +358,11 @@ export class AcpAgentRuntime implements AgentRuntime {
     const sessionId = this.runs.get(runId);
     if (sessionId && this.connection) {
       await this.connection.cancel({ sessionId });
+      return;
     }
+    // 会话尚未建立（drive 还在 newSession）：先记账，drive 登记后补发。
+    // run 已经不在跑（从未启动或已收尾）时不记账，避免泄漏。
+    if (!sessionId) this.pendingCancels.add(runId);
   }
 
   async deleteSession(): Promise<void> {}
@@ -370,7 +380,7 @@ export class AcpAgentRuntime implements AgentRuntime {
     try {
       await this.ensureConnection();
       const mcpServers = await this.mcpServersForRun?.(input) ?? [];
-      // 注入的 EverRoom MCP 工具与 pi 渠道同语义（token 即能力，不做权限门）：
+      // 注入的 EverOffice MCP 工具与 pi 渠道同语义（token 即能力，不做权限门）：
       // 经 _meta.claudeCode.options.allowedTools 预授权整个服务器，否则 CLI 对每个
       // mcp__everroom__* 调用走 canUseTool→requestPermission，在无工作区绑定
       // （inspect → mutationAllowed=false）下连只读检索也会被拒。
@@ -400,6 +410,10 @@ export class AcpAgentRuntime implements AgentRuntime {
         if (session.modes) sessionModes = acpSessionModeSnapshot(session.modes);
       }
       this.runs.set(input.runId, sessionId);
+      // 窗口期收到的取消（cancel 时会话还没建好）：登记后立即补发。
+      if (this.pendingCancels.delete(input.runId)) {
+        await this.connection!.cancel({ sessionId }).catch(() => undefined);
+      }
       this.sessions.set(sessionId, {
         queue,
         runId: input.runId,
@@ -462,6 +476,7 @@ export class AcpAgentRuntime implements AgentRuntime {
         }
         this.sessions.delete(sessionId);
         this.runs.delete(input.runId);
+        this.pendingCancels.delete(input.runId);
       }
       queue.end();
     }

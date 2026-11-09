@@ -128,7 +128,7 @@ function registerWithLaunchServices(appBundle) {
   if (!existsSync(lsregister)) return
   const result = spawnSync(lsregister, ['-f', appBundle], { stdio: 'ignore' })
   if (result.status !== 0) {
-    console.warn('[desktop] LaunchServices registration failed; Finder may not list EverRoom under Open With until the next launch.')
+    console.warn('[desktop] LaunchServices registration failed; Finder may not list EverOffice under Open With until the next launch.')
   }
 }
 
@@ -137,7 +137,7 @@ function prepareMacElectron() {
   const sourcePlist = join(sourceApp, 'Contents/Info.plist')
   const iconPath = join(desktopRoot, 'build/icon.icns')
   const cacheDirectory = join(desktopRoot, 'node_modules/.cache/everroom-electron')
-  const brandedApp = join(cacheDirectory, 'EverRoom.app')
+  const brandedApp = join(cacheDirectory, 'EverOffice.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
     brandingVersion: 10,
@@ -169,10 +169,10 @@ function prepareMacElectron() {
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverOffice', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier ai.nxcore.everoffice', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconFile icon.icns', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverRoom needs microphone access to record and transcribe your voice.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverRoom needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDocumentsFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDesktopFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverOffice needs microphone access to record and transcribe your voice.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverOffice needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDocumentsFolderUsageDescription string EverOffice needs access to selected folders to recognize supported documents in the file app.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDesktopFolderUsageDescription string EverOffice needs access to selected folders to recognize supported documents in the file app.', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0 dict', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLName string com.nxcore.everroom.auth', plistPath])
@@ -291,7 +291,7 @@ function prepareMacElectron() {
   console.log(`
 [desktop] macOS 开发环境「录屏与系统音频」授权指引:
   1. 打开 系统设置 → 隐私与安全性 → 录屏与系统音频 (Screen & System Audio Recording)
-  2. 点击 "+" 号,前往并选择下方这个 app(注意是缓存里的 EverRoom.app,不是 release 安装包):
+  2. 点击 "+" 号,前往并选择下方这个 app(注意是缓存里的 EverOffice.app,不是 release 安装包):
      ${devAppPath}
   3. 添加后按提示退出并重新启动开发版应用 (pnpm dev),权限即生效
   说明: 开发环境下真正发起系统音频捕获的是这个带 branding 的 Electron.app,

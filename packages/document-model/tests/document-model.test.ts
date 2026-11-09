@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createEverroomBlockReferenceUrl,
+  createEverofficeBlockReferenceUrl,
   everroomBlockIndexUrl,
   formatBlockIndexMarkMarkdown,
   freshenDocumentContent,
@@ -8,7 +8,7 @@ import {
   normalizeDocumentContent,
   normalizeDocumentFragment,
   parseBlockIndexMarkMarkdown,
-  parseEverroomBlockReferenceUrl,
+  parseEverofficeBlockReferenceUrl,
   stripDocumentTitle,
 } from "../src/index.js";
 
@@ -21,15 +21,15 @@ describe("document model", () => {
       fallbackTitle: "  计划草案  ",
       fallbackPreview: "第一阶段：调研",
     };
-    const url = createEverroomBlockReferenceUrl(reference);
+    const url = createEverofficeBlockReferenceUrl(reference);
 
     expect(url).toContain("everroom://room/room%2Fa/doc%201/block-1?");
-    expect(parseEverroomBlockReferenceUrl(url)).toEqual({
+    expect(parseEverofficeBlockReferenceUrl(url)).toEqual({
       ...reference,
       fallbackTitle: "计划草案",
     });
-    expect(parseEverroomBlockReferenceUrl("https://example.com")).toBeNull();
-    expect(parseEverroomBlockReferenceUrl("everroom://room/only/two")).toBeNull();
+    expect(parseEverofficeBlockReferenceUrl("https://example.com")).toBeNull();
+    expect(parseEverofficeBlockReferenceUrl("everroom://room/only/two")).toBeNull();
   });
 
   it("detects embedded image bytes but allows stable asset URLs", () => {
@@ -126,7 +126,7 @@ describe("document model", () => {
 
   it("freshens imported block IDs and remaps only internal references", () => {
     const generated = ["fresh-source", "fresh-reference"];
-    const internalReference = createEverroomBlockReferenceUrl({
+    const internalReference = createEverofficeBlockReferenceUrl({
       roomId: "room-1",
       documentId: "doc-import",
       blockId: "source",
@@ -163,7 +163,7 @@ describe("document model", () => {
       targetBlockId: "fresh-source",
     });
     const rewrittenLinks = content.content?.[0]?.content?.[0]?.marks?.map((mark) => mark.attrs?.href);
-    expect(parseEverroomBlockReferenceUrl(String(rewrittenLinks?.[0]))).toEqual({
+    expect(parseEverofficeBlockReferenceUrl(String(rewrittenLinks?.[0]))).toEqual({
       roomId: "room-1",
       documentId: "doc-import",
       blockId: "fresh-source",

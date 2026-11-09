@@ -370,6 +370,70 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   line-height: 14px;
 }
 
+/* ── 本轮产生的文件（DSH 产物卡语义：assistant 正文下方的文件条） ── */
+
+.agent-turn-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.agent-turn-file {
+  display: flex;
+  max-width: 100%;
+  width: fit-content;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px 7px 8px;
+  border: 1px solid #e5e8ed;
+  border-radius: 10px;
+  background: #fbfcfd;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.agent-turn-file:hover {
+  border-color: #c9d2df;
+  background: #f4f7fb;
+}
+
+.agent-turn-file:active {
+  border-color: #b6c3d4;
+}
+
+.agent-turn-file-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-turn-file-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-turn-file-copy strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #303640;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-turn-file-copy small {
+  color: #8a929d;
+  font-size: 10px;
+  line-height: 14px;
+}
+
 .agent-navigation-status {
   display: inline-flex;
   width: fit-content;
@@ -1193,6 +1257,8 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-tool-error {
+  overflow-wrap: anywhere;
+  word-break: break-word;
   color: #b42318;
 }
 
@@ -1415,10 +1481,26 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   gap: 8px;
   flex-wrap: wrap;
   color: #b42318;
+  /* 报错里常带 request id / trace id 这种没有空格的长串：默认不换行会把条
+     撑破容器（flex 子项的 min-width:auto 也不允许收缩）。用 anywhere 让它在
+     任意位置断开，容器保持 max-width。 */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .agent-error > span {
   min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 错误里的代码/标识（`code`）同样允许在字符间断行，但保留原有空白语义。 */
+.agent-error code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .agent-error-retry {
@@ -1985,6 +2067,31 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.agent-slides-page-count {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--slides-border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.agent-slides-page-count select {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.agent-slides-page-count-note {
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.7;
 }
 
 .agent-slides-action {
@@ -2969,10 +3076,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 .agent-picker-icon-button { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: #69717d; cursor: pointer; }
 .agent-picker-icon-button:hover, .agent-picker-icon-button:focus-visible { outline: 0; background: #f0f2f4; color: #242a32; }
 .agent-picker-icon-button svg { width: 15px; height: 15px; }
-/* 模型/渠道选项行图标：去底色块，仅留裸图标。 */
-.agent-picker-header-icon { display: grid; width: 22px; height: 22px; place-items: center; color: #667085; }
-.agent-picker-header-icon svg { width: 15px; height: 15px; }
-.agent-picker-header-icon .source-icon { width: 16px; height: 16px; object-fit: contain; }
 .agent-external-search { display: flex; align-items: center; min-height: 38px; gap: 7px; margin: 7px 8px 6px; padding: 0 9px; border: 1px solid #dfe3e8; border-radius: 6px; background: #fafbfc; }
 .agent-external-search:focus-within { border-color: #bcc3cc; background: #fff; box-shadow: 0 0 0 2px rgba(71, 84, 103, .08); }
 .agent-external-search svg { width: 14px; height: 14px; flex: 0 0 auto; color: #818995; }
@@ -3414,8 +3517,32 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   min-width: 0;
   min-height: 32px;
   align-items: center;
-  gap: 5px;
+  gap: 12px;
   margin-top: auto;
+}
+
+/* 底栏左组（DSH tools）：「+」与模型选择器并排，整组靠左。 */
+.agent-composer-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 底栏右组（DSH trailing）：上下文用量 + 发送钮，整组靠右。 */
+.agent-composer-trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.agent-composer-modes {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
 }
 
 .agent-composer-context {
@@ -3697,57 +3824,76 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 .agent-model-picker-hint {
-  padding: 7px 9px 6px;
+  padding: 7px 10px 6px;
   border-top: 1px solid #eceef1;
   color: #8b93a0;
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
-/* 权限模式弹层：与模型选择器同族，锚在底栏左上方。 */
-.agent-composer-popover.agent-permission-mode-picker {
+/* 模型选择弹层（DSH 两级菜单）：root 面板是「模型/推理等级」两行入口，
+   子面板是各自的单选列表。轻量紧凑，锚在底部选择器正上方。 */
+.agent-composer-popover.agent-model-picker {
   right: auto;
   left: 12px;
   bottom: 52px;
   display: grid;
   gap: 1px;
   width: max-content;
-  min-width: 232px;
+  min-width: 208px;
   max-width: 320px;
-  padding: 4px;
+  padding: 5px;
   border-color: #e8eaee;
   box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
 }
 
-/* 思考档位弹层：与模型/权限选择器同族，锚在底栏左上方。 */
-.agent-composer-popover.agent-thinking-level-picker {
-  right: auto;
-  left: 12px;
-  bottom: 52px;
-  display: grid;
-  gap: 1px;
-  width: max-content;
-  min-width: 232px;
-  max-width: 320px;
-  padding: 4px;
-  border-color: #e8eaee;
-  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
+/* root 面板入口行（DSH cell 同款）：label + 当前值（右对齐弱色）+ 右箭头。 */
+.agent-model-cell {
+  display: flex;
+  width: auto;
+  min-width: 100%;
+  height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #22272f;
+  font-size: 12.5px;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
 }
 
-/* full_access 危险档：选项标题与当前态切换钮同用危险色。 */
-.agent-model-option[data-danger='true'] strong { color: #b42318; }
-.agent-permission-mode-toggle[data-danger='true'] { color: #b42318; font-weight: 500; }
-.agent-permission-mode-toggle[data-danger='true']:hover:not(:disabled) { background: #fef3f2; color: #912018; }
+.agent-model-cell:hover,
+.agent-model-cell:focus-visible {
+  background: #f0f2f5;
+  outline: 0;
+}
 
-/* 两步确认：警告文案 + 取消/开启。 */
-.agent-permission-mode-confirm { display: grid; gap: 7px; padding: 10px 10px 8px; }
-.agent-permission-mode-confirm strong { font-size: 12px; color: #b42318; }
-.agent-permission-mode-confirm p { margin: 0; color: #667085; font-size: 11px; line-height: 1.5; }
-.agent-permission-mode-confirm-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.agent-permission-mode-confirm-actions button { height: 26px; padding: 0 10px; border: 1px solid #e3e6ea; border-radius: 6px; background: #fff; color: #475467; font-size: 11px; cursor: pointer; }
-.agent-permission-mode-confirm-actions button:hover { background: #f5f6f8; }
-.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable { border-color: #b42318; background: #b42318; color: #fff; }
-.agent-permission-mode-confirm-actions .agent-permission-mode-confirm-enable:hover { background: #912018; }
+.agent-model-cell-label {
+  flex: none;
+  white-space: nowrap;
+}
+
+.agent-model-cell-value {
+  flex: auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #747d8a;
+  font-weight: 400;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-cell-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  color: #8b93a0;
+}
 
 .agent-prompt-submit {
   display: inline-flex;
@@ -3765,20 +3911,25 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
 }
 
 
-/* 底栏控件统一 ghost 风格：无框无底，图标+文字+下拉箭头，悬停浅底。 */
+/* 底栏控件统一 ghost 风格：无框无底，文字+下拉箭头，悬停浅底。
+   模型钮（DSH trigger 同款）：模型名 + 推理等级后缀；精简后不放档位图标。 */
 .agent-model-tier-toggle {
   display: inline-flex;
   min-width: 0;
+  max-width: 220px;
   flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   height: 26px;
-  padding: 0 7px;
+  padding: 0 4px 0 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #667085;
-  font-size: 11.5px;
+  font-size: 12.5px;
+  font-weight: 520;
+  letter-spacing: 0.01em;
+  line-height: 20px;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -3797,6 +3948,22 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   width: 13px;
   height: 13px;
   flex: 0 0 13px;
+}
+
+.agent-model-tier-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 推理等级后缀（DSH triggerEffort 同款）：更弱的颜色，空间不足时最先收缩。 */
+.agent-model-tier-effort {
+  min-width: 0;
+  flex-shrink: 1000;
+  overflow: hidden;
+  color: #8b93a0;
+  font-weight: 400;
+  text-overflow: ellipsis;
 }
 
 /* 渠道 chip 用品牌 logo（SourceIcon img）+ 下拉箭头；尺寸独立于 svg 图标。 */
@@ -3819,32 +3986,18 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   border-top: 1px solid #eceef1;
 }
 
-/* 模型选择弹层：轻量紧凑，锚在底部选择器正上方（盖住输入区下沿），宽度随内容。 */
-.agent-composer-popover.agent-model-picker {
-  right: auto;
-  left: 12px;
-  bottom: 52px;
-  display: grid;
-  gap: 1px;
-  width: max-content;
-  min-width: 216px;
-  max-width: 320px;
-  padding: 4px;
-  border-color: #e8eaee;
-  box-shadow: 0 10px 28px rgba(25, 31, 41, 0.1), 0 2px 6px rgba(25, 31, 41, 0.05);
-}
-
 .agent-model-option {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) 16px;
+  display: flex;
+  min-height: 34px;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
-  min-height: 38px;
-  padding: 4px 8px;
+  padding: 6px 10px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #22272f;
+  font-size: 12.5px;
   text-align: left;
   cursor: pointer;
 }
@@ -3858,28 +4011,46 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   outline-offset: -2px;
 }
 
-.agent-model-option > span:nth-child(2) {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
+/* 精简版选项行：单行主文案，去掉小字说明与装饰图标；
+   选中态由右侧 Check 表达（与选项文案之间自动撑开）。 */
 .agent-model-option strong {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 560;
-  line-height: 1.25;
+  font-size: 12.5px;
+  font-weight: 520;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.agent-model-option small {
-  overflow: hidden;
-  color: #747d8a;
-  font-size: 10px;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.agent-model-option > svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--accent-strong, #4d6faf);
+}
+
+/* 渠道行：保留品牌 logo / Terminal 身份标识（信息性，非装饰）。 */
+.agent-model-option-channel {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.agent-model-option-channel svg {
+  width: 15px;
+  height: 15px;
+  color: #69717d;
+}
+
+.agent-model-option-channel .source-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
 }
 
 /* 渠道名后缀 (CLI)：弱化显示，与模型档位行区分。 */
@@ -3887,12 +4058,6 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #8b93a0;
   font-size: 10.5px;
   font-weight: 400;
-}
-
-.agent-model-option > svg {
-  width: 14px;
-  height: 14px;
-  color: var(--accent-strong, #4d6faf);
 }
 
 .agent-prompt-submit {
@@ -4010,4 +4175,173 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   .agent-thinking-text::after {
     display: none;
   }
+}
+
+/* 通用决策卡（agent_confirm 计划确认 / agent_ask_user 提问）：复用审批卡骨架。 */
+.agent-decision-card-body {
+  margin: 8px 0 0;
+  color: #555e6b;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.agent-decision-card-plan {
+  margin: 8px 0 0;
+  padding: 6px 18px 2px;
+  display: grid;
+  gap: 4px;
+  color: #3e4651;
+  font-size: 12.5px;
+}
+
+.agent-decision-card-options {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-decision-card-option {
+  padding: 6px 14px;
+  border: 1px solid #c9d2dd;
+  border-radius: 999px;
+  background: #fff;
+  color: #2f3a87;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.agent-decision-card-option:hover:not(:disabled) {
+  border-color: #2f6fed;
+  color: #2f6fed;
+}
+
+.agent-decision-card-input {
+  margin-top: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d4dae2;
+  border-radius: 8px;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.agent-decision-card-swatches {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+}
+
+.agent-decision-card-swatch {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+}
+
+.agent-decision-card-swatch-chip {
+  width: 40px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
+.agent-decision-card-swatch small {
+  color: #707886;
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+}
+
+.agent-decision-card-fonts {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #555e6b;
+  font-size: 12px;
+}
+
+.agent-decision-card-fonts code {
+  padding: 2px 8px;
+  border: 1px solid #e0e5eb;
+  border-radius: 6px;
+  background: #f6f8fa;
+  font-size: 11.5px;
+}
+
+.agent-decision-card-notes {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  color: #555e6b;
+  font-size: 12px;
+  display: grid;
+  gap: 2px;
+}
+
+/* 分级答复的 L2 详情折叠区（answer-tiering）：默认收起，点击 summary 展开。
+   视觉上与执行时间线的折叠行同族——低调的次要信息通道。 */
+.agent-answer-details {
+  margin-top: 4px;
+  border-radius: 8px;
+}
+
+.agent-answer-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #657080;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.agent-answer-details > summary::before {
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  content: '';
+  transition: transform 140ms ease;
+}
+
+.agent-answer-details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.agent-answer-details > summary:hover {
+  color: #3d4653;
+}
+
+.agent-answer-details-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid #e3e7ee;
+  color: #55606f;
+  font-size: 12px;
+  line-height: 1.62;
+}
+
+/* GFM 任务列表：只读展示，弱化系统 checkbox 的默认外观。 */
+.agent-message .agent-markdown li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -18px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.agent-message .agent-markdown input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin: 3px 0 1px;
+  accent-color: #6d83b8;
+}
+
+/* GFM 删除线：语义是"已作废"，弱化为次要色。 */
+.agent-message .agent-markdown del {
+  color: #8a93a3;
+  text-decoration: line-through;
 }

@@ -115,6 +115,7 @@
 .wb-home-note {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
   margin: 0;
@@ -183,17 +184,27 @@
 
 .wb-home-split {
   display: grid;
-  /* minmax(0,·)：两节各自成网格，列宽必须严格对半且不被内容 min-content 撑歪，
-     「新建」与「最近」两节的分栏线才能上下对齐 */
+  /* minmax(0,·)：两节各自成网格，列宽必须严格对半且不被内容 min-content 撑歪；
+     stretch 让两栏等高，右栏的空态提示框能拉到与左栏列表卡一样高。 */
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
 }
 .wb-home-split-col { display: flex; flex-direction: column; min-width: 0; }
+/* 「最近」两栏卡片强制等高：列表卡与空态提示框都拉满列剩余高度（两栏由 grid
+   stretch 等高，卡片边框上下严格对齐）。行本身不拉伸（flex:none），条目从上
+   往下自然排列，卡片被撑高时多余空间留在底部，不垂直居中、不分散。 */
+.wb-home-split-col > .wb-home-list,
+.wb-home-split-col > .wb-home-note { flex: 1; }
+.wb-home-split-col > .wb-home-list > * { flex: none; }
 .wb-home-split-label {
   display: flex;
   align-items: center;
   gap: 6px;
+  /* 两栏标签行统一高度与盒模型：左边是按钮（13px 图标）、右边是 div，
+     不定高会被图标撑歪，导致两栏卡片起点错位。 */
+  height: 20px;
+  box-sizing: border-box;
   margin-bottom: 8px;
   font-size: var(--ui-text-2xs);
   font-weight: 650;
@@ -201,6 +212,16 @@
   color: var(--ui-text-3);
 }
 .wb-home-split-label svg { flex: none; }
+/* 「项目空间」标签本身可点（跳转到项目空间页）：按钮复位 + 悬停反馈。 */
+button.wb-home-split-label {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+button.wb-home-split-label:hover { color: var(--ui-text-2); }
 .wb-home-split-link {
   margin-left: auto;
   height: 20px;
@@ -245,17 +266,6 @@
 .wb-home-new-tile:active { transform: translateY(0); box-shadow: var(--ui-shadow-sm); }
 /* 新建瓦片内图标浮起投影（原型 op-create-tile .op-ft-icon 同款） */
 .wb-home-new-tile .op-ft-icon { filter: drop-shadow(0 3px 8px rgba(0, 0, 0, 0.18)); }
-.wb-home-new-glyph {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 46px;
-  height: 46px;
-  border-radius: 12px;
-  /* 原型 op-space-glyph：主题 accent → 紫的 135° 渐变 + 白色图标 */
-  background: linear-gradient(135deg, var(--ui-accent-fill), #7a4dff);
-  color: #fff;
-}
 .wb-home-new-name { font-size: var(--ui-text-xs); font-weight: 600; }
 
 .wb-home-space-icon {
@@ -357,7 +367,9 @@
 }
 .wb-home-space-tile.is-new:hover { color: var(--ui-text); }
 .wb-home-space-tile.is-new .wb-home-space-main strong { color: inherit; }
-.wb-home-space-tile-head { display: flex; min-width: 0; }
+/* 头部统一行布局：普通卡由内层 .wb-home-space-open 提供间距，但「新建」卡
+   （is-new）直接放图标+文字，没有内层按钮——间距必须落在这一层，否则图标压字。 */
+.wb-home-space-tile-head { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .wb-home-space-open {
   display: flex;
   align-items: flex-start;
@@ -405,6 +417,10 @@
   overflow: hidden;
 }
 .wb-home-list > * + * { border-top: 1px solid var(--ui-border-subtle); }
+/* 「最近」分栏两栏卡片内部：条目数不同（3 vs 4）时行线错位视觉乱，
+   去掉列表内的横线分割，纯白卡片靠行高/悬停区分条目。 */
+.wb-home-split .wb-home-list > * + * { border-top: 0; }
+.wb-home-split .wb-home-list .wb-home-filerow + .wb-home-filerow { border-top: 0; }
 .wb-home-row {
   display: flex;
   align-items: center;
@@ -465,104 +481,198 @@
 .wb-home-search .ui-input { height: 32px; }
 
 .wb-home-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.wb-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-surface);
-  color: var(--ui-text-2);
-  font-size: var(--ui-text-xs);
-  font-weight: 550;
-  cursor: pointer;
-  transition: background var(--ui-duration-fast) var(--ui-ease), color var(--ui-duration-fast) var(--ui-ease);
-}
-.wb-chip:hover { background: var(--ui-hover); color: var(--ui-text); }
-.wb-chip:active { background: var(--ui-hover-strong); }
-.wb-chip.is-active { background: var(--ui-accent-soft); border-color: transparent; color: var(--ui-accent-strong); }
-.wb-chip-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: var(--ui-radius-full);
-  background: var(--ui-hover);
-  color: var(--ui-text-3);
-  font-size: var(--ui-text-2xs);
-  font-weight: 600;
-}
-.wb-chip.is-active .wb-chip-count { background: var(--ui-selected-strong); color: var(--ui-accent-strong); }
+/* wb-chip（来源筛选小圆片）已随来源筛选标签一并移除，页面不再使用。 */
 
-/* ───────────────── 文件表（最近 / 所有文件共用：表头 + 行） ───────────────── */
+/* ───────────────── 文件表（最近 / 所有文件共用：表头 + 行） ─────────────────
+ * 所有文件页照 everoffice 原型 `FileTable` 做「无外框的 WPS 式平铺表格」：
+ * 工具行裸贴在页头下，表头与行之间只有发丝线，整行悬停高亮。
+ * 「最近」分栏里的行（.wb-home-list 内的 .wb-home-filerow）不在
+ * .wb-home-filetbl 作用域内，保持原来的紧凑 48px 行高。 */
 
+/* 平铺容器：无描边、无底色，表格直接躺在页面画布上（原型 op-file-list）。 */
 .wb-home-filetbl {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface);
-  overflow: hidden;
 }
+.wb-home-filetbl .op-ft-icon { filter: drop-shadow(0 1px 2.5px rgba(0, 0, 0, 0.16)); }
+
+/* 工具行：类型标签在左，搜索 + 视图切换在右，同一行（原型 op-ft-bar）。 */
 .wb-home-filetbl-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--ui-border-subtle);
+  padding: 0 12px 10px;
 }
-.wb-home-filetbl-bar-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-.wb-home-filetbl-bar .wb-home-search { flex: 0 0 auto; width: 220px; min-width: 150px; }
-.wb-home-filetbl-src {
+.wb-home-ft-seg {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+  width: fit-content;
+  padding: 3px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+}
+/* 原型 op-seg-btn：胶囊裸标签，选中态白底浮起，不带计数徽标。 */
+.wb-home-ft-seg-btn {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-ft-seg-btn:hover { color: var(--ui-text); }
+.wb-home-ft-seg-btn.active {
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  font-weight: 600;
+  box-shadow: var(--ui-shadow-sm);
+}
+/* 搜索框（原型 op-ft-search）：无边框灰底，聚焦时白底 + 中性细边。 */
+.wb-home-ft-search {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ui-border-subtle);
+  gap: 7px;
+  width: 240px;
+  height: 32px;
+  margin-left: auto;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+  color: var(--ui-text-3);
+  transition:
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    background var(--ui-duration-fast) var(--ui-ease);
 }
-.wb-home-filetbl-src .wb-home-toolbar-meta { margin-left: auto; }
-
-/* 表头与行共用同一份 grid 模板：改列宽要两处一起改（首列 = 26px 图标位，末列 = 操作位）。 */
-.wb-home-filetbl-head,
-.wb-home-filerow {
+.wb-home-ft-search:focus-within {
+  background: var(--ui-surface);
+  border-color: var(--ui-border-strong);
+}
+/* 注意：input 不能设显式 height —— Chromium 的光标会撑满内容高度，变成一根超高的竖线 */
+.wb-home-ft-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: none;
+  font-size: var(--ui-text-sm);
+  padding: 6px 0;
+  margin: 0;
+  color: var(--ui-text);
+  caret-color: var(--ui-accent);
+}
+.wb-home-ft-search input::placeholder { color: var(--ui-text-3); }
+.wb-home-ft-search input::-webkit-search-cancel-button { display: none; }
+.wb-home-ft-search-clear {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: var(--ui-hover-strong);
+  color: var(--ui-text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.wb-home-ft-search-clear:hover { background: var(--ui-hover-strong); color: var(--ui-text); }
+/* 视图切换（原型 op-ft-views）：两个裸图标按钮。 */
+.wb-home-ft-views {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.wb-home-ft-views button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-3);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
+}
+.wb-home-ft-views button:hover { background: var(--ui-hover); color: var(--ui-text); }
+.wb-home-ft-views button.active { background: var(--ui-hover); color: var(--ui-text); }
+/* 「最近」分栏里的紧凑行变体（.wb-home-list 内）：列窄行矮，与分栏卡内边距对齐。
+   行高与左侧项目空间行（34px 图标 + 11px×2 内边距）对齐，两栏卡片高度一致。 */
+.wb-home-list .wb-home-filerow {
   display: grid;
   grid-template-columns: 26px minmax(120px, 1fr) 96px 68px 26px;
   align-items: center;
   gap: 12px;
+  position: relative;
+  height: 56px;
+  padding: 0 14px;
+}
+.wb-home-list .wb-home-filerow + .wb-home-filerow { border-top: 1px solid var(--ui-border-subtle); }
+.wb-home-list .wb-home-filerow-name { font-size: var(--ui-text-sm); font-weight: 550; }
+.wb-home-list .wb-home-filerow-time,
+.wb-home-list .wb-home-filerow-size { font-size: var(--ui-text-2xs); color: var(--ui-text-3); }
+
+/* 表头与行共用同一份 grid 模板（原型 op-file-grid：36px 图标 + 220px 起步的
+ * 文件名列 + 150px 时间 + 100px 大小 + 30px 操作）；改列宽要两处一起改。 */
+.wb-home-filetbl-head,
+.wb-home-filetbl .wb-home-filerow {
+  display: grid;
+  grid-template-columns: 36px minmax(220px, 1fr) 150px 100px 30px;
+  align-items: center;
+  gap: 14px;
   padding: 0 12px;
 }
 .wb-home-filetbl-head {
-  height: 34px;
-  border-bottom: 1px solid var(--ui-border-subtle);
-  font-size: var(--ui-text-2xs);
-  font-weight: 600;
+  height: 40px;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: var(--ui-text-xs);
+  font-weight: 500;
   color: var(--ui-text-3);
 }
-.wb-home-filerow { position: relative; height: 48px; }
-.wb-home-filerow + .wb-home-filerow { border-top: 1px solid var(--ui-border-subtle); }
-.wb-home-filerow:hover { background: var(--ui-hover); }
-.wb-home-filerow:active { background: var(--ui-hover-strong); }
+/* 「修改时间」列的排序指示（原型 op-file-sort：强调色 + 下箭头）。 */
+.wb-home-filetbl-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--ui-accent-strong);
+}
+/* 行（原型 op-file-row）：64px 宽行，行间发丝线，末行无线，悬停整行高亮。 */
+.wb-home-filetbl .wb-home-filerow {
+  position: relative;
+  height: 64px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.wb-home-filetbl .wb-home-filerow:last-child { border-bottom: none; }
+.wb-home-filetbl .wb-home-filerow:hover { background: var(--ui-hover); }
+.wb-home-filetbl .wb-home-filerow:active { background: var(--ui-hover-strong); }
 .wb-home-filerow-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--ui-text-sm);
-  font-weight: 550;
+  font-size: var(--ui-text-base);
+  font-weight: 600;
 }
 .wb-home-filerow-time,
 .wb-home-filerow-size {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--ui-text-2xs);
-  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+  color: var(--ui-text-2);
+  font-variant-numeric: tabular-nums;
 }
 /* 覆盖整行的透明按钮：整行可点，又不把行尾菜单按钮嵌进另一个可点区域里。 */
 .wb-home-filerow-open {
@@ -720,10 +830,15 @@
   width: 36px;
   height: 36px;
   border-radius: 26%;
-  /* 原型 op-insight-ai：紫色渐变方块 + 白色星火，内高光 + 柔投影 */
-  background: linear-gradient(180deg, #9b7ce8, #6d4bd0);
+  /* 与「新建」瓦片的类型图标（op-ft-icon）同款质感：垂直柔和渐变 + 顶部内高光；
+     香槟暖色（自品牌蜜桃 --ui-warm 派生）替代原高饱和紫，去「AI 风」。 */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 45%),
+    linear-gradient(180deg, #e0bd96, #a8754a);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 2px 8px rgba(90, 60, 190, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 2px 6px rgba(140, 95, 50, 0.2);
 }
 .wb-journal-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wb-journal-name {

@@ -52,6 +52,12 @@ export interface SpecialModelAssignment extends ManualAiConfigFields {
 export interface RuntimeConfigFormState {
   /** 通用文本模型四要素；场景启用（跟随通用/单独配置）时必须填全。 */
   generic: ManualAiConfigFields
+  /**
+   * 单次请求的输出 token 上限（primary 槽位）。留空 = 不覆盖，用服务端/默认值。
+   * 默认只有 8192：长任务里光是思考就能吃光整份预算，正文还没开始写就被截断
+   * （表现为"达到模型输出上限"）。
+   */
+  maxTokens: string
   scenarios: Record<TextScenarioId, ScenarioAssignment>
   vlm: SpecialModelAssignment
   webSearch: ManualAiConfigFields
@@ -114,6 +120,13 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
     }
     : emptyAiFields()
 
+  const maxTokensRaw = primary.maxTokens
+  const maxTokens = typeof maxTokensRaw === 'number' && Number.isFinite(maxTokensRaw) && maxTokensRaw > 0
+    ? String(maxTokensRaw)
+    : typeof maxTokensRaw === 'string'
+      ? maxTokensRaw.trim()
+      : ''
+
   const scenarios = {} as Record<TextScenarioId, ScenarioAssignment>
   const scenarioKeys: Partial<Record<TextScenarioId, boolean>> = {}
   for (const id of TEXT_SCENARIO_IDS) {
@@ -162,6 +175,7 @@ export function formStateFromSnapshot(snapshot: RuntimeConfigSnapshot | null): R
     webSearch,
     webSearchCustom: Boolean(webSearch.model || webSearch.baseUrl),
     deleteSearchKey: false,
+    maxTokens,
     keyConfigured: {
       generic: userConfig ? rawKeyOf(primary) : false,
       vlm: rawKeyOf(userConfig ? sectionOf(userConfig, 'vlm') : {}),
@@ -229,7 +243,14 @@ export function buildUserPayload(
     const dependentsActive = TEXT_SCENARIO_IDS.some((id) => id !== 'primary' && state.scenarios[id].mode !== 'official')
     const primaryModel = state.scenarios.primary.mode === 'custom' ? state.scenarios.primary.model.trim() || generic.model : generic.model
     if (state.scenarios.primary.mode !== 'official' || dependentsActive) {
-      base.primary = { ...generic, model: primaryModel }
+      const maxTokens = Number(state.maxTokens.trim())
+      const keepMaxTokens = Boolean(state.maxTokens.trim())
+        && Number.isInteger(maxTokens) && maxTokens > 0
+      base.primary = {
+        ...generic,
+        model: primaryModel,
+        ...(keepMaxTokens ? { maxTokens } : {}),
+      }
     }
     for (const id of TEXT_SCENARIO_IDS) {
       if (id === 'primary') continue
@@ -276,6 +297,14 @@ export function runtimeConfigFormError(state: RuntimeConfigFormState, t: (key: s
     const filled = [state.generic.model, state.generic.baseUrl].filter((value) => value.trim()).length
     const keyReady = state.generic.apiKey.trim() || state.keyConfigured.generic ? 1 : 0
     if (filled !== 2 || keyReady !== 1) return t('surface:settings.rcGenericIncomplete')
+    const maxTokensRaw = state.maxTokens.trim()
+    if (maxTokensRaw) {
+      const maxTokens = Number(maxTokensRaw)
+      // 太小会直接截断正常答复（默认 8192 已经偏紧），太大可能超出上游模型能力。
+      if (!Number.isInteger(maxTokens) || maxTokens < 1024 || maxTokens > 1_000_000) {
+        return t('surface:settings.rcMaxTokensInvalid')
+      }
+    }
   }
   for (const id of TEXT_SCENARIO_IDS) {
     const assignment = state.scenarios[id]

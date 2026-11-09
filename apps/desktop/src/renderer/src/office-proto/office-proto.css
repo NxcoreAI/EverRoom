@@ -1,4 +1,4 @@
-/* EverRoom Office 页面层（最近 / 所有文件 / 知识库 / 连接器 / 智能体 / 编辑器外壳）。
+/* EverOffice Office 页面层（最近 / 所有文件 / 知识库 / 连接器 / 智能体 / 编辑器外壳）。
    视觉 token 统一来自 styles/tokens.css 的暖纸品牌体系，这里不再局部覆写色值；
    页面内的排版、卡片、表格与编辑器外壳规则从下方开始。 */
 
@@ -49,8 +49,8 @@
   padding: 16px 12px 12px;
 }
 /* 品牌与账户（侧边栏内） */
-/* EverRoomMac 品牌标：项目原有 app 图标图片（原型占位为蓝色渐变 squircle + "E" 白字，
- * 迁移时替换为 everroom-app-icon.png，此处仅保留尺寸与圆角投影）。 */
+/* EverOfficeMac 品牌标：项目原有 app 图标图片（原型占位为蓝色渐变 squircle + "E" 白字，
+ * 迁移时替换为 everoffice-app-icon.png，此处仅保留尺寸与圆角投影）。 */
 .op-brand-mark {
   display: block;
   object-fit: contain;
@@ -1139,8 +1139,8 @@ table.op-sheet td input {
 .op-src-status.syncing::before { background: var(--ui-warm); }
 
 /* ───────────── 连接器页 ───────────── */
-/* 停靠栏内的 EverRoom agent 面板适配：原 .agent-panel 是窗口级 fixed 浮层
-   （EverRoom 主应用右上角挂载），在 dock 里改为铺满内容区。 */
+/* 停靠栏内的 EverOffice agent 面板适配：原 .agent-panel 是窗口级 fixed 浮层
+   （EverOffice 主应用右上角挂载），在 dock 里改为铺满内容区。 */
 .op-dock-body .agent-panel {
   position: static;
   inset: auto;
@@ -1281,8 +1281,7 @@ table.op-sheet td input {
 .op-drawer .op-primary-btn, .op-drawer .op-danger-btn { margin-top: auto; width: 100%; }
 
 /* 连接器抽屉 · 已连接账号列表（同源多账号，逐条可断开） */
-.op-conn-accounts { display: flex; flex-direction: column; gap: 8px; }
-.op-conn-account {
+.op-conn-accounts { display: flex; flex-direction: column; gap: 8px; }.op-conn-account {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md);
   background: var(--ui-surface-alt); font-size: var(--ui-text-sm);
@@ -1304,6 +1303,23 @@ table.op-sheet td input {
 }
 .op-conn-account-on:hover { background: var(--ui-accent-soft); }
 .op-conn-account-on:disabled { opacity: 0.45; cursor: default; }
+
+/* ───────────── 连接器弹窗形态（对话区「连接器」按钮打开的 Modal） ─────────────
+ * 复用整页版式（网格卡片 + 右侧抽屉），差异只有容器：
+ * - 页头换成一行工具条（标题由 Modal 提供）：分类筛选 + 已连接计数；
+ * - 抽屉锚定在弹窗内（position:fixed → absolute，宽度收窄），遮罩只盖弹窗。 */
+.op-conn-dialog { position: relative; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.op-conn-dialog-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid var(--ui-border-subtle);
+}
+.op-conn-dialog-toolbar .op-seg { margin: 0; }
+.op-conn-dialog-count { margin-left: auto; font-size: var(--ui-text-xs); color: var(--ui-text-3); white-space: nowrap; }
+/* 弹窗里的卡片网格：弹窗宽 720，双列即可；卡片最小宽收窄避免单列。 */
+.op-conn-dialog .op-conn-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.op-conn-dialog .op-drawer-mask,
+.op-conn-dialog .op-drawer { position: absolute; }
+.op-conn-dialog .op-drawer { width: 340px; max-width: 100%; }
 
 /* ───────────── 编辑页右侧停靠栏（Agent / 材料 / 历史记录） ───────────── */
 .op-ed-dock-row { flex: 1; display: flex; min-height: 0; min-width: 0; }
@@ -1591,4 +1607,37 @@ html[data-desktop='darwin'] .op-settings-view-bar {
 
 .op-settings-view-body > .page {
   flex: 1;
+}
+
+/* Agent 生成进度徽标：pptx 脚本执行期悬浮在主壳顶部，done/error 消失。 */
+.wb-generation-progress {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border: 1px solid #d4dae2;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1);
+  color: #3e4651;
+  font-size: 12.5px;
+  pointer-events: none;
+}
+
+.wb-generation-progress-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2f6fed;
+  animation: wb-generation-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes wb-generation-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }

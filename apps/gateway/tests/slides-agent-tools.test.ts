@@ -25,6 +25,8 @@ function runInput(phase?: string): StartRuntimeRunInput {
     runtimeSessionRef: null,
     prompt: "prompt",
     pageLabel: "Subagent: Slides Planner",
+    // 去 Room：slides 子 run 不再绑定房间（字段仍必填，单工作区写 null）。
+    roomId: null,
     toolsEnabled: true,
     ...(phase ? { runtimeMetadata: { subagentInput: { phase } } } : {}),
   };
@@ -37,23 +39,62 @@ const PLANNER_DOCUMENT_TOOLS = [
   tool("document_write_begin"), tool("document_patch_begin"),
 ];
 
+const PLANNER_WORKSPACE_TOOLS = [tool("workspace_files_list"), tool("send_notification")];
+
+const PLANNER_READ_FILE_TEXT = async (fileEntryId: string) =>
+  fileEntryId === "file-1" ? { text: "一二三四五六七八九十".repeat(1_000), filename: "锥光 BP-1020.md" } : null;
+
 describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
   it("只放行读取/联网/素材/配图预热类；slides 四件套、写入、调度、通知类一律拒绝", () => {
     const tools = createSlidesPlannerAgentTools({
       documentTools: PLANNER_DOCUMENT_TOOLS,
       webSearchTools: [tool("web_search"), tool("agent_dispatch"), tool("agent_catalog"), tool("send_notification")],
+      workspaceFileTools: PLANNER_WORKSPACE_TOOLS,
+      readWorkspaceFileText: PLANNER_READ_FILE_TEXT,
     });
     expect(tools.map((item) => item.name).sort()).toEqual([
       "document_list",
       "document_read",
       "slides_image_prewarm",
       "web_search",
+      "workspace_file_read",
+      "workspace_files_list",
     ]);
   });
 
   it("空依赖时只含配图预热（token 注册表寻址，装配零依赖）", () => {
     expect(createSlidesPlannerAgentTools({ documentTools: [], webSearchTools: [] })
       .map((item) => item.name)).toEqual(["slides_image_prewarm"]);
+  });
+
+  it("工作区文件读取：draft 单次限 8k 字符并给 nextOffset，arrange 拒读，未知文件报错", async () => {
+    const tools = createSlidesPlannerAgentTools({
+      documentTools: [],
+      webSearchTools: [],
+      workspaceFileTools: PLANNER_WORKSPACE_TOOLS,
+      readWorkspaceFileText: PLANNER_READ_FILE_TEXT,
+    });
+    const wrapped = tools.find((item) => item.name === "workspace_file_read")!;
+    const page1 = JSON.parse((await wrapped.execute(runInput("draft"), { fileEntryId: "file-1" })).content) as {
+      text: string;
+      totalCharacters: number;
+      truncated: boolean;
+      nextOffset?: number;
+    };
+    expect(page1.text.length).toBe(8_000);
+    expect(page1.truncated).toBe(true);
+    expect(page1.nextOffset).toBe(8_000);
+    expect(page1.totalCharacters).toBe(10_000);
+
+    const arrange = JSON.parse((await wrapped.execute(runInput("arrange"), { fileEntryId: "file-1" })).content) as {
+      skipped?: boolean;
+    };
+    expect(arrange.skipped).toBe(true);
+
+    const missing = JSON.parse((await wrapped.execute(runInput("draft"), { fileEntryId: "nope" })).content) as {
+      error?: string;
+    };
+    expect(missing.error).toContain("workspace_files_list");
   });
 
   it("文档读取：draft 单次限 8k 字符，arrange 阶段直接拒读", async () => {
@@ -83,7 +124,7 @@ describe("createSlidesPlannerAgentTools（slides-planner 工具面）", () => {
 });
 
 describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
-  it("只放行 PPT 四件套；检索、写入、调度、通知类一律拒绝", () => {
+  it("只放行 PPT 三件套（create/read/edit，set_page 已随脚本化生成退场）；检索、写入、调度、通知类一律拒绝", () => {
     const tools = createSlidesBuilderAgentTools({
       documentTools: PLANNER_DOCUMENT_TOOLS,
     });
@@ -91,7 +132,6 @@ describe("createSlidesBuilderAgentTools（slides-builder 工具面）", () => {
       "slides_create",
       "slides_edit",
       "slides_read",
-      "slides_set_page",
     ]);
   });
 
@@ -180,24 +220,18 @@ describe("createSlidesPlannerAgentTools（网关预取协同）", () => {
 });
 
 describe("createSlidesLayouterAgentTools（validate 收口）", () => {
-  it("同一 run 连续 5 轮不收敛后网关收下当前树并提示提交", async () => {
+  it("校验预算由程序记账：预算耗尽后收口 blocked，提示改走 subagent_submit_result", async () => {
     const tool = createSlidesLayouterAgentTools()[0]!;
-    const input = { ...runInput(), runId: "validate-forced-run" };
-    for (let round = 1; round <= 4; round += 1) {
-      const outcome = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as {
-        ok: boolean;
-        round?: number;
-      };
-      expect(outcome.ok).toBe(false);
-      expect(outcome.round).toBe(round);
+    const input = { ...runInput(), runId: "validate-budget-run" };
+    let last: { stage?: string; nextAction?: string; warning?: string } = {};
+    // 超过两类预算上限（geometry 6 / schema 2）的循环次数，确保走到收口分支。
+    for (let i = 0; i < 8; i += 1) {
+      last = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as typeof last;
+      expect(last.nextAction).toBeDefined();
     }
-    const forced = JSON.parse((await tool.execute(input, { token: "unknown-token", tree: {} })).content) as {
-      ok: boolean;
-      forcedSubmission?: boolean;
-      warning?: string;
-    };
-    expect(forced).toMatchObject({ ok: true, forcedSubmission: true });
-    expect(forced.warning).toContain("subagent_submit_result");
+    expect(last.stage).toBe("exhausted");
+    expect(last.nextAction).toBe("blocked");
+    expect(last.warning).toContain("subagent_submit_result");
   });
 });
 

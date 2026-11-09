@@ -50,7 +50,7 @@ export function RecentView({
   onToast: (msg: string) => void
 }) {
   const [drafting, setDrafting] = useState(false)
-  // EverRoomMac 接入：有真实文件库时最近文件显示真实文件（打开走内置预览）。
+  // EverOfficeMac 接入：有真实文件库时最近文件显示真实文件（打开走内置预览）。
   const [real, setReal] = useState<RealOfficeFile[] | null>(null)
   // 副标题的真实文件库计数；null = 无桥/查询失败（文案退回中性兜底）。
   const [fileTotal, setFileTotal] = useState<number | null>(null)
@@ -83,8 +83,8 @@ export function RecentView({
         <h1>{greeting()}{accountName ? `，${accountName}` : ''}</h1>
         <p>
           {fileTotal !== null && fileTotal > 0
-            ? `文件库里已有 ${fileTotal} 份文件进入了你的记忆，随时可以调用。`
-            : '文件库还没有内容，导入文件后即可在记忆中调用。'}
+            ? `资料里已有 ${fileTotal} 份文件进入了你的记忆，随时可以调用。`
+            : '资料还没有内容，导入文件后即可在记忆中调用。'}
         </p>
       </section>
 

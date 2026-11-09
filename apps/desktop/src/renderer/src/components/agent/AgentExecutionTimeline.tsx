@@ -139,26 +139,8 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查看操作要求': 'surface:agentExecutionTimeline.operationRequirementsViewed',
     '查找可用操作': 'surface:agentExecutionTimeline.searchAvailableOperations',
     '已查找可用操作': 'surface:agentExecutionTimeline.availableOperationsFound',
-    '准备创建选项': 'surface:agentExecutionTimeline.prepareCreationOptions',
-    '已准备创建选项': 'surface:agentExecutionTimeline.creationOptionsPrepared',
-    '获取文档列表': 'surface:agentExecutionTimeline.getDocumentList',
-    '已获取文档列表': 'surface:agentExecutionTimeline.documentListRetrieved',
-    '读取文档': 'surface:agentExecutionTimeline.readDocument',
-    '已读取文档': 'surface:agentExecutionTimeline.documentRead',
     '获取 Room 列表': 'surface:agentExecutionTimeline.getRoomList',
     '已获取 Room 列表': 'surface:agentExecutionTimeline.roomListRetrieved',
-    '准备文档修改': 'surface:agentExecutionTimeline.prepareDocumentChanges',
-    '已准备文档修改': 'surface:agentExecutionTimeline.documentChangesPrepared',
-    '提交文档修改': 'surface:agentExecutionTimeline.commitDocumentChanges',
-    '已提交文档修改': 'surface:agentExecutionTimeline.documentChangesCommitted',
-    '生成文档修改': 'surface:agentExecutionTimeline.generateDocumentChanges',
-    '已生成文档修改': 'surface:agentExecutionTimeline.documentChangesGenerated',
-    '写入文档内容': 'surface:agentExecutionTimeline.writeDocumentContent',
-    '已写入文档内容': 'surface:agentExecutionTimeline.documentContentWritten',
-    '开始创建文档': 'surface:agentExecutionTimeline.startDocumentCreation',
-    '已开始创建文档': 'surface:agentExecutionTimeline.documentCreationStarted',
-    '提交新文档': 'surface:agentExecutionTimeline.commitNewDocument',
-    '已提交新文档': 'surface:agentExecutionTimeline.newDocumentCommitted',
     '选择所需工具': 'surface:agentExecutionTimeline.selectRequiredTool',
     '已选择所需工具': 'surface:agentExecutionTimeline.requiredToolSelected',
     '查看图像': 'surface:agentExecutionTimeline.viewImage',
@@ -196,27 +178,6 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   }
   const exactKey = exactKeys[value]
   if (exactKey) return t(exactKey)
-  const documentRead = /^《(.+)》当前有 (\d+) 个可编辑内容块，基于版本 (\d+) 处理。$/.exec(value)
-  if (documentRead) {
-    return t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', {
-      title: documentRead[1]!, count: documentRead[2]!, version: documentRead[3]!,
-    })
-  }
-  const changeScope = /^修改范围已确定：(.+?)[。！!？?]?$/.exec(value)
-  if (changeScope) return t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary: changeScope[1]! })
-  const itemChange = /^第 (\d+) 项为(新增内容|替换内容|删除内容|文档修改)(?:，建议内容 (\d+) 字)?。$/.exec(value)
-  if (itemChange) {
-    const actionKeys: Record<string, string> = {
-      新增内容: 'surface:agentExecutionTimeline.insertContent',
-      替换内容: 'surface:agentExecutionTimeline.replaceContent',
-      删除内容: 'surface:agentExecutionTimeline.deleteContent',
-      文档修改: 'surface:agentExecutionTimeline.documentChange',
-    }
-    const action = t(actionKeys[itemChange[2]!] ?? 'surface:agentExecutionTimeline.documentChange')
-    return itemChange[3]
-      ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence: itemChange[1]!, action, count: itemChange[3]! })
-      : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence: itemChange[1]!, action })
-  }
   if (value === '工具调用失败' || value === '工具调用失败。') return t('surface:agentExecutionTimeline.failed')
   if (value === '操作已停止。' || value === '操作已停止') return t('surface:agentExecutionTimeline.stopped')
   const resultCount = /^获得 (\d+) 条结果$/.exec(value)
@@ -512,6 +473,26 @@ export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
             {rows.map((row) => {
               if (row.kind === 'subagent') {
                 return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
+              }
+              if (row.kind === 'repeat') {
+                // 同一工具连续调用多次（典型：一格一次地改 Excel）折叠成一行，
+                // 展开能看到每次的对象，不用被同一行刷屏。
+                const first = row.steps[0]!.tool
+                const label = agentToolLabel(first, true, t)
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.repeatCalls', { count: row.count, name: label })}
+                    </summary>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}>
+                          <code>{agentToolSubject(step.tool) ?? step.tool.name}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )
               }
               if (row.kind === 'noop') {
                 // 空转折叠行：默认一行摘要，展开才看每次打点的命令（原生 details，无需状态）。

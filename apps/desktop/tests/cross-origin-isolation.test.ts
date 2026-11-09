@@ -8,7 +8,7 @@ import {
 
 describe('desktop cross-origin isolation', () => {
   it('recognizes packaged file resources and only the configured development origin', () => {
-    expect(isRendererResourceUrl('file:///Applications/EverRoom/renderer/index.html')).toBe(true)
+    expect(isRendererResourceUrl('file:///Applications/EverOffice/renderer/index.html')).toBe(true)
     expect(isRendererResourceUrl('http://localhost:5180/src/main.tsx', 'http://localhost:5180'))
       .toBe(true)
     expect(isRendererResourceUrl('http://127.0.0.1:3000/v1/health', 'http://localhost:5180'))

@@ -5,22 +5,11 @@ import { createHash } from "node:crypto";
 import { Type, type TSchema } from "@sinclair/typebox";
 import type { PiAgentRuntimeTool } from "@nxcore/agent-runtime-pi";
 import type { SubagentInvocation } from "@nxcore/agent-contract";
-import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
-import { buildIndexProbe, normalizeIndexText } from "@nxcore/document-model";
-import { roomScopeId } from "../documents/room-scope.js";
-import {
-  DOC_WRITER_AGENT_ID,
-  DOC_WRITER_TASK_LABELS,
-  DOCUMENT_MARKDOWN_MAX_CHARS,
-  splitIntoAppendChunks,
-  type DocWriterTask,
-  type DocumentDraftSnapshot,
-} from "./document-draft.js";
-import { docWriterDraftFromStructuredOutput } from "./doc-writer-content.js";
 import { SubagentOrchestrator } from "./orchestrator.js";
 import { SubagentRegistry } from "./registry.js";
 import {
   parseDraftMarkdown,
+  draftParseDiagnostic,
   renderDraftMarkdown,
   slidesProgressPlanFrom,
 } from "./slides-draft-doc.js";
@@ -69,6 +58,16 @@ import {
 import { inferSceneId, resolveScene } from "../slides-layout/scene.js";
 import type { SlidesStoryboardStore } from "./slides-storyboards-store.js";
 
+/** documentMarkdown 组装预算（开放问题⑦的初值；随文稿工具链收缩保留 slides 取数语义）。 */
+const DOCUMENT_MARKDOWN_MAX_CHARS = 200_000;
+
+/** 幻灯片方案代理的文档取数快照（正文 + block 概览）。 */
+interface DocumentDraftSnapshot {
+  document: { id: string; title: string; version: number; roomId: string | null };
+  blocks: Array<{ blockId: string; type: string; ordinal: number; depth: number; textPreview: string }>;
+  markdown: string;
+}
+
 function dispatchKey(runId: string, agentId: string, task: string, input: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify({ runId, agentId, task, input }))
@@ -88,12 +87,91 @@ const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> 
   style_select: new Set(["task", "title", "styleSessionId", "candidateIndex", "referenceStyle"]),
   generate: new Set([
     "task", "resetGenerationBudget", "instruction", "draftDocumentId", "styleSessionId",
-    "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "regeneratePageImage",
-    "regeneratePageImages", "regenerateFeedback", "rejectPageImage", "rejectPageImages", "restorePageImage",
-    "restorePageImages",
+    "referenceStyle", "referenceOutline", "targetPages", "pageImagesDecision", "previewPages", "regenerateDeck",
+    "regeneratePages", "regeneratePageImage", "regeneratePageImages", "regenerateFeedback", "rejectPageImage",
+    "rejectPageImages", "restorePageImage", "restorePageImages",
   ]),
   edit: new Set(["task", "instruction", "fileId"]),
 };
+
+/** 参数别名：模型常写近形名（如 previewPage 少 s）；校验按归一后的规范名放行。 */
+const SLIDES_PARAM_ALIASES: Record<string, string> = {
+  previewPage: "previewPages",
+  preview_page: "previewPages",
+};
+
+const CN_NUMERALS: Record<string, number> = { 单: 1, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+/** 数字/数词前缀＝复合页码引用（第 N 页、每页、四十页、126 页），不当目标页数。 */
+const PAGE_REF_BEFORE = /[第每一两二三四五六七八九十\d]/u;
+
+/**
+ * 指令里的显式页数要求（「一页/单页/12 页」）。取最后一个匹配当目标页数
+ * （「把四页合并为一页」的目标是后者）；「第 N 页」「每页」与复合数字不算。
+ * 识别不出返回 undefined——宁可不拦，也不误拦。
+ */
+export function instructionPageIntent(instruction: string): number | undefined {
+  const matches = [...instruction.matchAll(/(单|一|两|二|三|四|五|六|七|八|九|十|\d{1,2})\s*页/gu)];
+  const wanted = matches.filter((m) => {
+    const before = instruction.slice(0, m.index!).replace(/\s+$/u, "").at(-1);
+    return before === undefined || !PAGE_REF_BEFORE.test(before);
+  });
+  const last = wanted.at(-1);
+  if (!last) return undefined;
+  const token = last[1]!;
+  const value = /^\d+$/u.test(token) ? Number(token) : CN_NUMERALS[token];
+  return value !== undefined && value >= 1 && value <= 32 ? value : undefined;
+}
+
+const PREVIEW_SCOPE_PATTERN = /(试看|预览|试一页|先出一页|先生成|逐页试)/u;
+const RESTRUCTURE_PATTERN = /(合并|压到|压缩|缩减|拆分|扩到|扩成|整册|全册|总共|一共)/u;
+// ponytail: 短窗正则，误伤（如「不要把封面做深色」）代价只是一次带指引的失败重试
+const PAGE_EXCLUSION_PATTERN = /(不需要|不要|不用|无需|去掉|删掉|删除|去除)(?=[^。！？\n，,]{0,4}(封面|目录|致谢|收尾|结尾|封底))/u;
+
+/** generate 指令里的页型排除意图（「不要封面页」）：编排不能增删页，须在草稿层改。 */
+export function pageExclusionIntent(instruction: string): boolean {
+  return PAGE_EXCLUSION_PATTERN.test(instruction);
+}
+
+/**
+ * generate 入口的页数范围解析：指令里的「N 页」是本轮试看落页范围，还是整册页数要求。
+ * previewPages 参数优先；带试看语义的指令不当整册冲突，但其中的页数仍要推导成试看
+ * 范围——否则「先生成一页示例」会按整册跑，且「一页」原样进编排批次，planner 遵循
+ * 指令只出 1 页、批次校验按批大小收，「页数不符」重试死循环（2026-11-02 实测）。
+ */
+export function resolveGeneratePageScope(input: {
+  instruction: string;
+  draftPageCount: number;
+  previewPages?: number;
+  targetPages?: number;
+}): { previewPages?: number; autoNote?: string; conflict?: { requested: number; draft: number } } {
+  let previewPages = input.previewPages;
+  let autoNote: string | undefined;
+  const scopeIntent = PREVIEW_SCOPE_PATTERN.test(input.instruction);
+  if (scopeIntent && previewPages === undefined) {
+    const scopedCount = instructionPageIntent(input.instruction);
+    if (scopedCount !== undefined && scopedCount < input.draftPageCount) {
+      previewPages = Math.min(32, scopedCount);
+      autoNote = `指令要求本轮先出 ${previewPages} 页试看：编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    }
+  }
+  const pageCountIntent = previewPages !== undefined || scopeIntent
+    ? undefined
+    : (instructionPageIntent(input.instruction) ?? input.targetPages);
+  if (pageCountIntent !== undefined && pageCountIntent !== input.draftPageCount) {
+    // 小于草稿页数的 N 几乎都是"本轮只出 N 页"的范围语义：自动按试看处理，
+    // 只落前 N 页（草稿/风格保留）。只有明确的整册重整措辞（合并/压到/拆分…）才拦下引导改草稿。
+    if (pageCountIntent < input.draftPageCount && !RESTRUCTURE_PATTERN.test(input.instruction)) {
+      previewPages = Math.min(32, pageCountIntent);
+      autoNote = `指令要求本轮生成 ${pageCountIntent} 页：已按试看处理，编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    } else {
+      return { conflict: { requested: pageCountIntent, draft: input.draftPageCount } };
+    }
+  }
+  return {
+    ...(previewPages !== undefined ? { previewPages } : {}),
+    ...(autoNote ? { autoNote } : {}),
+  };
+}
 
 function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
   const task = params.task;
@@ -102,7 +180,7 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
   }
   const allowed = SLIDES_DRAFT_FIELDS_BY_TASK[task];
   for (const key of Object.keys(params)) {
-    if (!allowed.has(key)) throw new Error(`slides_draft_parameter_not_allowed:${task}:${key}`);
+    if (!allowed.has(SLIDES_PARAM_ALIASES[key] ?? key)) throw new Error(`slides_draft_parameter_not_allowed:${task}:${key}`);
   }
   const instruction = typeof params.instruction === "string" ? params.instruction.trim() : "";
   if ((task === "draft" || task === "edit") && !instruction) {
@@ -117,11 +195,7 @@ function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesD
     }
     if (typeof params.candidateIndex !== "number") throw new Error("slides_style_candidate_required");
   }
-  if (task === "generate") {
-    const hasDraftId = typeof params.draftDocumentId === "string" && params.draftDocumentId.trim().length > 0;
-    const hasStyleSessionId = typeof params.styleSessionId === "string" && params.styleSessionId.trim().length > 0;
-    if (!hasDraftId && !hasStyleSessionId) throw new Error("slides_draft_document_required");
-  }
+  // generate 不再强制任何 id：网关按最新风格会话自动恢复；占位符/失效 id 也走恢复链。
   return task;
 }
 
@@ -138,12 +212,16 @@ const SLIDES_GENERATE_FIELDS: Record<string, TSchema> = {
   instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
   referenceStyle: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
   referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
-  targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
+  targetPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 32 })),
   pageImagesDecision: Type.Optional(Type.Union([
     Type.Literal("generate"),
     Type.Literal("skip"),
     Type.Literal("accept"),
   ])),
+  previewPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 32, description: "试看：只落前 N 页（整册方案仍按草稿完整编排校验）。草稿与风格会话保留，用户确认后重新 generate 出整册。" })),
+  regenerateDeck: Type.Optional(Type.Boolean({ description: "对本册上一轮已落页整轮重新生成：复用已确认的内容方案与配图，在同一 deck 文件上重新排版落页（跳过编排与配图阶段）。需 draftDocumentId。" })),
+  /** 指定页重新生成（1 基页序，按上一轮生成记录的范围）：只重排这些页，其余页保持不变。 */
+  regeneratePages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 32 }), { minItems: 1, maxItems: 32 })),
   regeneratePageImage: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
   /** 批量重生成：一次调用内循环处理并逐张广播（1 起页序，≤8 项）。 */
   regeneratePageImages: Type.Optional(Type.Array(Type.Integer({ minimum: 1, maximum: 8 }), { minItems: 1, maxItems: 8 })),
@@ -162,13 +240,33 @@ function slidesGenerateTaskSchema(
   return Type.Union([
     slidesDraftTaskSchema("generate", {
       ...fields,
-      draftDocumentId: Type.String({ minLength: 1, maxLength: 128 }),
-      styleSessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+      draftDocumentId: Type.String({
+        minLength: 1,
+        maxLength: 128,
+        pattern: "^[^\\[\\]]+$",
+        description: "已确认内容稿的文档 id。generate 优先传它：网关按它自动回查该草稿的风格会话。上下文压缩丢了 id 就省略本字段走恢复链，绝不写 [internal-id] 之类占位符（会被参数校验拒绝）。",
+      }),
+      styleSessionId: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 128,
+        pattern: "^[^\\[\\]]+$",
+        description: "风格会话 id，取自本轮 style/style_select 的结果；拿不准时传 draftDocumentId 让网关回查，不要凭记忆编造；丢了就省略，不写占位符。",
+      })),
     }),
     slidesDraftTaskSchema("generate", {
       ...fields,
-      draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      styleSessionId: Type.String({ minLength: 1, maxLength: 128 }),
+      draftDocumentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\[\\]]+$" })),
+      styleSessionId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[^\\[\\]]+$" }),
+    }),
+    // 对话路径兜底：两个 id 都拿不到时允许裸 generate——网关按最新风格会话恢复。
+    slidesDraftTaskSchema("generate", {
+      ...fields,
+      draftDocumentId: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 128,
+        pattern: "^[^\\[\\]]+$",
+        description: "已确认内容稿的文档 id；拿不到就整个省略（不要写占位符），网关按最新风格会话恢复。",
+      })),
     }),
   ]);
 }
@@ -187,8 +285,8 @@ const SLIDES_DRAFT_PARAMETERS = Type.Union([
     /** 参考 deck 的章节标题（可含 27 页原序）；planner 用它补全主干，最多 32 页。 */
     referenceOutline: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 80 }), { minItems: 1, maxItems: 30 })),
     /** 目标页数；缺省由参考 style.pageBudget 或 planner 判断。 */
-    targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
-    /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
+    targetPages: Type.Optional(Type.Integer({ minimum: 1, maximum: 32 })),
+    /** draft 阶段点名要读的工作区文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
     sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
   }),
   slidesDraftTaskSchema("style", {
@@ -281,6 +379,46 @@ interface SlidesDeckState {
   fileName: string | null;
   appliedPages: number[];
   totalPages: number;
+}
+
+/** 封面页识别（试看不占页数名额）：语义 role 优先，无 role 的旧方案按标题兜底。 */
+function isCoverPlanPage(page: unknown): boolean {
+  if (page === null || typeof page !== "object" || Array.isArray(page)) return false;
+  const record = page as Record<string, unknown>;
+  const content = record.content !== null && typeof record.content === "object" && !Array.isArray(record.content)
+    ? record.content as Record<string, unknown>
+    : null;
+  if (record.role === "cover" || content?.role === "cover") return true;
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  return /^封面(?:[：:—\-－\s]|$)/u.test(title);
+}
+
+/** 试看落页范围（0 基页序）：前 previewPages 个非封面页；封面与范围外页留给整册。 */
+function previewScopeIndexes(pages: unknown[], previewPages: number): number[] {
+  const kept: number[] = [];
+  for (const [index, page] of pages.entries()) {
+    if (kept.length >= previewPages) break;
+    if (isCoverPlanPage(page)) continue;
+    kept.push(index);
+  }
+  // 全部页都被识别成封面（planner 把仅有的内容页编成了 cover）：不裁剪，原样取前 N 页，
+  // 落页前由 stripCoverRole 改回内容页——否则范围为空、裁剪整体失效，封面页原样落页。
+  if (kept.length === 0) return pages.slice(0, previewPages).map((_, index) => index);
+  return kept;
+}
+
+/** 试看页一律按内容页落页：planner 仍把单页/首页编成 cover 时（封面留给整册），落页前改回 content。 */
+function stripCoverRole(page: unknown): unknown {
+  if (page === null || typeof page !== "object" || Array.isArray(page)) return page;
+  const record = page as Record<string, unknown>;
+  const content = record.content !== null && typeof record.content === "object" && !Array.isArray(record.content)
+    ? record.content as Record<string, unknown>
+    : null;
+  if (record.role !== "cover" && content?.role !== "cover") return page;
+  const next = { ...record };
+  if (next.role === "cover") next.role = "content";
+  if (content?.role === "cover") next.content = { ...content, role: "content" };
+  return next;
 }
 
 function deckStateOf(plan: Record<string, unknown>): LayouterExistingDeck | null {
@@ -576,7 +714,10 @@ function enqueueBatchPrewarm(
 
 function describeBatchFailures(failures: ArrangeBatchFailure[]): string {
   return failures
-    .map((failure) => `第 ${failure.batch.index + 1}/${failure.batch.total} 批（${failure.errorCode || failure.status}）`)
+    .map((failure) => {
+      const detail = failure.errorMessage?.trim().slice(0, 120);
+      return `第 ${failure.batch.index + 1}/${failure.batch.total} 批（${failure.errorCode || failure.status}${detail ? `：${detail}` : ""}）`;
+    })
     .join("、");
 }
 
@@ -597,57 +738,6 @@ function normalizeDocumentSummary(result: { text: string; structuredOutput?: unk
   return text
     ? { summary: text, outputFormat: "text", warning: "unstructured_subagent_output" }
     : { summary: null, outputFormat: null };
-}
-
-interface MaterialSourceEntry {
-  documentId: string;
-  blockId: string;
-  label?: string;
-  textPreview?: string;
-}
-
-/**
- * 块索引兜底推断（blockIndexMark）：主 agent 以自由文本 material 引用工作区文稿时，
- * 用本 run 的 document_read 台账定位素材文档，取其顶层块中确实出现在 material 里的
- * 部分（去空白后前 80 字符包含匹配），作为 materialSources 候选注入 doc-writer。
- * 匹配不上就不注入——宁缺毋滥，避免误挂。
- */
-export function inferMaterialSourcesFromReads(
-  reads: { documentsReadByRun(runId: string): Array<{ documentId: string; version: number }> },
-  readDocument: (documentId: string) => {
-    document: { title: string };
-    blocks: Array<{ blockId: string; depth: number; textPreview: string }>;
-  } | null,
-  runId: string,
-  material: string,
-): MaterialSourceEntry[] {
-  const normalizedMaterial = normalizeIndexText(material);
-  if (!runId || normalizedMaterial.length < 20) return [];
-  const entries: MaterialSourceEntry[] = [];
-  for (const read of reads.documentsReadByRun(runId)) {
-    // Phase 2i 后文稿一律工作区级（roomId 恒 null）：素材来源不再按 Room 过滤，
-    // 块索引 URI 的 scope 段由调用方统一注入（roomScopeId → 工作区频道）。
-    let snapshot;
-    try {
-      snapshot = readDocument(read.documentId);
-    } catch {
-      continue;
-    }
-    if (!snapshot) continue;
-    for (const block of snapshot.blocks) {
-      if (block.depth !== 0) continue;
-      const probe = buildIndexProbe(block.textPreview);
-      if (!probe || !normalizedMaterial.includes(probe)) continue;
-      entries.push({
-        documentId: read.documentId,
-        blockId: block.blockId,
-        label: snapshot.document.title.slice(0, 200),
-        textPreview: block.textPreview.slice(0, 400),
-      });
-      if (entries.length >= 50) return entries;
-    }
-  }
-  return entries;
 }
 
 /** 参考 deck 抽取结果覆盖风格卡色板/明暗/构图；字体与间距仍沿用用户风格卡。 */
@@ -716,15 +806,15 @@ function compactStylePalette(
  * 生图，`runStyleImages` 会因为会话没到 images_ready 而**新开一个会话重跑一遍**，
  * 白白多烧一整套生图配额。所以 `style` 分支进来时先等这个 promise 落定。
  *
- * key = roomId + draftDocumentId：换草稿就是新一轮流程，旧预热不复用。
+ * key = draftDocumentId：换草稿就是新一轮流程，旧预热不复用（单工作区语义，草稿 id 全局唯一）。
  */
 const stylePrefetchByDraft = new Map<string, Promise<unknown>>();
 
-function stylePrefetchKey(roomId: string, draftDocumentId: string): string {
-  return `${roomId}::${draftDocumentId}`;
+function stylePrefetchKey(draftDocumentId: string): string {
+  return draftDocumentId;
 }
 
-/** draft 阶段源码预取：主 Agent 指令里点名的 Room 文档正文直接随 planner 输入下发。 */
+/** draft 阶段源码预取：主 Agent 指令里点名的工作区文档正文直接随 planner 输入下发。 */
 const DRAFT_SOURCE_DOCUMENT_MAX = 2;
 const DRAFT_SOURCE_DOCUMENT_MAX_CHARS = 40_000;
 const DRAFT_SOURCE_DOCUMENTS_TOTAL_CHARS = 60_000;
@@ -747,35 +837,23 @@ export function createSubagentPiTools(
   orchestrator: SubagentOrchestrator,
   options: {
     resolveFileMarkdown?: (fileId: string) => Promise<string | null>;
+    /**
+     * 文件条目 → 当前版本 id。document_analysis 的 fileVersionId 兜底解析：
+     * workspace_files_list 只回 fileEntryId，模型拿 entry id 顶替版本 id 时
+     * （线上实测的最常见形态），派发前换成条目当前版本，避免解析子代理空转一轮。
+     */
+    resolveFileCurrentVersionId?: (fileEntryId: string) => string | null;
     /** doc-writer 组装数据源（doc-writer-subagent-plan §4）：读权威文档快照。 */
     resolveDocumentForDraft?: (documentId: string) => DocumentDraftSnapshot;
-    /**
-     * 块索引兜底（blockIndexMark）：主 agent 以自由文本 material 引用工作区文稿、
-     * 却没传 materialSources 时，从本 run 的 document_read 台账推断来源块。
-     */
-    inferMaterialSources?: (
-      runId: string,
-      material: string,
-    ) => Array<{ documentId: string; blockId: string; label?: string; textPreview?: string }>;
-    /** 代发读凭证（§5.3）：与 document_read 同构地以主 run 名义签发 receipt。 */
-    issueDraftReadReceipt?: (
-      context: { agentSessionId: string; runId: string; roomId: string | null },
-      documentId: string,
-      version: number,
-      blockIds: string[],
-    ) => { readReceipt: string; expiresAt: string };
-    /** dispatch 期"agent 修改中"软租约：占用文档（编辑器只读、保存被拒），patch_begin 接管前清除。 */
-    setDocumentModificationLease?: (documentId: string, value: string | null) => void;
     /** PPT 逐页进度上报器：slides_draft generate 布进度，set_page 落页后广播快照（无决策无挂起）。 */
     slidesProgress?: SlidesProgressTracker | null;
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
     slidesGenerationBudget?: Partial<GenerationBudgetLimits>;
     /**
-     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建工作区文稿
-     * （Phase 2i 后无 Room 归属，roomId 恒 null），返回 documentId 供用户编辑与 generate 阶段读回。
+     * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建工作区文档，
+     * 返回 documentId 供用户编辑与 generate 阶段读回。
      */
     createSlidesDraftDocument?: (input: {
-      roomId: string | null;
       title: string;
       markdown: string;
     }) => Promise<{ documentId: string; title: string }>;
@@ -784,6 +862,11 @@ export function createSubagentPiTools(
      * 失败/部分完成时草稿保留以便重试，不调用本项。
      */
     trashSlidesDraftDocument?: (documentId: string) => Promise<void>;
+    /**
+     * 草稿从回收站恢复（generate 再入时按需）：生成成功后草稿已回收，但用户可能
+     * 要求再生成——generate 读不到草稿时先经本项恢复再重读。
+     */
+    restoreSlidesDraftDocument?: (documentId: string) => Promise<void>;
     /** 无模版风格管线（slides_draft 的 style/style_select 阶段与 generate 风格注入）。
      *  create-server 侧 filesService/materials 晚于工具装配创建：支持 getter 惰性取。 */
     slidesStyle?: SlidesStyleStageDeps | null | (() => SlidesStyleStageDeps | null);
@@ -952,9 +1035,15 @@ export function createSubagentPiTools(
         const question = typeof params.question === "string" && params.question.trim()
           ? params.question.trim()
           : "概括这份文档的主题、关键事实和结论。";
+        const requestedEntryId = String(params.fileEntryId);
+        let requestedVersionId = String(params.fileVersionId);
+        if (requestedVersionId === requestedEntryId) {
+          const currentVersionId = options.resolveFileCurrentVersionId?.(requestedEntryId) ?? null;
+          if (currentVersionId) requestedVersionId = currentVersionId;
+        }
         const input = {
-          fileEntryId: String(params.fileEntryId),
-          fileVersionId: String(params.fileVersionId),
+          fileEntryId: requestedEntryId,
+          fileVersionId: requestedVersionId,
           question,
           profile: params.profile ?? "full",
           privacyPolicy: "local_only",
@@ -998,357 +1087,11 @@ export function createSubagentPiTools(
       },
     });
   }
-  const docWriter = registry.get(DOC_WRITER_AGENT_ID);
-  if (docWriter) {
-    tools.push({
-      name: "document_draft",
-      label: "Draft document content",
-      description: "调度 doc-writer 子 Agent 产出文档正文内容（起草、修改提案、续写、选区改写）。"
-        + "draft-edit 与 draft-continue 只传 documentId（网关读取权威文档组装素材），返回 baseVersion 与修改项摘要，"
-        + "并已为本 run 签发读取凭证，可直接 patch_begin；draft-create 传入 instruction 与可选 material，返回 title。"
-        + "落库方式：write_append 传返回的 invocationId 与 chunkIndex（0 起）、patch_hunk 传 invocationId 与 itemIndex（0 起），"
-        + "正文由服务端从 doc-writer 结果转交，不得在工具参数中复写正文；write_begin 的 title 使用返回值。"
-        + "rewrite 返回 replacementText，逐字作为回复片段呈现。"
-        + "用户要求调整、润色或修改刚生成的内容时，传 previousInvocationId（此前 document_draft 返回的 invocationId），"
-        + "doc-writer 会基于上一稿增量修改而非从头重写。"
-        + "materialSources（draft-create / draft-edit 可选）：引用了工作区文稿块的素材来源列表（documentId/blockId 取自 document_read 的 blocks），"
-        + "doc-writer 会在对应正文段末附 ^[...](everroom://...) 索引标记；只传确实被素材支撑的来源；"
-        + "未传时网关会按本 run 的 document_read 记录对照 material 自动推断补齐。"
-        + "用户要求为既有文档补建来源索引时：先 document_read 该文档与来源文档，再以 task=draft-edit 传 materialSources，"
-        + "instruction 要求仅为确有来源支撑的存量段落在段末追加索引标记，其余正文保持原样。"
-        + "禁止在 instruction 中手写 everroom:// 链接或 blockId（截短的 id 会被网关拒绝）；"
-        + "来源块一律经 materialSources 传递，id 完整照抄 document_read 的 blocks，doc-writer 自会生成标记语法。"
-        + "正文内容必须来自本工具的调用链，不得自行撰写或改写。",
-      parameters: Type.Object({
-        task: Type.Union([
-          Type.Literal("draft-create"),
-          Type.Literal("draft-edit"),
-          Type.Literal("draft-continue"),
-          Type.Literal("rewrite"),
-        ]),
-        instruction: Type.String({ minLength: 1, maxLength: 16_000 }),
-        documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        material: Type.Optional(Type.String({ maxLength: 100_000 })),
-        materialSources: Type.Optional(Type.Array(Type.Object({
-          documentId: Type.String({ minLength: 1, maxLength: 128 }),
-          blockId: Type.String({ minLength: 1, maxLength: 128 }),
-          label: Type.Optional(Type.String({ maxLength: 200 })),
-          textPreview: Type.Optional(Type.String({ maxLength: 400 })),
-        }, { additionalProperties: false }), { maxItems: 50 })),
-        selectedText: Type.Optional(Type.String({ minLength: 1, maxLength: 20_000 })),
-        contextBefore: Type.Optional(Type.String({ maxLength: 4_000 })),
-        contextAfter: Type.Optional(Type.String({ maxLength: 4_000 })),
-        blockType: Type.Optional(Type.String({ maxLength: 64 })),
-        responseLanguage: Type.Optional(Type.String({ minLength: 2, maxLength: 35 })),
-      }, { additionalProperties: false }),
-      execute: async (run, params, signal) => {
-        const task = String(params.task ?? "") as DocWriterTask;
-        const instruction = String(params.instruction ?? "").trim();
-        if (!DOC_WRITER_TASK_LABELS[task]) throw new Error("document_draft_task_invalid");
-        const material = typeof params.material === "string" && params.material.trim() ? params.material : null;
-        const responseLanguage = typeof params.responseLanguage === "string" && params.responseLanguage.trim()
-          ? params.responseLanguage.trim()
-          : null;
-
-        let snapshot: DocumentDraftSnapshot | null = null;
-        if (task === "draft-edit" || task === "draft-continue") {
-          const documentId = typeof params.documentId === "string" ? params.documentId.trim() : "";
-          if (!documentId) throw new Error("document_draft_document_id_required");
-          if (!options.resolveDocumentForDraft) throw new Error("document_draft_document_access_unavailable");
-          try {
-            snapshot = options.resolveDocumentForDraft(documentId);
-          } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            const code = (error as { code?: string } | null)?.code;
-            throw new Error(`document_draft_document_unavailable: ${code ?? ""} ${detail}`.trim());
-          }
-        }
-
-        // 块索引标记（blockIndexMark）：主 Agent 从 document_read 拿到的来源块透传给
-        // doc-writer，供正文段落末尾附 ^[...](everroom://...) 索引标记；id 必须来自权威数据。
-        const materialSources = Array.isArray(params.materialSources)
-          ? params.materialSources.flatMap((item) => {
-            const documentId = String(item.documentId ?? "").trim();
-            const blockId = String(item.blockId ?? "").trim();
-            if (!documentId || !blockId) return [];
-            return [{
-              documentId,
-              blockId,
-              ...(typeof item.label === "string" && item.label.trim()
-                ? { label: item.label.trim().slice(0, 200) }
-                : {}),
-              ...(typeof item.textPreview === "string" && item.textPreview.trim()
-                ? { textPreview: item.textPreview.trim().slice(0, 400) }
-                : {}),
-            }];
-          }).slice(0, 50)
-          : [];
-        // 兜底（blockIndexMark）：主 agent 读了文档当素材却没传 materialSources 时，
-        // 从本 run 的读取台账确定性推断；显式传入的来源优先，不做覆盖。
-        const materialText = typeof params.material === "string" ? params.material : "";
-        const inferredSources = materialSources.length === 0 && materialText.trim() && options.inferMaterialSources
-          ? options.inferMaterialSources(run.runId, materialText)
-          : [];
-        const resolvedMaterialSources = [
-          ...materialSources,
-          ...inferredSources.flatMap((item) => [{
-            documentId: item.documentId,
-            blockId: item.blockId,
-            ...(item.label ? { label: item.label.slice(0, 200) } : {}),
-            ...(item.textPreview ? { textPreview: item.textPreview.slice(0, 400) } : {}),
-          }]),
-        ].slice(0, 50);
-
-        const topLevelBlocks = snapshot
-          ? snapshot.blocks.filter((block) => block.depth === 0)
-          : [];
-        const documentTruncated = snapshot !== null && snapshot.markdown.length > DOCUMENT_MARKDOWN_MAX_CHARS;
-        // 增量迭代：previousInvocationId 回读本会话内上一次 doc-writer 产出注入，
-        // "再简洁一点"类跟进指令在上一稿上修改而非从头重写（doc-writer 方案 §4 占位落地）。
-        const previousInvocationId = typeof params.previousInvocationId === "string"
-          ? params.previousInvocationId.trim()
-          : "";
-        let previousDraft: string | null = null;
-        if (previousInvocationId) {
-          const prior = orchestrator.getInvocation(previousInvocationId);
-          const priorStructured = prior?.result?.structuredOutput;
-          const normalized = prior
-            && prior.agentDefinitionId === DOC_WRITER_AGENT_ID
-            && prior.source === "primary_agent"
-            && prior.parentSessionId === run.sessionId
-            && prior.status === "completed"
-            && priorStructured !== null
-            && typeof priorStructured === "object"
-            && !Array.isArray(priorStructured)
-            ? docWriterDraftFromStructuredOutput(priorStructured as Record<string, unknown>)
-            : null;
-          if (normalized) {
-            const body = normalized.kind === "draft-edit"
-              ? normalized.items.map((item, index) =>
-                `${index + 1}. [${item.operation}] ${JSON.stringify(item.target)}\n${item.markdown}`).join("\n\n")
-              : normalized.chunks.join("");
-            if (body.trim()) {
-              previousDraft = (normalized.title ? `【上一稿标题】${normalized.title}\n\n` : "") + body;
-              if (previousDraft.length > 50_000) previousDraft = `${previousDraft.slice(0, 50_000)}\n…（超长截断）`;
-            }
-          }
-        }
-        const input = {
-          task,
-          instruction,
-          // 块索引 URI 的 scope 段（冻结语法 everroom://room/{scope}/...）：
-          // Phase 2i 后文稿一律工作区级，scope 统一由网关注入为工作区频道常量。
-          blockIndexScope: roomScopeId(snapshot?.document.roomId ?? null),
-          ...(material ? { material } : {}),
-          ...(resolvedMaterialSources.length ? { materialSources: resolvedMaterialSources } : {}),
-          ...(snapshot
-            ? {
-              documentId: snapshot.document.id,
-              documentName: snapshot.document.title.slice(0, 200),
-              documentMarkdown: documentTruncated
-                ? snapshot.markdown.slice(0, DOCUMENT_MARKDOWN_MAX_CHARS)
-                : snapshot.markdown,
-              ...(documentTruncated ? { documentTruncated: true } : {}),
-              blockIndex: topLevelBlocks.slice(0, 2_000).map((block) => ({
-                blockId: block.blockId,
-                type: block.type.slice(0, 64),
-                ordinal: block.ordinal,
-                ...(block.textPreview ? { textPreview: block.textPreview.slice(0, 400) } : {}),
-              })),
-              outline: topLevelBlocks
-                .filter((block) => block.type.toLowerCase().includes("heading") && block.textPreview)
-                .slice(0, 100)
-                .map((block) => block.textPreview.slice(0, 300)),
-              baseVersion: snapshot.document.version,
-            }
-            : {}),
-          ...(typeof params.selectedText === "string" && params.selectedText
-            ? { selectedText: params.selectedText }
-            : {}),
-          ...(typeof params.contextBefore === "string" && params.contextBefore.trim()
-            ? { contextBefore: params.contextBefore }
-            : {}),
-          ...(typeof params.contextAfter === "string" && params.contextAfter.trim()
-            ? { contextAfter: params.contextAfter }
-            : {}),
-          ...(typeof params.blockType === "string" && params.blockType.trim()
-            ? { blockType: params.blockType.trim() }
-            : {}),
-          ...(responseLanguage ? { responseLanguage } : {}),
-          ...(previousDraft ? { previousInvocationId, previousDraft } : {}),
-        };
-        if (task === "rewrite" && typeof input.selectedText !== "string") {
-          throw new Error("document_draft_selected_text_required");
-        }
-        const taskLabel = DOC_WRITER_TASK_LABELS[task];
-
-        // dispatch 期软租约（用户决策：agent 修改中文档不可编辑）：占用文档期间
-        // 编辑器 writing 态只读、手动保存被拒；patch_begin 接管前必须清除
-        //（Kernel 租约获取要求 NULL），失败路径同样在 finally 清除。
-        const leaseValue = snapshot ? `agent-modification:${run.runId}` : null;
-        if (leaseValue) options.setDocumentModificationLease?.(snapshot!.document.id, leaseValue);
-
-        let invocation;
-        try {
-          invocation = await orchestrator.dispatch({
-            agentId: DOC_WRITER_AGENT_ID,
-            task: taskLabel,
-            input,
-            idempotencyKey: dispatchKey(run.runId, DOC_WRITER_AGENT_ID, taskLabel, input),
-            source: "primary_agent",
-            parentSessionId: run.sessionId,
-            parentRunId: run.runId,
-            ...(signal ? { signal } : {}),
-          });
-        } catch (error) {
-          const errorCode = error instanceof Error ? error.message : String(error);
-          const retryable = errorCode === "subagent_concurrency_limit"
-            || errorCode === "subagent_global_concurrency_limit";
-          return {
-            content: JSON.stringify({
-              status: "failed",
-              errorCode,
-              retryable,
-              message: retryable
-                ? "doc-writer 调度被并发限额拒绝；如实告知用户可稍后重试，禁止自行改写正文。"
-                : "doc-writer 调度失败；如实告知用户，禁止自行改写正文。",
-            }),
-            details: { errorCode },
-          };
-        } finally {
-          if (leaseValue && snapshot) options.setDocumentModificationLease?.(snapshot.document.id, null);
-        }
-        if (invocation.status !== "completed") {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: invocation.status,
-              errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
-              retryable: invocation.status === "timed_out" || invocation.status === "cancelled",
-              message: `doc-writer 未完成（${invocation.status}）；如实告知用户，禁止自行改写正文。`,
-            }),
-            details: invocation,
-          };
-        }
-        const structured = invocation.result?.structuredOutput !== null
-          && typeof invocation.result?.structuredOutput === "object"
-          && !Array.isArray(invocation.result.structuredOutput)
-          ? invocation.result.structuredOutput as Record<string, unknown>
-          : extractJsonObject(invocation.result?.text ?? "");
-        if (!structured || typeof structured.kind !== "string" || structured.kind !== task) {
-          return {
-            content: JSON.stringify({
-              invocationId: invocation.id,
-              status: "completed",
-              errorCode: "doc_writer_result_invalid",
-              retryable: true,
-              message: "doc-writer 未提交匹配任务的结构化结果；可调整 instruction 后重新调用 document_draft。",
-            }),
-            details: invocation,
-          };
-        }
-
-        let title: string | null = null;
-        let chunks: string[] | null = null;
-        if (task === "draft-create" || task === "draft-continue") {
-          if (typeof structured.title === "string" && structured.title.trim()) {
-            title = structured.title.trim();
-          }
-          if (Array.isArray(structured.appendChunks)) {
-            chunks = structured.appendChunks.map((chunk) => String(chunk));
-          } else if (typeof structured.contentMarkdown === "string" && structured.contentMarkdown) {
-            chunks = splitIntoAppendChunks(structured.contentMarkdown);
-          }
-        }
-        const hunks = Array.isArray(structured.hunks)
-          ? structured.hunks.filter((hunk): hunk is Record<string, unknown> =>
-            hunk !== null && typeof hunk === "object" && !Array.isArray(hunk))
-          : null;
-
-        // 版本复核 + 代发读凭证（§5.3）：与 document_read 同构，主 Agent 无需读全文即可 patch_begin。
-        let readReceiptExpiresAt: string | null = null;
-        if (snapshot) {
-          let fresh: DocumentDraftSnapshot | null = null;
-          try {
-            fresh = options.resolveDocumentForDraft
-              ? options.resolveDocumentForDraft(snapshot.document.id)
-              : null;
-          } catch {
-            fresh = null;
-          }
-          if (!fresh || fresh.document.version !== snapshot.document.version) {
-            return {
-              content: JSON.stringify({
-                invocationId: invocation.id,
-                status: "conflict",
-                errorCode: "DOCUMENT_CONFLICT",
-                retryable: true,
-                message: "文档在生成期间发生变化；请重新调用 document_draft 获取基于最新版本的提案。",
-                expectedVersion: snapshot.document.version,
-                currentVersion: fresh?.document.version ?? null,
-              }),
-              details: invocation,
-            };
-          }
-          if (options.issueDraftReadReceipt) {
-            const receipt = options.issueDraftReadReceipt(
-              // 与主 run 文档工具同 scope（Phase 2i 后无 Room 维度，一律 null），
-              // document_patch_begin 的 requireLatest 才能直接复用本凭证。
-              { agentSessionId: run.sessionId, runId: run.runId, roomId: null },
-              snapshot.document.id,
-              snapshot.document.version,
-              fresh.blocks.filter((block) => block.depth === 0).map((block) => block.blockId),
-            );
-            readReceiptExpiresAt = receipt.expiresAt;
-          }
-        }
-
-        return {
-          content: JSON.stringify({
-            invocationId: invocation.id,
-            agentId: invocation.agentDefinitionId,
-            status: "completed",
-            kind: task,
-            ...(title ? { title } : {}),
-            // M3/V2 摘要回传：文档路径正文不进主 Agent 上下文，
-            // 由 write_append/patch_hunk 凭 invocationId 服务端转交。
-            ...(chunks
-              ? {
-                chunkCount: chunks.length,
-                appendChunkBytes: chunks.reduce(
-                  (sum, chunk) => sum + Buffer.byteLength(chunk, "utf8"),
-                  0,
-                ),
-              }
-              : {}),
-            ...(hunks
-              ? {
-                hunkCount: hunks.length,
-                hunksSummary: hunks.map((hunk) => ({
-                  operation: typeof hunk.operation === "string" ? hunk.operation : null,
-                  target: hunk.target ?? null,
-                })),
-              }
-              : {}),
-            // 对话内划词改写需逐字呈现片段，保留全文；落库走 patch 引用路径。
-            ...(task === "rewrite" && typeof structured.replacementText === "string"
-              ? { replacementText: structured.replacementText }
-              : {}),
-            ...(snapshot
-              ? {
-                baseVersion: snapshot.document.version,
-                documentId: snapshot.document.id,
-              }
-              : {}),
-            ...(readReceiptExpiresAt ? { readReceiptExpiresAt } : {}),
-            ...(previousInvocationId ? { previousDraftApplied: Boolean(previousDraft) } : {}),
-            digest: structured.digest ?? null,
-          }),
-          details: invocation,
-        };
-      },
-    });
-  }
+// document_draft（doc-writer 调度工具）已随 Markdown 文稿工具链下线（2026-11）：
+// 新 workbench 无文稿列表/编辑 UI，write_*/patch_* 落库工具已删除，工具返回的
+// invocationId 无处消费；doc-writer 子代理保留定义（划词改写等服务端内部链路仍可
+// 调度），但不再向主 Agent 暴露 document_draft。合并 everoffice/main 时曾带回该
+// 半链路，本注释防止再次复活。
   const slidesBuilder = registry.get("slides-builder");
   if (slidesBuilder) {
     const slidesDraftTool: PiAgentRuntimeTool = {
@@ -1358,7 +1101,8 @@ export function createSubagentPiTools(
         + "draft 需 instruction，生成内容草稿并暂停；完成后等用户确认。可选 title/outline、参考文件和 sourceDocumentIds。"
         + "style 可选 draftDocumentId/instruction，生成或重显风格候选；只有用户要求换一批时传 regenerate=true 和反馈 instruction。"
         + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
-        + "generate 需 draftDocumentId 或 styleSessionId，可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
+        + "generate 可传 draftDocumentId（优先）或本轮对话内返回的 styleSessionId；任一 id 都拿不到时就都不传——网关按最新风格会话自动恢复整条链，绝不写占位符或凭记忆编 id；用户要求先看效果时传 previewPages=N 只做前 N 个内容页试看（编排与落页都只做这些页，封面不占名额，指令说「先生成/只生成 N 页」也会自动按试看处理；草稿与风格保留，确认后重新 generate 出整册）；用户要重新生成上一轮已落页时传 regenerateDeck=true（配 draftDocumentId）：网关复用内容方案与配图，在同一文件上重新排版落页；用户只说重新生成某几页（如「重新生成第 3 页」）时改传 regeneratePages=[3]——只重排这些页，其余页保持不变，不要因此整轮重排；可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
+        + "页结构（封面/目录/收尾页）以草稿文档为准，generate 的 instruction 不能增删页；用户在确认环节提出增删页/去封面时，先用文稿编辑工具修改草稿（删除对应 ## 章节）再发起 generate，不要把结构指令塞进 generate。"
         + "edit 需 instruction 并直接修改 PPT；fileId 可选，缺省为当前打开文件。"
         + "修改此前生成的成品（尤其应用重启后）：把上一轮 generate/edit 返回的 fileEntryId 作为 fileId 传入——"
         + "未打开的 PPT 会自动以可编辑方式打开；PPT 产物始终在产物库里，不存在\"找不到\"。"
@@ -1437,10 +1181,6 @@ export function createSubagentPiTools(
         }
         const fileIdArg = typeof params.fileId === "string" ? params.fileId.trim() : "";
         const styleSessionIdParam = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
-        // Phase 2i 后无 Room 维度：风格会话 / 页面图会话 / storyboard 等内部管线
-        // 仍需要一个非空 scope 字符串作分区键，统一固定为工作区频道常量
-        // （与 documents 模块的 roomScopeId 归一结果一致），模型侧不再感知。
-        const roomId = WORKSPACE_DOCUMENT_CHANNEL;
 
         // ── style / style_select：无模版风格阶段（纵览候选 → 提取定参 → 风格卡）。 ──
         if (task === "style" || task === "style_select") {
@@ -1471,9 +1211,12 @@ export function createSubagentPiTools(
             const requestedDraftId = (typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "")
               || selectedStyleSession?.draftDocumentId
               || "";
+            const pendingKeys = [...stylePrefetchByDraft.keys()];
+            // 单工作区：预热 Map 以草稿 id 为键。没有点名草稿时等最近一次在飞预热
+            // （同一时间通常只有一条 PPT 流程），避免会话未到 images_ready 就重复生图。
             const pendingKey = requestedDraftId
-              ? stylePrefetchKey(roomId, requestedDraftId)
-              : [...stylePrefetchByDraft.keys()].find((k) => k.startsWith(`${roomId}::`));
+              ? stylePrefetchKey(requestedDraftId)
+              : pendingKeys[pendingKeys.length - 1];
             const pending = pendingKey ? stylePrefetchByDraft.get(pendingKey) : undefined;
             if (pending) {
               await Promise.race([
@@ -1488,7 +1231,7 @@ export function createSubagentPiTools(
           const styleResult = await runSlidesStyleStage(
             {
               task,
-              run: { runId: run.runId, sessionId: run.sessionId, roomId },
+              run: { runId: run.runId, sessionId: run.sessionId },
               instruction,
               ...(titleArg ? { title: titleArg } : {}),
               ...(typeof params.draftDocumentId === "string" && params.draftDocumentId.trim()
@@ -1574,7 +1317,6 @@ export function createSubagentPiTools(
           const plannerInput: Record<string, unknown> = {
             phase: "draft",
             instruction,
-            roomId,
             ...(titleArg ? { title: titleArg } : {}),
             ...(Array.isArray(params.outline)
               ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
@@ -1586,7 +1328,6 @@ export function createSubagentPiTools(
           };
           // 阶段一开始就广播：planner 检索+成稿可到数分钟，不能只有「正在调用工具…」。
           const draftingPayload = slidesProgressPayload("drafting", {
-            roomId,
             ...(titleArg ? { title: titleArg } : {}),
           });
           onUpdate?.({ content: JSON.stringify(draftingPayload), details: draftingPayload });
@@ -1650,8 +1391,6 @@ export function createSubagentPiTools(
           let draftDocument: { documentId: string; title: string };
           try {
             draftDocument = await options.createSlidesDraftDocument({
-              // Phase 2i 后文稿一律工作区级：草稿文档无 Room 归属。
-              roomId: null,
               title: gatePlan.title,
               markdown: renderDraftMarkdown(gatePlan),
             });
@@ -1675,7 +1414,6 @@ export function createSubagentPiTools(
             totalPages: gatePlan.pages.length,
             pages: gatePlan.pages,
             doneCount: 0,
-            roomId,
             documentId: draftDocument.documentId,
             updatedAt: Date.now(),
             ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
@@ -1687,11 +1425,11 @@ export function createSubagentPiTools(
           {
             const prefetchDeps = typeof options.slidesStyle === "function" ? options.slidesStyle() : options.slidesStyle;
             if (prefetchDeps) {
-              const key = stylePrefetchKey(roomId, draftDocument.documentId);
+              const key = stylePrefetchKey(draftDocument.documentId);
               const prefetch = runSlidesStyleStage(
                 {
                   task: "style",
-                  run: { runId: run.runId, sessionId: run.sessionId, roomId },
+                  run: { runId: run.runId, sessionId: run.sessionId },
                   instruction,
                   ...(titleArg ? { title: titleArg } : {}),
                   draftDocumentId: draftDocument.documentId,
@@ -1734,6 +1472,11 @@ export function createSubagentPiTools(
         // ── generate：读回用户确认的草稿（风格会话可代取）→ planner arrange → builder 按风格参数落页。 ──
         if (task === "generate") {
           let styleSessionId = typeof params.styleSessionId === "string" ? params.styleSessionId.trim() : "";
+          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
+          // 方括号占位符（"[internal-id]" 等）当空值处理：等同裸 generate，走恢复链而不是
+          // 拿假 id 查库（实测 deepseek 上下文压缩后会给两个字段都写占位符）。
+          if (/^\[[^\]]*\]$/.test(styleSessionId)) styleSessionId = "";
+          if (/^\[[^\]]*\]$/.test(draftDocumentId)) draftDocumentId = "";
           // 风格会话存储必须无条件加载：配图确认的续跑调用只带 draftDocumentId（桌面罐头消息
           // 不带 styleSessionId），落页尾部要靠 byDraftId 回查风格会话补注入——按 styleSessionId
           // 门控会让回查永远拿到 null，确认配图后的落页丢掉整张风格卡。
@@ -1741,27 +1484,54 @@ export function createSubagentPiTools(
           const styleSessions = styleDepsForResume?.sessions ?? null;
           const pageImageSessionsForResume = styleDepsForResume?.pageImageSessions ?? null;
           let styleSession: import("../slides-style/types.js").SlidesStyleSessionData | null = null;
+          /** 恢复注记：传入 id 无效但网关自动找回会话时，写进结果让主代理知道实际用了哪个。 */
+          let styleSessionRecovered = "";
+          /** 草稿从回收站自动恢复的注记（结果回显用；须早于 dispatchBuilderTail 声明，配图路径先于草稿读取执行）。 */
+          let draftRestoredNote = "";
+          /** 试看页数（须早于 dispatchBuilderTail 声明：配图确认路径先于页数门控执行）。
+           *  指令/参数里"本轮只出 N 页"（N < 草稿页数）会自动落到这里；previewPage（少 s）等近形名兼容。 */
+          const previewPagesRaw = params.previewPages ?? params.previewPage;
+          let previewPages = typeof previewPagesRaw === "number"
+            ? Math.max(1, Math.min(32, Math.floor(previewPagesRaw)))
+            : undefined;
+          /** 自动试看注记（指令页数被当作生成范围时写进结果 warnings）。 */
+          let previewAutoNote = "";
+          const usableSession = (session: import("../slides-style/types.js").SlidesStyleSessionData | null): boolean =>
+            Boolean(session?.styleParams && (session.stage === "card_ready" || session.stage === "confirmed"));
           if (styleSessionId && styleSessions) {
             const session = styleSessions.byId(styleSessionId);
-            if (!session || session.roomId !== roomId || session.stage !== "card_ready" || !session.styleParams) {
+            if (usableSession(session)) styleSession = session;
+          }
+          // 传入 id 无效（占位符、压缩丢 UUID 后的编造值）或未传：按草稿回查 → 最新活跃会话自动恢复。
+          // 生成链路很长，早期工具结果里的会话 id 会被上下文压缩摘掉——重试时靠记忆必错，靠回查才稳。
+          // 「最新会话」恢复有跨册风险：只接受还挂着**未回收草稿**的会话——旧 deck 生成完成后草稿已
+          // 进回收站，把它捞回来等于用错内容生成；这种情况宁可失败引导重走风格。
+          let recoveredByLatestSession = false;
+          if (!styleSession && styleSessions) {
+            const byDraft = draftDocumentId ? styleSessions.byDraftId(draftDocumentId) : null;
+            const active = byDraft ?? styleSessions.latestWithStyleCard();
+            if (active && usableSession(active) && (byDraft || active.draftDocumentId)) {
+              styleSession = active;
+              recoveredByLatestSession = !byDraft;
+              if (styleSessionId) styleSessionRecovered = `传入的 styleSessionId 无效（可能是上下文压缩后凭记忆写的），已按${byDraft ? "草稿回查" : "最新活跃会话"}恢复为当前会话`;
+              styleSessionId = active.id;
+            } else if (styleSessionId) {
               return {
                 content: JSON.stringify({
                   status: "failed",
                   errorCode: "slides_style_session_invalid",
                   retryable: false,
-                  message: "风格会话不存在、未确认到风格卡阶段或不属于当前 Room；请先走 style → style_select 产出风格卡。",
+                  message: `styleSessionId「${styleSessionId.slice(0, 40)}」无效且网关找不到可恢复的风格会话（会话 id 只在本轮对话内由 style/style_select 返回，长对话会被压缩丢失）。请改传 draftDocumentId 让网关按草稿回查；或重新走 style → style_select。`,
                 }),
-                details: { errorCode: "slides_style_session_invalid" },
+                details: { errorCode: "slides_style_session_invalid", styleSessionId: styleSessionId.slice(0, 40) },
               };
             }
-            styleSession = session;
           }
-          let draftDocumentId = typeof params.draftDocumentId === "string" ? params.draftDocumentId.trim() : "";
           if (!styleSessionId && draftDocumentId) {
-            styleSessionId = pageImageSessionsForResume?.byDraftId(roomId, draftDocumentId)?.styleSessionId
-              ?? styleSessions?.byDraftId(roomId, draftDocumentId)?.id
+            styleSessionId = pageImageSessionsForResume?.byDraftId(draftDocumentId)?.styleSessionId
+              ?? styleSessions?.byDraftId(draftDocumentId)?.id
               ?? "";
-            if (styleSessionId && styleSessions) styleSession = styleSessions.byId(styleSessionId);
+            if (styleSessionId && styleSessions && !styleSession) styleSession = styleSessions.byId(styleSessionId);
           }
           if (!draftDocumentId && styleSession?.draftDocumentId) draftDocumentId = styleSession.draftDocumentId;
           // UI continuation calls intentionally carry only a session/document id. Restore the
@@ -1819,7 +1589,8 @@ export function createSubagentPiTools(
             makeKey: dispatchKey,
             // 单页布局；第 4 参带附件时是"自审回投"——把该页渲染图投回同一个
             // 视觉模型，让它看自己的成品。整册不再有独立的审页代理。
-            dispatchPage: (input, idempotencyKey, tailParentRunId, attachments) =>
+            // 第 5 参 session：deck 级续会话（同册逐页共享上下文），见 runLayouterTail。
+            dispatchPage: (input, idempotencyKey, tailParentRunId, attachments, session) =>
               retryDispatch(() => dispatch({
                 agentId: "slides-layouter",
                 task: "单页布局",
@@ -1829,6 +1600,7 @@ export function createSubagentPiTools(
                 source: "primary_agent",
                 parentSessionId: run.sessionId,
                 ...(tailParentRunId ? { parentRunId: tailParentRunId } : {}),
+                ...(session ? { runtimeSession: session } : {}),
                 ...(signal ? { signal } : {}),
               }), slidesConcurrencyRetry(orchestrator, "slides-layouter")),
           });
@@ -1836,6 +1608,27 @@ export function createSubagentPiTools(
             const trash = options.trashSlidesDraftDocument;
             if (!trash) return;
             await trash(documentId);
+          };
+          /** 整轮重生成凭据：记录已装配方案与 deck 进度，regenerateDeck 直接复用（跳过编排/配图）。
+           *  直落尾部与流式收尾两条路径都要写（流式提前 return 不经过 dispatchBuilderTail 结尾）。 */
+          const saveRegenState = (planToStore: Record<string, unknown>, payload: Record<string, unknown> | null): void => {
+            const regenFileId = typeof payload?.fileEntryId === "string" ? payload.fileEntryId : "";
+            const regenPages = Array.isArray(planToStore.pages) ? planToStore.pages : [];
+            if (!regenFileId || regenPages.length < 1) return;
+            generationCheckpoints.patch(`slides-regenerate:${draftDocumentId}`, {
+              regen: {
+                plan: planToStore,
+                deck: {
+                  fileEntryId: regenFileId,
+                  originalName: typeof payload?.fileName === "string" ? payload.fileName : null,
+                  appliedPages: Array.isArray(payload?.appliedPages)
+                    ? payload.appliedPages.filter((value): value is number => typeof value === "number")
+                    : [],
+                  totalPages: regenPages.length,
+                },
+                ...(previewPages ? { previewPages } : {}),
+              },
+            });
           };
           type SemanticAssembled = Awaited<ReturnType<typeof assembleSemanticPlan>>;
           /** 内容契约装配（权威校验 + 指定页修复）：整册与分批流水线共用。 */
@@ -1846,7 +1639,6 @@ export function createSubagentPiTools(
           ): Promise<SemanticAssembled> => assembleSemanticPlan({
             plan: planToAssemble,
             instruction,
-            roomId,
             repair: (input, round) => retryDispatch(() => dispatch({
               agentId: "slides-editor", task: "单页内容修复", input,
               idempotencyKey: dispatchKey(run.runId, "slides-editor", `${repairKeyPrefix}:${round}`, input),
@@ -1868,7 +1660,6 @@ export function createSubagentPiTools(
                 revisions: ["slides-planner", "slides-editor", "slides-layouter"].map(id => registry.get(id)?.revision?.digest),
               };
               options.slidesEditor?.store?.save({
-                roomId,
                 draftDocumentId,
                 draftHash: `semantic-v3:${semanticHash({ hash: assembled.draftHash, style: styleParamsForHash, scene: sceneId, generation })}`,
                 storyboard: assembled.storyboard,
@@ -1969,7 +1760,22 @@ export function createSubagentPiTools(
               };
             }
 
-            const savedDeck = tailKey ? generationCheckpoints.read(tailKey).deck : undefined;
+            // 试看模式：整册方案已过语义契约校验，落页范围切到前 N 个内容页——
+            // 封面不占试看名额（选 1 页拿到的是首个内容页，不是只有封面的空 deck），封面留给整册。
+            let tailArmPlan = builderArmPlan;
+            if (previewPages && Array.isArray(activePlan.pages)) {
+              const planPages = activePlan.pages as unknown[];
+              const keptIndexes = previewScopeIndexes(planPages, previewPages);
+              if (keptIndexes.length > 0) {
+                activePlan = { ...activePlan, pages: keptIndexes.map((index) => stripCoverRole(planPages[index]!)) };
+                const keptArmPages = keptIndexes
+                  .map((index) => builderArmPlan.pages[index])
+                  .filter((page): page is NonNullable<typeof page> => Boolean(page));
+                if (keptArmPages.length > 0) tailArmPlan = { ...builderArmPlan, pages: keptArmPages };
+              }
+            }
+            // 试看不落 checkpoint/不续用旧 deck：确认后的整册 generate 建新文件，不撞页数校验。
+            const savedDeck = previewPages ? undefined : (tailKey ? generationCheckpoints.read(tailKey).deck : undefined);
             const tailResult = await runLayouterTail(
               {
                 progress: options.slidesProgress ?? null,
@@ -1994,18 +1800,19 @@ export function createSubagentPiTools(
                   }), slidesConcurrencyRetry(orchestrator, "slides-layouter")),
               },
               {
-                roomId,
                 sessionId: run.sessionId,
                 runId: run.runId,
+                workspaceId: run.workspaceId ?? null,
                 parentRunId,
                 instruction,
                 plan: activePlan,
-                armPlan: builderArmPlan,
+                armPlan: tailArmPlan,
                 styleParams: (builderStyleParams !== null && typeof builderStyleParams === "object" && !Array.isArray(builderStyleParams))
                   ? builderStyleParams as Record<string, unknown>
                   : null,
                 scene: deckScene.id,
                 draftDocumentId,
+                ...(previewPages ? { preview: true } : {}),
                 settle: {
                   ...(settle.pageImagesSessionId ? { pageImagesSessionId: settle.pageImagesSessionId } : {}),
                   ...(styleSessionIdToSettle ? { styleSessionIdToSettle } : {}),
@@ -2015,14 +1822,37 @@ export function createSubagentPiTools(
                 trashDraft: trashDraftDocument,
                 // 配图确认暂停时把 deck 进度写进了 plan.__deck：恢复时复用同一个 deck 续落，不再新建文件。
                 ...((savedDeck ?? deckStateOf(builderPlan)) ? { existingDeck: (savedDeck ?? deckStateOf(builderPlan))! } : {}),
-                onCheckpoint: deck => { if (tailKey) generationCheckpoints.patch(tailKey, { deck }); },
+                ...(previewPages ? {} : { onCheckpoint: deck => { if (tailKey) generationCheckpoints.patch(tailKey, { deck }); } }),
                 ...(signal ? { signal } : {}),
                 ...(onUpdate ? { onUpdate } : {}),
               },
             );
             generationCompleted = parseToolContentJson(tailResult.content)?.status === "completed";
+            // 结果回显恢复凭据：生成链路长、上下文会压缩，重试时主代理照抄最近一次结果里的
+            // styleSessionId/draftDocumentId，不再凭（已被压缩的）记忆编造。
+            const echoPayload = parseToolContentJson(tailResult.content);
+            if (echoPayload) {
+              if (styleSessionIdToSettle) echoPayload.styleSessionId = styleSessionIdToSettle;
+              if (draftDocumentId) echoPayload.draftDocumentId = draftDocumentId;
+              if (previewPages) {
+                echoPayload.previewPages = previewPages;
+                echoPayload.message = `试看版：已生成前 ${previewPages} 个内容页（不含封面）。告诉用户：确认版式与视觉后说「继续」即重新 generate 生成整册（草稿与风格已保留）。`;
+              }
+              const notes = [styleSessionRecovered, draftRestoredNote, previewAutoNote].filter(Boolean);
+              if (notes.length > 0) {
+                echoPayload.warnings = [...new Set([
+                  ...(Array.isArray(echoPayload.warnings) ? echoPayload.warnings : []),
+                  ...notes,
+                ])];
+              }
+            }
+            // 整轮重生成凭据：记录本轮已装配方案与 deck 进度，regenerateDeck 直接复用（跳过编排/配图）。
+            saveRegenState(activePlan, echoPayload);
             // 内容契约报告挂到 details（不改变落页结果）；semanticReport 在此处必非空（未通过已提前失败）。
-            return { ...tailResult, details: { ...(tailResult.details as Record<string, unknown>), contentReport: semanticReport } };
+            return {
+              content: echoPayload ? JSON.stringify(echoPayload) : tailResult.content,
+              details: { ...(tailResult.details as Record<string, unknown>), contentReport: semanticReport },
+            };
           };
 
           // 正文配图交互路由：带 decision/regenerate 参数续跑已落库的配图会话；
@@ -2053,7 +1883,7 @@ export function createSubagentPiTools(
             || regenerateIndexes.length > 0 || rejectIndexes.length > 0 || restoreIndexes.length > 0;
           const existingPageImagesSession = hasPageImagesParams
             ? null
-            : pageImagesStoreRef?.byDraftId(roomId, draftDocumentId) ?? null;
+            : pageImagesStoreRef?.byDraftId(draftDocumentId) ?? null;
           const waitingPageImagesSession = existingPageImagesSession
             && (existingPageImagesSession.stage === "confirm" || existingPageImagesSession.stage === "review")
             ? existingPageImagesSession
@@ -2081,7 +1911,7 @@ export function createSubagentPiTools(
             };
             let outcome: PageImagesStageOutcome;
             if (pageImagesDecision === "generate" || pageImagesDecision === "skip" || pageImagesDecision === "accept") {
-              outcome = await decidePageImages({ roomId, draftDocumentId, decision: pageImagesDecision }, stageDeps);
+              outcome = await decidePageImages({ draftDocumentId, decision: pageImagesDecision }, stageDeps);
             } else if (batchRequested && (regenerateIndexes.length > 0 || rejectIndexes.length > 0 || restoreIndexes.length > 0)) {
               // 批量处置：一次调用内循环处理、逐张广播，返回合并 message（旧单数参数也走这里）。
               const failureNotes: string[] = [];
@@ -2095,14 +1925,13 @@ export function createSubagentPiTools(
                 failureNotes.push(`${action}失败${typeof failedContent?.message === "string" ? `：${failedContent.message}` : ""}`);
               };
               for (const index of rejectIndexes) {
-                absorb(reviewPageImageReject({ roomId, draftDocumentId, index, rejected: true }, stageDeps), `打回第 ${index} 张`);
+                absorb(reviewPageImageReject({ draftDocumentId, index, rejected: true }, stageDeps), `打回第 ${index} 张`);
               }
               for (const index of restoreIndexes) {
-                absorb(reviewPageImageReject({ roomId, draftDocumentId, index, rejected: false }, stageDeps), `恢复第 ${index} 张`);
+                absorb(reviewPageImageReject({ draftDocumentId, index, rejected: false }, stageDeps), `恢复第 ${index} 张`);
               }
               for (const index of regenerateIndexes) {
                 absorb(await regeneratePageImage({
-                  roomId,
                   draftDocumentId,
                   index,
                   ...(typeof params.regenerateFeedback === "string" ? { feedback: params.regenerateFeedback } : {}),
@@ -2136,17 +1965,16 @@ export function createSubagentPiTools(
               outcome = { kind: "waiting", result: { content: JSON.stringify(merged), details: merged } };
             } else if (regenerateIndex !== null) {
               outcome = await regeneratePageImage({
-                roomId,
                 draftDocumentId,
                 index: regenerateIndex,
                 ...(typeof params.regenerateFeedback === "string" ? { feedback: params.regenerateFeedback } : {}),
               }, stageDeps);
             } else if (rejectIndex !== null) {
-              outcome = reviewPageImageReject({ roomId, draftDocumentId, index: rejectIndex, rejected: true }, stageDeps);
+              outcome = reviewPageImageReject({ draftDocumentId, index: rejectIndex, rejected: true }, stageDeps);
             } else if (restoreIndex !== null) {
-              outcome = reviewPageImageReject({ roomId, draftDocumentId, index: restoreIndex, rejected: false }, stageDeps);
+              outcome = reviewPageImageReject({ draftDocumentId, index: restoreIndex, rejected: false }, stageDeps);
             } else {
-              outcome = reshowPageImages({ roomId, draftDocumentId }, stageDeps);
+              outcome = reshowPageImages({ draftDocumentId }, stageDeps);
             }
             if (outcome.kind !== "build") return outcome.result;
             const buildArmPlan = slidesProgressPlanFrom(outcome.plan);
@@ -2163,7 +1991,7 @@ export function createSubagentPiTools(
             }
             // 空串的 styleSessionId（续跑调用未带）必须落进回查：?? 不吃空串，用 || 串链。
             const settleStyleSessionId = styleSessionId || waitingPageImagesSession?.styleSessionId
-              || pageImagesStoreRef.byDraftId(roomId, draftDocumentId)?.styleSessionId || null;
+              || pageImagesStoreRef.byDraftId(draftDocumentId)?.styleSessionId || null;
             const resumeStyleSession = settleStyleSessionId && styleSessions
               ? styleSessions.byId(settleStyleSessionId) : null;
             const acceptNote = outcome.kind === "build" ? outcome.message : undefined;
@@ -2187,17 +2015,117 @@ export function createSubagentPiTools(
             ])];
             return { ...tailResult, content: JSON.stringify(tailPayload) };
           }
-          const draftSnapshot = options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
+          // readDocumentForAgent 对缺失/回收站文档是抛异常（"Document not found"）而不是返回
+          // null——不包 try/catch 的话异常会直接穿透工具层，主代理只看到英文报错，恢复逻辑不执行。
+          const readDraftSnapshot = (): DocumentDraftSnapshot | null => {
+            try {
+              return options.resolveDocumentForDraft?.(draftDocumentId) ?? null;
+            } catch {
+              return null;
+            }
+          };
+          // 读 → 不在则从回收站还原再读（生成成功后草稿被 trashDraft；"再生成"就是恢复意图）。
+          const readWithRestore = async (): Promise<DocumentDraftSnapshot | null> => {
+            let snapshot = readDraftSnapshot();
+            // 回收站恢复只对「显式点名/按草稿回查」的 id 开放：经最新会话兜底捞到的 id 若只在
+            // 回收站里，说明那是已完成旧册的草稿——恢复它等于生成错内容，宁可走失败引导。
+            if (!snapshot && options.restoreSlidesDraftDocument && !recoveredByLatestSession) {
+              try {
+                await options.restoreSlidesDraftDocument(draftDocumentId);
+                snapshot = readDraftSnapshot();
+                if (snapshot) draftRestoredNote = "草稿在上轮生成成功后已回收，本轮已自动从回收站恢复";
+              } catch {
+                // 不在回收站（彻底删除或从未存在）。
+              }
+            }
+            return snapshot;
+          };
+          let draftSnapshot = await readWithRestore();
+          // 传入的草稿 id 失效（占位符/压缩后编造）且风格会话关联了另一个草稿：改用它再试。
+          if (!draftSnapshot && styleSession?.draftDocumentId && draftDocumentId !== styleSession.draftDocumentId) {
+            draftDocumentId = styleSession.draftDocumentId;
+            draftSnapshot = await readWithRestore();
+          }
           if (!draftSnapshot) {
             return {
               content: JSON.stringify({
                 status: "failed",
                 errorCode: "slides_draft_document_not_found",
                 retryable: false,
-                message: "草稿文档不存在或不属于当前 Room；与用户确认文档后重新提供 draftDocumentId。",
+                message: styleSession
+                  ? `恢复了旧风格会话但其草稿已不可读：当前这册的风格阶段可能还没走完。请让用户说「看风格候选」完成风格挑选后再生成。`
+                  : "当前没有可恢复的风格会话与草稿：这一册的风格阶段还没完成（或被中断）。请让用户说「看风格候选」重新挑风格，完成后再 generate；不要重试同一个 id。",
               }),
               details: { errorCode: "slides_draft_document_not_found" },
             };
+          }
+          // ── regenerateDeck / regeneratePages：重排——复用上一轮已装配方案与同一 deck 文件，只重跑布局与落页。 ──
+          // 编排/配图/配图确认全部跳过：内容与图片保持不变，新 runId 派发布局代理自然产出新树。
+          // regeneratePages 指定页（1 基页序）：只重排这些页，其余页视为已落定原样保留。
+          const regenPageIndexes = Array.isArray(params.regeneratePages)
+            ? [...new Set(params.regeneratePages.filter((value) => Number.isInteger(value) && value >= 1 && value <= 32))]
+            : null;
+          if (params.regenerateDeck === true || regenPageIndexes !== null) {
+            const regenState = generationCheckpoints.read(`slides-regenerate:${draftDocumentId}`).regen;
+            const regenPlan = regenState?.plan;
+            if (!regenState || !regenPlan || !Array.isArray(regenPlan.pages) || regenPlan.pages.length < 1
+              || typeof regenState.deck?.fileEntryId !== "string" || !regenState.deck.fileEntryId) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_regenerate_unavailable",
+                  retryable: false,
+                  message: "这一册没有可复用的生成记录（记录随网关数据库保存，可能生成方式较旧或已被清理）。请重新发起 generate 生成；只改个别页面也可用 task=edit 直接改成品。",
+                }),
+                details: { errorCode: "slides_regenerate_unavailable" },
+              };
+            }
+            const regenArmPlan = slidesProgressPlanFrom(regenPlan);
+            if (!regenArmPlan) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_regenerate_plan_invalid",
+                  retryable: false,
+                  message: "上一轮生成记录的方案已不可解析，无法重排；请重新发起 generate。",
+                }),
+                details: { errorCode: "slides_regenerate_plan_invalid" },
+              };
+            }
+            const regenPageCount = regenPlan.pages.length;
+            // 指定页换算成本轮范围的 0 基页序；全部越界时给出有效范围（页码按上一轮
+            // 生成记录的页序，试看轮不含封面——与卡面页号一致）。
+            const requested = regenPageIndexes !== null
+              ? regenPageIndexes.filter((value) => value <= regenPageCount)
+              : null;
+            if (regenPageIndexes !== null && requested!.length === 0) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_regenerate_pages_invalid",
+                  retryable: false,
+                  message: `页码 ${regenPageIndexes.join("、")} 超出本轮生成记录的范围（1~${regenPageCount} 页；页号以进度卡显示的页序为准）。请改用范围内的页码，或传 regenerateDeck=true 重排全部页。`,
+                }),
+                details: { errorCode: "slides_regenerate_pages_invalid", totalPages: regenPageCount },
+              };
+            }
+            previewPages = regenState.previewPages !== undefined && regenState.previewPages < regenPageCount
+              ? regenState.previewPages
+              : undefined;
+            const regenTailPlan = { ...regenPlan };
+            // 不挂编排检查点：其 deck 记录会把已落页当完成跳过。重排页原地替换，其余页视为已落定。
+            delete regenTailPlan.__checkpointKey;
+            const requestedSet = requested !== null ? new Set(requested.map((value) => value - 1)) : null;
+            // __deck 走 SlidesDeckState 形状（deckStateOf 读 fileName 字段）。
+            regenTailPlan.__deck = {
+              fileEntryId: regenState.deck.fileEntryId,
+              fileName: regenState.deck.originalName ?? null,
+              appliedPages: requestedSet !== null
+                ? Array.from({ length: regenPageCount }, (_, index) => index).filter((index) => !requestedSet.has(index))
+                : [],
+              totalPages: regenPageCount,
+            };
+            return await dispatchBuilderTail(regenTailPlan, regenArmPlan, null);
           }
           // 唯一内容路径：草稿全文保真解析（semantic 契约要求来源完整，不截断）。
           const draftPages = parseDraftMarkdown(draftSnapshot.markdown, { preserveContent: true });
@@ -2207,11 +2135,54 @@ export function createSubagentPiTools(
                 status: "failed",
                 errorCode: "slides_draft_document_empty",
                 retryable: false,
-                message: "草稿里解析不到「## 章节=页」结构（可能被清空）；请用户恢复章节结构后重试。",
+                message: `${draftParseDiagnostic(draftSnapshot.markdown)}；请用户把每页恢复为「## 标题」后重试，或核对 draftDocumentId 是否指向 PPT 草稿。`,
               }),
               details: { errorCode: "slides_draft_document_empty" },
             };
           }
+          // 试看页数 ≥ 草稿页数＝整册：去掉试看语义，落满后照常回收草稿与风格。
+          if (previewPages !== undefined && previewPages >= draftPages.length) previewPages = undefined;
+          // 页型排除意图（「不要封面页」）在编排层无通路：页数/页序在草稿层冻结，
+          // 拦下引导改草稿，而不是让 planner 拿到做不到的指令后照常落封面。
+          if (pageExclusionIntent(instruction)) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_page_structure_conflict",
+                retryable: false,
+                message: "页结构在草稿层决定：编排阶段不能增删页。请先用文稿编辑工具把草稿中对应的「## 章节」删除后重试 generate；或重新发起草稿（draft）并在 instruction 写明排除要求。",
+              }),
+              details: { errorCode: "slides_page_structure_conflict" },
+            };
+          }
+          // 页数在草稿层冻结（编排合同不得增删页）：指令/参数的页数要求与草稿不符时，
+          // 与其让 planner 违规合并后被拒，不如入口直接给出改草稿的指引。
+          const pageScope = resolveGeneratePageScope({
+            instruction,
+            draftPageCount: draftPages.length,
+            ...(previewPages ? { previewPages } : {}),
+            ...(targetPages !== undefined ? { targetPages } : {}),
+          });
+          if (pageScope.conflict) {
+            return {
+              content: JSON.stringify({
+                status: "failed",
+                errorCode: "slides_page_count_conflict",
+                retryable: false,
+                message: `页数在草稿层决定：当前草稿为 ${pageScope.conflict.draft} 页，本轮指令要求 ${pageScope.conflict.requested} 页；编排阶段不能增删页。请把草稿的「## 章节」合并/拆分为 ${pageScope.conflict.requested} 个后重试，或重新发起草稿（draft）阶段按 ${pageScope.conflict.requested} 页生成。`,
+              }),
+              details: { errorCode: "slides_page_count_conflict", draftPages: pageScope.conflict.draft, requestedPages: pageScope.conflict.requested },
+            };
+          }
+          if (pageScope.previewPages !== undefined) {
+            previewPages = pageScope.previewPages;
+            if (pageScope.autoNote) previewAutoNote = pageScope.autoNote;
+          }
+          // 试看指令里的「N 页」是落页范围不是编排页数：原样下发会让 planner 把它当编排
+          // 页数（instruction 优先级最高），与批次校验的固定页数冲突成「页数不符」死循环。
+          const arrangeInstruction = previewPages
+            ? `${instruction}\n（网关注：本轮试看只做前 ${previewPages} 个内容页，输入 draftPages 已按此裁剪、不含封面。编排必须覆盖输入 draftPages 的每一页/本批全部页，pages 数量与页序以输入 sources 为准，不得增删。这些页在整册里都不是第一页：不得把任何页编为 cover 角色或开场封面式版式，按各页自身内容角色编排。）`
+            : instruction;
           const planner = registry.get("slides-planner");
           if (!planner) {
             return {
@@ -2225,6 +2196,12 @@ export function createSubagentPiTools(
             };
           }
 
+          // 试看轮编排也只做落页范围内的内容页（封面与范围外页留给整册）：1 页试看不再
+          // 整册编排，秒级出方案；确认后整册 generate 会按全量草稿重新编排（checkpoint
+          // 按来源 hash 分键，试看批次不污染整册缓存）。
+          const arrangeScope = previewPages ? previewScopeIndexes(draftPages, previewPages) : null;
+          const arrangePages = arrangeScope ? arrangeScope.map((index) => draftPages[index]!) : draftPages;
+
           // 配图预热：编排过程中 planner 即可经 slides_image_prewarm 入池生图（与编排重叠）。
           // 生图能力可用才注册 token；planner 不调工具时对账为空，行为与现状一致。
           const prewarmToken = styleDeps?.images
@@ -2232,39 +2209,40 @@ export function createSubagentPiTools(
             : null;
           if (prewarmToken !== null) {
             registerPrewarm(prewarmToken, {
-              roomId,
               draftDocumentId,
               stylePalette: compactStylePalette(effectivePalette),
               images: styleDeps!.images!,
+              // 试看轮只预热落页范围内的内容页：范围外不生图，配图留给整册生成。
+              ...(previewPages
+                ? { allowedPages: new Set(arrangePages.map((_, index) => index + 1)) }
+                : {}),
             });
           }
           const deckStyle = deckStyleFrom(effectiveStyleParams as Record<string, unknown> | null);
           // 语义来源在编排入口一次分配（页序即来源页序），planner 与后续契约校验共用同一份。
-          const semanticSources = assignContentSources(draftPages, draftDocumentId);
+          const semanticSources = assignContentSources(arrangePages, draftDocumentId);
           // 重排方案阶段一开始就广播（arrange 是第二段长等待）：素材预取也算在这一段里。
           const planningPayload = slidesProgressPayload("planning", {
             title: draftSnapshot.document.title.slice(0, 120),
-            totalPages: draftPages.length,
-            roomId,
+            totalPages: arrangePages.length,
             documentId: draftDocumentId,
           });
           onUpdate?.({ content: JSON.stringify(planningPayload), details: planningPayload });
           // 素材检索前移到网关：按页预取命中随输入下发，planner 不再逐页调 material_search
           // （27 页 deck 实测 21~40 次工具往返，是 arrange 超时的主要来源）。
           const materialHits = options.searchMaterials
-            ? prefetchSlidesMaterials({ pages: draftPages, search: options.searchMaterials })
+            ? prefetchSlidesMaterials({ pages: arrangePages, search: options.searchMaterials })
             : [];
           const deckTitle = draftSnapshot.document.title.slice(0, 120);
           // 根因修复：整册一次性成稿拆成 8 页一批。短 deck 仍是单批（行为与旧路径一致）。
           const arrangeBatches = planArrangeBatches({
-            pages: draftPages,
+            pages: arrangePages,
             sources: semanticSources,
             batchSize: ARRANGE_BATCH_SIZE,
           });
           // 编排 checkpoint：同一草稿/指令/风格/来源的重试只补失败批。有已完成批时不做流水线
           // （重试场景批次少、且复用的批不会重新派发，直接走整册合并路径最稳）。
           const checkpointKey = arrangeBatchCheckpointKey({
-            roomId,
             draftDocumentId,
             instruction,
             sourcesHash: semanticHash(semanticSources),
@@ -2280,10 +2258,21 @@ export function createSubagentPiTools(
           restoreGeneration(checkpointKey);
           const savedCheckpoint = generationCheckpoints.read(checkpointKey);
           const checkpoint = { batches: new Map(Object.entries(savedCheckpoint.batches).map(([index, value]) => [Number(index), value])) };
+          // 批次失败缺陷：随 checkpoint 持久化。同一次 run 的整批重试与用户重试 generate
+          // 都会把上一轮的具体缺陷随输入喂回 planner，避免整批从零盲排。
+          const batchErrors: Record<string, string[]> = { ...(savedCheckpoint.batchErrors ?? {}) };
+          const persistBatchErrors = (batchIndex: number, errors?: string[]): void => {
+            const key = String(batchIndex);
+            const normalized = (errors ?? []).map((item) => item.trim()).filter(Boolean).slice(0, 12);
+            if (normalized.length > 0) batchErrors[key] = normalized;
+            else delete batchErrors[key];
+            generationCheckpoints.patch(checkpointKey, { batchErrors });
+          };
           // ── 分批流水线（内容→布局→落页）：批一完成就装配本批内容并推进落页尾部，不等全部批次。
           // 单批路径没有重叠收益，保持原逻辑；配图页攒到批次全部完成后再走过目卡/自动生图。
           const streamingScene = resolveScene(inferSceneId(instruction));
-          const streamingOffice = arrangeBatches.length > 1 ? resolveLayoutOffice() : null;
+          // 试看走非流式（整册流式按草稿全量建 deck 文件，与"只落前 N 页"矛盾）。
+          const streamingOffice = arrangeBatches.length > 1 && !previewPages ? resolveLayoutOffice() : null;
           const streamingStyleParams = (effectiveStyleParams !== null && typeof effectiveStyleParams === "object" && !Array.isArray(effectiveStyleParams))
             ? effectiveStyleParams as Record<string, unknown>
             : null;
@@ -2302,9 +2291,9 @@ export function createSubagentPiTools(
             if (draftArmPlan) {
               const stream = createSlidePageStream();
               const tail = runLayouterTail(layouterDepsFor(streamingOffice), {
-                roomId,
                 sessionId: run.sessionId,
                 runId: run.runId,
+                workspaceId: run.workspaceId ?? null,
                 parentRunId: null,
                 instruction,
                 // plan.pages 只提供占位页标题；真正内容按批从 stream 进来。
@@ -2354,10 +2343,9 @@ export function createSubagentPiTools(
           } else if (arrangeBatches.length <= 1) {
             const plannerInput: Record<string, unknown> = {
               phase: "arrange",
-              instruction,
-              roomId,
+              instruction: arrangeInstruction,
               title: deckTitle,
-              draftPages,
+              draftPages: arrangePages,
               contentMode: SEMANTIC_MODE,
               sources: semanticSources,
               ...(deckStyle ? { deckStyle } : {}),
@@ -2439,28 +2427,29 @@ export function createSubagentPiTools(
                 // 批次级进度：计划阶段不再是一片空白，也不影响 plan_ready 的既有载荷。
                 const progress = slidesProgressPayload("planning", {
                   title: deckTitle,
-                  totalPages: draftPages.length,
+                  totalPages: arrangePages.length,
                   doneBatches: checkpoint.batches.size,
                   totalBatches: arrangeBatches.length,
-                  roomId,
                   documentId: draftDocumentId,
                 });
                 onUpdate?.({ content: JSON.stringify(progress), details: progress });
               },
               async run(batch, attempt) {
                 const hitsForBatch = batchMaterialHits(batch);
+                // attempt 0 用上次用户重试留下的缺陷；in-run 重试用本轮刚记录的缺陷。
+                const priorErrors = batchErrors[String(batch.index)] ?? [];
                 const batchInput: Record<string, unknown> = {
                   phase: "arrange",
-                  instruction,
-                  roomId,
+                  instruction: arrangeInstruction,
                   title: deckTitle,
                   draftPages: batch.pages,
                   contentMode: SEMANTIC_MODE,
                   sources: batch.sources,
-                  arrangeBatch: arrangeBatchMeta(batch, draftPages, deckTitle),
+                  arrangeBatch: arrangeBatchMeta(batch, arrangePages, deckTitle),
                   ...(deckStyle ? { deckStyle } : {}),
                   ...(referenceStyle ? { referenceStyle } : {}),
                   ...(hitsForBatch.length > 0 ? { materialHits: hitsForBatch } : {}),
+                  ...(priorErrors.length > 0 ? { previousErrors: priorErrors } : {}),
                 };
                 const invocation = await retryDispatch(
                   () => dispatch({
@@ -2481,21 +2470,30 @@ export function createSubagentPiTools(
                   arrangeBatchRetry(orchestrator),
                 );
                 if (invocation.status !== "completed") {
+                  const errorCode = invocation.errorCode ?? invocation.errorMessage ?? invocation.status;
+                  const errorMessage = invocation.errorMessage ?? errorCode;
+                  persistBatchErrors(batch.index, [`planner 调用未完成（${invocation.status}）：${errorMessage}`]);
                   return {
                     ok: false as const,
                     status: invocation.status,
-                    errorCode: invocation.errorCode ?? invocation.errorMessage ?? invocation.status,
+                    errorCode,
+                    errorMessage,
                     invocationId: invocation.id,
+                    // 超时/输出上限/调度失败属于可重试的瞬时失败；语义契约失败才不重试。
+                    retryable: true,
                   };
                 }
                 const batchPlan = structuredPlanOf(invocation);
                 const errors = batchPlan ? validateArrangeBatchPlan(batch, batchPlan) : ["批结果不是对象"];
                 if (!batchPlan || errors.length > 0) {
+                  persistBatchErrors(batch.index, errors);
                   return {
                     ok: false as const,
                     status: "failed",
                     errorCode: errors[0] ?? "slides_arrange_batch_invalid",
+                    errorMessage: errors.slice(0, 4).join("; "),
                     invocationId: invocation.id,
+                    retryable: true,
                   };
                 }
                 // 流水线：本批内容契约一过就立刻派布局并落页，不等其他批。
@@ -2517,11 +2515,15 @@ export function createSubagentPiTools(
                       `semantic-repair:batch-${batch.index}`,
                     );
                     if (!assembled.report.passed) {
+                      persistBatchErrors(batch.index, assembled.report.errors);
                       return {
                         ok: false as const,
                         status: "failed",
                         errorCode: "slides_semantic_content_invalid",
+                        errorMessage: assembled.report.errors.slice(0, 4).join("; "),
                         invocationId: invocation.id,
+                        // 语义契约失败是确定性的：同稿再排一次只会复现同一组缺陷。
+                        retryable: false,
                       };
                     }
                     const batchPages = assembled.plan.pages as unknown as Array<Record<string, unknown>>;
@@ -2539,15 +2541,21 @@ export function createSubagentPiTools(
                       }
                     }
                   } catch (error) {
+                    const semanticErrors = (error as Error & { semanticErrors?: string[] }).semanticErrors;
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    persistBatchErrors(batch.index, semanticErrors?.length ? semanticErrors : [errorMessage]);
                     return {
                       ok: false as const,
                       status: "failed",
                       errorCode: "slides_semantic_content_invalid",
                       invocationId: invocation.id,
-                      errorMessage: error instanceof Error ? error.message : String(error),
+                      errorMessage,
+                      // 内容契约校验不通过是确定性失败，不整批重排。
+                      retryable: false,
                     };
                   }
                 }
+                persistBatchErrors(batch.index);
                 return { ok: true as const, plan: batchPlan, invocationId: invocation.id };
               },
             });
@@ -2572,7 +2580,7 @@ export function createSubagentPiTools(
                   status: "failed",
                   errorCode: "slides_arrange_batch_failed",
                   retryable: true,
-                  message: `编排未完成（${failed}失败）；已完成的批次已保留，重试只补未完成批次。`,
+                  message: `编排未完成（${failed}失败）；已完成的批次已保留，重试只补未完成批次，并对失败批次带上本次的具体缺陷重新编排。`,
                 }),
                 details: {
                   errorCode: "slides_arrange_batch_failed",
@@ -2589,7 +2597,7 @@ export function createSubagentPiTools(
             try {
               plan = mergeArrangeBatchPlans({
                 deckTitle,
-                pages: draftPages,
+                pages: arrangePages,
                 sources: semanticSources,
                 batches: arrangeBatches,
                 results: outcome.results,
@@ -2635,7 +2643,6 @@ export function createSubagentPiTools(
             totalPages: gatePlan.pages.length,
             pages: gatePlan.pages,
             doneCount: 0,
-            roomId,
             documentId: draftDocumentId,
             updatedAt: Date.now(),
             ...(gatePlan.narrative ? { narrative: gatePlan.narrative } : {}),
@@ -2706,7 +2713,8 @@ export function createSubagentPiTools(
             }
             if (state.deferred.size === 0) {
               generationCompleted = parseToolContentJson(partial.content)?.status === "completed";
-              // 无配图页：全部页已在流水线里落定，直接交付。
+              // 无配图页：全部页已在流水线里落定，直接交付（重生成凭据在此写：流式不经过尾部收尾）。
+              saveRegenState(plan, state.partialPayload);
               return {
                 ...partial,
                 details: { ...(partial.details as Record<string, unknown>), contentReport: streamingReport },
@@ -2719,22 +2727,27 @@ export function createSubagentPiTools(
                 fileEntryId: deckFileId,
                 fileName: typeof state.partialPayload?.fileName === "string" ? state.partialPayload.fileName : null,
                 appliedPages: Array.isArray(state.partialPayload?.appliedPages) ? state.partialPayload.appliedPages : [],
-                totalPages: Array.isArray(plan.pages) ? plan.pages.length : draftPages.length,
+                totalPages: Array.isArray(plan.pages) ? plan.pages.length : arrangePages.length,
               } satisfies SlidesDeckState;
             }
           }
 
           // 正文配图交互：有缺口页且配图会话可用时，落库并停在确认卡（用户选生成/跳过）。
           // 会话存储未配置时退回 V1 自动生图直落（无交互），失败页照旧退化图形版式。
-          const pendingImagePages = collectPendingImagePages(plan);
+          // 试看轮配图只做落页范围内的页：范围外不生图（省配图额度），整册生成时再补。
+          const previewPageScope = previewPages && Array.isArray(plan.pages)
+            ? new Set(previewScopeIndexes(plan.pages as unknown[], previewPages))
+            : null;
+          const pendingImagePages = collectPendingImagePages(plan)
+            .filter((item) => !previewPageScope || previewPageScope.has(item.pageIndex));
           if (pendingImagePages.length > 0 && pageImagesStoreRef && styleDeps?.images) {
             const stylePalette = compactStylePalette(effectivePalette);
             const outcome = openPageImagesConfirm({
-              roomId,
               draftDocumentId,
               styleSessionId,
               plan,
               stylePalette,
+              ...(previewPageScope ? { pageScope: previewPageScope } : {}),
             }, {
               sessions: pageImagesStoreRef,
               images: styleDeps.images,
@@ -2754,7 +2767,11 @@ export function createSubagentPiTools(
               const newlyReady = await prewarmed.settle(60_000);
               applyPrewarmReadyToPlan(plan, newlyReady);
             }
-            const pageImagesSummary = await generateSlidesPageImages(plan, {
+            // V1 试看：浅拷贝只留范围内页（page 对象按引用共享，注入回落到整册 plan 上）。
+            const v1Plan = previewPageScope
+              ? { ...plan, pages: (plan.pages as unknown[]).filter((_, index) => previewPageScope.has(index)) }
+              : plan;
+            const pageImagesSummary = await generateSlidesPageImages(v1Plan, {
               images: styleDeps.images,
               ...(styleDeps.readMaterialBytes ? { readMaterialBytes: styleDeps.readMaterialBytes } : {}),
               ...(imageVlmReviewer ? { reviewImage: imageVlmReviewer } : {}),
@@ -2772,7 +2789,6 @@ export function createSubagentPiTools(
                   totalPages: gatePlanFinal.pages.length,
                   pages: gatePlanFinal.pages,
                   doneCount: 0,
-                  roomId,
                   documentId: draftDocumentId,
                   updatedAt: Date.now(),
                   ...(gatePlanFinal.narrative ? { narrative: gatePlanFinal.narrative } : {}),
@@ -2790,7 +2806,6 @@ export function createSubagentPiTools(
         const editInput = {
           task: "edit",
           instruction,
-          roomId,
           ...(fileIdArg ? { fileId: fileIdArg } : {}),
         };
         let editInvocation;

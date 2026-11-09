@@ -1,5 +1,18 @@
 import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
+import { officeBashViolation } from "./office-bash-guard.js";
+import {
+  createRepeatedCallState,
+  DEFAULT_MAX_REPEATED_CALLS,
+  resolveStallAction,
+  trackRepeatedCall,
+  type RepeatedCallState,
+} from "./tool-loop-guard.js";
+import {
+  createToolResultDedupeState,
+  dedupeToolResult,
+  type ToolResultDedupeState,
+} from "./tool-result-dedupe.js";
 import { randomUUID } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import type { AgentContextUsageSegment, AgentPermissionMode, RuntimeCapabilities } from "@nxcore/agent-contract";
@@ -56,6 +69,36 @@ export const DEFAULT_PI_BUILTIN_TOOLS: PiBuiltinToolName[] = [
   "ls",
 ];
 
+/** 通用决策卡：agent 主动请求用户确认计划（confirm）或回答问题（question）。 */
+export interface PiAgentCardRequest {
+  approvalId: string;
+  input: StartRuntimeRunInput;
+  /** confirm = 计划/操作确认卡；question = 提问卡（等用户回答）。 */
+  card: {
+    kind: "confirm" | "question";
+    title: string;
+    body?: string;
+    /** confirm：计划/步骤列表（按序展示）。 */
+    plan?: string[];
+    /** question：可选答案（按钮）；不传或 allowText 时用户可自由输入。 */
+    options?: string[];
+    allowText?: boolean;
+    /** confirm：设计决策展示——色板（hex，按 主色/次色/强调 顺序）。 */
+    palette?: string[];
+    /** confirm：标题/正文字体名。 */
+    fonts?: { heading?: string; body?: string };
+    /** confirm：其他风格要点（如「深色封面 + 浅色内容页」）。 */
+    notes?: string[];
+  };
+  timeoutMs?: number;
+}
+
+export interface PiAgentCardDecision {
+  /** confirm：approved/denied；question：选项文本或用户输入。 */
+  choice: string;
+  text?: string;
+}
+
 export interface PiAgentRuntimeConfig {
   provider: string;
   model: string;
@@ -82,6 +125,18 @@ export interface PiAgentRuntimeConfig {
   systemPrompt?: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /**
+   * 单轮命中输出上限（stopReason=length）时自动续写几轮。默认 2：长任务里模型常常
+   * 思考就把 8192 的输出额度烧完、正文还没开始写，直接判失败等于把活甩回给用户。
+   */
+  maxAutoContinuesPerRun?: number;
+  /** 首轮连接类错误的重试次数（默认 2；仅在没有工具副作用时生效）。 */
+  maxConnectionRetries?: number;
+  /**
+   * 同一工具用完全相同参数连续调用的次数上限（默认 5，0 关闭）。命中即中止：
+   * 连续同样的命令重复刷，说明模型在转圈而不是在推进。
+   */
+  maxRepeatedCalls?: number;
   /**
    * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转并
    * 中止 run。模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
@@ -226,11 +281,44 @@ interface ActivePiRun {
   /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
   noOpStreak: number;
   noOpLimitExceeded: boolean;
+  /** 本 run 已见过的工具结果指纹（重复的大结果折叠成占位，省上下文）。 */
+  toolResults: ToolResultDedupeState;
+  /** 已经自动续写过几轮（命中输出上限后接续，防死循环）。 */
+  autoContinues: number;
+  /** 正在自动续写：期间不能被 start() 的收尾逻辑提前判完成。 */
+  continuing: boolean;
+  /** 连续相同调用的计数（原地打转守卫，取代 main 侧 identicalStreak 简版）。 */
+  repeated: RepeatedCallState;
+  repeatLimitExceeded: boolean;
+  /** 已就空转 / 打转向模型纠偏过一次（第二次命中才中止）。 */
+  noOpSteered: boolean;
+  repeatSteered: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+/** 命中输出上限后默认自动续写轮数。 */
+export const DEFAULT_MAX_AUTO_CONTINUES = 2;
+/** 首轮请求遇到连接类错误的默认重试次数（仅在没有工具副作用时）。 */
+export const DEFAULT_MAX_CONNECTION_RETRIES = 2;
+/**
+ * 空转/打转的纠偏提示：用用户口吻说清楚"别打点、直接干活"，并点名可用工具。
+ * 只在第一次命中时注入一次；再犯才中止。
+ */
+const STALL_STEER_TEXT = [
+  "停一下：你刚才连续在用 echo、读取 /dev/null 这类没有任何作用的调用打点，任务没有推进。",
+  "不要再做这类调用，也不要重复同一条命令。",
+  "Office 文件（PPT/Excel/Word）的内容读写一律用对应工具：PPT 用 slides_read / slides_edit，",
+  "Excel 用 sheets_agent_read / sheets_agent_edit，Word 用 word_agent_read / word_agent_edit。",
+  "现在直接继续把用户要求的修改做完；如果缺少必要信息，就用一句话说明缺什么。",
+].join("");
+/** 续写提示词：只要求"接着写完"，避免模型重头再来或重新复述需求。 */
+const AUTO_CONTINUE_PROMPT = [
+  "上一轮输出被长度上限截断了，没有写完。",
+  "接着把剩下的部分做完：不要重复已经完成的修改，不要重新查已经读过的东西。",
+  "先一句话说明还差哪几项，然后直接动手完成，最后给出结论。",
+].join("");
 const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
 
 /** 项目空间里作为 project instructions 注入的约定文件（与 pi 的 context file 同名）。 */
@@ -283,6 +371,10 @@ function createBashSandboxExtension(
       if (deniedPatterns.some((pattern) => pattern.test(command))) {
         throw new Error("shell_command_denied_by_policy");
       }
+      // Office 文件只读放行，写入/重打包直接拦：提示词劝不住模型时，这里能省掉上百次
+      // 无效调用（实测有 run 连发 120 条 python heredoc 改 pptx，直到撞上调用上限）。
+      const officeViolation = officeBashViolation(command);
+      if (officeViolation) throw new Error(officeViolation);
       const input = getInput();
       if (!input) throw new Error("shell_run_context_missing");
       const approved = await runtime.requestBashApproval({
@@ -493,6 +585,7 @@ function compactHistoricalToolState(session: AgentSession): boolean {
 export class PiAgentRuntime implements AgentRuntime {
   readonly id = "pi";
   private readonly sessions = new Map<string, PiSessionHandle>();
+  private readonly pendingAgentCards = new Map<string, { resolve: (decision: PiAgentCardDecision) => void; timer: ReturnType<typeof setTimeout>; kind: "confirm" | "question" }>();
   private readonly activeRuns = new Map<string, ActivePiRun>();
   private modelRuntimePromise: Promise<ModelRuntime> | null = null;
 
@@ -575,6 +668,72 @@ export class PiAgentRuntime implements AgentRuntime {
   /** edit/write 文件变更审批（ask_before_write 档；其余档在入口直接放行）。 */
   async requestEditApproval(request: PiBashApprovalRequest): Promise<boolean> {
     return this.requestToolApproval({ ...request, kind: "edit", toolName: request.toolName ?? "edit" });
+  }
+
+  /**
+   * 通用决策卡：把 confirm/question 卡片作为 approval.requested(kind:"card") 事件
+   * 推进当前 run 的事件流，挂起等待用户在 UI 上作答（resolveApproval 带 choice/text
+   * 回填）。与 bash 审批共用同一条阻塞往返管道，超时按拒绝/空答收口。
+   */
+  async requestAgentCard(request: PiAgentCardRequest): Promise<PiAgentCardDecision> {
+    const active = this.activeRuns.get(request.input.runId);
+    const timeoutMs = Math.max(1_000, request.timeoutMs ?? 10 * 60_000);
+    active?.queue.push({
+      type: "approval.requested",
+      payload: {
+        approvalId: request.approvalId,
+        kind: "card",
+        toolName: request.card.kind === "confirm" ? "agent_confirm" : "agent_ask_user",
+        command: request.card.title,
+        cwd: null,
+        timeoutMs,
+        card: request.card,
+      },
+    });
+    const decision = await new Promise<PiAgentCardDecision>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAgentCards.delete(request.approvalId);
+        resolve({ choice: request.card.kind === "confirm" ? "denied" : "", text: "timeout" });
+      }, timeoutMs);
+      timer.unref?.();
+      this.pendingAgentCards.set(request.approvalId, { resolve, timer, kind: request.card.kind });
+    });
+    active?.queue.push({
+      type: "approval.resolved",
+      payload: {
+        approvalId: request.approvalId,
+        approved: request.card.kind === "confirm" ? decision.choice === "approved" : decision.choice !== "" || Boolean(decision.text),
+        choice: decision.choice,
+        ...(decision.text ? { text: decision.text } : {}),
+      },
+    });
+    return decision;
+  }
+
+  /**
+   * run 被取消/中止时把挂起的决策卡按形态收口：confirm 按取消、question 按空答，
+   * 工具拿到正常结果而不是 "Pi tool execution aborted"——卡片挂起期间用户点重试/停止
+   * 不会再把工具标成失败（2026-11-06 实测：confirm 卡挂起时 run 被重试取消，工具行
+   * 显示 aborted，用户以为确认功能坏了）。
+   */
+  private cancelPendingAgentCards(reason: string): void {
+    for (const pending of this.pendingAgentCards.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(pending.kind === "confirm"
+        ? { choice: "denied", text: reason }
+        : { choice: "", text: reason });
+    }
+    this.pendingAgentCards.clear();
+  }
+
+  /** UI 侧回填决策卡作答（gateway 的 resolveApproval 路由转发到这里）。 */
+  resolveAgentCard(approvalId: string, decision: PiAgentCardDecision): boolean {
+    const pending = this.pendingAgentCards.get(approvalId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pendingAgentCards.delete(approvalId);
+    pending.resolve(decision);
+    return true;
   }
 
   private async requestToolApproval(request: PiBashApprovalRequest & { kind: "shell" | "edit" }): Promise<boolean> {
@@ -707,6 +866,13 @@ export class PiAgentRuntime implements AgentRuntime {
       toolLimitExceeded: false,
       noOpStreak: 0,
       noOpLimitExceeded: false,
+      toolResults: createToolResultDedupeState(),
+      autoContinues: 0,
+      continuing: false,
+      repeated: createRepeatedCallState(),
+      repeatLimitExceeded: false,
+      noOpSteered: false,
+      repeatSteered: false,
       terminal: false,
       finishPromise: null,
     };
@@ -734,6 +900,7 @@ export class PiAgentRuntime implements AgentRuntime {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.cancelled = true;
+    this.cancelPendingAgentCards("run_cancelled");
     try {
       await active.handle.session.abort();
       await this.finish(runId, "cancelled");
@@ -752,6 +919,7 @@ export class PiAgentRuntime implements AgentRuntime {
 
   async dispose(): Promise<void> {
     const activeRuns = [...this.activeRuns.entries()];
+    this.cancelPendingAgentCards("runtime_disposed");
     await Promise.all(activeRuns.map(async ([runId, active]) => {
       active.cancelled = true;
       try {
@@ -909,10 +1077,15 @@ export class PiAgentRuntime implements AgentRuntime {
             ),
             signal,
           );
+          const clamped = clampToolResultText(
+            result.content,
+            this.config.maxToolResultChars ?? 0,
+          );
           return {
             content: [{
               type: "text" as const,
-              text: clampToolResultText(result.content, this.config.maxToolResultChars ?? 0),
+              // 同一 run 内字节级相同的大结果只保留一份，避免重复快照反复进上下文。
+              text: active ? dedupeToolResult(active.toolResults, tool.name, clamped) : clamped,
             }],
             details: result.details ?? {},
           };
@@ -1019,6 +1192,14 @@ export class PiAgentRuntime implements AgentRuntime {
             `当前界面 locale：${responseLanguage}。除非用户明确要求本次输出使用另一种语言，所有 Agent 生成的自然语言内容（包括聊天答复、总结、文档标题和文档正文）都必须使用 ${responseLanguage} 对应的主要语言；代码、路径、引用、专有名词和用户原文保持原样。`,
           );
         }
+        const workspaceId = context.current?.workspaceId?.trim();
+        if (workspaceId) {
+          const workspaceLabel = context.current?.workspaceLabel?.trim();
+          lines.push(
+            `当前工作区：${workspaceLabel || workspaceId}（workspaceId: ${workspaceId}）。文件检索与产物入库默认作用于该工作区（未指定 workspaceId 的工具按会话归属自动落到这里）；除非用户明确要求，不要把检索范围或产物落到其他工作区。`,
+          );
+        }
+
         // 用户画像：长期记忆沉淀的「关于用户本人」的稳定信息。放在语言约定之后、
         // 工具说明之前——它是先验认知，不是本轮任务，所以给的是「怎么用」而不是指令。
         const userProfile = context.current?.userProfilePrompt?.trim();
@@ -1029,7 +1210,7 @@ export class PiAgentRuntime implements AgentRuntime {
         const hasConnectorTools = customTools.some((tool) => tool.name.startsWith("connector_"));
         if (hasDocumentTools && hasConnectorTools) {
           lines.push(
-            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverRoom 工作区文稿。只有用户明确要求创建、读取或修改 EverRoom 工作区文稿时才使用 document_* 工具。",
+            "外部服务请求必须优先使用 connector 工具；不要把 Gmail、GitHub、Notion、Google Drive、Slack、Dropbox 或其他第三方服务误当成 EverOffice 工作区文稿。只有用户明确要求创建、读取或修改 EverOffice 工作区文稿时才使用 document_* 工具。",
           );
         }
         if (context.current?.toolsEnabled !== false) {
@@ -1112,9 +1293,10 @@ export class PiAgentRuntime implements AgentRuntime {
       active.handle.session.setActiveToolsByName(
         this.activeToolNamesFor(input, active.handle.toolNames),
       );
-      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照，
-      // 提示词只保留「直接创建、不追问归属」的工作区级指引。
-      const roomContext = "工作区文稿一律按工作区级文稿创建，用户要求创建、保存或写入文档时直接调用 document_write_begin，不需要用户先选择或确认归属，也不要只用文字追问归属。";
+      // Phase 2i 后无 Room 维度：文稿一律工作区级，run 不再携带 Room 快照。
+      // 2026-11 Markdown 文稿链路下线后不再注入「直接调 document_write_begin」的
+      // 指引——那会诱导模型调用不存在的工具。正式文稿一律 office_create 生成。
+      const roomContext = "工作区的正式文稿（Word/Excel/PPT）由对应 Office 工具直接生成或修改：用户要求创建或写入文档时，按格式选 office_create / sheets_create / slides_create，不需要用户先选择或确认归属，也不要只用文字追问归属。";
       const documentContext = input.activeDocument
         ? [
             `当前活动文档：${input.activeDocument.title}（ID: ${input.activeDocument.documentId}，版本: ${input.activeDocument.version}）。`,
@@ -1124,10 +1306,10 @@ export class PiAgentRuntime implements AgentRuntime {
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
         : input.activeFile
-          // 有 Office 页签时不要再说“没有活动文档，去调 document_list”：
-          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜文稿。
-          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先调 document_list。"
-          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 document_list 触发选择。";
+          // 有 Office 页签时不要再说“没有活动文稿，去翻文稿库”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜。
+          ? "当前视口没有文档内核里的活动文稿；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先去搜索文档。"
+          : "当前视口没有已确认的活动文稿；若用户明确要求修改已有文件，先用 file_search 定位 fileId 再走对应的读写工具。";
       // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
       // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
       const activeFileContext = buildActiveFileContext(input.activeFile);
@@ -1144,8 +1326,8 @@ export class PiAgentRuntime implements AgentRuntime {
         : [
             `本轮执行 ID：${input.runId}。这是同一对话中的一次全新工具执行。`,
             "历史对话只用于理解用户意图；历史 run 的 readReceipt、operationId、patchId、工具结果和工具错误均已失效，不得复用，也不得把历史错误当成本轮结果直接回复用户。",
-            "如果用户本轮明确要求创建、续写或修改文档，必须在本轮重新完成所需工具链。文档正文一律先经 document_draft 生成；修改或续写已有文档时不要先调用 document_read——直接调用 document_draft（网关会读取权威版本组装素材并为本轮代签读取凭证），随后凭返回的 invocationId 完成 patch_begin、patch_hunk 和 patch_commit，除非本轮工具返回不可恢复错误。仅当用户询问文档内容本身时才使用 document_read。",
-            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或 patch markdown；这些都是 Agent 应通过工具获取和组织的内部参数。",
+            "如果用户本轮明确要求创建或修改文档，必须在本轮重新完成所需工具链：新文稿按格式直接用 office_create / sheets_create / slides_create 生成；修改已有文件先 file_search 定位，再走 word_agent_* / sheets_agent_* / slides_read + slides_edit。除非本轮工具返回不可恢复错误，不要把生成推迟到下一轮。",
+            "不得要求用户提供 readReceipt、operationId、patchId、blockId 或操作句柄；这些都是 Agent 应通过工具获取和组织的内部参数。",
           ].join("\n");
       const prompt = [
         `当前工作区：${input.pageLabel}`,
@@ -1171,7 +1353,8 @@ export class PiAgentRuntime implements AgentRuntime {
         mimeType: attachment.mimeType,
       }));
       try {
-        await active.handle.session.prompt(
+        await this.promptWithConnectionRetry(
+          active,
           promptText,
           { expandPromptTemplates: false, source: "rpc", ...(images?.length ? { images } : {}) },
         );
@@ -1182,7 +1365,10 @@ export class PiAgentRuntime implements AgentRuntime {
         }
         throw error;
       }
-      if (!active.terminal) await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
+      // 自动续写进行中时不能在这里收尾：真正的结束由续写那轮的 agent_settled 决定。
+      if (!active.terminal && !active.continuing) {
+        await this.finish(input.runId, active.cancelled ? "cancelled" : "completed");
+      }
     } catch (error) {
       if (active.cancelled) {
         await this.finish(input.runId, "cancelled");
@@ -1263,11 +1449,31 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
+      // 打转守卫：同一工具 + 完全相同的参数连续多次（实测有任务把同一条 python
+      // heredoc 刷了约 170 次、跑 7 分钟而没有任何文件被改），直接中止。
+      const repeatLimit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+      const repeatHit = trackRepeatedCall(active.repeated, event.toolName, event.args, repeatLimit);
+      const repeatAction = resolveStallAction(repeatHit, active.repeatSteered);
+      if (repeatAction === "steer") {
+        active.repeatSteered = true;
+        active.repeated = createRepeatedCallState();
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (repeatAction === "abort") {
+        active.repeatLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       // 空转守卫：连续多次"打点式"调用（echo / read /dev/null）说明模型在原地转圈，
       // 继续跑只会刷满时间线而不推进任务，直接中止并如实报告。
       const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
       active.noOpStreak = isNoOpToolCall(event.toolName, event.args) ? active.noOpStreak + 1 : 0;
-      if (noOpLimit > 0 && active.noOpStreak >= noOpLimit) {
+      const noOpHit = noOpLimit > 0 && active.noOpStreak >= noOpLimit;
+      const noOpAction = resolveStallAction(noOpHit, active.noOpSteered);
+      if (noOpAction === "steer") {
+        active.noOpSteered = true;
+        active.noOpStreak = 0;
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (noOpAction === "abort") {
         active.noOpLimitExceeded = true;
         void this.abortForToolLimit(runId);
         return;
@@ -1287,29 +1493,109 @@ export class PiAgentRuntime implements AgentRuntime {
         payload: { toolCallId: event.toolCallId, name: event.toolName, result: event.result },
       });
     } else if (event.type === "agent_settled") {
+      active.continuing = false;
       const sessionError = active.handle.session.state.errorMessage;
       const lastAssistant = [...active.handle.session.state.messages]
         .reverse()
         .find((message) => message.role === "assistant");
       const outputLimitReached = active.stopReason === "length"
         || (lastAssistant?.role === "assistant" && lastAssistant.stopReason === "length");
+      // 命中输出上限先自动续写（工作记忆都还在，只差把剩下的输出补完），
+      // 续满次数才判失败——否则用户每次都得手动点"继续"或重述需求。
+      const autoContinueLimit = this.config.maxAutoContinuesPerRun ?? DEFAULT_MAX_AUTO_CONTINUES;
+      if (outputLimitReached && active.autoContinues < autoContinueLimit) {
+        active.autoContinues += 1;
+        void this.continueAfterOutputLimit(runId);
+        return;
+      }
       void this.finish(
         runId,
         active.cancelled
           ? "cancelled"
-          : active.toolLimitExceeded || active.noOpLimitExceeded || sessionError || outputLimitReached
+          : active.toolLimitExceeded || active.noOpLimitExceeded || active.repeatLimitExceeded
+            || sessionError || outputLimitReached
             ? "failed"
             : "completed",
         active.toolLimitExceeded
           ? new Error(this.toolLimitErrorMessage())
           : active.noOpLimitExceeded
             ? new Error(this.noOpLimitErrorMessage())
+            : active.repeatLimitExceeded
+              ? new Error(this.repeatLimitErrorMessage())
             : sessionError
             ? new Error(friendlyRunError(sessionError))
             : outputLimitReached
-              ? new Error("本次处理达到模型输出上限，未能生成最终结论。已保留处理过程，请缩小范围后重试。")
+              ? new Error(
+                  "本次处理达到模型输出上限，未能生成最终结论。已保留处理过程——" +
+                    "直接点「继续」即可接着做完，不必重新描述需求。",
+                )
               : undefined,
+        outputLimitReached ? "output_limit" : undefined,
       );
+    }
+  }
+
+  /**
+   * 首轮请求的连接抖动自动重试。
+   *
+   * SDK 把 DNS/超时/连接重置统一报成 "Connection error."；实测一个 run 在首包就挂掉
+   * （0 token、34 秒），用户只能看到一个英文短语再手动重发。此时还没有任何工具调用，
+   * 重发完全安全，所以按 1s/2s 退避重试两次；已经有工具副作用的不重试，避免重复执行。
+   */
+  private async promptWithConnectionRetry(
+    active: ActivePiRun,
+    promptText: string,
+    options: Parameters<AgentSession["prompt"]>[1],
+  ): Promise<void> {
+    const retries = this.config.maxConnectionRetries ?? DEFAULT_MAX_CONNECTION_RETRIES;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await active.handle.session.prompt(promptText, options);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const untouched = active.toolCallCount === 0 && active.content === "";
+        const retryable = CONNECTION_ERROR_PATTERN.test(message) && untouched && !active.cancelled;
+        if (!retryable || attempt >= retries) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 1_000 * (attempt + 1)));
+        if (active.terminal) throw error;
+      }
+    }
+  }
+
+  /**
+   * 纠偏：命中空转/打转时先往会话里塞一句用户口吻的提醒，而不是立刻杀掉。
+   * 注入失败（会话已结束等）就直接按超限中止，避免白等。
+   */
+  private async steerStall(runId: string, text: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    try {
+      await active.handle.session.steer(text);
+    } catch {
+      active.noOpLimitExceeded = true;
+      await this.abortForToolLimit(runId);
+    }
+  }
+
+  /**
+   * 命中输出上限后自动续写一轮：会话、工具结果、已完成修改都在上下文里，模型只要
+   * 接着把剩下的输出吐完即可。新一轮结束会再次触发 agent_settled，由那里正常收尾。
+   */
+  private async continueAfterOutputLimit(runId: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    active.continuing = true;
+    // 上一轮留下的 length 不能算到续写这轮头上，否则会一直判超限。
+    delete active.stopReason;
+    try {
+      await active.handle.session.prompt(AUTO_CONTINUE_PROMPT, {
+        expandPromptTemplates: false,
+        source: "rpc",
+      });
+    } catch (error) {
+      active.continuing = false;
+      await this.finish(runId, "failed", error, "output_limit");
     }
   }
 
@@ -1323,7 +1609,20 @@ export class PiAgentRuntime implements AgentRuntime {
   }
 
   private toolLimitErrorMessage(): string {
-    return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+    const limit = this.config.maxToolCallsPerRun;
+    return (
+      `本轮工具调用已达上限（${limit} 次）仍未完成，已自动中止。` +
+      "建议把任务拆小后重试；如果只是想看进度，请直接说明下一步要做什么，不要重复调用工具。"
+    );
+  }
+
+  /** 打转中止说明：告诉用户这不是业务失败，而是模型在重复同一条命令。 */
+  private repeatLimitErrorMessage(): string {
+    const limit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+    return (
+      `本次处理在原地打转：同一条工具调用（参数完全相同）连续重复了 ${limit} 次，` +
+      "没有任何实际进展，已自动中止。可以把任务说得更具体一些，或换个方式描述目标后重试。"
+    );
   }
 
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */
@@ -1394,6 +1693,7 @@ export class PiAgentRuntime implements AgentRuntime {
   private async abortForToolLimit(runId: string): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active || active.terminal) return;
+    this.cancelPendingAgentCards("run_aborted");
     try {
       await active.handle.session.abort();
     } catch {
@@ -1406,6 +1706,8 @@ export class PiAgentRuntime implements AgentRuntime {
     runId: string,
     outcome: "completed" | "failed" | "cancelled",
     error?: unknown,
+    /** 失败原因分类：界面据此给不同动作（output_limit → 直接"继续"）。 */
+    reason?: string,
   ): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active) return Promise.resolve();
@@ -1436,7 +1738,10 @@ export class PiAgentRuntime implements AgentRuntime {
       } else {
         active.queue.push({
           type: "run.failed",
-          payload: { message: finalError instanceof Error ? finalError.message : "Pi runtime failed" },
+          payload: {
+            message: finalError instanceof Error ? finalError.message : "Pi runtime failed",
+            ...(reason === undefined ? {} : { reason }),
+          },
         });
       }
 
@@ -1452,9 +1757,15 @@ export class PiAgentRuntime implements AgentRuntime {
 
 /** 运行失败文案翻译：上游 provider 的原始报错（如 404 model_not_found 的 JSON 串）
  *  对用户不可读，收口成可行动的提示；未识别的保持原文。 */
+/** 网络层失败：SDK 把 DNS/超时/连接重置统一说成 "Connection error."，对用户没有信息量。 */
+const CONNECTION_ERROR_PATTERN = /connection error|econnreset|econnrefused|econnaborted|etimedout|enotfound|eai_again|fetch failed|socket hang up|network error/i;
+
 export function friendlyRunError(raw: string): string {
   if (/model_not_found|Model not exist/i.test(raw)) {
     return "当前配置的模型在服务端不可用（可能已被上游下架，或渠道未配置）。请联系管理员检查模型配置后重试。";
+  }
+  if (CONNECTION_ERROR_PATTERN.test(raw)) {
+    return "连接模型服务失败（网络中断、代理异常或服务端暂时不可达）。本轮没有任何改动，网络恢复后直接重试即可。";
   }
   return raw;
 }

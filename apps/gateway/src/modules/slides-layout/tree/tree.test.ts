@@ -3,7 +3,7 @@ import { isLeaf, normalizeTree, type LayoutTree } from "./schema.js";
 import { contractFromStyleParams } from "./layout-contract.js";
 import { darkPageTheme, deriveCardSurface, mixHex, resolveTheme } from "../theme.js";
 import { compileTree } from "./compile.js";
-import { measureDefects, shrinkToFit } from "./measure.js";
+import { componentTextOverflow, measureDefects, shrinkToFit } from "./measure.js";
 import { auditSimilarity, treeSignature } from "./similarity.js";
 import { jpegDimensions, pngDimensions, resolveImageAr, resolveImageArs } from "./aspect-ratio.js";
 import { estimateLineHeight } from "../text-metrics.js";
@@ -259,8 +259,9 @@ describe("深色页组件主题视图", () => {
       (el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === "38")),
     );
     expect(numeral && numeral.type === "text" ? numeral.paragraphs[0]!.runs[0]!.color : undefined).toBe(dark.colors.text);
+    // 装饰收敛后 stats 不再画强调刻标：页面强调交给数字本体。
     const tick = result.spec.elements.some((el) => el.type === "shape" && el.fill === dark.colors.primary);
-    expect(tick).toBe(true);
+    expect(tick).toBe(false);
   });
 
   it("深色页 funnel：渐隐朝深色页底收淡，末级文字换浅色", () => {
@@ -404,7 +405,7 @@ describe("justify 打包", () => {
 });
 
 describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () => {
-  it("KPI 卡装不下卡框时自动缩字收敛，不溢出", () => {
+  it("KPI 卡装不下卡框时：先在 56–80pt 档内收缩，仍不够走布局错误通道", () => {
     const result = compileTree(tree({
       role: "data", title: "茶经立典",
       direction: "column", weights: [0.6, 1.6], children: [
@@ -419,8 +420,10 @@ describe("引擎硬闸镜像（真机 2026-10-15 第 4 页事故回归）", () =
       ],
     }), CONTRACT);
     const defects = measureDefects(result, CONTRACT);
-    expect(defects.some((d) => d.type === "overflow" && /KPI 卡/.test(d.detail))).toBe(false);
-    expect(result.spec.elements.length).toBeGreaterThan(0);
+    // 56pt 是核心数据的可读下限：更窄的槽位不再靠整体缩字号硬塞，报可执行缺陷。
+    const overflow = defects.find((d) => d.type === "overflow" && /KPI 卡/.test(d.detail));
+    expect(overflow).toBeTruthy();
+    expect(overflow!.detail).toMatch(/加大该子树权重或减少条目/);
   });
 
   it("只把引擎会拒的 emoji 判成 emoji，箭头与裸符号是合法文本", () => {
@@ -892,9 +895,9 @@ describe("组件层（component）", () => {
     }
   });
 
-  it("stats 展开元素数 = 每条 3 个 + 列间发丝线", () => {
+  it("stats 展开元素数 = 每条 2 个（标签+数字）+ 列间发丝线", () => {
     const result = compileTree(tree(COMPONENT_TREES.stats!), CONTRACT);
-    expect(result.stats.elements).toBe(2 * 3 + 1 + 1); // 2×(刻+标签+数字) + 列间线 + 标题带
+    expect(result.stats.elements).toBe(2 * 2 + 1 + 1); // 2×(标签+数字) + 列间线 + 标题带
   });
 
   it("featureCards 非法 icon 名被归一拦截", () => {
@@ -1304,7 +1307,7 @@ describe("P0 扩展：质感层", () => {
   });
 
   it("页脚契约：brand/label/页码注入常规页，整页构图自动跳过", () => {
-    const contract = contractFromStyleParams({ footer: { brand: "EverRoom", label: "对外资料", pageNumbers: true } });
+    const contract = contractFromStyleParams({ footer: { brand: "EverOffice", label: "对外资料", pageNumbers: true } });
     const normal = compileTree(tree({
       role: "content", title: "常规页", direction: "row",
       children: [{ type: "text", variant: "body", text: "正文" }],
@@ -1313,7 +1316,7 @@ describe("P0 扩展：质感层", () => {
       (el) => el.type === "text" && el.y > 680,
     ) as TextElement[];
     const texts = footerTexts.flatMap((el) => el.paragraphs.flatMap((p) => p.runs.map((r) => r.text)));
-    expect(texts).toContain("EverRoom");
+    expect(texts).toContain("EverOffice");
     expect(texts).toContain("对外资料");
     expect(texts).toContain("7 / 24");
     // 封面（省略 title）无页脚
@@ -1560,16 +1563,19 @@ describe("批次2 扩展：五个新组件", () => {
           { name: "团队版", price: "¥198", unit: "/人/月", features: ["50 人以内", "社区支持"] },
           { name: "企业版", price: "¥398", unit: "/人/月", features: ["人数不限", "私有部署", "SLA"], cta: "选择企业版" },
         ], featured: 1 }] }), CONTRACT);
-    // featured = 一块 ink 反白卡 + 强调色顶条 + 实心按钮；两档同一基线。
+    // featured = 浅强调底 + 一条强调边 + 实心按钮（不叠顶条/反白/阴影）；两档同一基线。
     const featuredCards = result.spec.elements.filter(
-      (el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100 && el.fill === CONTRACT.theme.colors.text,
+      (el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100 && el.fill === mixHex(CONTRACT.theme.colors.primary, CONTRACT.theme.colors.background, 0.88),
     ) as { x: number; y: number; w: number; h: number }[];
     expect(featuredCards.length).toBe(1);
+    const stroked = result.spec.elements.filter(
+      (el) => el.type === "shape" && el.shape === "roundRect" && el.h > 100 && (el as { stroke?: { color: string } }).stroke?.color === CONTRACT.theme.colors.primary,
+    );
+    expect(stroked.length).toBe(1); // featured 的一条强调边
     const solids = result.spec.elements.filter((el) => el.type === "shape" && el.fill === CONTRACT.theme.colors.primary);
-    expect(solids.length).toBeGreaterThanOrEqual(2); // 顶条 + 按钮
+    expect(solids.length).toBeGreaterThanOrEqual(1); // 实心按钮
     const bars = result.spec.elements.filter((el) => el.type === "shape" && el.shape === "rect" && el.h === 4) as { x: number; w: number; y: number }[];
-    expect(bars.length).toBe(1);
-    expect(bars[0]!.x).toBeGreaterThanOrEqual(featuredCards[0]!.x); // 顶条覆盖卡顶（平铺时与卡同宽）
+    expect(bars.length).toBe(0); // 顶条已取消
     // 两档文字都在页面上（非 featured 档平铺在纸面）。
     for (const name of ["团队版", "企业版"]) {
       expect(result.spec.elements.some((el) => el.type === "text" && el.paragraphs.some((p) => p.runs.some((r) => r.text === name))), name).toBe(true);
@@ -1797,5 +1803,22 @@ describe("indexHeader 与 eraRail（fork 转正）", () => {
     }), CONTRACT);
     const defects = measureDefects(result, CONTRACT);
     expect(defects.some((d) => d.type === "overflow" && /统一短年代格式/.test(d.detail))).toBe(true);
+  });
+});
+
+describe("componentTextOverflow：组件展开产物的文本量测（预检复用口径）", () => {
+  const textEl = (text: string, w: number, h: number, sizePt = 18) => ({
+    type: "text" as const, x: 0, y: 0, w, h,
+    paragraphs: [{ runs: [{ text, sizePt }] }],
+  });
+
+  it("文字估算高度超出元素框时返回溢出描述", () => {
+    const overflow = componentTextOverflow([textEl("长".repeat(200), 200, 40)]);
+    expect(overflow).toMatch(/文本量测溢出/);
+  });
+
+  it("装得下时返回 null；非文本元素跳过", () => {
+    expect(componentTextOverflow([textEl("短文案", 200, 40)])).toBeNull();
+    expect(componentTextOverflow([{ type: "image", x: 0, y: 0, w: 100, h: 100, url: "u" }])).toBeNull();
   });
 });

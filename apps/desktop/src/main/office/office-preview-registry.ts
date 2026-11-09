@@ -15,6 +15,8 @@ import {
   onOfficeFileSaved,
   wireDocsAgentAsk,
   wireDocsAskQueue,
+  wireMarkdownAgentAsk,
+  wireMarkdownAskQueue,
   wireOfficeSavedHooks,
   wirePdfAgentAsk,
   wirePdfAskQueue,
@@ -58,9 +60,11 @@ import {
   type AgentPdfFileHints,
   type AgentPdfFailureReason,
 } from './office-agent-pdf-session'
+import { AgentSlidesSessionManager } from './office-agent-slides-session'
 import { writeBackEditedDocument } from './write-back'
 import { PdfViewManager } from './pdf-view-manager'
 import { SlidesViewManager } from './slides-view-manager'
+import { MarkdownViewManager } from './markdown-view-manager'
 import { SpreadsheetViewManager } from './spreadsheet-view-manager'
 import { logOfficeDiag } from './office-diag'
 
@@ -175,14 +179,14 @@ export type AgentArtifactToolsOutcome =
 
 export type SlidesEditArtifactOutcome =
   | { ok: true; info?: AgentSlidesDeckInfo; result?: AgentSlidesEditResult }
-  | { ok: false; reason: 'not_open' | 'not_editable'; open?: OpenOfficeInstanceInfo[] }
+  | { ok: false; reason: 'not_open' | 'not_editable'; message?: string; open?: OpenOfficeInstanceInfo[] }
 
 /** 保存回填的 per-file 状态：独立于视图存活（导入只需要磁盘工作副本）。 */
 interface EditSyncState {
   filePath: string
   originalName: string
-  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets/pdf → docx/pptx/xlsx/pdf）。 */
-  kind: 'docx' | 'slides' | 'spreadsheet' | 'pdf'
+  /** sourceKey 前缀与广播 format 按形态派生（word/slides/sheets/pdf/markdown → docx/pptx/xlsx/pdf/md）。 */
+  kind: 'docx' | 'slides' | 'spreadsheet' | 'pdf' | 'markdown'
   roomId: string | null
   /** 条目归属工作区：保存回填重导入时带上，避免归属被重置（资料库按空间隔离）。 */
   workspaceId: string | null
@@ -253,6 +257,11 @@ export const officePreviewKindFor = officePreviewKindForFileName
  * 同一时刻只显示渲染端激活的那个（渲染端是焦点唯一事实源，open 不自动激活）。
  * docx/pptx/xlsx 产物可编辑：保存事件去抖后按 fileEntryId 钉住条目重导入（版本链 +1）。
  */
+/** genoffice 主机级"会话丢失"错误（registry 实例在、slides session 不在）→ 按 not_open 处置。 */
+export function genofficeSessionGone(error: unknown): boolean {
+  return typeof error === 'string' && /no slides session|the slides view is gone/u.test(error);
+}
+
 export class OfficePreviewRegistry {
   private runtime: PreparedGenOfficeRuntime | null = null
   private window: BrowserWindow | null = null
@@ -270,6 +279,7 @@ export class OfficePreviewRegistry {
   private agentSheets: AgentSheetSessionManager | null = null
   /** 未打开文件的后台 PDF 编辑会话（同上；pdf embed 无 sidecar）。 */
   private agentPdfs: AgentPdfSessionManager | null = null
+  private agentSlides: AgentSlidesSessionManager | null = null
   /** Agent 后台编辑的文件解析端口（index.ts 注入文件库访问）。 */
   private agentFileResolver: ((fileId: string) => Promise<AgentDocFileMeta | null>) | null = null
   /** 后台会话的保存回填订阅（fileId → unsubscribe）。 */
@@ -388,6 +398,20 @@ export class OfficePreviewRegistry {
       runtime.pdf.pushPdfAskQueue(wcId, pdfRows)
       return true
     }
+    if (instance.descriptor.kind === 'markdown') {
+      if (typeof runtime.markdown.pushMarkdownAskQueue !== 'function') return false
+      // 锚型与评论侧车一致：块索引（复用 fromBlockIndex）+ 摘要 + 块内偏移；
+      // 渲染层用模糊匹配器还原范围，缺 excerpt 的行也能锚到整块。
+      const mdRows = rows.map((item) => ({
+        id: item.id,
+        instruction: item.instruction,
+        ...(item.excerpt ? { excerpt: item.excerpt } : {}),
+        blockIndex: item.anchor?.fromBlockIndex ?? 0,
+        ...(item.anchor?.offset !== undefined ? { offset: item.anchor.offset } : {}),
+      }))
+      runtime.markdown.pushMarkdownAskQueue(wcId, mdRows)
+      return true
+    }
     return false
   }
 
@@ -438,14 +462,14 @@ export class OfficePreviewRegistry {
     this.agentPdfs = null
   }
 
-  /** 是否有正在显示的 docs 页签（应用菜单接管闸门；后台会话不算）。 */
+  /** 是否有正在显示的文档编辑页签（应用菜单接管闸门；后台会话不算）。 */
   hasActiveDocInstance(): boolean {
     if (!this.activeId) return false
     return this.instances.get(this.activeId)?.descriptor.kind === 'docx'
   }
 
   /**
-   * EverRoom 宿主控制「干净画布」：隐藏/显示当前 Word 编辑器的操作区
+   * EverOffice 宿主控制「干净画布」：隐藏/显示当前 Word 编辑器的操作区
    * （Ribbon/状态栏/标尺/导航）。hidden 省略 = 切换。返回是否命中可见实例；
    * 渲染层自带恢复胶囊与 ⌘⇧F，隐藏后用户始终能恢复。
    */
@@ -567,7 +591,8 @@ export class OfficePreviewRegistry {
     })
     this.bindWindow(window)
     const runtime = this.ensureRuntime(window)
-    const editable = file.editable === true && kind !== 'pdf'
+    // PDF 与其他三类一致参与 editable（选区标注工具卡需要）；只读预览照旧。
+    const editable = file.editable === true
     const roomId = typeof file.roomId === 'string' && file.roomId ? file.roomId : null
     const requestedWorkspaceId = typeof file.workspaceId === 'string' && file.workspaceId.trim()
       ? file.workspaceId.trim()
@@ -684,6 +709,21 @@ export class OfficePreviewRegistry {
     }
     const wcId = instance?.view.webContentsId
     if (!instance || !this.runtime || typeof wcId !== 'number') {
+      // 文件未打开：page 落页转后台隐藏会话（与活会话同一条 applyAgentDeckPage 管线），
+      // 逐页生成不再依赖「用户恰好打开过这份 PPT」。read/ops 保持原 not_open 语义。
+      if (fileId !== 'active' && 'page' in req) {
+        const headless = this.ensureAgentSlides()
+        if (headless) {
+          const outcome = await headless.applyPage(fileId, req.page)
+          if (outcome.ok) return { ok: true, result: outcome.result }
+          return {
+            ok: false,
+            reason: 'not_open',
+            ...(outcome.message ? { message: outcome.message } : {}),
+            open: this.listOpenOffice(),
+          }
+        }
+      }
       return { ok: false, reason: 'not_open', open: this.listOpenOffice() }
     }
     if (instance.descriptor.kind !== 'slides') {
@@ -698,15 +738,19 @@ export class OfficePreviewRegistry {
     if (!instance.editable) {
       return { ok: false, reason: 'not_editable', open: this.listOpenOffice() }
     }
-    return {
-      ok: true,
-      result: 'page' in req
-        ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page, this.materialResolver() ?? undefined)
-        : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
-          dryRun: req.dryRun,
-          isolation: req.isolation,
-        }),
+    const result = 'page' in req
+      ? await this.runtime.slides.applyAgentDeckPage(wcId, req.page, this.materialResolver() ?? undefined)
+      : await this.runtime.slides.applyAgentDeckOps(wcId, req.ops, {
+        dryRun: req.dryRun,
+        isolation: req.isolation,
+      });
+    // registry 实例在、genoffice session 却不在（渲染端重载/初始化未完成/视图已销毁）：
+    // 两层注册表脱节。映射回 not_open 让 office-bridge 走「请渲染端重开 + 轮询重试」，
+    // 而不是把 ok:false 原样包进 ok:true 透传——后者在网关落页闸变成不可恢复的占位页。
+    if (genofficeSessionGone(result.error)) {
+      return { ok: false, reason: 'not_open', open: this.listOpenOffice() };
     }
+    return { ok: true, result };
   }
 
   /**
@@ -870,6 +914,36 @@ export class OfficePreviewRegistry {
     return this.agentPdfs
   }
 
+  /**
+   * 未打开的 PPT 的后台落页会话（惰性创建）：隐藏 slides 视图跑与活会话同一条
+   * applyAgentDeckPage 管线。运行时缺 createSlidesView 或没有主窗口/文件解析端口
+   * 时返回 null，调用方保持原 not_open 语义（office-bridge 再走「请渲染端打开」兜底）。
+   */
+  private ensureAgentSlides(): AgentSlidesSessionManager | null {
+    const resolver = this.agentFileResolver
+    if (!resolver) return null
+    if (this.agentSlides) return this.agentSlides
+    const window = this.window && !this.window.isDestroyed()
+      ? this.window
+      : BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
+    if (!window) return null
+    this.bindWindow(window)
+    const runtime = this.ensureRuntime(window)
+    if (typeof runtime.slides.createSlidesView !== 'function') return null
+    this.agentSlides = new AgentSlidesSessionManager({
+      slides: runtime.slides,
+      getWindow: () => (this.window && !this.window.isDestroyed() ? this.window : null),
+      resolveFile: resolver,
+      materialResolver: () => this.materialResolver() ?? null,
+      editSync: {
+        register: (input) => this.registerAgentEditState({ ...input, kind: 'slides' }),
+        drain: (fileId) => this.drainAgentEdits(fileId),
+        release: (fileId) => this.releaseAgentEditState(fileId),
+      },
+    })
+    return this.agentSlides
+  }
+
   /** 后台会话接入既有 editStates + fileSaved 回填链（与活实例编辑同一条导入路径）。 */
   private registerAgentEditState(input: {
     fileId: string
@@ -878,8 +952,8 @@ export class OfficePreviewRegistry {
     originalName: string
     roomId: string | null
     workspaceId: string | null
-    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel（xlsx），pdf = PDF。 */
-    kind: 'docx' | 'spreadsheet' | 'pdf'
+    /** 回填导入与广播的形态：docx = Word，spreadsheet = Excel，pdf = PDF，slides = PPT。 */
+    kind: 'docx' | 'spreadsheet' | 'pdf' | 'slides'
   }): () => void {
     this.editStates.set(input.fileId, {
       filePath: input.filePath,
@@ -936,6 +1010,45 @@ export class OfficePreviewRegistry {
   }
 
   /** Agent 读 Word：已打开实例优先；未打开则拉起后台编辑器（不弹页签）。 */
+  /**
+   * Agent 导出 PDF（word_export_pdf）：进程内渲染，替代 LibreOffice。
+   * 已打开实例优先（导的是用户正看到的版式）；未打开则拉起后台隐藏
+   * 会话。运行时缺 exportDocsPdf（老 genoffice 构建）时返回
+   * reason='unsupported'，调用方回退 LibreOffice 路径。
+   */
+  async exportDocxPdf(
+    fileId: string,
+    outPath: string,
+    hints?: AgentDocFileHints,
+  ): Promise<
+    | { ok: true; path: string }
+    | {
+      ok: false
+      reason: 'unsupported' | AgentArtifactFailureReason
+      message?: string
+    }
+  > {
+    const resolved = await this.resolveAgentInstance(fileId, 'docx', { waitForOpen: false })
+    if (resolved.ok) {
+      const target = webContents.fromId(resolved.wcId)
+      const docs = this.runtime!.docs
+      if (!target || target.isDestroyed() || typeof docs.exportDocsPdf !== 'function') {
+        return { ok: false, reason: 'unsupported' }
+      }
+      const exported = await docs.exportDocsPdf(target, outPath)
+      if ('error' in exported) return { ok: false, reason: 'error', message: exported.error }
+      return { ok: true, path: exported.path }
+    }
+    if (resolved.reason === 'not_editable') {
+      // 可见但只读打开：仍可用后台会话装载导出（导出不要求可编辑）
+    }
+    const headless = fileId === 'active' ? null : this.ensureAgentDocs()
+    if (!headless) return { ok: false, reason: resolved.reason }
+    const outcome = await headless.exportPdf(fileId, outPath, hints)
+    if (outcome.ok) return { ok: true, path: outcome.path }
+    return { ok: false, reason: outcome.reason, ...(outcome.message ? { message: outcome.message } : {}) }
+  }
+
   async describeDocArtifact(
     fileId: string,
     hints?: AgentDocFileHints,
@@ -1025,8 +1138,7 @@ export class OfficePreviewRegistry {
    * Agent 读 Excel：已打开实例优先（读也走用户现场的会话，不拿隐藏工作簿顶替）；
    * 未打开（或 UI 没有页签）则拉起后台隐藏工作簿会话。可见但不是表格、或
    * fileId 'active' 解析不到可见实例时保持原 not_open/not_editable 语义。
-   */
-  async describeSpreadsheetArtifact(
+   */  async describeSpreadsheetArtifact(
     fileId: string,
     hints?: AgentSheetFileHints,
   ): Promise<
@@ -1403,6 +1515,11 @@ export class OfficePreviewRegistry {
 
   /** 激活一个实例并隐藏其余；未知 id 返回 false。 */
   setActive(id: string | null): boolean {
+    // TEMP FIX(2026-11-06)：目标实例已经是当前激活实例时直接返回，不再翻转视图。
+    // 渲染端 NativeEditorHost 的可见性观测会自激重复调用本方法；原来每轮都会
+    // 把全部 view.setActive(false) 再对目标 setActive(true)，表现为预览区持续闪烁，
+    // 且关闭动作被下一次激活立刻覆盖。切换实例与 setActive(null) 的行为保持不变。
+    if (id !== null && this.activeId === id && this.instances.has(id)) return true
     if (id === null) {
       for (const instance of this.instances.values()) instance.view.setActive(false)
       this.activeId = null
@@ -1509,14 +1626,18 @@ export class OfficePreviewRegistry {
         ? 'slides'
         : state.kind === 'pdf'
           ? 'pdf'
-          : 'sheets'
+          : state.kind === 'markdown'
+            ? 'markdown'
+            : 'sheets'
     const format = state.kind === 'docx'
       ? 'docx'
       : state.kind === 'slides'
         ? 'pptx'
         : state.kind === 'pdf'
           ? 'pdf'
-          : 'xlsx'
+          : state.kind === 'markdown'
+            ? 'md'
+            : 'xlsx'
     const input = {
       filePath: state.filePath,
       originalName: state.originalName,
@@ -1611,7 +1732,17 @@ export class OfficePreviewRegistry {
       return { view, documentPath: view.documentPath }
     }
     if (kind === 'pdf') {
-      return { view: await PdfViewManager.create(window, runtime.pdf, file), documentPath: null }
+      // editable 与其他三类一致：选区标注工具卡（高亮/下划线/删除线）需要
+      // 可编辑打开；只读预览保持原 readonly=1 行为。工作副本路径同样交给
+      // 编辑回填（editStates.filePath）。
+      const view = await PdfViewManager.create(window, runtime.pdf, file, { editable })
+      return { view, documentPath: view.documentPath }
+    }
+    if (kind === 'markdown') {
+      // markdown 与 pdf 同一套工作副本快照模型；everroom hostMode（操作栏
+      // 收起默认开、自带 AI 面板折叠）由 MarkdownViewManager 内部决定。
+      const view = await MarkdownViewManager.create(window, runtime.markdown, file, { editable })
+      return { view, documentPath: view.documentPath }
     }
     const view = await SpreadsheetViewManager.create(window, runtime.sheets, file, { editable })
     return { view, documentPath: view.documentPath }
@@ -1654,6 +1785,11 @@ export class OfficePreviewRegistry {
         resolveInstance: (wcId) => this.findByWebContentsId(wcId),
         forward: this.agentAskForward,
       })
+      // Markdown 选区「评论」浮层：与评论侧车同一锚型（块索引 + 摘要 + 偏移）。
+      wireMarkdownAgentAsk(this.runtime, {
+        resolveInstance: (wcId) => this.findByWebContentsId(wcId),
+        forward: this.agentAskForward,
+      })
       // 批注队列：编辑器内锚点动作 ↔ 宿主（队列事实只在宿主侧）。
       if (this.askQueueActionForward) {
         const queueDeps = {
@@ -1664,6 +1800,7 @@ export class OfficePreviewRegistry {
         wireSheetsAskQueue(this.runtime, queueDeps)
         wireSlidesAskQueue(this.runtime, queueDeps)
         wirePdfAskQueue(this.runtime, queueDeps)
+        wireMarkdownAskQueue(this.runtime, queueDeps)
       }
     }
     // AI 页签论文排版桥（注入晚于首开也在此补挂，幂等）。
@@ -1672,8 +1809,8 @@ export class OfficePreviewRegistry {
     this.runtime.docs.setDocsShellWindow(window)
     this.runtime.sheets.setSheetsShellWindow(window)
     this.runtime.slides.setSlidesShellWindow(window)
-    // 后台保存会 pushRecent → buildDocsMenu；只有可见 docs 页签活跃时才允许
-    // docs 接管应用菜单，否则关掉页签后的后台编辑会改掉整个应用的菜单。
+    // 后台保存会 pushRecent → buildDocsMenu；只有可见的文档编辑页签活跃时才
+    // 允许 docs 接管应用菜单，否则关掉页签后的后台编辑会改掉整个应用的菜单。
     if (typeof this.runtime.docs.setDocsMenuGate === 'function') {
       this.runtime.docs.setDocsMenuGate(() => this.hasActiveDocInstance())
     }

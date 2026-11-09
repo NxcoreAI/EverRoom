@@ -126,7 +126,7 @@ async function writeLegacySpaceV1(root: string): Promise<{ spaceId: string }> {
     layoutVersion: 1,
     rootMode: "external",
     createdAt: "2026-01-01T00:00:00.000Z",
-    createdBy: { app: "EverRoom", version: "0.0.1", platform: "darwin" },
+    createdBy: { app: "EverOffice", version: "0.0.1", platform: "darwin" },
     layout: {
       library: "Library",
       memory: "Memory",
@@ -337,14 +337,14 @@ describe("project space layout (P0/v2)", () => {
     });
     expect(notSpace.json()).toEqual({ status: "missing" });
 
-    // 同一个目录不能再挂第二个空间。
+    // 同一个目录不能再挂第二个空间（目录冲突统一 409，与 /v1/workspaces/adopt 同口径）。
     const conflict = await app.inject({
       method: "POST",
       url: "/v1/agent/workspaces",
       headers,
       payload: { name: "Copy cat", path: root },
     });
-    expect(conflict.statusCode).toBe(400);
+    expect(conflict.statusCode).toBe(409);
     expect(conflict.json<{ error: string }>().error).toBe("space_marker_conflict");
 
     await app.close();

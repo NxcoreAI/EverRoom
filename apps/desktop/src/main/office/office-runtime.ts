@@ -71,7 +71,7 @@ export interface GenOfficeDocsRuntime {
   /** 应用菜单接管闸门：仅当可见 docs 实例活跃时才允许 docs 菜单覆盖应用菜单。 */
   setDocsMenuGate(gate: (() => boolean) | null): void
   /**
-   * 干净画布（EverRoom）：隐藏/显示编辑器操作区（Ribbon/状态栏/标尺/导航）。
+   * 干净画布（EverOffice）：隐藏/显示编辑器操作区（Ribbon/状态栏/标尺/导航）。
    * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
    */
   setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
@@ -94,7 +94,7 @@ export interface GenOfficeDocsRuntime {
       | null,
   ): void
   /**
-   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 选区「AI 修改」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
    * 载荷只描述选区（顶层块索引区间 + 类型 + 文本摘要），不带任何 id。
    */
   setDocsAgentAskHook(
@@ -110,13 +110,18 @@ export interface GenOfficeDocsRuntime {
             blockType?: string
             /** 'queue' = 攒成批注一起发；缺省立即发送。 */
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
   ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
   setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
-  /** AI 页签论文排版面板：embed 宿主接管（wcId 反查 Room 与文件；payload 不带 id）。 */
+  /**
+   * AI 页签论文排版面板：embed 宿主接管（wcId 反查文件；payload 不带 id）。
+   * Room 已删除：本仓库不再返回 no_room，联合类型保留兼容旧契约。
+   */
   setDocsThesisPanelHook(
     hook:
       | ((
@@ -156,6 +161,16 @@ export interface GenOfficeDocsRuntime {
     contents: WebContents,
     calls: GenOfficeAgentToolCall[],
   ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 进程内 PDF 导出（genoffice embed 后加导出）：把该视图打开的 docx 按
+   * 渲染层完整导出编排（分页预览 → 分组 printToPDF → 合并）写成 PDF，
+   * 无对话框、无外部依赖。老运行时缺此导出时返回 undefined，调用方回退
+   * LibreOffice。宿主只授权一次写入目标路径。
+   */
+  exportDocsPdf?(
+    contents: WebContents,
+    outPath: string,
+  ): Promise<{ path: string } | { error: string }>
   /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
   buildThesisDocx(
     sourceBytes: Uint8Array,
@@ -269,7 +284,7 @@ export interface GenOfficeSheetsRuntime {
   /** 未保存编辑条数（>0 = 脏）：Agent 写回工作副本前的闸门。 */
   sheetsPendingEditCount(webContentsId: number): number
   /**
-   * 选区「AI 修改」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 选区「AI 修改」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
    * 载荷带工作表 id（sheets 工具按 sheetId 定位）+ A1 区域 + 指令。
    */
   setSheetsAgentAskHook(
@@ -284,6 +299,8 @@ export interface GenOfficeSheetsRuntime {
             /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'workbook' = 极简条快捷能力（整簿作用，无选区锚点）。 */
+            scope?: 'workbook'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -397,6 +414,8 @@ export interface GenOfficeSlidesRuntime {
             /** 选区纯文本摘要（≤200 字）。 */
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'page' = 极简条快捷能力（当前页作用，无元素目标）。 */
+            scope?: 'page'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -435,6 +454,77 @@ export interface GenOfficeSlidesRuntime {
   ): Promise<{ pngBase64: string } | { error: string }>
 }
 
+/** @genoffice/markdown embed 入口（feat/everroom-ai-tab 8d98310 起）。 */
+export interface GenOfficeMarkdownRuntime {
+  configureMarkdownRuntime(config: {
+    preloadPath: string
+    rendererUrl?: string
+    rendererFile?: string
+  }): void
+  /** 显式注册（createMarkdownView 内部也会兜底调用一次）。 */
+  registerMarkdownIpc(): void
+  createMarkdownView(
+    openPath?: string | null,
+    options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
+  ): WebContentsView
+  requestMarkdownClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  requestMarkdownSave(contents: WebContents, mode: 'save' | 'saveAs'): Promise<boolean>
+  markdownIsDirty(webContentsId: number): boolean
+  markdownFilePath(webContentsId: number): string | undefined
+  markdownFileRenamed(contents: WebContents, oldPath: string, newPath: string): void
+  sendMarkdownExportRequest(contents: WebContents, format: 'pdf' | 'docs' | 'docx'): void
+  sendMarkdownPrintRequest(contents: WebContents): void
+  /** 操作栏收起两态（docs/sheets 同款）：不传 hidden = 切换。 */
+  setMarkdownChromeHidden(contents: WebContents, hidden?: boolean): void
+  /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
+  setMarkdownFileSavedHook(hook: ((wc: WebContents, filePath: string) => void) | null): void
+  /** 就绪信号：渲染层装载完目标文件后上报；false = 超时/视图销毁/身份不符。 */
+  waitForMarkdownAgentReady?(
+    contents: WebContents,
+    expectedPath: string,
+    timeoutMs?: number,
+  ): Promise<boolean>
+  /**
+   * 选区「评论」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引 + 摘要 + 块内偏移，与评论侧车同一锚型）。
+   * 可选：老运行时缺这个导出时 wire 静默跳过，浮层保持关闭。
+   */
+  setMarkdownAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            blockIndex: number
+            excerpt?: string
+            offset?: number
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 markdown 视图（空数组 = 清空文档内锚点）。 */
+  pushMarkdownAskQueue?(
+    wcId: number,
+    items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      blockIndex: number
+      offset?: number
+    }>,
+  ): void
+  /** markdown 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setMarkdownAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
+  /** 视图销毁：清 IPC 状态映射 + 解除等待者。 */
+  teardownMarkdownRenderer(contents: WebContents): void
+}
+
 export interface GenOfficePdfRuntime {
   configurePdfRuntime(config: { preloadPath: string; rendererFile?: string }): void
   createPdfView(
@@ -459,7 +549,7 @@ export interface GenOfficePdfRuntime {
   /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
   setPdfFileSavedHook?(hook: ((wc: WebContents, filePath: string) => void) | null): void
   /**
-   * 选区「注释」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 选区「注释」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
    * 载荷带原始页序 + PDF 坐标 quads + 选区摘要。
    */
   setPdfAgentAskHook?(
@@ -472,6 +562,8 @@ export interface GenOfficePdfRuntime {
             quads: number[][]
             excerpt?: string
             mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
           },
         ) => Promise<{ ok: true } | { ok: false; error: string }>)
       | null,
@@ -495,6 +587,7 @@ export interface PreparedGenOfficeRuntime {
   sheets: GenOfficeSheetsRuntime
   slides: GenOfficeSlidesRuntime
   pdf: GenOfficePdfRuntime
+  markdown: GenOfficeMarkdownRuntime
   root: string
 }
 
@@ -518,6 +611,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const pdfMainEntry = join(root, 'pdf', 'main', 'embed.js')
   const pdfPreloadPath = join(root, 'pdf', 'preload', 'index.js')
   const pdfRendererFile = join(root, 'pdf', 'renderer', 'index.html')
+  const markdownMainEntry = join(root, 'markdown', 'main', 'embed.js')
+  const markdownPreloadPath = join(root, 'markdown', 'preload', 'index.js')
+  const markdownRendererFile = join(root, 'markdown', 'renderer', 'index.html')
   const sidecarPath = join(root, 'native', process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar')
   for (const path of [
     mainEntry,
@@ -532,6 +628,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
     pdfMainEntry,
     pdfPreloadPath,
     pdfRendererFile,
+    markdownMainEntry,
+    markdownPreloadPath,
+    markdownRendererFile,
     sidecarPath,
   ]) {
     if (!existsSync(path)) {
@@ -540,7 +639,7 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   }
 
   // The runtime is built independently and copied through extraResources, so
-  // it must stay outside EverRoom's electron-vite dependency graph.
+  // it must stay outside EverOffice's electron-vite dependency graph.
   const requireRuntime = createRequire(mainEntry)
   const docs = requireRuntime(mainEntry) as GenOfficeDocsRuntime
   docs.configureDocsRuntime({ preloadPath, rendererFile })
@@ -553,5 +652,11 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const pdfRequire = createRequire(pdfMainEntry)
   const pdf = pdfRequire(pdfMainEntry) as GenOfficePdfRuntime
   pdf.configurePdfRuntime({ preloadPath: pdfPreloadPath, rendererFile: pdfRendererFile })
-  return { docs, sheets, slides, pdf, root }
+  const markdownRequire = createRequire(markdownMainEntry)
+  const markdown = markdownRequire(markdownMainEntry) as GenOfficeMarkdownRuntime
+  markdown.configureMarkdownRuntime({
+    preloadPath: markdownPreloadPath,
+    rendererFile: markdownRendererFile,
+  })
+  return { docs, sheets, slides, pdf, markdown, root }
 }

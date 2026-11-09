@@ -285,7 +285,7 @@ function runVersion(command: string, timeoutMs: number, env: NodeJS.ProcessEnv):
 function card(provider: LocalAgentProvider, label: string, version: string | null): LocalAgentCard {
   return {
     name: `${label} Local`,
-    description: `本机 ${label} Agent（由 EverRoom Adapter 接入）`,
+    description: `本机 ${label} Agent（由 EverOffice Adapter 接入）`,
     version: version ?? 'unknown',
     supportedInterfaces: [],
     capabilities: { streaming: provider !== 'openclaw', pushNotifications: false },

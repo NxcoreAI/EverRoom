@@ -48,6 +48,15 @@ export interface DispatchSubagentInput {
    * 以该 id 注册跨模块运行时状态（如 PPT 逐页审阅闸门 arm）。
    */
   onInvocationId?: (invocationId: string) => void;
+  /**
+   * 续会话：传 deck 级稳定 sessionId + 上一轮返回的 runtimeSessionRef，多次 dispatch
+   * 共享同一 pi 会话（后轮看得到前轮上下文）。缺省每 dispatch 独立会话（原行为）。
+   * runId 恒为 invocationId——超时/事件/validate 按 run 隔离的语义不变。
+   */
+  runtimeSession?: {
+    sessionId: string;
+    runtimeSessionRef: string | null;
+  };
 }
 
 interface ActiveInvocation {
@@ -127,6 +136,7 @@ function toInvocation(row: typeof subagentInvocations.$inferSelect): SubagentInv
     result: row.result,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
+    runtimeSessionRef: row.runtimeSessionRef,
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString() ?? null,
     completedAt: row.completedAt?.toISOString() ?? null,
@@ -438,7 +448,7 @@ export class SubagentOrchestrator {
       invocationId,
       input.input ?? null,
     );
-    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs, input.onUsage);
+    const promise = this.executeInvocation(invocationId, definition, runtime, input.attachments, input.timeoutMs, input.onUsage, input.runtimeSession);
     this.active.set(invocationId, {
       runtime,
       promise,
@@ -499,6 +509,7 @@ export class SubagentOrchestrator {
     attachments?: RuntimeAttachment[],
     timeoutMsOverride?: number,
     onUsage?: DispatchSubagentInput["onUsage"],
+    runtimeSession?: DispatchSubagentInput["runtimeSession"],
   ): Promise<SubagentInvocation> {
     const startedAt = new Date();
     // 调用方只能收紧预算，不能突破 agent 定义的 policy；分批链路用更短的单批上限。
@@ -510,8 +521,8 @@ export class SubagentOrchestrator {
     const row = this.db.select().from(subagentInvocations)
       .where(eq(subagentInvocations.id, invocationId)).get();
     if (!row) throw new Error("subagent_invocation_not_found");
-    // Phase 2i 后无 Room 维度：子 run 不再从 dispatch input 读取 roomId 绑定
-    // 文档工具；子 Agent 的文档读取按工作区级（null scope）直接可用。
+    // 去 Room 后子 run 不再绑定房间：文档工具一律走工作区文稿（input.roomId 缺省即
+    // null），派发 input 里的历史 roomId 字段也不再解读。
     const invocationInput = row.input && typeof row.input === "object" && !Array.isArray(row.input)
       ? (row.input as Record<string, unknown>)
       : null;
@@ -533,11 +544,16 @@ export class SubagentOrchestrator {
     try {
       runtimeRun = await runtime.start({
         runId: invocationId,
-        sessionId: invocationId,
-        runtimeSessionRef: null,
+        // 续会话：deck 级稳定 sessionId + 上一轮 ref → 同一 pi 会话追加任务消息。
+        sessionId: runtimeSession?.sessionId ?? invocationId,
+        runtimeSessionRef: runtimeSession?.runtimeSessionRef ?? null,
         originalPrompt: row.task,
         prompt,
         pageLabel: `Subagent: ${definition.name}`,
+        // 去 Room：子 run 不再绑定房间，文档工具按工作区文稿解析。
+        roomId: null,
+        captureMemory: false,
+        recallMemory: false,
         toolsEnabled: true,
         // 结构化输入同时以元数据交给工具（不重复进 prompt）：工具可按阶段
         // 收紧取数，例如 planner 的 arrange 阶段不再回文档正文。

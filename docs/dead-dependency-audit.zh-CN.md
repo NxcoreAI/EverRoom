@@ -1,6 +1,6 @@
 # 依赖深度审计：大改后已失效的库与残留
 
-> 审计对象：`nxcore-ce` monorepo（`apps/desktop`、`apps/gateway`、`packages/*`、`submodules/everroom-connectors/*`）
+> 审计对象：`nxcore-ce` monorepo（`apps/desktop`、`apps/gateway`、`packages/*`、`submodules/everoffice-connectors/*`）
 > 审计基线：`feat/doc-flow-prototype` @ `97c4bf22`（含工作区改动，见 §9 待确认项）
 > 结论性质：**只读审计**，本文件不含任何代码改动。
 
@@ -99,7 +99,7 @@ src/renderer/src/components/context-room/operations/DocumentOperationReviewToolb
 
 ### 3.1 转换管线已迁入 submodule（14）
 
-实现位于 `submodules/everroom-connectors/gateway-module/email-content.ts` 与 `converters.ts`。gateway 自身源码里这 14 项（10 个库 + 4 个类型包）**零 import**，只剩过时声明：
+实现位于 `submodules/everoffice-connectors/gateway-module/email-content.ts` 与 `converters.ts`。gateway 自身源码里这 14 项（10 个库 + 4 个类型包）**零 import**，只剩过时声明：
 
 `rehype-parse`、`rehype-remark`、`rehype-sanitize`、`remark-gfm`、`remark-stringify`、`unified`、`turndown`（+`@types/turndown`）、`html-to-text`（+`@types/html-to-text`）、`mailparser`（+`@types/mailparser`）、`email-reply-parser`、`@types/hast`
 
@@ -183,7 +183,7 @@ src/renderer/src/components/context-room/operations/DocumentOperationReviewToolb
 
 | # | 问题 | 证据 | 建议 |
 | --- | --- | --- | --- |
-| S1 | `packages/connector-contract/` 是**空壳目录**（只有 `node_modules/`，无 `package.json`） | 同名真实包在 `submodules/everroom-connectors/connector-contract`；`pnpm-lock.yaml` 中无该 importer | 删除目录 |
+| S1 | `packages/connector-contract/` 是**空壳目录**（只有 `node_modules/`，无 `package.json`） | 同名真实包在 `submodules/everoffice-connectors/connector-contract`；`pnpm-lock.yaml` 中无该 importer | 删除目录 |
 | S2 | `apps/browser-extension/` 是**空壳目录**（只有 `node_modules/`） | 剪藏能力已下线，全仓 0 引用 | 删除目录 |
 | S3 | gateway 与 submodule **重复声明**同一批转换库 | 见 §3.1 | 以 submodule 为唯一事实源 |
 | S4 | desktop 的 `reality-contract` 只剩 2 处 **type-only** 引用 | `src/shared/sources.ts:113`（`RealityInsights`）、`src/main/cloud/saas-client.ts:26`（`RealityTag`）——现实感知能力已下线 | 清掉这两个类型后即可摘除依赖 |

@@ -8,7 +8,16 @@ import { ensureWorkingCopyWritable } from './working-copy'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
 import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
-async function preparePresentation(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
+/** Agent 后台会话的工作副本前缀：与用户可见视图的崩溃恢复副本互不干扰（同 spreadsheet）。 */
+const AGENT_WORK_COPY_PREFIX = 'agent-'
+
+export async function preparePresentation(
+  fileId: string,
+  hash: string,
+  name: string,
+  storagePath: string,
+  options: { agent?: boolean } = {},
+): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('Presentation identity is invalid.')
   const extension = extname(name).toLowerCase()
   if (extension !== '.pptx' && extension !== '.ppt') throw new Error(`Unsupported internal presentation: ${name}`)
@@ -20,7 +29,8 @@ async function preparePresentation(fileId: string, hash: string, name: string, s
   // a LibreOffice conversion cached next to that working copy.
   const dir = join(app.getPath('userData'), 'office-presentations', fileId, hash)
   const legacyTarget = extension === '.ppt' ? 'pptx' as const : null
-  const target = join(dir, legacyTarget ? `${basename(name, extname(name))}.${legacyTarget}` : basename(name))
+  const baseName = legacyTarget ? `${basename(name, extname(name))}.${legacyTarget}` : basename(name)
+  const target = join(dir, options.agent === true ? `${AGENT_WORK_COPY_PREFIX}${baseName}` : baseName)
   mkdirSync(dir, { recursive: true })
   if (!existsSync(target)) {
     if (legacyTarget) await convertLegacyOfficeFile(source, name, dir, legacyTarget)

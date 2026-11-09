@@ -34,7 +34,7 @@ import type {
 } from '../../shared/notifications'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
-import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
+import everroomFullLogo from '../../renderer/src/assets/everoffice-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -422,7 +422,7 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EverRoom · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
+  <title>EverOffice · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
   <style>
     :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
@@ -439,14 +439,14 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <body>
   <main>
     <div class="brand">
-      <img src="${everroomFullLogo}" alt="EverRoom">
+      <img src="${everroomFullLogo}" alt="EverOffice">
     </div>
     <div class="status" aria-hidden="true">${failed ? '!' : '&#10003;'}</div>
     <h1>${failed ? 'Sign-in incomplete' : 'You are signed in'}</h1>
-    <p>${failed ? 'Return to EverRoom and try signing in again.' : 'Your account is connected. You can continue in EverRoom.'}</p>
+    <p>${failed ? 'Return to EverOffice and try signing in again.' : 'Your account is connected. You can continue in EverOffice.'}</p>
     ${failed
-      ? '<div class="hint">Return to EverRoom to try again</div>'
-      : '<div class="hint">Redirecting to the EverRoom website in <span id="redirect-countdown">5</span> seconds</div>'}
+      ? '<div class="hint">Return to EverOffice to try again</div>'
+      : '<div class="hint">Redirecting to the EverOffice website in <span id="redirect-countdown">5</span> seconds</div>'}
   </main>
   ${failed ? '' : `<script>
     (() => {
@@ -548,7 +548,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 type SaasCompatibleSession = Omit<AgentSession, 'workspaceId'>
   & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>
 
-/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区字段，避免 strict 校验整包 422。 */
+/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区 / 批注卡片字段，避免 strict 校验整包 422。 */
 function saasCompatibleSession(
   session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
 ): SaasCompatibleSession {
@@ -560,7 +560,16 @@ function saasCompatibleSession(
   } = session
   return {
     ...rest,
-    messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),
+    // noteCards / displayContent 是本地展示扩展（agent-contract）：批注卡片与
+    // assistant 答复分级（[[details]] 拆分的默认展示层）。服务端消息 schema
+    // 拒收未知属性（422: "property noteCards should not exist"），上行剥离；
+    // content 始终是完整答复，云端会话回看不受影响。
+    messages: session.messages.map(({
+      authorAgentId: _authorAgentId,
+      noteCards: _noteCards,
+      displayContent: _displayContent,
+      ...message
+    }) => message),
   }
 }
 
@@ -764,7 +773,7 @@ export class SaasClient {
 
   /**
    * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
-   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   * 未登录时抛错；oo token 与 EverOffice 会话生命周期解耦（持久稳定），无需缓存。
    */
   async connectorOoSession(): Promise<ConnectorOoSession> {
     await this.initialize()
@@ -1611,7 +1620,7 @@ export class SaasClient {
         }
         // 网络（或服务端 5xx）耗尽重试：凭据仍在，标记「网络受阻」而非未登录。
         this.authBlockedReason = 'network'
-        console.warn('Unable to restore EverRoom SaaS session; keeping the refresh token for retry.')
+        console.warn('Unable to restore EverOffice SaaS session; keeping the refresh token for retry.')
       }
     }
   }
@@ -1836,7 +1845,7 @@ export class SaasClient {
   }> {
     return {
       deviceKey: await this.deviceKey(),
-      deviceName: hostname() || 'EverRoom Desktop',
+      deviceName: hostname() || 'EverOffice Desktop',
       platform: process.platform === 'win32' ? 'Windows' : 'macOS',
       appVersion: this.electronApp.getVersion(),
     }
@@ -1923,7 +1932,7 @@ export class SaasClient {
 
   private requireLogin(): void {
     if (!this.accessToken || !this.account) {
-      throw new Error('请先登录 EverRoom，或切换为本地自有配置。')
+      throw new Error('请先登录 EverOffice，或切换为本地自有配置。')
     }
   }
 

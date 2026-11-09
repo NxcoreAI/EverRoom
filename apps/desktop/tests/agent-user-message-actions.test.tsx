@@ -13,8 +13,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentChatView } from '../src/renderer/src/components/agent/AgentChatView'
-import { RoomDocumentsProvider } from '../src/renderer/src/components/context-room/RoomDocumentsProvider'
-import { DocumentOperationProvider } from '../src/renderer/src/components/context-room/operations'
 import type { DisplayAgentMessage } from '../src/renderer/src/components/agent/useAgentSession'
 
 ;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -55,7 +53,6 @@ let clipboardWrites: string[]
 
 function baseProps(over: Record<string, unknown> = {}) {
   return {
-    activeDocument: null,
     activeRunId: null,
     agentIdByRun: {},
     agentNamesById: {},
@@ -73,7 +70,6 @@ function baseProps(over: Record<string, unknown> = {}) {
     onRetryPrompt: retryPrompt,
     onOpenMention: () => undefined,
     onOpenSessionLink: () => undefined,
-    onSelectDocument: () => undefined,
     onSelectPrompt: () => undefined,
     onSelectRoom: async () => undefined,
     pendingNavigationByRun: {},
@@ -89,27 +85,16 @@ function baseProps(over: Record<string, unknown> = {}) {
   }
 }
 
-/** 空操作桥：本测试不触发任何文档操作，provider 只需能列出空列表。 */
-const noopBridge = {
-  list: async () => [],
-  get: async () => null,
-  command: async () => null,
-}
-
 async function renderView(options: MountOptions): Promise<void> {
   await act(async () => {
     root = createRoot(container)
     root.render(
-      <DocumentOperationProvider operationBridge={noopBridge} onDocumentApplied={() => undefined}>
-        <RoomDocumentsProvider>
-          <AgentChatView
-            {...baseProps({
-              messages: options.messages,
-              runCompletedAtByRun: options.runCompletedAtByRun ?? {},
-            })}
-          />
-        </RoomDocumentsProvider>
-      </DocumentOperationProvider>,
+      <AgentChatView
+        {...baseProps({
+          messages: options.messages,
+          runCompletedAtByRun: options.runCompletedAtByRun ?? {},
+        })}
+      />,
     )
   })
 }

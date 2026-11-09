@@ -529,7 +529,7 @@ describe('概览页无数据空态', () => {
     expect(container.textContent).toContain('空间里发生的工作与文件变化会记录在这里')
 
     // 文件库不可用时只留一句事实。
-    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).toContain('资料暂不可用')
     expect(container.textContent).not.toContain('暂时只显示工作动态')
 
     // 已删除的说明性/重复文案不得回流。
@@ -653,7 +653,7 @@ describe('概览页真实数据', () => {
     expect(container.textContent).not.toContain('暂无洞察')
     expect(container.textContent).toContain('结束了工作')
     expect(container.textContent).toContain('周报整理')
-    expect(container.textContent).toContain('文件库暂不可用')
+    expect(container.textContent).toContain('资料暂不可用')
     expect(container.textContent).not.toContain('暂时只显示工作动态')
 
     // 错误态给重试入口：手动刷新会再次请求（冷却只拦自动重试）。
@@ -674,7 +674,7 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
     })
     expect(withInterrupted.summary).toContain('2 项工作')
     expect(withInterrupted.summary).toContain('1 项待续')
-    expect(withInterrupted.summary).toContain('资料库 5 个文件')
+    expect(withInterrupted.summary).toContain('资料 5 个文件')
     expect(withInterrupted.suggestions[0]).toContain('「供应商比价」被中断过')
 
     // 全部收尾 → 建议开新工作。
@@ -807,7 +807,7 @@ describe('洞察纯逻辑（pickLatestSession / deriveWorkspaceInsight）', () =
       workspaceId: 'ws-1',
       status: 'ready',
       // 正文 = 聚合总结（状态分布 + 建议），不再复述消息原文。
-      text: expect.stringContaining('1 项工作：1 项有新结果。资料库 2 个文件。'),
+      text: expect.stringContaining('1 项工作：1 项有新结果。资料 2 个文件。'),
       updatedAt: '2026-10-30T11:00:00.000Z',
       stats: { workCount: 1, fileCount: 2 },
       origin: {

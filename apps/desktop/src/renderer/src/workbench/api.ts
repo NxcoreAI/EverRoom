@@ -9,6 +9,7 @@ import type {
   AgentSpaceCacheGcResult,
   AgentSpaceCacheStats,
   AgentSpaceDefaultRoot,
+  AgentSpaceDetectResult,
   AgentSpaceLayout,
   AgentSpaceReconcileReport,
   AgentSpaceRepairReport,
@@ -34,19 +35,19 @@ import type {
 
 function workspaceBridge(): NonNullable<Window['nxcore']>['workspace'] {
   const bridge = window.nxcore?.workspace
-  if (!bridge) throw new Error('桌面服务工作区接口未就绪，请重启 EverRoom')
+  if (!bridge) throw new Error('桌面服务工作区接口未就绪，请重启 EverOffice')
   return bridge
 }
 
 function planBridge(): NonNullable<Window['nxcore']>['plan'] {
   const bridge = window.nxcore?.plan
-  if (!bridge) throw new Error('桌面服务计划接口未就绪，请重启 EverRoom')
+  if (!bridge) throw new Error('桌面服务计划接口未就绪，请重启 EverOffice')
   return bridge
 }
 
 function agentBridge(): NonNullable<Window['nxcore']>['agent'] {
   const bridge = window.nxcore?.agent
-  if (!bridge) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverRoom')
+  if (!bridge) throw new Error('桌面服务 Agent 接口未就绪，请重启 EverOffice')
   return bridge
 }
 
@@ -78,6 +79,16 @@ export const workbenchApi = {
     const bridge = workspaceBridge()
     if (typeof bridge.defaultRoot !== 'function') return null
     return bridge.defaultRoot(name)
+  },
+
+  /**
+   * 判定目录是否已是项目空间（读 `.everoffice` 标记）。
+   * 一步式创建流程用：探测失败按「普通目录」处理（创建失败时网关会给可读错误）。
+   */
+  async detectSpace(dir: string): Promise<AgentSpaceDetectResult | null> {
+    const bridge = window.nxcore?.workspace
+    if (typeof bridge?.detect !== 'function') return null
+    return bridge.detect(dir).catch(() => null)
   },
 
   /** 空间目录快照（路径 + 健康）；未绑定目录时网关 409，调用方按空态渲染。 */
@@ -196,7 +207,10 @@ export const workbenchApi = {
     if (!bridge) return () => {}
     void bridge.subscribe(workspaceId).catch(() => undefined)
     const off = bridge.onChanged((payload) => {
-      if (payload.workspaceId === workspaceId) listener(payload.item)
+      // 防御：非变更帧（如 SSE ready 帧，只有 workspaceId）不带 item，
+      // 透传会把 undefined upsert 进看板数组，渲染即崩（reading 'status'）。
+      if (payload.workspaceId !== workspaceId || !payload.item || typeof payload.item !== 'object') return
+      listener(payload.item)
     })
     return () => {
       off()

@@ -56,11 +56,9 @@ describe('THINKING_LEVEL_OPTIONS', () => {
     ])
   })
 
-  it('每项都有 surface:agentComposer 命名空间下的 label/hint key', () => {
+  it('每项都有 surface:agentComposer 命名空间下的 label key', () => {
     for (const option of THINKING_LEVEL_OPTIONS) {
       expect(option.labelKey.startsWith('surface:agentComposer.thinkingLevel')).toBe(true)
-      expect(option.hintKey.startsWith('surface:agentComposer.thinkingLevel')).toBe(true)
-      expect(option.labelKey).not.toBe(option.hintKey)
     }
   })
 })

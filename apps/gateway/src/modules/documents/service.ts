@@ -60,7 +60,6 @@ import {
   sectionPlainText,
 } from "./section-preview.js";
 import type { SelectionRewriteContentResolver } from "./capabilities/selection-rewrite-content.js";
-import type { DocWriterDraftResolver } from "./capabilities/doc-writer-content.js";
 
 export { DocumentServiceError } from "./errors.js";
 
@@ -246,13 +245,6 @@ export class DocumentService {
    * documents 模块不直接依赖 subagents / context-rooms。
    */
   resolveSelectionRewriteContent: SelectionRewriteContentResolver | null = null;
-
-  /**
-   * doc-writer 引用透传（doc-writer-subagent-plan M3/V2）：
-   * write_append / patch_hunk 携带 invocationId 时的草稿内容解析器。
-   * 由 create-server 装配注入（orchestrator 取数 + run 绑定授权）。
-   */
-  resolveDocWriterDraft: DocWriterDraftResolver | null = null;
 
   constructor(
     private readonly db: GatewayDatabase,

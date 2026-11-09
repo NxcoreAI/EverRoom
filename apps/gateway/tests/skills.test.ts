@@ -1,8 +1,9 @@
 import { lstat } from "node:fs/promises";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import Fastify from "fastify";
+import JSZip from "jszip";
 import type { FastifyInstance } from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { afterEach, describe, expect, it } from "vitest";
@@ -85,11 +86,11 @@ describe("技能目录", () => {
       subagents: () => subagents,
       logger,
     });
-    const skill = withSubagents.list().find((entry) => entry.id === "subagent:doc-writer:rewrite");
+    const skill = withSubagents.list().find((entry) => entry.id === "subagent:content-analyst:analysis-method");
     expect(skill).toBeTruthy();
-    expect(skill!.ownerName).toBe("Document Writer");
-    expect(skill!.description).toContain("selectedText");
-    expect(withSubagents.get("subagent:doc-writer:rewrite")?.prompt).toContain("# Rewrite");
+    expect(skill!.ownerName).toBe("Content Analyst");
+    expect(skill!.description).toContain("analysis");
+    expect(withSubagents.get("subagent:content-analyst:analysis-method")?.prompt).toContain("# Analysis Method");
     expect(service.list().some((entry) => entry.ownerKind === "subagent")).toBe(false);
   });
 
@@ -132,13 +133,13 @@ describe("启停", () => {
       subagents: () => subagents,
       logger,
     });
-    const paths = ["./skills/draft-create", "./skills/rewrite"];
-    expect(service.subagentSkillPaths("doc-writer", paths)).toEqual(paths);
-
-    service.setEnabled("subagent:doc-writer:rewrite", false);
-    expect(service.subagentSkillPaths("doc-writer", paths)).toEqual(["./skills/draft-create"]);
-    // 同一技能换一个 owner 不受影响。
+    const paths = ["./skills/analysis-method", "./skills/other-method"];
     expect(service.subagentSkillPaths("content-analyst", paths)).toEqual(paths);
+
+    service.setEnabled("subagent:content-analyst:analysis-method", false);
+    expect(service.subagentSkillPaths("content-analyst", paths)).toEqual(["./skills/other-method"]);
+    // 同一技能换一个 owner 不受影响。
+    expect(service.subagentSkillPaths("thesis-formatter", paths)).toEqual(paths);
   });
 });
 
@@ -259,7 +260,7 @@ describe("用户技能（新增 / 导入 / 删除）", () => {
     );
     await writeFile(join(source, "references", "notes.md"), "# notes\n", "utf8");
 
-    const imported = service.importUserSkill(source);
+    const imported = await service.importUserSkill(source);
     expect(imported.id).toBe("user:local:imported-skill");
     expect(imported.name).toBe("imported-skill");
     expect(imported.description).toBe("导入进来的技能");
@@ -269,12 +270,64 @@ describe("用户技能（新增 / 导入 / 删除）", () => {
     )).resolves.toContain("# notes");
   });
 
+  it("从 zip 导入：SKILL.md 在压缩包根，附属文件一并落位", async () => {
+    const { dataDir, service } = await createHarness();
+    const zip = new JSZip();
+    zip.file("SKILL.md", "---\nname: zipped-skill\ndescription: 压缩包技能\n---\n\n# Zipped\n");
+    zip.folder("references")!.file("notes.md", "# notes\n");
+    const zipPath = join(dataDir, "inbox", "zipped-skill.zip");
+    await mkdir(dirname(zipPath), { recursive: true });
+    await writeFile(zipPath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    const imported = await service.importUserSkill(zipPath);
+    expect(imported.id).toBe("user:local:zipped-skill");
+    expect(imported.name).toBe("zipped-skill");
+    expect(imported.description).toBe("压缩包技能");
+    await expect(readFile(
+      join(dataDir, "agent", "skills", "zipped-skill", "references", "notes.md"),
+      "utf8",
+    )).resolves.toContain("# notes");
+  });
+
+  it("从 zip 导入：macOS 右键压缩的单层包裹（my-skill/SKILL.md）也能识别", async () => {
+    const { dataDir, service } = await createHarness();
+    const zip = new JSZip();
+    zip.file("my-skill/SKILL.md", "---\nname: wrapped-skill\ndescription: 包裹技能\n---\n\n# Wrapped\n");
+    const zipPath = join(dataDir, "inbox", "wrapped.zip");
+    await mkdir(dirname(zipPath), { recursive: true });
+    await writeFile(zipPath, await zip.generateAsync({ type: "nodebuffer" }));
+
+    const imported = await service.importUserSkill(zipPath);
+    expect(imported.id).toBe("user:local:wrapped-skill");
+    await expect(readFile(
+      join(dataDir, "agent", "skills", "wrapped-skill", "SKILL.md"),
+      "utf8",
+    )).resolves.toContain("# Wrapped");
+  });
+
+  it("zip 缺 SKILL.md 被拒；坏 zip 报压缩包错误码", async () => {
+    const { dataDir, service } = await createHarness();
+    await mkdir(join(dataDir, "inbox"), { recursive: true });
+
+    const noManifest = new JSZip();
+    noManifest.file("README.md", "# 不是技能\n");
+    const noManifestPath = join(dataDir, "inbox", "no-manifest.zip");
+    await writeFile(noManifestPath, await noManifest.generateAsync({ type: "nodebuffer" }));
+    await expect(service.importUserSkill(noManifestPath)).rejects.toThrow(SkillInputError);
+    await expect(service.importUserSkill(noManifestPath)).rejects.toThrow(/skill_source_missing_manifest/);
+
+    const corruptedPath = join(dataDir, "inbox", "corrupted.zip");
+    await writeFile(corruptedPath, Buffer.from("这不是一个 zip 文件"));
+    await expect(service.importUserSkill(corruptedPath)).rejects.toThrow(SkillInputError);
+    await expect(service.importUserSkill(corruptedPath)).rejects.toThrow(/zip is unreadable or corrupted/);
+  });
+
   it("导入缺 SKILL.md 的目录被拒", async () => {
     const { dataDir, service } = await createHarness();
     const source = join(dataDir, "inbox", "not-a-skill");
     await mkdir(source, { recursive: true });
     await writeFile(join(source, "README.md"), "# 不是技能\n", "utf8");
-    expect(() => service.importUserSkill(source)).toThrow(/skill_source_missing_manifest/);
+    await expect(service.importUserSkill(source)).rejects.toThrow(/skill_source_missing_manifest/);
   });
 
   it("删除用户技能：目录与启停记录一起清掉", async () => {

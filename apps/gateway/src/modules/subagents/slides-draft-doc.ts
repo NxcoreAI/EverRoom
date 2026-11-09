@@ -216,3 +216,14 @@ export function parseDraftMarkdown(markdown: string, options: { preserveContent?
   if (options.preserveContent && pages.length > MAX_PAGES) throw new Error("semantic_draft_capacity: 最多支持 32 页，草稿未截断");
   return pages.length > 0 ? pages.slice(0, MAX_PAGES) : null;
 }
+
+/** 解析失败时的诊断摘要：区分正文被清空 / 有内容但标题层级不对 / 完全没有标题。 */
+export function draftParseDiagnostic(markdown: string): string {
+  const lines = markdown.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return "草稿正文为空（可能被清空）";
+  const levels = lines
+    .map((line) => /^#+/.exec(line)?.[0]?.length)
+    .filter((level): level is number => level !== undefined);
+  const top = levels.length ? `H${Math.min(...levels)}` : "无任何标题";
+  return `草稿有 ${lines.length} 行内容但没有「## 章节」结构（最高标题层级 ${top}）`;
+}

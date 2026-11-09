@@ -152,11 +152,7 @@ describe('trusted document MCP sessions', () => {
     expect(terminalRevoked.statusCode).toBe(404)
     expect(() => agent.createTrustedMcpSession(session.id, run.id))
       .toThrow('mcp_agent_context_not_active')
-    expect(() => agent.validateDocumentOperationContext({
-      capabilityId: 'document.selection-rewrite',
-      agentSessionId: session.id,
-      runId: run.id,
-    })).not.toThrow()
+    // 划词改写宽限期随 selection-rewrite 链路移除：结束后任何能力都不可再校验。
     expect(() => agent.validateDocumentOperationContext({
       capabilityId: 'document.edit',
       agentSessionId: session.id,

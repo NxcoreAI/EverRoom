@@ -455,8 +455,8 @@
 ### 7.1 类型检查（覆盖范围经核实）
 
 ```bash
-cd /Users/zyt/EverRoom_office/apps/desktop
-fnm exec --using=22.22.1 node /Users/zyt/EverRoom_office/node_modules/.pnpm/typescript@5.6.2/node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
+cd /Users/zyt/EverOffice_office/apps/desktop
+fnm exec --using=22.22.1 node /Users/zyt/EverOffice_office/node_modules/.pnpm/typescript@5.6.2/node_modules/typescript/bin/tsc --noEmit -p tsconfig.json
 ```
 
 **覆盖范围（已核实 `apps/desktop/tsconfig.json`）**：`include: ["src", "electron.vite.config.ts"]`，无 `references`、无 `extends`。因此**单个 tsconfig 同时覆盖 main + preload + renderer + shared**（`src/main/**`、`src/preload/**`、`src/renderer/**`、`src/shared/**`），外加 `electron.vite.config.ts`。
@@ -477,12 +477,12 @@ fnm exec --using=22.22.1 node /Users/zyt/EverRoom_office/node_modules/.pnpm/type
 
 Vitest 入口（本仓库实际路径）：
 ```
-/Users/zyt/EverRoom_office/node_modules/.pnpm/vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@22.20.1_happy-dom@20.11.2_vite@6.4.3_c5cc40c9ca79b24c845722825a784986/node_modules/vitest/vitest.mjs
+/Users/zyt/EverOffice_office/node_modules/.pnpm/vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@22.20.1_happy-dom@20.11.2_vite@6.4.3_c5cc40c9ca79b24c845722825a784986/node_modules/vitest/vitest.mjs
 ```
 
 全量（`apps/desktop` 为 cwd，`vitest run`，**含 `vendor/genoffice/**`**）：
 ```bash
-cd /Users/zyt/EverRoom_office/apps/desktop
+cd /Users/zyt/EverOffice_office/apps/desktop
 fnm exec --using=22.22.1 node "<上面 vitest.mjs 路径>" run
 ```
 **基线（本次实跑，`EXIT=1`）**：
@@ -494,7 +494,7 @@ fnm exec --using=22.22.1 node "<上面 vitest.mjs 路径>" run
 
 桌面自有信号（排除 vendor，**推荐作为执行期的对照基线**）：
 ```bash
-cd /Users/zyt/EverRoom_office/apps/desktop
+cd /Users/zyt/EverOffice_office/apps/desktop
 fnm exec --using=22.22.1 node "<vitest.mjs 路径>" run --exclude 'vendor/**' --exclude '**/node_modules/**'
 ```
 **基线（本次实跑，`EXIT=1`）**：Test Files **19 failed | 219 passed (238)**；Tests **37 failed | 1426 passed (1463)**；19.3s。
@@ -527,7 +527,7 @@ fnm exec --using=22.22.1 node "<vitest.mjs 路径>" run --exclude 'vendor/**' --
 ### 7.3 编译产物验证（可选，用于 2g-4）
 
 ```bash
-cd /Users/zyt/EverRoom_office/apps/desktop
+cd /Users/zyt/EverOffice_office/apps/desktop
 fnm exec --using=22.22.1 node node_modules/electron-vite/bin/electron-vite.js build
 ```
 （`pnpm run build` 等价；`build` 脚本会先跑 `prepare-vision-ocr.mjs` 与 `prepare-genoffice-runtime.mjs`，前者在 2g-4 删除后需同步改脚本。）

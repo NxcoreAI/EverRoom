@@ -85,7 +85,7 @@ import {
 import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { generateDocxFromHtml } from './office/office-generation'
-import { createEverroomMaterialResolver } from './office/office-material-resolver'
+import { createEverofficeMaterialResolver } from './office/office-material-resolver'
 import { openDocumentFromSystem as runSystemOpen, OsOpenQueue, osOpenPathsFromArgv } from './office/os-open'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
 import { parseAgentNotificationTarget, type AgentNotificationTarget, type NotificationPreferences } from '../shared/notifications'
@@ -115,7 +115,6 @@ import {
 import { LarkAuthRunner } from './agent-auth/lark-auth-runner'
 import { AgentAuthController } from './agent-auth/controller'
 import { createLarkCliRuntime, type LarkCliRuntime } from './runtime/lark-cli-runtime'
-import { ExternalDocumentsGatewayBridge } from './gateway/external-documents-gateway-bridge'
 import { startDocumentAssetBridge, type DocumentAssetBridge } from './document-asset-bridge'
 import { NtnAuthRunner } from './agent-auth/ntn-auth-runner'
 import { createAgentAuthPersistence } from './agent-auth/persistence'
@@ -126,7 +125,6 @@ import type {
 } from '../shared/agent-auth'
 import { OBSIDIAN_VAULT_ASSET_SCHEME, type ObsidianImportResult, type ObsidianImportTarget } from '../shared/obsidian'
 import { ObsidianVaultService } from './obsidian/obsidian-vault-service'
-import { pushDocumentSaveToVault, trashDocumentInVault } from './obsidian/vault-document-sync'
 import { createLocalAgentDiscovery, isSafeLocalAgentPath, probeLocalAgentAcpAdapter } from './local-agents/discovery'
 import { installLocalAgentAcpAdapter, resolveLocalAcpAdapterSpawn } from './local-agents/adapter-install'
 import { bundledAcpAdaptersRoot, bundledNpmCliPath, localAgentAdaptersRoot } from './local-agents/local-agent-paths'
@@ -136,7 +134,7 @@ import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
 import { OfficePreviewRegistry, type AgentArtifactFailureReason } from './office/office-preview-registry'
 import { notifyPreviewRequested, previewRequestFromOpenResult } from './office/preview-request'
-import { convertOfficeFileToPdf } from './office/legacy-convert'
+import { exportDocxToPdf } from './office/docx-pdf-export'
 import { OfficeBridge as GenofficeProtoBridge } from './genoffice/bridge'
 
 // 品牌/数据目录名：决定 userData 路径（~/Library/Application Support/<APP_NAME>）、
@@ -309,34 +307,8 @@ const AGENT_AUTH_CHANNELS = {
   disconnect: 'agent-auth:disconnect',
 } as const
 
-const EXTERNAL_DOCUMENT_CHANNELS = {
-  importSearch: 'external-documents:import-search',
-  importList: 'external-documents:import-list',
-  importBatch: 'external-documents:import-batch',
-  importBatchStatus: 'external-documents:import-batch-status',
-  activeImportBatch: 'external-documents:active-import-batch',
-  cancelImportBatch: 'external-documents:cancel-import-batch',
-  importPreview: 'external-documents:import-preview',
-  importCommit: 'external-documents:import-commit',
-  importRun: 'external-documents:import-run',
-  cancelImportRun: 'external-documents:cancel-import-run',
-  importHistory: 'external-documents:import-history',
-  checkExternalUpdate: 'external-documents:check-external-update',
-  applyCandidate: 'external-documents:apply-candidate',
-  createExport: 'external-documents:create-export',
-  getExport: 'external-documents:get-export',
-  confirmExport: 'external-documents:confirm-export',
-  retryExport: 'external-documents:retry-export',
-  cancelExport: 'external-documents:cancel-export',
-  listExports: 'external-documents:list-exports',
-  importDiff: 'external-documents:import-diff',
-  importStructuredDiff: 'external-documents:import-structured-diff',
-  searchExportTargets: 'external-documents:search-export-targets',
-} as const
-
 // 子代理调用（划词改写 + 调用树/事件轮询）：Context Room 删除后仅剩这些活通道。
 const SUBAGENT_CHANNELS = {
-  dispatchSelectionRewrite: 'subagents:dispatch-selection-rewrite',
   getInvocation: 'subagents:get-invocation',
   cancelInvocation: 'subagents:cancel-invocation',
   listRunInvocations: 'subagents:list-run-invocations',
@@ -449,42 +421,6 @@ const CURSOR_COMPLETION_AGENT_CHANNELS = {
   cancelRun: 'cursor-completion-agent:cancel-run',
   subscribe: 'cursor-completion-agent:subscribe',
   unsubscribe: 'cursor-completion-agent:unsubscribe',
-} as const
-
-const DOCUMENT_CHANNELS = {
-  list: 'documents:list',
-  listTrash: 'documents:list-trash',
-  get: 'documents:get',
-  listBlocks: 'documents:list-blocks',
-  listBlockBacklinks: 'documents:list-block-backlinks',
-  listVersions: 'documents:list-versions',
-  getVersionSnapshot: 'documents:get-version-snapshot',
-  getDiff: 'documents:get-diff',
-  versionChangeSummary: 'documents:version-change-summary',
-  listDocumentComments: 'documents:list-document-comments',
-  createDocumentComment: 'documents:create-document-comment',
-  resolveDocumentComment: 'documents:resolve-document-comment',
-  deleteDocumentComment: 'documents:delete-document-comment',
-  getOverview: 'documents:get-overview',
-  generateOverview: 'documents:generate-overview',
-  getSectionPreview: 'documents:get-section-preview',
-  restoreVersion: 'documents:restore-version',
-  resolveBlockReferences: 'documents:resolve-block-references',
-  listOperations: 'documents:list-operations',
-  startOperation: 'documents:start-operation',
-  getOperation: 'documents:get-operation',
-  executeOperationCommand: 'documents:execute-operation-command',
-  storeImage: 'documents:store-image',
-  import: 'documents:import',
-  save: 'documents:save',
-  delete: 'documents:delete',
-  move: 'documents:move',
-  moveMany: 'documents:move-many',
-  restore: 'documents:restore',
-  deletePermanently: 'documents:delete-permanently',
-  emptyTrash: 'documents:empty-trash',
-  subscribe: 'documents:subscribe',
-  unsubscribe: 'documents:unsubscribe',
 } as const
 
 // 系统隐私授权（本地 TCC 查询，不经网关）：只有麦克风 onboarding 还需要。
@@ -698,7 +634,6 @@ function installIpcRouters(): void {
     RUNTIME_CONFIG_CHANNELS,
     OPEN_CONNECTOR_CHANNELS,
     AGENT_AUTH_CHANNELS,
-    EXTERNAL_DOCUMENT_CHANNELS,
     SUBAGENT_CHANNELS,
     AGENT_CHANNELS,
     MEMORY_CHANNELS,
@@ -706,7 +641,6 @@ function installIpcRouters(): void {
     WORKSPACE_INSIGHT_CHANNELS,
     PLAN_CHANNELS,
     CURSOR_COMPLETION_AGENT_CHANNELS,
-    DOCUMENT_CHANNELS,
     PERMISSION_CHANNELS,
     ACCOUNT_CHANNELS,
     NOTIFICATION_CHANNELS,
@@ -803,7 +737,7 @@ let clearUserDataOnQuit = false
 const officePreviewRegistry = new OfficePreviewRegistry(
   8_000,
   // everroom-material:// 素材回源：文件桥惰性取（网关启动后才赋值），每次调用现建（闭包零成本）。
-  () => createEverroomMaterialResolver(() => officeFilesBridge),
+  () => createEverofficeMaterialResolver(() => officeFilesBridge),
 )
 /** 论文格式网关桥：网关就绪后赋值；pick 直传共用同一实例。 */
 let thesisFormatBridgeRef: ThesisFormatGatewayBridge | null = null
@@ -1069,8 +1003,11 @@ ipcMain.handle('appearance:set-theme', (_event, theme: unknown) => {
 function logRendererDiagnostic(input: unknown): void {
   if (!input || typeof input !== 'object') return
   const value = input as { module?: unknown; level?: unknown; event?: unknown }
+  // native-editor-host：渲染端原生编辑器宿主的 activate/bounds 决策点
+  // （模版预览标签点不动一类的渲染端锁死问题靠它定位，2026-11-09）。
   if (value.module !== 'document-cursor-completion' && value.module !== 'context-room-overview'
-    && value.module !== 'block-index-mark' && value.module !== 'document-focus') return
+    && value.module !== 'block-index-mark' && value.module !== 'document-focus'
+    && value.module !== 'native-editor-host') return
   if (value.level !== 'info' && value.level !== 'warn' && value.level !== 'error') return
   if (!value.event || typeof value.event !== 'object' || Array.isArray(value.event)) return
   try {
@@ -1088,7 +1025,7 @@ ipcMain.on('app:diagnostic-log', (_event, input: unknown) => logRendererDiagnost
 
 ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   if (id !== null && typeof id !== 'string') return false
   // TEMP DIAG：渲染端激活请求是否命中实例（查完删除）。
   const active = officePreviewRegistry.setActive(id === null ? null : id)
@@ -1098,7 +1035,7 @@ ipcMain.handle('office:instance:set-active', (event, id: unknown) => {
 
 ipcMain.handle('office:instance:close', async (event, id: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   if (typeof id !== 'string') return false
   // false = 可编辑实例在脏关闭守卫里被取消：渲染层保留标签不卸载。
   return officePreviewRegistry.close(id)
@@ -1110,7 +1047,7 @@ ipcMain.handle('office:instance:close', async (event, id: unknown) => {
  */
 ipcMain.handle('office:chrome-toggle', (event, input: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window || window.isDestroyed()) throw new Error('EverRoom 主窗口不可用。')
+  if (!window || window.isDestroyed()) throw new Error('EverOffice 主窗口不可用。')
   const value = (input ?? {}) as { fileId?: unknown; hidden?: unknown }
   const fileId = typeof value.fileId === 'string' && value.fileId ? value.fileId : 'active'
   const hidden = typeof value.hidden === 'boolean' ? value.hidden : undefined
@@ -1167,7 +1104,7 @@ function handleProtocolUrl(url: string): void {
 function notifyLoginCallbackDropped(): void {
   const options = {
     type: 'warning' as const,
-    title: 'EverRoom 登录',
+    title: 'EverOffice 登录',
     message: '浏览器授权已完成，但应用内没有正在进行的登录。',
     detail: '登录等待可能已超时或应用重启过，请回到登录页重新点击登录。',
     buttons: ['好'],
@@ -1183,7 +1120,7 @@ app.on('open-url', (event, url) => {
   handleProtocolUrl(url)
 })
 
-// 访达双击/「打开方式」→ EverRoom：open-file 可能在 ready 之前派发，先入队，
+// 访达双击/「打开方式」→ EverOffice：open-file 可能在 ready 之前派发，先入队，
 // 等文件桥就绪（启动链装处理器）再串行导入并打开内嵌预览。
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
@@ -1715,7 +1652,7 @@ function attachOpenConnectorBridge(bridge: OoCliBridge): void {
 }
 
 // ---- SaaS 连接层（connector-mode = 'saas'）----
-// 登录 EverRoom 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
+// 登录 EverOffice 后从 SaaS 换取 oo 用户会话（SaaS 代发并登记用户 runtime token），
 // 桌面与 gateway 均持该 token 直连 oo 数据面；连接层不再经 SaaS 转发。
 let connectorOoLoginSeen = false
 
@@ -1865,7 +1802,7 @@ function registerOpenConnectorHandlers(): void {
         gatewayState: 'unreachable' as const,
         gatewayMessage: connectorOoLoginSeen
           ? '云端连接层暂不可用，请稍后重试。'
-          : '登录 EverRoom 后将自动连接云端连接层。',
+          : '登录 EverOffice 后将自动连接云端连接层。',
         runtimeTokenConfigured: false,
         cliState: 'checking' as const,
         cliVersion: null,
@@ -2000,95 +1937,8 @@ function registerAgentAuthHandlers(): void {
   })
 }
 
-function registerExternalDocumentHandlers(bridge: ExternalDocumentsGatewayBridge): void {
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importSearch, (_event, provider: unknown, query: unknown) => {
-    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的导入搜索请求。')
-    return bridge.importSearch(provider as 'feishu' | 'notion', query)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importList, (_event, provider: unknown, connectionName: unknown, cachedOnly: unknown, mode: unknown) => {
-    if (typeof provider !== 'string') throw new Error('无效的文档列举请求。')
-    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
-    if (cachedOnly !== undefined && typeof cachedOnly !== 'boolean') throw new Error('无效的缓存参数。')
-    if (mode !== undefined && mode !== 'full' && mode !== 'delta') throw new Error('无效的列举模式。')
-    return bridge.importList(provider as 'feishu' | 'notion', connectionName, cachedOnly, mode as 'full' | 'delta' | undefined)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatch, (_event, input: unknown) => bridge.importBatch(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importBatchStatus, (_event, batchId: unknown) => {
-    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
-    return bridge.importBatchStatus(batchId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.activeImportBatch, (_event, provider: unknown, connectionName: unknown) => {
-    if (typeof provider !== 'string') throw new Error('无效的文档来源。')
-    if (connectionName !== undefined && typeof connectionName !== 'string') throw new Error('无效的连接名。')
-    return bridge.activeImportBatch(provider as 'feishu' | 'notion', connectionName)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportBatch, (_event, batchId: unknown) => {
-    if (typeof batchId !== 'string') throw new Error('无效的批量导入标识。')
-    return bridge.cancelImportBatch(batchId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importPreview, (_event, provider: unknown, remoteDocumentId: unknown) => {
-    if (typeof provider !== 'string' || typeof remoteDocumentId !== 'string') throw new Error('无效的导入预览请求。')
-    return bridge.importPreview(provider as 'feishu' | 'notion', remoteDocumentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importCommit, (_event, input: unknown) => bridge.importCommit(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importRun, (_event, runId: unknown) => {
-    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
-    return bridge.importRun(runId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelImportRun, (_event, runId: unknown) => {
-    if (typeof runId !== 'string') throw new Error('无效的导入任务标识。')
-    return bridge.cancelImportRun(runId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importHistory, (_event, documentId: unknown) => {
-    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.importHistory(documentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.checkExternalUpdate, (_event, documentId: unknown) => {
-    if (typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.checkExternalUpdate(documentId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importStructuredDiff, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.importStructuredDiff(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.applyCandidate, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.applyCandidate(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.createExport, (_event, input: unknown) => bridge.createExport(input as never))
-  handle(EXTERNAL_DOCUMENT_CHANNELS.getExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.getExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.confirmExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.confirmExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.retryExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.retryExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.cancelExport, (_event, exportId: unknown) => {
-    if (typeof exportId !== 'string') throw new Error('无效的导出任务标识。')
-    return bridge.cancelExport(exportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.importDiff, (_event, roomImportId: unknown) => {
-    if (typeof roomImportId !== 'string') throw new Error('无效的导入关联标识。')
-    return bridge.importDiff(roomImportId)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.searchExportTargets, (_event, provider: unknown, query: unknown) => {
-    if (typeof provider !== 'string' || typeof query !== 'string') throw new Error('无效的目标搜索请求。')
-    return bridge.searchExportTargets(provider as 'feishu' | 'notion', query)
-  })
-  handle(EXTERNAL_DOCUMENT_CHANNELS.listExports, (_event, documentId: unknown) => {
-    if (documentId !== undefined && typeof documentId !== 'string') throw new Error('无效的文档标识。')
-    return bridge.listExports(typeof documentId === 'string' ? documentId : undefined)
-  })
-}
 
 function registerSubagentHandlers(bridge: SubagentGatewayBridge): void {
-  handle(SUBAGENT_CHANNELS.dispatchSelectionRewrite, (_event, input: SubagentSelectionRewriteInput) =>
-    bridge.dispatchSelectionRewrite(input))
   handle(SUBAGENT_CHANNELS.getInvocation, (_event, invocationId: string) =>
     bridge.getSubagentInvocation(invocationId))
   handle(SUBAGENT_CHANNELS.cancelInvocation, (_event, invocationId: string) =>
@@ -2249,13 +2099,17 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.createSkill, (_event, input: CreateAgentSkillInput) => bridge.createSkill(input))
   handle(AGENT_CHANNELS.importSkillDirectory, (_event, sourceDirectory: string) =>
     bridge.importSkillDirectory(sourceDirectory))
-  // 技能文件夹选择：只让用户挑一个目录，SKILL.md 校验与复制都在网关侧。
+  // 技能来源选择：文件夹或 zip 压缩包都能选（zip 由网关解压解析），
+  // SKILL.md 校验与复制都在网关侧。
   handle(AGENT_CHANNELS.pickSkillDirectory, async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options: Electron.OpenDialogOptions = {
-      title: '选择技能文件夹（需包含 SKILL.md）',
+      title: '选择技能文件夹或 zip 压缩包（需包含 SKILL.md）',
       buttonLabel: '导入此技能',
-      properties: ['openDirectory'],
+      properties: ['openFile', 'openDirectory'],
+      filters: [
+        { name: '技能（文件夹或 zip）', extensions: ['zip'] },
+      ],
     }
     const result = parent && !parent.isDestroyed()
       ? await dialog.showOpenDialog(parent, options)
@@ -2457,8 +2311,8 @@ function registerAgentHandlers(bridge: AgentGatewayBridge, migrationCoordinator:
   handle(AGENT_CHANNELS.submitPendingIntent, (_event, intentId, input) =>
     bridge.submitPendingIntent(intentId, input))
   handle(AGENT_CHANNELS.cancelRun, (_event, runId) => bridge.cancelRun(runId))
-  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback) =>
-    bridge.resolveApproval(approvalId, decision, feedback))
+  handle(AGENT_CHANNELS.resolveApproval, (_event, approvalId, decision, feedback, choice, text) =>
+    bridge.resolveApproval(approvalId, decision, feedback, choice, text))
   handle(AGENT_CHANNELS.getPermissionMode, (_event, sessionId) => bridge.getPermissionMode(sessionId))
   handle(AGENT_CHANNELS.setPermissionMode, (_event, sessionId, mode) => bridge.setPermissionMode(sessionId, mode))
   handle(AGENT_CHANNELS.setThinkingLevel, (_event, sessionId, level) =>
@@ -2493,144 +2347,6 @@ function registerCursorCompletionAgentHandlers(bridge: AgentGatewayBridge): void
   })
 }
 
-function registerDocumentHandlers(
-  bridge: DocumentGatewayBridge,
-  assets: DocumentAssetStore,
-  vaults?: ObsidianVaultService | null,
-): void {
-  // 挂载目录笔记的写回依赖（见 vault-document-sync）：序列化走网关、回滚走投影 PUT。
-  const vaultSyncDeps = vaults ? {
-    vaults,
-    documentMarkdown: (documentId: string) => bridge.documentMarkdown(documentId),
-    revertDocumentToDisk: async (input: {
-      documentId: string
-      vaultId: string
-      resourceId: string
-      relativePath: string
-      sourceHash: string
-      title: string
-      markdown: string
-    }) => {
-      const vault = vaults.list().find((item) => item.id === input.vaultId)
-      if (!vault) throw new Error(`Vault room not found for ${input.vaultId}`)
-      await bridge.syncExternalProjection({
-        sourceKind: vault.sourceType,
-        sourceId: input.vaultId,
-        resourceId: input.resourceId,
-        roomId: vault.roomId,
-        relativePath: input.relativePath,
-        sourceHash: input.sourceHash,
-        title: input.title,
-        markdown: input.markdown,
-      })
-    },
-  } : null
-  handleGroup(DOCUMENT_CHANNELS, {
-    list: (_event, roomId) => bridge.list(roomId),
-    listTrash: (_event, roomId) => bridge.listTrash(roomId),
-    get: (_event, documentId) => bridge.get(documentId),
-    listBlocks: (_event, documentId) => bridge.listBlocks(documentId),
-    listBlockBacklinks: (_event, documentId, blockId) =>
-      bridge.listBlockBacklinks(documentId, blockId),
-    listVersions: (_event, documentId, options) => bridge.listVersions(documentId, options),
-    getVersionSnapshot: (_event, documentId, version) => bridge.getVersionSnapshot(documentId, version),
-    getDiff: (_event, documentId, fromVersion, toVersion) => bridge.getDiff(documentId, fromVersion, toVersion),
-    versionChangeSummary: (_event, documentId, version) => bridge.versionChangeSummary(documentId, version),
-    listDocumentComments: (_event, documentId) => bridge.listDocumentComments(documentId),
-    createDocumentComment: (_event, documentId, input) => bridge.createDocumentComment(documentId, input),
-    resolveDocumentComment: (_event, documentId, commentId, resolved) => bridge.resolveDocumentComment(documentId, commentId, resolved),
-    deleteDocumentComment: (_event, documentId, commentId) => bridge.deleteDocumentComment(documentId, commentId),
-    getOverview: (_event, documentId) => bridge.getDocumentOverview(documentId),
-    generateOverview: (_event, documentId) => bridge.generateDocumentOverview(documentId),
-    getSectionPreview: (_event, documentId, input) => bridge.getSectionPreview(documentId, input),
-    restoreVersion: (_event, documentId, version, baseVersion) =>
-      bridge.restoreVersion(documentId, version, baseVersion),
-    resolveBlockReferences: (_event, input) => bridge.resolveBlockReferences(input),
-    listOperations: (_event, filters) => bridge.listOperations(filters),
-    startOperation: (_event, input: StartDocumentOperationInput) => {
-      assertNoEmbeddedDocumentImages(input)
-      return bridge.startOperation(input)
-    },
-    getOperation: (_event, operationId, context) => bridge.getOperation(operationId, context),
-    executeOperationCommand: async (_event, operationId: string, input: DocumentOperationCommandInput) => {
-      if (!vaults || (input.type !== 'review.apply' && input.type !== 'item.accept')) {
-        return bridge.executeOperationCommand(operationId, input)
-      }
-      const operation = await bridge.getOperation(operationId, input.context)
-      const note = operation.documentId ? vaults.noteForDocument(operation.documentId) : null
-      if (!note || !input.context) return bridge.executeOperationCommand(operationId, input)
-      const prepared = await bridge.prepareExternalPatch({ operationId, command: input })
-      const current = await vaults.readNote(note.vaultId, note.resourceId)
-      let resultingSourceHash = current.sourceHash
-      if (current.sourceHash === prepared.expectedSourceHash) {
-        const saved = await vaults.saveNoteForAgent(
-          note.vaultId,
-          note.resourceId,
-          prepared.markdown,
-          prepared.expectedSourceHash,
-        )
-        if (saved.status === 'conflict') {
-          throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
-        }
-        resultingSourceHash = saved.snapshot.sourceHash
-      } else if (current.markdown !== prepared.markdown) {
-        throw new Error('VAULT_SOURCE_CONFLICT: Obsidian 已修改该笔记，请比较磁盘版本后重新审阅。')
-      }
-      const completed = await bridge.completeExternalPatch({
-        preparationId: prepared.preparationId,
-        resultingSourceHash,
-        context: input.context,
-      })
-      vaults.notifyChanged(note.vaultId)
-      return completed
-    },
-    storeImage: (_event, documentId, input) => assets.storeImage(documentId, input),
-    import: (_event, input: ImportRoomDocumentInput) => {
-      assertNoEmbeddedDocumentImages(input?.contentJson)
-      return bridge.import(input)
-    },
-    save: async (_event, documentId, input: SaveRoomDocumentInput) => {
-      assertNoEmbeddedDocumentImages(input?.contentJson)
-      // 挂载目录的笔记：网关保存成功后写回原文件（文件是事实源）。
-      // vault 未绑定/离线时跳过写回；文件被外部改过则回滚文档并报冲突（编辑器保留草稿）。
-      if (vaultSyncDeps && vaultSyncDeps.vaults.noteForDocument(documentId)) {
-        const previous = await bridge.get(documentId).catch(() => null)
-        const updated = await bridge.save(documentId, input)
-        await pushDocumentSaveToVault(vaultSyncDeps, {
-          documentId,
-          previousTitle: previous?.title,
-          nextTitle: updated.title,
-        })
-        return updated
-      }
-      return bridge.save(documentId, input)
-    },
-    delete: async (_event, documentId) => {
-      const deleted = await bridge.delete(documentId)
-      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
-      return deleted
-    },
-    move: (_event, documentId, fromRoomId, roomId) => bridge.move(documentId, fromRoomId, roomId),
-    moveMany: (_event, documentIds, fromRoomId, roomId) => bridge.moveMany(documentIds, fromRoomId, roomId),
-    restore: (_event, documentId) => bridge.restore(documentId),
-    deletePermanently: async (_event, documentId) => {
-      if (vaultSyncDeps) await trashDocumentInVault(vaultSyncDeps, documentId)
-      await bridge.deletePermanently(documentId)
-      await assets.deleteDocument(documentId).catch((error) => {
-        console.error('Failed to delete local document assets', { documentId, error })
-      })
-    },
-    emptyTrash: async (_event, roomId: string | null | undefined) => {
-      const trashed = await bridge.listTrash(roomId)
-      await bridge.emptyTrash(roomId)
-      await Promise.all(trashed.map((document) => assets.deleteDocument(document.id).catch((error) => {
-        console.error('Failed to delete local document assets', { documentId: document.id, error })
-      })))
-    },
-    subscribe: (event, roomId: string | null | undefined) => bridge.subscribe(event.sender, roomId),
-    unsubscribe: (event, roomId: string | null | undefined) => bridge.unsubscribe(event.sender.id, roomId ?? undefined),
-  })
-}
 
 function registerMcpHandlers(bridge: McpGatewayBridge): void {
   handle(MCP_CHANNELS.listServers, () => bridge.list())
@@ -2702,7 +2418,7 @@ async function pickThesisTemplateFromDisk(
   }
 
   const picked = await dialog.showOpenDialog({
-    title: options?.wordOnly ? '选择论文模版（Word）' : '选择论文格式模版',
+    title: options?.wordOnly ? '选择论文模版（Word）' : '选择模版',
     properties: ['openFile'],
     // 产物区「排版工具」只收 Word：管理员模版也多是 .docx，给更窄的选择面降低误选。
     filters: options?.wordOnly
@@ -2867,16 +2583,18 @@ function registerThesisFormatHandlers(
     }
   })
   handle(THESIS_FORMAT_CHANNELS.reformatStatus, (_event, jobId: string) => bridge.reformatJobStatus(jobId))
-  /** 导出 PDF：LibreOffice 转换 → ~/Downloads/EverRoom/，并定位到文件。 */
+  /** 导出 PDF：优先 genoffice 进程内渲染（无 LibreOffice 依赖）→ ~/Downloads/EverOffice/，并定位到文件。 */
   handle(THESIS_FORMAT_CHANNELS.exportPdf, async (_event, fileEntryId: string) => {
     const storagePath = await files.storagePath(fileEntryId)
     const entry = await files.catalogEntry(fileEntryId)
-    const outcome = await convertOfficeFileToPdf(
+    const outcome = await exportDocxToPdf({
+      registry: officePreviewRegistry,
+      fileId: fileEntryId,
       storagePath,
-      entry.originalName,
-      join(app.getPath('downloads'), 'EverRoom'),
-    )
-    if ('unavailable' in outcome) return { unavailable: true as const }
+      originalName: entry.originalName,
+      targetDir: join(app.getPath('downloads'), 'EverOffice'),
+    })
+    if (!outcome.ok) return { unavailable: true as const }
     shell.showItemInFolder(outcome.pdfPath)
     return { unavailable: false as const, path: outcome.pdfPath }
   })
@@ -2928,7 +2646,7 @@ async function openFileInAppPreview(
   }
 
   const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed()) ?? null
-  if (!window) throw new Error('EverRoom 主窗口不可用。')
+  if (!window) throw new Error('EverOffice 主窗口不可用。')
   if (options?.focusWindow) {
     if (window.isMinimized()) window.restore()
     window.show()
@@ -3009,13 +2727,20 @@ function registerFilesHandlers(
       await bridge.openOriginal(fileId)
       return { openedWith: 'external' as const }
     }
-    return openFileInAppPreview(bridge, fileId, originalName, {
+    const opened = await openFileInAppPreview(bridge, fileId, originalName, {
       ...(contentHash ? { contentHash } : {}),
       ...(options?.editable === true ? { editable: true } : {}),
       ...(typeof options?.roomId === 'string' && options.roomId ? { roomId: options.roomId } : {}),
       ...(typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options?.focusWindow === true ? { focusWindow: true } : {}),
     })
+    // 没有 DOM 宿主的裸调入口（Agent 对话文件卡、幻灯片成品卡等）直接 openOriginal：
+    // 实例建好后无人激活/上报矩形 → 永远不可见（用户看到「点了没反应」）。这里统一
+    // 补一条预览通知，让工作台开标签接管实例；气泡窗自身的打开幂等（同文件去重），
+    // 多收一次通知也只是无变化的重复 openFile。
+    const request = previewRequestFromOpenResult(opened)
+    if (request) notifyPreviewRequested(request)
+    return opened
   })
   bridge.onImportProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -3029,8 +2754,11 @@ function registerFilesHandlers(
   )
   handle(FILES_CHANNELS.pickPaths, () => bridge.pickImportPaths())
   // 「+ → 导入文件」：选择框直选文件 → 文件引擎导入 → 本轮对话附件。
-  handle(FILES_CHANNELS.pickAgentAttachments, (event) =>
-    bridge.pickAgentAttachments(BrowserWindow.fromWebContents(event.sender)))
+  handle(FILES_CHANNELS.pickAgentAttachments, (event, options?: { workspaceId?: string }) =>
+    bridge.pickAgentAttachments(
+      BrowserWindow.fromWebContents(event.sender),
+      typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : undefined,
+    ))
   handle(
     FILES_CHANNELS.importPathsOnce,
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
@@ -3050,7 +2778,10 @@ function registerFilesHandlers(
   )
   handle(
     FILES_CHANNELS.importAgentAttachments,
-    (_event, paths: string[]) => bridge.importAgentAttachments(paths),
+    (_event, paths: string[], options?: { workspaceId?: string }) => bridge.importAgentAttachments(
+      paths,
+      typeof options?.workspaceId === 'string' && options.workspaceId ? { workspaceId: options.workspaceId } : undefined,
+    ),
   )
   handle(FILES_CHANNELS.listHighRiskReviews, () => ({ items: highRiskImports.list() }))
   handle(
@@ -3269,7 +3000,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
     if (!account.authenticated || !account.user) {
       return {
         enabled: false,
-        reason: '请先登录 EverRoom。',
+        reason: '请先登录 EverOffice。',
         initialized: false,
         umkId: null,
         activeVersion: null,
@@ -3289,7 +3020,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
   handle(ACCOUNT_CHANNELS.createPairingSession, () => rateLimitAware(async () => {
     const account = await client.status()
     const userId = account.authenticated ? account.user?.id : null
-    if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+    if (!account.user || !userId) throw new Error('请先登录 EverOffice。')
     return keyring.createPairingSession(client, userId)
   }))
   handle(ACCOUNT_CHANNELS.getPairingSession, (_event, id: unknown) => {
@@ -3301,7 +3032,7 @@ function registerAccountKeyringHandlers(client: SaasClient, keyring: AccountKeyr
     return rateLimitAware(async () => {
       const account = await client.status()
       const userId = account.authenticated ? account.user?.id : null
-      if (!account.user || !userId) throw new Error('请先登录 EverRoom。')
+      if (!account.user || !userId) throw new Error('请先登录 EverOffice。')
       return keyring.approvePairingSession(client, userId, id)
     })
   })
@@ -3576,10 +3307,10 @@ function createWindow(): BrowserWindow {
     minWidth: 1080,
     minHeight: 700,
     show: false,
-    title: 'Everroom',
+    title: 'Everoffice',
     backgroundColor: appearanceWindowBackground(),
     // macOS 走 hiddenInset + 系统红绿灯；Windows 隐藏整条系统标题栏，
-    // 由渲染端 TopBar/引导页头部绘制 EverRoom 风格的自绘窗口按钮。
+    // 由渲染端 TopBar/引导页头部绘制 EverOffice 风格的自绘窗口按钮。
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 16 } }
       : { titleBarStyle: 'hidden' as const }),
@@ -3923,8 +3654,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           : outcome
       },
-      // Word → PDF 导出并入库（word_export_pdf）：LibreOffice 转换 catalog 里的
-      // docx，再把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
+      // Word → PDF 导出并入库（word_export_pdf）：优先 genoffice 进程内渲染
+      // （无外部依赖），老运行时/渲染失败回退 LibreOffice；转换 catalog 里的
+      // docx 后把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
       () => async (req: OfficeExportPdfRequest): Promise<
         OfficeExportPdfResult | { ok: false; message: string }
       > => {
@@ -3940,9 +3672,23 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           }
           const storagePath = await files.storagePath(req.fileId)
           const exportDirectory = join(app.getPath('userData'), 'office-exports')
-          const converted = await convertOfficeFileToPdf(storagePath, originalName, exportDirectory)
-          if ('unavailable' in converted) {
-            return { ok: false, message: '本机未安装 LibreOffice，无法导出 PDF。' }
+          const converted = await exportDocxToPdf({
+            registry: officePreviewRegistry,
+            fileId: req.fileId,
+            storagePath,
+            originalName,
+            targetDir: exportDirectory,
+            ...(req.roomId || req.workspaceId
+              ? {
+                hints: {
+                  ...(req.roomId ? { roomId: req.roomId } : {}),
+                  ...(req.workspaceId ? { workspaceId: req.workspaceId } : {}),
+                },
+              }
+              : {}),
+          })
+          if (!converted.ok) {
+            return { ok: false, message: converted.message }
           }
           const rawName = (req.fileName ?? '').trim()
             || `${basename(originalName, extname(originalName))}.pdf`
@@ -4126,8 +3872,6 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     // Agent status reporting is attached after the authenticated SaaS client is created below.
     registerSearchHandlers(new SearchGatewayBridge(gatewaySupervisor))
     documentGatewayBridge = new DocumentGatewayBridge(gatewaySupervisor)
-    registerDocumentHandlers(documentGatewayBridge, documentAssets, obsidianVaultService)
-    registerExternalDocumentHandlers(new ExternalDocumentsGatewayBridge(gatewaySupervisor))
     registerDocumentPdfExportHandler()
     registerMcpHandlers(new McpGatewayBridge(gatewaySupervisor))
     registerExternalCallHandlers(new ExternalCallsGatewayBridge(gatewaySupervisor))
@@ -4249,6 +3993,10 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
             // 否则用户看着 docs 窗口会觉得「点了没反应」。
             focusWindow: true,
           })
+          // 内嵌预览不可用（如 .doc 且本机既无 LibreOffice 也无 textutil）时，
+          // openFileInAppPreview 会回退外部应用打开——但从 AI 面板点 👁 的用户
+          // 预期是「右侧出现预览」，静默外开等于「点了没反应」。如实报不可用。
+          if (result.openedWith === 'external') return { opened: false, reason: 'unsupported_format' as const }
           // 光把窗口提到前台不够：实例的 WebContentsView 默认是隐藏的，可见性由
           // 渲染端驱动（开标签 → 上报矩形 → setActiveInstance）。docs 面板发起的
           // 打开不经过渲染端的 openOriginal，所以必须在这里补一条通知，否则
@@ -4448,7 +4196,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     gatewaySupervisor = null
     await cursorCompletionSupervisor?.shutdown()
     cursorCompletionSupervisor = null
-    console.error('Failed to initialize Everroom desktop services', error)
+    console.error('Failed to initialize Everoffice desktop services', error)
     // 静默退出 = 用户看到白屏数分钟后应用消失且毫无提示（issue #179）。
     // 用原生错误框告知原因与日志位置，再退出。
     const failureDetail = error instanceof Error ? error.message : String(error)
@@ -4526,7 +4274,7 @@ app.on('before-quit', (event) => {
   remoteCommands?.stop()
   cursorCompletionBridge?.dispose()
   documentBridge?.dispose()
-  cloud?.cancelOidcLogin('EverRoom 正在退出。')
+  cloud?.cancelOidcLogin('EverOffice 正在退出。')
   void Promise.allSettled([
     service?.shutdown(),
     vaults?.shutdown(),
@@ -4539,7 +4287,7 @@ app.on('before-quit', (event) => {
       try {
         await rm(resolvedDataDirectory, { recursive: true, force: true })
       } catch (error) {
-        console.error('Failed to clear EverRoom user data', error)
+        console.error('Failed to clear EverOffice user data', error)
         clearUserDataOnQuit = false
       }
     }

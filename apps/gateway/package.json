@@ -1,6 +1,6 @@
 {
   "name": "@nxcore/gateway",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "description": "OpenNxCore local gateway service",
@@ -13,7 +13,7 @@
     "build": "tsup && node scripts/copy-migrations.mjs",
     "start": "node dist/serve.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && vitest run --dir ../../submodules/everroom-connectors/gateway-module",
+    "test": "vitest run && vitest run --dir ../../submodules/everoffice-connectors/gateway-module",
     "test:watch": "vitest",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/bin/migrate.ts"

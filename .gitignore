@@ -6,7 +6,8 @@ dist/
 out/
 release/
 screenshots/
-
+.omc/
+.omx/
 # Agent bundles are product source assets and must be committed with the app.
 !agents/
 !agents/**
@@ -32,7 +33,7 @@ apps/desktop/build/packaged-env.json
 !.env.example
 .env1
 .env2
-# 本地独立部署的 MemoryCore 克隆(仅本机联调用);EverRoom 通过 pnpm git 依赖
+# 本地独立部署的 MemoryCore 克隆(仅本机联调用);EverOffice 通过 pnpm git 依赖
 # 引用 NxcoreAI/memory-tencentdb-core,不直接依赖此目录。
 TencentDB-Agent-Memory/
 
@@ -48,6 +49,22 @@ materials/ppt-style-experiments/
 .tmp-preview/
 .tmp-proto/
 .tmp-pdf-audit/
+.tmp-output-analysis/
+
+# 原型探索半成品（从旧分支拷回的部分文件，缺兄弟依赖，会弄红 typecheck/测试；
+# 待补齐依赖或定稿后再入库）：context-room ported 片段、mock-thoughts 浏览器复现页、
+# 思路涌现 emergence 服务/技能、录音分段上传与说话人组件、相关孤儿测试。
+apps/desktop/src/renderer/src/components/context-room/
+apps/desktop/src/renderer/mock-thoughts.html
+apps/desktop/src/renderer/src/mock-thoughts-entry.tsx
+apps/desktop/src/main/recording/
+apps/desktop/src/renderer/src/components/recording/
+apps/desktop/tests/asr-coordinator.test.ts
+apps/desktop/tests/context-room-materials-pane.test.tsx
+apps/desktop/tests/recording-segment-uploader.test.ts
+apps/gateway/src/modules/knowledge/
+apps/gateway/tests/emergence-projection.test.ts
+agents/knowledge/
 
 # 本地工具 / 调试产物（不入库）
 # DeepSeek Harness 的 office 渲染临时目录（随机后缀，每次运行不同）
@@ -58,3 +75,6 @@ materials/ppt-style-experiments/
 /scratch/
 # TypeScript 增量构建信息
 *.tsbuildinfo
+
+# 个人答辩稿的测试副本（含个人信息，不入库）
+test/fixtures/pptx-agent/答辩PPT_测试副本.pptx

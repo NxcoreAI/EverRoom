@@ -37,8 +37,12 @@ const MAX_AGENT_SHEET_BYTES = 100 * 1024 * 1024
 const SESSION_IDLE_MS = 3 * 60_000
 /** 同时保留的隐藏会话数（按最近使用淘汰）。 */
 const SESSION_MAX = 2
-/** 等渲染层报告「目标工作副本已装载」的上限。 */
-const READY_TIMEOUT_MS = 15_000
+/**
+ * 等渲染层报告「目标工作副本已装载」的上限。15s 在真机上被打穿过（2026-11-05：
+ * dev 冷启动 + 并发 61MB docx 隐藏会话装载时，22KB 的合法 xlsx 15s 内没就绪），
+ * 网关侧 HTTP 上限 150s，放宽到 45s 只影响真失败场景的报错延迟。
+ */
+const READY_TIMEOUT_MS = 45_000
 /** 隐藏视图给布局测量用的真实尺寸。 */
 const HIDDEN_VIEW_BOUNDS = { x: 0, y: 0, width: 1100, height: 1400 }
 /** OOXML 加密文件（password-protected xlsx/xlsm）是 CFB 容器：正常 .xlsx 是 zip（PK..）。 */

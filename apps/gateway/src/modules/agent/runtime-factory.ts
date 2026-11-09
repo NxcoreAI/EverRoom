@@ -8,9 +8,10 @@ import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runti
 import { bundledAgentDefinitionsDir, type GatewayConfig, type PiRuntimeConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
 import { createDocumentPiTools } from "../documents/pi-tools.js";
-import { SLIDES_TOOL_NAMES } from "../documents/capabilities/office-plugin.js";
+
 import { createWebSearchPiTools } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
+import { createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "./workspace-files-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
@@ -24,6 +25,8 @@ export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
   externalCalls?: ExternalCallBudgetService;
+  /** 工作区文件目录（晚绑定 getter）：filesService 在 runtime 装配之后才创建。 */
+  workspaceFiles?: () => WorkspaceFileCatalog | null;
   /** 连接器 MCP 中转地址（loopback）；只在用户档 runtime 注入。 */
   connectorMcp?: { url: string };
   /** 长期记忆服务；提供时给用户档 agent 注入 memory_search / memory_remember。 */
@@ -127,6 +130,14 @@ export function createAgentRuntime(
 }
 
 /**
+ * 用户档不暴露 document_list（文稿库清单）：文件查找一律走 workspace_files_list，
+ * 不再把「读导入文件」的请求绕去文稿库空转；改稿目标由 activeDocument 上下文
+ * 或直接问用户确定。子代理（doc-writer / slides 系）各自的 documentTools
+ * 不经此过滤，仍保留 document_list。
+ */
+const USER_FACING_EXCLUDED_DOCUMENT_TOOLS = ["document_list"] as const;
+
+/**
  * 用户档 runtime 统一装配（main / main-direct / main-lite 共用）：
  * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/外部 MCP），
  * 差异仅在 pi 配置与 lite 委派工具。返回 null＝该 pi 未配置（调用方
@@ -148,6 +159,20 @@ function createUserFacingRuntime(
   const skillPrompts = (integrations?.skills ?? PASSTHROUGH_SKILL_GATE).builtinSkillPrompts(bundle);
   return new PiAgentRuntime({
     ...withConnectorMcp(withAgentDirectories(config, agentId, pi), integrations?.connectorMcp),
+    // 用户档护栏：单轮工具预算 + 同一调用重复上限，超限即停并如实反馈。
+    // 主 agent 的工具结果不再无限大：一次无参 Excel 读取曾回 82KB（其中指南 69KB），
+    // 三份重复快照直接把上下文顶到 80%、末轮输出额度被思考吃光。60k 字符足够放下
+    // 一份正常文档读取，超出部分按 JSON 感知截断并提示改读具体范围。
+    maxToolResultChars: 60_000,
+    // 主 agent 也要有刹车：实测一个 PPT 任务调了 185 次工具（其中 170 次是同一条
+    // 命令）跑满 7 分钟，期间文件一次没改。120 次足够覆盖正常的长任务。
+    maxToolCallsPerRun: 120,
+    // 不挂 pi 原生文件工具（read/edit/write/grep/find/ls 均无沙箱、read 还能把任意
+    // 路径图片直接塞进视觉上下文——2026-11-05 实测模型反复 read /tmp 图片烧掉 42%
+    // 窗口后触发重复熔断）。文件访问一律走 workspace/file 工具面；工作目录内的
+    // 探索用下面的沙箱 bash。
+    builtinTools: [],
+    // bash 仅在白名单根目录内沙箱执行（历史事故：无沙箱 bash 直读应用数据库「找图」）。
     bashSandbox: {
       // 基础根（agent 默认工作目录）；绑了目录的项目空间由 runtime 按本轮
       // 的空间根并进来（见 agent-runtime-pi 的 createBashSandboxExtension）。
@@ -161,11 +186,15 @@ function createUserFacingRuntime(
   }, {
     tools: [
       ...(integrations?.tools ?? []),
-      // PPT 四件套归 slides 子代理独占（create：slides-planner 方案 → slides-builder 落页；
-      // edit：slides-builder 直改）：用户档（main/main-direct/main-lite）
-      // 剔除，改走 slides_draft 调度；doc-writer 消费点另有 allowlist 不受影响。
+      // 工作区文件（含用户上传图片）的一等入口：只读清单 + 可引用句柄。
+      ...(integrations?.workspaceFiles
+        ? createWorkspaceFilesPiTools(integrations.workspaceFiles)
+        : []),
+      // PPT 生成走主 Agent 直生：pptx skill（系统提示词内联）设计 + slides_create
+      // 整册 pptxgenjs 脚本（桌面 vm 沙箱执行）；slides 三件套不再从用户档剔除。
+      // document_list（文稿库清单）仍剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
       ...createDocumentPiTools(mcpHost)
-        .filter((tool) => !(SLIDES_TOOL_NAMES as readonly string[]).includes(tool.name)),
+        .filter((tool) => !(USER_FACING_EXCLUDED_DOCUMENT_TOOLS as readonly string[]).includes(tool.name)),
       ...(config.webSearch && integrations?.agentResolver
         ? createWebSearchPiTools(integrations.agentResolver, integrations.externalCalls)
         : []),

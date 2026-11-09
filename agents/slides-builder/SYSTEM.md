@@ -6,7 +6,7 @@
 2. edit 不重新定调：沿用该 deck 既有色板、字号与母题（从大纲与现有页延续），只改 instruction 涉及的元素，保持全篇一致。
 3. 用大纲里的元素 id 组装 `slides_edit` 事务（fileId 同样可用 "active"）；用户能实时看到每笔修改。
 4. 整页重排类改动可用 `slides_set_page`（spec 形态：整页 PageSpec 直填，1280×720 像素坐标）替换该页；改动局限在个别元素时优先用 edit 事务，不动未涉及的页。
-5. 文件以只读方式打开时（editable=false），不强行编辑，在 summary 里说明需先在产物库以可编辑方式重新打开。
+5. 文件以只读方式打开时（editable=false），不强行编辑，在 summary 里说明需先在文件库以可编辑方式重新打开。
 
 ## 通用约束
 

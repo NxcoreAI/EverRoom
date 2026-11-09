@@ -60,8 +60,6 @@ describe("database migrations", () => {
     const tables = upgraded.sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
     ).all() as Array<{ name: string }>;
-    const ingestColumns = upgraded.sqlite.prepare("PRAGMA table_info(ingest_events)")
-      .all() as Array<{ name: string }>;
     const preserved = upgraded.sqlite.prepare(
       "SELECT title, content_json FROM doc_versions WHERE id = ?",
     ).get("version-1");
@@ -74,7 +72,10 @@ describe("database migrations", () => {
       "document_yjs_updates",
       "document_yjs_versions",
     ]));
-    expect(ingestColumns.map(({ name }) => name)).toContain("reinstated_at");
+    // ingest_events 台账已随 Phase 2h-2（0084）整体退役：重放后表不该再出现。
+    // 旧断言（重放 0023 补 reinstated_at 列）写于表还存在时——现在重放护栏
+    // runMigrationStatements 会跳过目标表已不存在的语句，表本身保持消失。
+    expect(tables.map(({ name }) => name)).not.toContain("ingest_events");
     expect(preserved).toEqual({ title: "Preserved", content_json: content });
   });
 
@@ -247,7 +248,7 @@ describe("database migrations", () => {
     db.sqlite.close();
   });
 
-  it("repairs databases that ran the EverRoom dev branch before this branch (mixed history)", async () => {
+  it("repairs databases that ran the EverOffice dev branch before this branch (mixed history)", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "nxcore-mixed-dev-migration-test-"));
     temporaryDirectories.push(dataDir);
     const databasePath = join(dataDir, "gateway.sqlite");

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./everroom_logo/everroom_full.png" width="320" alt="EverRoom">
+<img src="./everoffice_logo/everoffice_full.png" width="320" alt="EverOffice">
 
 **本地优先的工作空间：用可治理的 AI Agent 生产真正的 Office 文档。**
 
@@ -8,21 +8,21 @@ Agent 起草 · 逐条审阅 · 导出可交付的 Office 文件
 
 [English](./README.md) | [简体中文](./README.zh-CN.md) | [官网](https://r.nxcore.ai/)
 
-[![Star History Rank](https://api.star-history.com/badge?repo=NxcoreAI/EverRoom&type=rank)](https://www.star-history.com/nxcoreai/everroom)
-<a href="https://trendshift.io/repositories/178463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-178463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/178463/daily?language=TypeScript" alt="NxcoreAI%2FEverRoom | Trendshift" width="250" height="50"/></a>
+[![Star History Rank](https://api.star-history.com/badge?repo=NxcoreAI/EverOffice&type=rank)](https://www.star-history.com/nxcoreai/everroom)
+<a href="https://trendshift.io/repositories/178463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-178463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/178463/daily?language=TypeScript" alt="NxcoreAI%2FEverOffice | Trendshift" width="250" height="50"/></a>
 
-![Stars](https://img.shields.io/github/stars/NxcoreAI/EverRoom?style=flat&label=stars)
-![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverRoom?filename=apps%2Fdesktop%2Fpackage.json&label=version)
+![Stars](https://img.shields.io/github/stars/NxcoreAI/EverOffice?style=flat&label=stars)
+![Version](https://img.shields.io/github/package-json/v/NxcoreAI/EverOffice?filename=apps%2Fdesktop%2Fpackage.json&label=version)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
 > [!IMPORTANT]
-> Everroom 当前处于 Alpha 阶段，macOS 是主要开发目标。产品和 API 正在快速迭代，部分能力需要可选的本地服务或模型配置。
+> Everoffice 当前处于 Alpha 阶段，macOS 是主要开发目标。产品和 API 正在快速迭代，部分能力需要可选的本地服务或模型配置。
 
-## Everroom 是什么？
+## Everoffice 是什么？
 
-Everroom 是一个本地优先的桌面工作空间，用来和 AI Agent 一起生产真正的 Office 文档。导入本地文件、代码仓库和已连接的服务，然后在内置 Office 编辑器里自己撰写 Word 文档、表格和演示文稿，或者交给 Agent 会话起草、改写和填充。
+Everoffice 是一个本地优先的桌面工作空间，用来和 AI Agent 一起生产真正的 Office 文档。导入本地文件、代码仓库和已连接的服务，然后在内置 Office 编辑器里自己撰写 Word 文档、表格和演示文稿，或者交给 Agent 会话起草、改写和填充。
 
 这里的 Agent 不是接在文件库旁边的聊天框：它在明确的会话与 run 中工作，只拿到当前请求需要的工具和文档，并把文档改动作为可审阅的操作提交，最终是否落到文件里由你决定。
 
@@ -35,11 +35,11 @@ Everroom 是一个本地优先的桌面工作空间，用来和 AI Agent 一起�
 3. **逐条审阅改动：** Agent 的写入与修改以 patch 和文档操作的形式呈现，确认后才成为文档的一部分。
 4. **持续推进工作：** 有边界的 Agent 会话、定时 run、dispatch-only 子 Agent 和通知承担重复与长耗时任务。
 
-## 为什么需要 Everroom？
+## 为什么需要 Everoffice？
 
 当 AI 拿到正确的素材、并且有一个真正能落地的地方时，给出下一步并不难。真正困难的是此前的工作：把源材料导进来，产出同事能直接打开的文件，并让自动改动始终可审阅，而不是悄悄重写你的文档。
 
-Everroom 补上的正是这一层。它面向文档、文件和已连接服务构建本地工作空间，并让 Agent 作用于真实的 Office 产物；它不是另一个聊天客户端、简单的 RAG 界面，也不是默默堆积未审阅产出的自动化工具。
+Everoffice 补上的正是这一层。它面向文档、文件和已连接服务构建本地工作空间，并让 Agent 作用于真实的 Office 产物；它不是另一个聊天客户端、简单的 RAG 界面，也不是默默堆积未审阅产出的自动化工具。
 
 产品主张很简单：
 
@@ -50,7 +50,7 @@ Everroom 补上的正是这一层。它面向文档、文件和已连接服务�
 - **本地优先：** 数据、文档、索引和凭据默认保存在用户设备上。
 - **先审阅再落地：** Agent 改动以操作和 patch 的形式提出，而不是静默覆盖。
 - **自动化但可治理：** Agent 获得明确、临时且可撤销的工具权限。
-- **底座可替换：** 模型、连接器和 Agent runtime 均通过 Everroom 自有接口接入。
+- **底座可替换：** 模型、连接器和 Agent runtime 均通过 Everoffice 自有接口接入。
 
 只有当人能够检查改了什么、修正它，并让修正进入下一次任务时，生成稿才真正有用。
 
@@ -61,7 +61,7 @@ Everroom 补上的正是这一层。它面向文档、文件和已连接服务�
 | **Documents** | 支持版本化、块级编辑的 Word 文档、表格和演示文稿 | 确保最终产物仍由人掌控 |
 | **Agent** | 拥有明确工具、会话、run 记录和取消能力的任务执行者 | 让自动化能够被检查、停止和替换 |
 | **Sources** | 汇集本地文件、文件夹和代码仓库的统一素材库；连接器由 Agent 即席查询 | 让 Agent 可读的素材只有一个入口 |
-| **Connectors** | 通过 OpenConnector MCP 即席检索外部资料；不做定时同步、不留内容副本 | 用用户自己的凭据触达外部数据，Everroom 不存储 |
+| **Connectors** | 通过 OpenConnector MCP 即席检索外部资料；不做定时同步、不留内容副本 | 用用户自己的凭据触达外部数据，Everoffice 不存储 |
 | **Schedules** | 周期性 Agent run 与 dispatch-only 子 Agent | 长耗时工作始终可见、可中断 |
 
 原始文件和解析后的 Markdown 只有一个存储所有者：文档与 Agent run 通过稳定引用、哈希和溯源信息使用它们，而不是复制多份。
@@ -78,7 +78,7 @@ Agent 不会绕过你远程改文档，它走的是和人一样的提交路径�
 
 ### 产品边界
 
-Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理，也不强制云端同步。重点是可信的本地文档工作，以及一个你能审阅的 Agent。
+Everoffice 刻意收窄范围：不做自治多 Agent 集群、不做企业管理，也不强制云端同步。重点是可信的本地文档工作，以及一个你能审阅的 Agent。
 
 ## 当前进度
 
@@ -96,9 +96,9 @@ Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理�
 
 ### 在访达中直接打开 Word / Excel / PPT
 
-桌面端把 EverRoom 注册为 `.docx`、`.doc`、`.xlsx`、`.xls`、`.pptx`、`.ppt` 的备选打开方式。在访达里右键文档，选择**打开方式 → EverRoom**（也可以把它设为该类文件的默认程序）。EverRoom 会把文件导入本地文件库，并用内置 Office 编辑器打开——`.docx`、`.xlsx`、`.xlsm`、`.pptx` 可直接编辑。保存会把编辑结果写回磁盘上的原文件（Word、WPS、Keynote 打开也能看到新内容），同时在文件库为该条目生成新版本。之后它也会出现在「文件」页里。
+桌面端把 EverOffice 注册为 `.docx`、`.doc`、`.xlsx`、`.xls`、`.pptx`、`.ppt` 的备选打开方式。在访达里右键文档，选择**打开方式 → EverOffice**（也可以把它设为该类文件的默认程序）。EverOffice 会把文件导入本地文件库，并用内置 Office 编辑器打开——`.docx`、`.xlsx`、`.xlsm`、`.pptx` 可直接编辑。保存会把编辑结果写回磁盘上的原文件（Word、WPS、Keynote 打开也能看到新内容），同时在文件库为该条目生成新版本。之后它也会出现在「文件」页里。
 
-> 开发态首次 `pnpm dev` 会重建带品牌信息的 Electron 应用并注册文档类型。若访达的「打开方式」里仍没有 EverRoom，再重启一次开发应用，让 LaunchServices 重新扫描。
+> 开发态首次 `pnpm dev` 会重建带品牌信息的 Electron 应用并注册文档类型。若访达的「打开方式」里仍没有 EverOffice，再重启一次开发应用，让 LaunchServices 重新扫描。
 
 ## 快速开始
 
@@ -111,8 +111,8 @@ Everroom 刻意收窄范围：不做自治多 Agent 集群、不做企业管理�
 ### 启动桌面应用
 
 ```bash
-git clone https://github.com/NxcoreAI/Everroom.git
-cd Everroom
+git clone https://github.com/NxcoreAI/Everoffice.git
+cd Everoffice
 pnpm install
 pnpm dev
 ```
@@ -145,13 +145,13 @@ NxCore Gateway 同时提供受 Bearer Token 保护的 `/v1/mcp/documents/:sessio
 
 ```dotenv
 NXCORE_SUBAGENTS_ENABLED=true
-NXCORE_SUBAGENTS_DIR=/absolute/path/to/everroom-agents
+NXCORE_SUBAGENTS_DIR=/absolute/path/to/everoffice-agents
 ```
 
 每个一级子目录代表一个 Agent：
 
 ```text
-everroom-agents/
+everoffice-agents/
 └── mail-researcher/
     ├── agent.yaml
     ├── SYSTEM.md
@@ -178,7 +178,8 @@ policy:
   allowedCallers: [primary-agent]
   timeoutMs: 300000
   maxConcurrency: 1
-  maxToolCalls: 40
+  # maxToolCalls 不声明＝不设工具调用上限（长任务推荐）：run 只受 timeoutMs
+  # 与输出预算约束。确需硬边界时才显式声明，超限会中止 run 并判 failed。
 ```
 
 `mcp.server` 引用设置中已有的全局 MCP 服务器名称，子 Agent 只会看到自己绑定并通过 `includeTools` 筛选后的服务器。修改目录内容后重启 Gateway 会自动生成新的不可变 Revision；已有 Invocation 继续使用原 Revision。完整约束见 [`docs/subagent-framework-design.zh-CN.md`](./docs/subagent-framework-design.zh-CN.md)。
@@ -208,13 +209,13 @@ pnpm package:win  # 生成 Windows x64 NSIS 安装包
 - `git submodule update --init --recursive`（GenOffice）
 - `apps/desktop/scripts/generate-packaged-env.mjs` 所需的打包环境变量；本地测试构建使用占位值，切勿使用生产密钥
 
-未签名的安装包输出到 `release/EverRoom-<version>-windows-x64.exe`。可通过 `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs` 免安装验证。脚本化安装时可使用 `/S`（静默）与 `/D=<dir>` 指定目标目录。由于构建未签名，Microsoft Defender SmartScreen 可能会在首次启动前提示。
+未签名的安装包输出到 `release/EverOffice-<version>-windows-x64.exe`。可通过 `pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs` 免安装验证。脚本化安装时可使用 `/S`（静默）与 `/D=<dir>` 指定目标目录。由于构建未签名，Microsoft Defender SmartScreen 可能会在首次启动前提示。
 
 </details>
 
 ## 技术架构
 
-Everroom 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责本地编排与持久化；连接器和 Agent runtime 各自维护自己的数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
+Everoffice 保持产品边界稳定，同时允许底层引擎替换。桌面端负责生命周期与信任边界；NxCore Gateway 负责本地编排与持久化；连接器和 Agent runtime 各自维护自己的数据契约。Renderer 无法直接访问数据库、文件系统或 Gateway 凭据；所有 IPC 请求由主进程处理，再转发给 Gateway。
 
 ### 实现策略
 
@@ -269,7 +270,7 @@ macOS 默认运行时目录：
 └── open-connector/  # 托管连接器运行时与 CLI 数据
 ```
 
-Windows 上相同布局位于 `%APPDATA%\EverRoom\`（即 `C:\Users\<user>\AppData\Roaming\EverRoom\`）。设置 `NXCORE_DATA_DIR` 可迁移该目录。
+Windows 上相同布局位于 `%APPDATA%\EverOffice\`（即 `C:\Users\<user>\AppData\Roaming\EverOffice\`）。设置 `NXCORE_DATA_DIR` 可迁移该目录。
 
 Gateway 日志命名为 `gateway.YYYY-MM-DD.N.log`，每天零点切分，保留 30 个历史文件，并自动脱敏已知凭据。终端日志使用可读的本地时间。
 
@@ -288,7 +289,7 @@ Gateway 日志命名为 `gateway.YYYY-MM-DD.N.log`，每天零点切分，保留
 ## 仓库结构
 
 ```text
-Everroom/
+Everoffice/
 ├── apps/
 │   ├── desktop/          # Electron main、preload 与 React renderer
 │   └── gateway/          # 独立本地后端服务
@@ -299,7 +300,7 @@ Everroom/
 │   ├── document-model/   # 纯文档规范化与块引用
 │   └── reality-contract/ # 共享协议与事件类型
 ├── submodules/
-│   └── everroom-connectors/  # 连接器契约、Gateway 模块与桌面宿主
+│   └── everoffice-connectors/  # 连接器契约、Gateway 模块与桌面宿主
 └── docs/                 # 产品、架构和实施说明
 ```
 
@@ -319,7 +320,7 @@ Everroom/
 
 ## 致谢
 
-Everroom 建立在众多开源项目和理念之上：
+Everoffice 建立在众多开源项目和理念之上：
 
 - [Electron](https://www.electronjs.org/) 与 [React](https://react.dev/) 提供桌面应用基础。
 - [Fastify](https://fastify.dev/)、[TypeBox](https://github.com/sinclairzx81/typebox)、[Drizzle ORM](https://orm.drizzle.team/) 和 [SQLite](https://www.sqlite.org/) 提供本地服务与存储层。
@@ -329,8 +330,8 @@ Everroom 建立在众多开源项目和理念之上：
 
 ## 开源协议与贡献
 
-Everroom 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
+Everoffice 以 [Apache License 2.0](./LICENSE) 开源。第三方组件仍适用各自的上游许可证；请以对应目录中的许可证和声明文件为准。
 
 社区版计划包含桌面客户端、Office 文档体验、Agent runtime 边界、本地 Connector 和扩展 SDK。托管同步、团队管理、企业控制与托管连接器基础设施可能单独提供。
 
-Everroom 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、Office 文档与导出质量、文档操作、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。
+Everoffice 仍处于早期阶段，接口会持续演进。当前有价值的贡献方向包括 Connector、Agent adapter、Office 文档与导出质量、文档操作、测试、文档和隐私审查。开始大规模架构改动前，请先创建 Issue，确保实现与当前契约和路线图保持一致。

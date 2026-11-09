@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { OfficeBridgeClient } from "../src/modules/documents/capabilities/office-bridge-client.js";
 import { officePlugin } from "../src/modules/documents/capabilities/office-plugin.js";
 import { SlidesVisualReviewer } from "../src/modules/slides-visual-review/review.js";
-import type { VlmPromptAnalyzer } from "../src/modules/vision/vlm-client.js";
 import type { DocumentExecutionContext } from "../src/modules/documents/capabilities/types.js";
 
 function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
@@ -17,6 +16,7 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
     versionDeduped: false,
     roomRequested: true,
     originalName: "out.pptx",
+    warnings: ["素材 abc 回源失败，已用占位图替代"],
   });
   const readDeck = vi.spyOn(bridge, "readDeck").mockResolvedValue({
     outline: "Page 1\n  t1 | text | 季度回顾",
@@ -45,7 +45,7 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
-  it("插件暴露六个工具：word / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {
+  it("插件暴露五个工具：word / slides 整册脚本生成 / sheets 生成 + slides 读 / 编辑", () => {
     const { tools } = createHarness();
     expect([...tools.keys()].sort()).toEqual([
       "office_create",
@@ -53,106 +53,49 @@ describe("office 工具：PPT / Excel 扩展", () => {
       "slides_create",
       "slides_edit",
       "slides_read",
-      "slides_set_page",
     ]);
   });
 
-  it("slides create：只落 1 页首页骨架（含演示标题与首页标题）、outline 原样回传作页序蓝图、format=pptx、幂等键前缀 agent-slides、nextAction=fill_pages", async () => {
+  const SCRIPT = [
+    'const pptxgen = require("pptxgenjs");',
+    'const pres = new pptxgen();',
+    'pres.layout = "LAYOUT_WIDE";',
+    'const slide = pres.addSlide();',
+    'slide.addText("季度回顾", { x: 0.6, y: 0.5, w: 12, h: 1, fontSize: 40, color: "1A1A2E", isTextBox: true });',
+    'await pres.writeFile({ fileName: "deck.pptx" });',
+    "",
+  ].join("\n");
+
+  it("slides create：script + applyThemeJs 下发、format=pptx、幂等键前缀 agent-slides、warnings 透传、nextAction=report_result", async () => {
     const { tools, generate } = createHarness();
     const result = await tools.get("slides_create")!.execute(
-      { title: "季度汇报", outline: ["封面", "营收", "展望"] },
+      { title: "季度汇报", script: SCRIPT },
       context,
     );
     expect(generate).toHaveBeenCalledTimes(1);
     const input = generate.mock.calls[0]![0];
     expect(input.format).toBe("pptx");
-    expect(input.pages).toHaveLength(1);
-    expect(input.pages![0]).toContain("季度汇报");
-    expect(input.pages![0]).toContain("封面");
-    expect(input.pages![0]).toContain("第 1 / 3 页");
-    input.pages!.forEach((page) => {
-      const parsed = JSON.parse(page) as { elements: unknown[] };
-      expect(parsed.elements.length).toBeGreaterThan(0);
-    });
+    expect(input.script).toBe(SCRIPT);
+    expect(input.pages).toBeUndefined();
+    expect(typeof input.applyThemeJs).toBe("string");
+    expect(input.applyThemeJs).toContain("applyTheme");
     expect(input.idempotencyKey!.startsWith("agent-slides:")).toBe(true);
     expect(result.structuredContent).toMatchObject({
-      pages: 1,
-      outline: ["封面", "营收", "展望"],
-      nextAction: "fill_pages",
+      fileEntryId: "fe-1",
+      warnings: ["素材 abc 回源失败，已用占位图替代"],
+      nextAction: "report_result",
     });
-    expect(result.structuredContent.hint).toContain("slides_set_page");
+    expect(result.structuredContent.hint).toContain("slides_read");
   });
 
-  it("slides create：outline 非数组 / 空数组 / 非字符串项 → INVALID_REQUEST；fileName 扩展名校验", async () => {
+  it("slides create：缺 script / 无 writeFile → INVALID_REQUEST；fileName 扩展名校验", async () => {
     const { tools } = createHarness();
     const slides = tools.get("slides_create")!;
-    await expect(slides.execute({ title: "t", outline: [] }, context)).rejects.toThrow("INVALID_REQUEST");
-    await expect(slides.execute({ title: "t", outline: "nope" }, context)).rejects.toThrow("INVALID_REQUEST");
-    await expect(slides.execute({ title: "t", outline: ["封面", 42] }, context)).rejects.toThrow("第 2 页");
-    await expect(slides.execute({ title: "t", outline: ["封面"], fileName: "a.docx" }, context)).rejects.toThrow(".pptx 结尾");
-  });
-
-  it("slides set_page：spec 对象 stringify 下发、slideIndex 透传、成功 → nextAction=fill_next_page", async () => {
-    const { tools, fillPage } = createHarness();
-    const spec = { background: "#FFFFFF", elements: [{ type: "text", x: 80, y: 80, w: 400, h: 80, paragraphs: [{ runs: [{ text: "标题", sizePt: 44, bold: true }] }] }] };
-    const result = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 2, spec },
-      context,
-    );
-    expect(fillPage).toHaveBeenCalledWith({ fileId: "fe-1", slideIndex: 2, specJson: JSON.stringify(spec) });
-    expect(result.structuredContent).toMatchObject({
-      fileId: "fe-1",
-      slideIndex: 2,
-      applied: true,
-      saved: true,
-      records: [{ op: "insertSlidePptx", created: ["s-9"] }],
-      nextAction: "fill_next_page",
-    });
-  });
-
-  it("slides set_page：非法入参 → INVALID_REQUEST（slideIndex / spec）", async () => {
-    const { tools, fillPage } = createHarness();
-    const setPage = tools.get("slides_set_page")!;
-    await expect(setPage.execute({ fileId: "fe-1", slideIndex: -1, spec: { elements: [] } }, context)).rejects.toThrow("INVALID_REQUEST");
-    await expect(setPage.execute({ fileId: "fe-1", slideIndex: 1.5, spec: { elements: [] } }, context)).rejects.toThrow("INVALID_REQUEST");
-    await expect(setPage.execute({ fileId: "fe-1", slideIndex: 0 }, context)).rejects.toThrow("INVALID_REQUEST");
-    await expect(setPage.execute({ fileId: "fe-1", slideIndex: 0, spec: [{ elements: [] }] }, context)).rejects.toThrow("INVALID_REQUEST");
-    expect(fillPage).not.toHaveBeenCalled();
-  });
-
-  it("slides set_page：未生效（applied:false）→ failures/warnings 透传 + fix_spec_and_retry；ok:false → OFFICE_EDIT_FAILED", async () => {
-    const { tools, fillPage } = createHarness();
-    fillPage.mockResolvedValueOnce({
-      ok: true,
-      applied: false,
-      failures: [{ index: 0, error: "page 3: the elements array is missing or empty" }],
-      saved: true,
-    });
-    const failed = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 2, spec: { elements: [] } },
-      context,
-    );
-    expect(failed.structuredContent).toMatchObject({
-      applied: false,
-      failures: [{ index: 0, error: "page 3: the elements array is missing or empty" }],
-      nextAction: "fix_spec_and_retry",
-    });
-    fillPage.mockResolvedValueOnce({ ok: true, applied: true, warnings: [{ page: 3, messages: ["图片 URL 拉取失败"] }] });
-    const warned = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 2, spec: { elements: [{ type: "text", paragraphs: [{ runs: [{ text: "x" }] }] }] } },
-      context,
-    );
-    expect(warned.structuredContent).toMatchObject({
-      applied: true,
-      warnings: [{ page: 3, messages: ["图片 URL 拉取失败"] }],
-    });
-    fillPage.mockResolvedValueOnce({ ok: false, error: "PPT 未在 Room 中打开" });
+    await expect(slides.execute({ title: "t" }, context)).rejects.toThrow("INVALID_REQUEST");
+    await expect(slides.execute({ title: "t", script: "const x = 1;" }, context)).rejects.toThrow("writeFile");
     await expect(
-      tools.get("slides_set_page")!.execute(
-        { fileId: "fe-1", slideIndex: 0, spec: { elements: [{ type: "text", paragraphs: [{ runs: [{ text: "x" }] }] }] } },
-        context,
-      ),
-    ).rejects.toThrow("OFFICE_EDIT_FAILED: PPT 未在 Room 中打开");
+      slides.execute({ title: "t", script: SCRIPT, fileName: "a.docx" }, context),
+    ).rejects.toThrow(".pptx 结尾");
   });
 
   it("sheets：rows 二维数组透传（数字/布尔保留）、format=xlsx、幂等键前缀 agent-sheets", async () => {
@@ -188,10 +131,21 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），六个工具照常暴露", () => {
+  it("Phase 2i：office 插件不再要求先选 Room（requiresRoom=false），五个工具照常暴露", () => {
     const { plugin, tools } = createHarness();
     expect(plugin.manifest.requiresRoom).toBe(false);
-    expect(tools.size).toBe(6);
+    expect(tools.size).toBe(5);
+  });
+
+  it("Room 已删除：工具文案不再指向 Room / 产物库，生成物统一落在文件库", () => {
+    const { plugin, tools } = createHarness();
+    const surface = [
+      ...plugin.promptGuidelines,
+      ...[...tools.values()].flatMap((tool) => [tool.title, tool.description]),
+    ].join("\n");
+    expect(surface).not.toContain("Room");
+    expect(surface).not.toContain("产物库");
+    expect(surface).toContain("文件库");
   });
 });
 
@@ -307,84 +261,5 @@ describe("office 工具：PPT 编辑（slides read / edit）", () => {
       context,
     );
     expect(editDeck).toHaveBeenLastCalledWith({ fileId: "file-9", ops, isolation: "atomic" });
-  });
-});
-
-describe("office 工具：set_page 视觉复检接线", () => {
-  const failVlm: VlmPromptAnalyzer = {
-    model: "fake-vlm",
-    async analyze() {
-      return {
-        pass: false,
-        issues: [{ item: "text_overlap", where: "标题与第一张卡片之间", severity: "major" }],
-      };
-    },
-  };
-  const passVlm: VlmPromptAnalyzer = {
-    model: "fake-vlm",
-    async analyze() {
-      return { pass: true };
-    },
-  };
-  const spec = {
-    background: "#FFFFFF",
-    elements: [
-      { type: "text", x: 80, y: 80, w: 400, h: 80, paragraphs: [{ runs: [{ text: "目录", sizePt: 44, bold: true }] }] },
-      { type: "text", x: 80, y: 200, w: 400, h: 60, paragraphs: [{ runs: [{ text: "市场 · 产品 · 渠道 · 财务", sizePt: 18 }] }] },
-    ],
-  };
-
-  it("复检通过：visualReview.status=pass、nextAction=fill_next_page、renderPage 被调用", async () => {
-    const { tools, renderPage } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
-    const result = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 0, spec },
-      context,
-    );
-    expect(renderPage).toHaveBeenCalledWith({ fileId: "fe-1", slideIndex: 0 });
-    expect(result.structuredContent).toMatchObject({
-      visualReview: { status: "pass" },
-      nextAction: "fill_next_page",
-    });
-  });
-
-  it("复检不通过：issues 中文映射进返回、nextAction=revise_page_and_retry；同页第二次 → retriesExhausted → fill_next_page", async () => {
-    const { tools } = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: failVlm }) });
-    const first = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 0, spec },
-      context,
-    );
-    expect(first.structuredContent).toMatchObject({
-      visualReview: {
-        status: "fail",
-        retriesExhausted: false,
-        issues: [{ 问题: "文字互相重叠", 位置: "标题与第一张卡片之间" }],
-      },
-      nextAction: "revise_page_and_retry",
-    });
-    const second = await tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 0, spec },
-      context,
-    );
-    expect(second.structuredContent).toMatchObject({
-      visualReview: { status: "fail", retriesExhausted: true },
-      nextAction: "fill_next_page",
-    });
-  });
-
-  it("未注入 reviewer：无 visualReview 字段、renderPage 不被调用；注入 reviewer 时 spec 形态同样复检", async () => {
-    const noReviewer = createHarness();
-    const plain = await noReviewer.tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 0, spec },
-      context,
-    );
-    expect(plain.structuredContent.visualReview).toBeUndefined();
-    expect(noReviewer.renderPage).not.toHaveBeenCalled();
-
-    const withReviewer = createHarness({ reviewer: new SlidesVisualReviewer({ vlm: passVlm }) });
-    await withReviewer.tools.get("slides_set_page")!.execute(
-      { fileId: "fe-1", slideIndex: 0, spec },
-      context,
-    );
-    expect(withReviewer.renderPage).toHaveBeenCalledWith({ fileId: "fe-1", slideIndex: 0 });
   });
 });

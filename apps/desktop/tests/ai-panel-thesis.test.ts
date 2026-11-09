@@ -292,9 +292,9 @@ describe('预览可见性：主进程建好实例后必须通知渲染端', () =
     expect(block.slice(0, block.indexOf('if (card.sourceFileEntryId)'))).toContain('notifyPreviewRequested(request)')
   })
 
-  it('渲染端收到通知就开文件标签并激活（矩形上报沿用文件编辑视口）', () => {
+  it('渲染端收到通知就在归属工作空间打开（矩形上报沿用气泡窗编辑视口）', () => {
     expect(workbench).toContain('office.onPreviewRequest(')
-    expect(workbench).toContain('openFileTab(entry.file)')
+    expect(workbench).toContain('openFileInWorkspace(entry.file)')
   })
 
   it('preload 暴露 onPreviewRequest，通道名两端一致', () => {
@@ -303,6 +303,29 @@ describe('预览可见性：主进程建好实例后必须通知渲染端', () =
     const sources = readFileSync(resolve(__dirname, '../src/shared/sources.ts'), 'utf8')
     expect(sources).toContain("export const OFFICE_PREVIEW_REQUEST_CHANNEL = 'office:preview-request'")
     expect(sources).toContain('onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void')
+  })
+
+  it('内嵌预览不可用时如实报 unsupported_format（不再静默外开让用户以为没反应）', () => {
+    const block = main.slice(main.indexOf('previewTemplate: async (workspaceId, cardId)'))
+    const openBlock = block.slice(0, block.indexOf('if (card.sourceFileEntryId)'))
+    expect(openBlock).toContain("openedWith === 'external'")
+    expect(openBlock).toContain("reason: 'unsupported_format'")
+    // 外部回退发生时绝不能再发预览通知（那会在右侧开一个永远空白的标签）
+    expect(openBlock.indexOf('unsupported_format')).toBeLessThan(openBlock.indexOf('previewRequestFromOpenResult(result)'))
+  })
+
+  it('面板把 unsupported_format 翻译成可操作的提示（引导另存为 docx）', () => {
+    const aiTab = readFileSync(
+      resolve(__dirname, '../vendor/genoffice/apps/docs/src/renderer/components/AiTab.tsx'),
+      'utf8',
+    )
+    expect(aiTab).toContain("'unsupported_format'")
+    expect(aiTab).toContain('aiThesisPreviewUnsupported')
+    const strings = readFileSync(
+      resolve(__dirname, '../vendor/genoffice/apps/docs/src/renderer/i18n/strings-ai.ts'),
+      'utf8',
+    )
+    expect(strings).toContain('aiThesisPreviewUnsupported')
   })
 })
 

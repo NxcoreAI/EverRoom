@@ -97,6 +97,19 @@ interface PlanSubscription {
   reconnectTimer: NodeJS.Timeout | null
 }
 
+/** /v1/plan/stream 推送的变更帧形状（workspaceId + item + event）。 */
+function isPlanChangePayload(value: unknown): value is {
+  workspaceId: string
+  item: PlanItem
+  event: PlanItemEvent
+} {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as { workspaceId?: unknown; item?: unknown; event?: unknown }
+  return typeof candidate.workspaceId === 'string'
+    && Boolean(candidate.item) && typeof candidate.item === 'object'
+    && typeof candidate.event === 'string'
+}
+
 interface RunWatch {
   sessionId: string
   socket: WebSocket | null
@@ -375,11 +388,17 @@ export class AgentGatewayBridge {
         while (boundary >= 0) {
           const chunk = buffer.slice(0, boundary)
           buffer = buffer.slice(boundary + 2)
-          const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'))
-          if (dataLine) {
+          // SSE 帧带 event 类型：只转发真正的变更（event: plan）。连接帧
+          // （event: ready，data 只有 workspaceId）与 ping 心跳不进 plan:changed
+          // ——它们没有 item，透传会让渲染层把 undefined upsert 进看板数组，
+          // 点开「计划」即渲染崩溃（reading 'status'）。
+          const lines = chunk.split('\n')
+          const eventLine = lines.find((line) => line.startsWith('event:'))
+          const dataLine = lines.find((line) => line.startsWith('data:'))
+          if (dataLine && (!eventLine || eventLine.slice(6).trim() === 'plan')) {
             try {
               const payload = JSON.parse(dataLine.slice(5).trim()) as unknown
-              if (!contents.isDestroyed() && !subscription.closed) {
+              if (isPlanChangePayload(payload) && !contents.isDestroyed() && !subscription.closed) {
                 contents.send('plan:changed', payload)
               }
             } catch {
@@ -589,10 +608,17 @@ export class AgentGatewayBridge {
     approvalId: string,
     decision: AgentApprovalDecision,
     feedback?: string,
+    choice?: string,
+    text?: string,
   ): Promise<{ approvalId: string; decision: string }> {
     return this.request(`/v1/agent/approvals/${encodeURIComponent(approvalId)}/resolve`, {
       method: 'POST',
-      data: { decision, ...(feedback ? { feedback } : {}) },
+      data: {
+        decision,
+        ...(feedback ? { feedback } : {}),
+        ...(choice ? { choice } : {}),
+        ...(text ? { text } : {}),
+      },
     })
   }
 

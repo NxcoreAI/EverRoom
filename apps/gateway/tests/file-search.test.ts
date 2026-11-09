@@ -240,6 +240,16 @@ describe("file_search pi 工具", () => {
     ]);
   });
 
+  it("extension 序列化成 JSON 字符串或逗号分隔时自动解开，不再校验失败", async () => {
+    const searchCatalog: SearchCatalogStub = vi.fn(() => ({ total: 0, items: [] }));
+    const tool = toolWith(searchCatalog);
+    // deepseek 实测：数组参数被写成 JSON 字符串。
+    await tool.execute(runInput(), { query: "锥光", extension: '["md", "markdown", "txt"]' });
+    expect(searchCatalog.mock.calls[0]![1]).toMatchObject({ extensions: ["md", "markdown", "txt"] });
+    await tool.execute(runInput(), { query: "锥光", extension: "png, jpg" });
+    expect(searchCatalog.mock.calls[1]![1]).toMatchObject({ extensions: ["png", "jpg"] });
+  });
+
   it("params.workspaceId 覆盖运行会话工作区；limit 缺省 10、越界收敛 50", async () => {
     const searchCatalog: SearchCatalogStub = vi.fn((_query: string, _options?: SearchOptions) => ({
       total: 0,
@@ -307,16 +317,16 @@ describe("file_search pi 工具", () => {
     const searchCatalog: SearchCatalogStub = vi.fn(() => ({ total: 0, items: [] }));
     const tool = toolWith(searchCatalog);
 
-    // 省略 = 整库，不向服务层传 scope，提示里说的是「文件库」。
+    // 省略 = 整库，不向服务层传 scope，提示里说的是「全部文件」。
     const omitted = JSON.parse((await tool.execute(runInput(), { query: "报告" })).content) as { hint: string };
     expect(searchCatalog.mock.calls[0]![1]).not.toHaveProperty("scope");
-    expect(omitted.hint).toContain("文件库");
+    expect(omitted.hint).toContain("全部文件");
 
     // 限定产物库时，空结果要明确告诉模型「查的是产物库」并允许再搜整库。
     const artifacts = JSON.parse(
       (await tool.execute(runInput(), { query: "报告", scope: "artifacts" })).content,
     ) as { hint: string };
-    expect(artifacts.hint).toContain("产物库");
+    expect(artifacts.hint).toContain("产物里没有");
     expect(artifacts.hint).toContain("scope=all");
     expect(artifacts.hint).toContain("换个关键词");
 

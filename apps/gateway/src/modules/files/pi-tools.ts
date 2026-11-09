@@ -113,7 +113,7 @@ export function createFileReadPiTool(deps: FileReadToolDeps): PiAgentRuntimeTool
           entry = files.catalogEntry(fileId);
         }
       }
-      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在文件库中（可能仍在导入或已被删除）`);
+      if (!entry) throw new Error(`FILE_NOT_FOUND: ${fileId} 不在资料中（可能仍在导入或已被删除）`);
 
       let markdown = files.catalogMarkdownOf(fileId)
         ?? files.markdownOf(fileId)
@@ -198,9 +198,9 @@ export interface FileSearchToolDeps {
 export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntimeTool {
   return {
     name: "file_search",
-    label: "按文件名搜索文件库（可限定产物库/资料库）",
+    label: "按文件名搜索文件（可限定产物/资料）",
     description:
-      "在文件库里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
+      "在资料里按文件名子串搜索已入库的文件（Word/Excel/PPT/PDF/Markdown/图片等），返回 fileId 列表。"
       + "用户的问题可能落在工作区资料库/产物的某份材料里时，先用它把「哪份文件」变成确定 fileId，"
       + "不必等用户报出文件名，也不要要求用户先上传或打开文件。"
       + "query 同时匹配原始文件名和显示名（不区分大小写，中文按子串）；extension 可以是单个扩展名或数组。"
@@ -218,10 +218,10 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
         description: "文件名关键词（子串匹配原始文件名/显示名）；省略 = 最近更新的文件",
       })),
       extension: Type.Optional(Type.Union([
-        Type.String({ minLength: 2, maxLength: 12 }),
+        Type.String({ minLength: 2, maxLength: 160 }),
         Type.Array(Type.String({ minLength: 2, maxLength: 12 }), { minItems: 1, maxItems: 8 }),
       ], {
-        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）。大小写不敏感",
+        description: "扩展名过滤，如 docx / .xlsx / pptx / pdf；也可以传数组（[\"png\",\"jpg\"] 找图片）、逗号分隔或 JSON 数组字符串（自动解析）。大小写不敏感",
       })),
       scope: Type.Optional(Type.Union([
         Type.Literal("all"),
@@ -253,10 +253,22 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
       const files = deps.files();
       if (!files) throw new Error("FILE_SERVICE_UNAVAILABLE: 文件服务尚未就绪");
       const query = typeof params.query === "string" ? params.query.trim() : "";
+      // 模型常把数组参数序列化成 JSON 字符串（实测 deepseek："[\"md\",\"txt\"]"）或写成语义
+      // 等价的逗号分隔——扩展名本身不含逗号/括号，直接解开，省一轮校验失败重试。
+      const parseExtensionList = (value: string): string[] => {
+        const trimmed = value.trim();
+        if (trimmed.startsWith("[")) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) return parsed.filter((item): item is string => typeof item === "string");
+          } catch { /* 落到逗号分隔 */ }
+        }
+        return trimmed.split(/[,，\s]+/);
+      };
       const rawExtensions = Array.isArray(params.extension)
         ? params.extension
         : typeof params.extension === "string"
-          ? [params.extension]
+          ? parseExtensionList(params.extension)
           : [];
       const extensions = rawExtensions
         .filter((value): value is string => typeof value === "string")
@@ -297,7 +309,7 @@ export function createFileSearchPiTool(deps: FileSearchToolDeps): PiAgentRuntime
           updatedAt: item.updatedAt,
         };
       });
-      const scopeLabel = scope === "artifacts" ? "产物库" : scope === "library" ? "资料库" : "文件库";
+      const scopeLabel = scope === "artifacts" ? "产物" : scope === "library" ? "资料" : "全部文件";
       const payload = {
         query,
         ...(extensions.length > 0 ? { extension: extensions.length === 1 ? extensions[0] : extensions } : {}),

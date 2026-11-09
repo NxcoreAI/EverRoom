@@ -39,7 +39,7 @@ export interface ProjectedDocumentReference {
   ordinal: number;
 }
 
-export interface EverroomBlockReference {
+export interface EverofficeBlockReference {
   roomId: string;
   documentId: string;
   blockId: string;
@@ -75,7 +75,7 @@ function cleanOptionalText(value: string | null | undefined): string | null {
   return text ? text : null;
 }
 
-export function createEverroomBlockReferenceUrl(reference: EverroomBlockReference): string {
+export function createEverofficeBlockReferenceUrl(reference: EverofficeBlockReference): string {
   const path = [reference.roomId, reference.documentId, reference.blockId]
     .map((part) => encodeURIComponent(part))
     .join("/");
@@ -88,7 +88,7 @@ export function createEverroomBlockReferenceUrl(reference: EverroomBlockReferenc
   return `everroom://room/${path}${suffix}`;
 }
 
-export function parseEverroomBlockReferenceUrl(value: string): EverroomBlockReference | null {
+export function parseEverofficeBlockReferenceUrl(value: string): EverofficeBlockReference | null {
   let url: URL;
   try {
     url = new URL(value);
@@ -120,10 +120,60 @@ export function isValidBlockId(value: unknown): value is string {
 /**
  * Block index mark targets. `document` points at a same-Room document block.
  */
-export type EverroomBlockIndexTarget = { kind: "document" } & EverroomBlockReference;
+export type EverofficeBlockIndexTarget = { kind: "document" } & EverofficeBlockReference;
+const MEMORY_INDEX_HOST = "memory";
 
-export function everroomBlockIndexUrl(target: EverroomBlockIndexTarget): string {
-  return createEverroomBlockReferenceUrl(target);
+export interface EverroomMemoryIndex {
+  roomId: string;
+  memoryId: string;
+  fallbackTitle?: string | null;
+  fallbackPreview?: string | null;
+}
+
+export function createEverroomMemoryIndexUrl(target: EverroomMemoryIndex): string {
+  const path = [target.roomId, target.memoryId]
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  const query = new URLSearchParams();
+  const title = cleanOptionalText(target.fallbackTitle);
+  const preview = cleanOptionalText(target.fallbackPreview);
+  if (title) query.set("title", title);
+  if (preview) query.set("preview", preview);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return `everroom://${MEMORY_INDEX_HOST}/${path}${suffix}`;
+}
+
+export function parseEverroomMemoryIndexUrl(value: string): EverroomMemoryIndex | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "everroom:" || url.hostname !== MEMORY_INDEX_HOST) return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 2) return null;
+  try {
+    const [roomId, memoryId] = parts.map(decodeURIComponent);
+    if (!roomId || !memoryId) return null;
+    return {
+      roomId,
+      memoryId,
+      fallbackTitle: cleanOptionalText(url.searchParams.get("title")),
+      fallbackPreview: cleanOptionalText(url.searchParams.get("preview")),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 文档与记忆两类索引目标的联合（office-editor 的链接/标记同时承载两类）。 */
+export type BlockIndexUrlTarget = EverofficeBlockIndexTarget | ({ kind: "memory" } & EverroomMemoryIndex);
+
+export function everroomBlockIndexUrl(target: BlockIndexUrlTarget): string {
+  return target.kind === "memory"
+    ? createEverroomMemoryIndexUrl(target)
+    : createEverofficeBlockReferenceUrl(target);
 }
 
 function escapeBlockIndexLabel(value: string): string {
@@ -140,7 +190,7 @@ function unescapeBlockIndexLabel(value: string): string {
  * plain markdown links and from the block-level reference tokenizer (which
  * only claims line-leading `[label](everroom://...)`).
  */
-export function formatBlockIndexMarkMarkdown(target: EverroomBlockIndexTarget, label: string): string {
+export function formatBlockIndexMarkMarkdown(target: BlockIndexUrlTarget, label: string): string {
   const escaped = escapeBlockIndexLabel(label) || escapeBlockIndexLabel(target.fallbackTitle || "");
   // The label already carries the title; writing it into the URL query too
   // would make serialize(parse(x)) grow on every round trip.
@@ -170,7 +220,7 @@ export function buildIndexProbe(textPreview: string): string | null {
 
 export function parseBlockIndexMarkMarkdown(
   text: string,
-): { target: EverroomBlockIndexTarget; label: string | null; raw: string } | null {
+): { target: EverofficeBlockIndexTarget; label: string | null; raw: string } | null {
   const match = text.match(BLOCK_INDEX_MARK_PATTERN);
   const raw = match?.[0];
   const rawLabel = match?.[1];
@@ -178,7 +228,7 @@ export function parseBlockIndexMarkMarkdown(
   if (!match || !raw || rawLabel === undefined || !rawUrl) return null;
   const label = unescapeBlockIndexLabel(rawLabel) || null;
 
-  const reference = parseEverroomBlockReferenceUrl(rawUrl);
+  const reference = parseEverofficeBlockReferenceUrl(rawUrl);
   if (!reference) return null;
   return {
     target: {
@@ -267,7 +317,7 @@ export function freshenDocumentContent(
     if (node.marks) {
       node.marks = node.marks.map((mark) => {
         if (mark.type !== "link" || typeof mark.attrs?.href !== "string") return mark;
-        const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
+        const reference = parseEverofficeBlockReferenceUrl(mark.attrs.href);
         const targetBlockId = reference?.documentId === documentId
           ? idMap.get(reference.blockId)
           : null;
@@ -276,7 +326,7 @@ export function freshenDocumentContent(
           ...mark,
           attrs: {
             ...mark.attrs,
-            href: createEverroomBlockReferenceUrl({ ...reference, blockId: targetBlockId }),
+            href: createEverofficeBlockReferenceUrl({ ...reference, blockId: targetBlockId }),
           },
         };
       });
@@ -311,7 +361,7 @@ function nodeReferences(node: TiptapJsonContent): Array<{
   }
   for (const mark of node.marks ?? []) {
     if (mark.type !== "link" || typeof mark.attrs?.href !== "string") continue;
-    const reference = parseEverroomBlockReferenceUrl(mark.attrs.href);
+    const reference = parseEverofficeBlockReferenceUrl(mark.attrs.href);
     if (reference) result.push(reference);
   }
   return result;

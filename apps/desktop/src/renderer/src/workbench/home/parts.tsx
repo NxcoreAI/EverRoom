@@ -82,7 +82,7 @@ export function HomeNote({ children, className }: { children: React.ReactNode; c
   return <div className={cn('wb-home-note', className)}>{children}</div>
 }
 
-/** 新建项目空间的全局事件：弹窗由外壳（Workbench → CreateWorkspaceDialog）承载。 */
+/** 新建项目空间的全局事件：外壳（Workbench → useCreateSpaceFlow）弹目录选择器并一步建好。 */
 export const NEW_SPACE_EVENT = 'everroom:workbench-new-space'
 
 export function requestNewSpace(): void {

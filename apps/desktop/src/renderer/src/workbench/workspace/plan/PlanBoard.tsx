@@ -38,7 +38,6 @@ export function PlanBoard({
           key={column.status}
           status={column.status}
           label={column.label}
-          hint={column.hint}
           items={groups[column.status]}
           dragId={dragId}
           sessionTitles={sessionTitles}

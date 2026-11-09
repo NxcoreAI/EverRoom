@@ -1,8 +1,8 @@
-# Everroom Frontend Guidelines
+# Everoffice Frontend Guidelines
 
 ## Visual Source Of Truth
 
-- For Everroom PC parity work, treat the `nexcore-pc` component source and its computed runtime styles as the source of truth. Port the component structure first, then add the smallest CE-specific route or data adapter.
+- For Everoffice PC parity work, treat the `nexcore-pc` component source and its computed runtime styles as the source of truth. Port the component structure first, then add the smallest CE-specific route or data adapter.
 - Do not redraw an existing PC interface from screenshots when its source is available. Screenshots are for verification, not implementation.
 - Do not migrate Qiankun, window-context integration, the Agent bridge, or the real cloud-document host into CE. Preserve the PC visual shell with local CE adapters instead.
 - Use `lucide-react` for interface icons because both projects already use it. Keep a single icon family and use `strokeWidth={1.8}` for product-surface icons.

@@ -133,7 +133,7 @@ function buildDocx(title: string, spec: Extract<NativeFileSpec, { kind: 'docx' }
 
   const core = `${XML_HEAD}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${esc(title)}</dc:title></cp:coreProperties>`
 
-  const app = `${XML_HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>EverRoom Office Prototype</Application></Properties>`
+  const app = `${XML_HEAD}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>EverOffice Office Prototype</Application></Properties>`
 
   return buildZip([
     { name: '[Content_Types].xml', data: Buffer.from(contentTypes) },

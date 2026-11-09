@@ -1,11 +1,11 @@
-import { ListTodo, Plus, Search } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
-import type { PlanItem, PlanStatus } from '@nxcore/agent-contract'
+import type { PlanStatus } from '@nxcore/agent-contract'
 
 import { workbenchApi } from '../api'
 import { sessionDisplayTitle } from '../types'
-import { Button, EmptyState, Segmented, Spinner, TextInput } from '../ui/primitives'
+import { Button, Spinner, TextInput } from '../ui/primitives'
 import type { WorkspacePageProps } from './contracts'
 import { PlanBoard } from './plan/PlanBoard'
 import { PlanItemDetail, type PlanDetailPatch } from './plan/PlanItemDetail'
@@ -13,20 +13,17 @@ import { resolveDrop } from './plan/planDrag'
 import { usePlanItems } from './plan/usePlanItems'
 import './plan/plan.css'
 
-type OwnerFilter = 'all' | 'me' | 'agent'
-
 /**
  * 工作空间「计划」：任务的看板（用户与 Agent 的共同待办池）。
  *
- * 与旧版的差别（见 docs/workspace-plan-task-design.zh-CN.md §1）：卡片不再是会话，
- * 而是任务本体；状态可拖拽、任务可新建/编辑；会话降级为卡片上的执行入口。
- * 会话列表仍在侧栏「工作 N」里，这里不再重复。
+ * 四列常显：没有任务时也渲染四个状态列（空列保留各自的「新建任务」入口），
+ * 不用空态整页替换看板。任务不按负责人区分（卡片上也没有我/Agent 标签），
+ * 会话降级为卡片上的执行入口；会话列表仍在侧栏「工作 N」里，这里不再重复。
  */
 export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToast }: WorkspacePageProps) {
   const plan = usePlanItems(workspace.id)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>('all')
   const [composing, setComposing] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
   const [selectMode, setSelectMode] = useState(false)
@@ -34,18 +31,14 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
 
   const visible = useMemo(() => {
     const keyword = query.trim().toLowerCase()
-    return plan.items.filter((item) => {
-      if (ownerFilter === 'me' && item.ownerKind !== 'user') return false
-      if (ownerFilter === 'agent' && item.ownerKind !== 'agent') return false
-      if (!keyword) return true
-      return item.title.toLowerCase().includes(keyword)
-        || (item.detail ?? '').toLowerCase().includes(keyword)
-        || item.tags.some((tag) => tag.toLowerCase().includes(keyword))
-    })
-  }, [plan.items, ownerFilter, query])
+    if (!keyword) return plan.items
+    return plan.items.filter((item) => item.title.toLowerCase().includes(keyword)
+      || (item.detail ?? '').toLowerCase().includes(keyword)
+      || item.tags.some((tag) => tag.toLowerCase().includes(keyword)))
+  }, [plan.items, query])
 
   const groups = useMemo(() => {
-    const buckets: Record<PlanStatus, PlanItem[]> = { todo: [], doing: [], done: [], dropped: [] }
+    const buckets: Record<PlanStatus, typeof visible> = { todo: [], doing: [], done: [], dropped: [] }
     for (const item of visible) buckets[item.status].push(item)
     return buckets
   }, [visible])
@@ -131,14 +124,17 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
     },
     onRemove: async () => {
       if (await plan.removeItem(selected)) {
-        onToast('已取消该任务（可在「已取消」列恢复）')
+        onToast('已取消该任务')
         setSelectedId(null)
+      } else {
+        onToast('取消任务失败，请重试')
       }
     },
     onRestore: async () => {
       const todoCount = plan.items.filter((item) => item.status === 'todo').length
       const target = resolveDrop(plan.items, selected.id, 'todo', todoCount)
       if (await plan.moveItem(selected, target)) onToast('已恢复到「待开始」')
+      else onToast('恢复失败，请重试')
     },
     onOpenSession,
     onToast,
@@ -149,10 +145,6 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
       <header className="wb-plan-toolbar">
         <div className="wb-plan-toolbar-title">
           <h2>计划</h2>
-          <span className="wb-plan-toolbar-count">
-            {plan.items.filter((item) => item.status === 'todo').length} 待开始 ·{' '}
-            {plan.items.filter((item) => item.status === 'doing').length} 进行中
-          </span>
         </div>
         <div className="wb-plan-toolbar-search">
           <Search size={14} aria-hidden="true" />
@@ -163,16 +155,6 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <Segmented<OwnerFilter>
-          ariaLabel="按负责人筛选"
-          value={ownerFilter}
-          onChange={setOwnerFilter}
-          items={[
-            { key: 'all', label: '全部' },
-            { key: 'me', label: '我的' },
-            { key: 'agent', label: 'Agent 的' },
-          ]}
-        />
         <div className="wb-plan-toolbar-actions">
           {plan.items.length ? (
             <Button
@@ -198,7 +180,7 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
           <TextInput
             autoFocus
             value={draftTitle}
-            placeholder="任务标题，回车创建（背景/验收可稍后在详情里补）"
+            placeholder="任务标题，回车创建"
             onChange={(event) => setDraftTitle(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') void commitDraft()
@@ -222,17 +204,6 @@ export function PlanPage({ workspace, sessions, onOpenSession, onNewWork, onToas
 
       {plan.state === 'loading' ? (
         <div className="wb-plan-loading"><Spinner /> 正在加载计划…</div>
-      ) : plan.items.length === 0 ? (
-        <EmptyState
-          icon={<ListTodo size={22} />}
-          title="还没有任务"
-          description="把要做的事记在这里：写好背景与验收标准，之后可以自己干，也可以交给 Agent 认领。"
-          action={(
-            <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setComposing(true)}>
-              新建第一个任务
-            </Button>
-          )}
-        />
       ) : (
         <PlanBoard
           groups={groups}

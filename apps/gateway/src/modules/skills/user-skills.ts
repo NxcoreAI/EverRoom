@@ -9,7 +9,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+
+import JSZip from "jszip";
 
 import { parseSkillMarkdown } from "./skill-markdown.js";
 
@@ -71,6 +74,7 @@ export type SkillInputErrorCode =
   | "skill_source_invalid"
   | "skill_source_missing_manifest"
   | "skill_source_too_large"
+  | "skill_archive_invalid"
   | "skill_not_found"
   | "skill_not_removable";
 
@@ -160,25 +164,46 @@ export class UserSkillStore {
   }
 
   /**
-   * 从本地文件夹导入：只读复制（拒绝符号链接），目录名取 SKILL.md 的 name，
-   * 缺失时退回来源文件夹名。
+   * 从本地文件夹或 zip 导入：只读复制（拒绝符号链接），目录名取 SKILL.md 的
+   * name，缺失时退回来源文件夹名（zip 时退回压缩包名去扩展名）。
+   *
+   * zip 的解析规则：条目路径拒绝绝对路径与 `..` 穿越；SKILL.md 允许在压缩包
+   * 根，也允许在唯一的一层子目录里（`my-skill.zip → my-skill/SKILL.md` 是
+   * 系统右键压缩的常见形态），导入时把该子目录当技能根。
    */
-  importDirectory(sourceDirectory: string): UserSkillFile {
+  importDirectory(source: string): Promise<UserSkillFile> {
     // 只接受绝对路径（桌面端从系统选择器拿到的就是绝对路径）。
-    if (!sourceDirectory.trim() || !isAbsolute(sourceDirectory)) {
+    if (!source.trim() || !isAbsolute(source)) {
       throw new SkillInputError("skill_source_invalid");
     }
-    const source = resolve(sourceDirectory);
-    const sourceStats = statSync(source, { throwIfNoEntry: false });
-    if (!sourceStats?.isDirectory()) throw new SkillInputError("skill_source_invalid");
+    const resolvedSource = resolve(source);
+    const stats = statSync(resolvedSource, { throwIfNoEntry: false });
+    if (!stats) throw new SkillInputError("skill_source_invalid");
 
-    const files = collectFiles(source);
+    if (stats.isFile()) {
+      // zip 压缩包：先解到临时目录，再走与文件夹完全相同的校验/复制路径。
+      if (!resolvedSource.toLowerCase().endsWith(".zip")) {
+        throw new SkillInputError("skill_source_invalid");
+      }
+      return this.extractZipToTemp(resolvedSource)
+        .then((extracted) => Promise.resolve()
+          .then(() => this.importFromDirectoryTree(extracted, basename(resolvedSource, ".zip")))
+          .finally(() => { rmSync(extracted, { recursive: true, force: true }) }));
+    }
+    if (!stats.isDirectory()) throw new SkillInputError("skill_source_invalid");
+    return Promise.resolve(this.importFromDirectoryTree(resolvedSource, basename(resolvedSource)));
+  }
+
+  /** 文件夹导入的共用路径：source 是已就位的目录树，fallbackName 用于目录名兜底。 */
+  private importFromDirectoryTree(source: string, fallbackName: string): UserSkillFile {
+    const skillRoot = resolveSingleWrapper(source);
+    const files = collectFiles(skillRoot);
     if (!files.some((file) => file.relativePath === "SKILL.md")) {
       throw new SkillInputError("skill_source_missing_manifest");
     }
-    const markdown = readFileSync(join(source, "SKILL.md"), "utf8");
+    const markdown = readFileSync(join(skillRoot, "SKILL.md"), "utf8");
     const meta = parseSkillMarkdown(markdown);
-    const directoryName = assertSkillDirectoryName(meta.name.trim() || basename(source));
+    const directoryName = assertSkillDirectoryName(meta.name.trim() || fallbackName);
     this.assertAvailable(directoryName);
 
     // 先写进同级临时目录再改名：中途失败不会留下半个技能。
@@ -189,7 +214,7 @@ export class UserSkillStore {
         const target = join(staging, file.relativePath);
         if (!target.startsWith(`${staging}${sep}`)) throw new SkillInputError("skill_source_invalid");
         mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, readFileSync(join(source, file.relativePath)));
+        writeFileSync(target, readFileSync(join(skillRoot, file.relativePath)));
       }
       renameSync(staging, this.directoryOf(directoryName));
     } catch (error) {
@@ -200,6 +225,47 @@ export class UserSkillStore {
     const imported = this.readOrNull(directoryName);
     if (!imported) throw new SkillInputError("skill_source_invalid");
     return imported;
+  }
+
+  /**
+   * 解压 zip 到临时目录并返回该目录：
+   * - 条目路径先做安全校验（拒绝绝对路径、盘符、`..`、反斜杠归一后越界）；
+   * - 目录条目（以 / 结尾）跳过（mkdirSync 递归创建即可）；
+   * - 解压后若根下只有一个目录且没有散文件，返回那个子目录（单层包裹）；
+   *   否则返回解压根（SKILL.md 应在根下）。
+   */
+  private async extractZipToTemp(zipPath: string): Promise<string> {
+    let zip: JSZip;
+    try {
+      zip = await JSZip.loadAsync(readFileSync(zipPath));
+    } catch {
+      throw new SkillInputError("skill_archive_invalid", "zip is unreadable or corrupted");
+    }
+    const outRoot = mkdtempSync(join(tmpdir(), "everroom-skill-zip-"));
+    try {
+      const entries = Object.values(zip.files);
+      for (const entry of entries) {
+        if (entry.dir) continue;
+        const entryName = entry.name.replace(/\\/g, "/");
+        if (!entryName || entryName.startsWith("/") || /^[a-zA-Z]:/.test(entryName)) {
+          throw new SkillInputError("skill_archive_invalid", `unsafe entry name: ${entry.name}`);
+        }
+        if (entryName.split("/").some((segment) => segment === ".." || segment === "")) {
+          throw new SkillInputError("skill_archive_invalid", `unsafe entry name: ${entry.name}`);
+        }
+        const target = join(outRoot, entryName);
+        if (!target.startsWith(`${outRoot}${sep}`)) {
+          throw new SkillInputError("skill_archive_invalid", `entry escapes archive root: ${entry.name}`);
+        }
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, await entry.async("nodebuffer"));
+      }
+    } catch (error) {
+      rmSync(outRoot, { recursive: true, force: true });
+      if (error instanceof SkillInputError) throw error;
+      throw new SkillInputError("skill_archive_invalid", errorMessage(error));
+    }
+    return outRoot;
   }
 
   /** 删除一个用户技能目录。 */
@@ -293,4 +359,17 @@ function countFiles(directory: string): number {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * 单层包裹归一：macOS 右键压缩文件夹得到 `my-skill.zip → my-skill/…`，
+ * 解压后根下只有一个目录且没有散文件时，把那个目录当技能根。
+ * 其余形态（SKILL.md 在根下、多个顶层条目）原样返回。
+ */
+function resolveSingleWrapper(root: string): string {
+  const entries = readdirSync(root).filter((entry) => !entry.startsWith("."));
+  if (entries.length !== 1) return root;
+  const only = join(root, entries[0]!);
+  const stats = lstatSync(only, { throwIfNoEntry: false });
+  return stats?.isDirectory() ? only : root;
 }

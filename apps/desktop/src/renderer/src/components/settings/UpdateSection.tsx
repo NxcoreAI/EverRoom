@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 
 interface UpdateStatus {
   version: string
@@ -22,7 +22,6 @@ export function UpdateSection() {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<CheckResult | null>(null)
-  const [copied, setCopied] = useState(false)
   const [progress, setProgress] = useState<{ percent: number; bytesPerSecond: number } | null>(null)
   const [downloaded, setDownloaded] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -53,13 +52,6 @@ export function UpdateSection() {
     }
   }
 
-  const copyInstallId = async () => {
-    if (!status) return
-    await navigator.clipboard.writeText(status.installId)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
-
   const progressText = progress
     ? `正在下载 ${progress.percent.toFixed(0)}%（${(progress.bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s）`
     : null
@@ -70,24 +62,11 @@ export function UpdateSection() {
         <span><RefreshCw aria-hidden="true" /></span>
         <div>
           <h2 id="update-settings-title">软件更新</h2>
-          <p>检查并安装 EverRoom 桌面端新版本</p>
         </div>
       </header>
       <div className="reality-setting-row">
         <div>
           <strong>当前版本 {status ? `v${status.version}` : '—'}</strong>
-          <small>
-            更新渠道 {status?.channel ?? '—'}
-            {status?.channel === 'nightly' ? '（每日构建，可能不稳定）' : ''}
-          </small>
-          {status?.installId && (
-            <small>
-              安装标识 {status.installId.slice(0, 13)}…
-              <button type="button" className="link-button" onClick={() => void copyInstallId()} aria-label="复制安装标识">
-                {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-              </button>
-            </small>
-          )}
         </div>
         <button type="button" className="primary-button" onClick={() => void check()} disabled={checking || status?.supported === false}>
           <RefreshCw aria-hidden="true" className={checking ? 'spin' : undefined} />

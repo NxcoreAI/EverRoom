@@ -3,7 +3,7 @@ import { basename, extname, resolve } from 'node:path'
 import type { OsOpenedDocument } from '../../shared/office'
 
 /**
- * 系统文件管理器（访达「打开方式」/ 资源管理器双击）直接交给 EverRoom 的格式。
+ * 系统文件管理器（访达「打开方式」/ 资源管理器双击）直接交给 EverOffice 的格式。
  * 与 `package.json` 的 `build.mac.extendInfo.CFBundleDocumentTypes` /
  * `build.win.fileAssociations`、`shared/sources.ts` 的 `officePreviewKindForFileName`
  * 保持一致：这里只登记内嵌预览能打开的格式，旧版 .doc/.xls/.ppt 依赖本机
@@ -13,9 +13,10 @@ export const OS_OPEN_DOCUMENT_EXTENSIONS = [
   '.docx', '.doc',
   '.xlsx', '.xls', '.xlsm',
   '.pptx', '.ppt',
+  '.md', '.markdown',
 ] as const
 
-/** 单个 argv 项是否是可以交给 EverRoom 打开的文档路径（排除以 - 开头的开关）。 */
+/** 单个 argv 项是否是可以交给 EverOffice 打开的文档路径（排除以 - 开头的开关）。 */
 export function isOsOpenDocumentPath(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0) return false
   if (value.startsWith('-')) return false

@@ -44,9 +44,14 @@ describe("bundled project Agent", () => {
     expect(registry.get("multimodal-document-parser")?.revision.outputSchema).toMatchObject({
       required: expect.arrayContaining(["summary", "facts", "missingFields"]),
     });
-    // 仓库内 slides 代理的上下文/预算配置可被注册表解析（审页降思考档、布局工具预算放宽）。
-    expect(registry.get("slides-reviewer")?.revision.policy.model).toMatchObject({ reasoning: "low" });
-    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBe(24);
+    // 仓库内 slides 代理的上下文/预算配置可被注册表解析。
+    // 8ac88033 下线了独立审页代理（slides-reviewer）：审页改由 layouter 看渲染图自审。
+    // layouter 不再设 maxToolCalls（长链路只受 timeoutMs 与输出预算约束），
+    // 这里断言它的新策略形状：reasoning 档位 + 放宽的墙钟。
+    expect(registry.get("slides-reviewer")).toBeNull();
+    expect(registry.get("slides-layouter")?.revision.policy.model).toMatchObject({ reasoning: "low" });
+    expect(registry.get("slides-layouter")?.revision.policy.maxToolCalls).toBeUndefined();
+    expect(registry.get("slides-layouter")?.revision.policy.timeoutMs).toBe(1_800_000);
 
     const catalog = createSubagentPiTools(registry, orchestrator)
       .find((tool) => tool.name === "agent_catalog")!;
@@ -154,6 +159,35 @@ describe("bundled project Agent", () => {
       outputFormat: "structured",
     });
 
+    // 线上形态：workspace_files_list 只回 fileEntryId，模型拿它顶替 fileVersionId；
+    // 派发前应兜底解析成条目当前版本，避免解析子代理按不存在的版本空转。
+    const entryIdDispatch = vi.fn().mockResolvedValue({
+      id: "document-entry-invocation",
+      agentDefinitionId: "multimodal-document-parser",
+      status: "completed",
+      result: { text: "ok" },
+      errorMessage: null,
+    });
+    const entryIdTool = createSubagentPiTools(
+      registry,
+      { dispatch: entryIdDispatch } as unknown as SubagentOrchestrator,
+      { resolveFileCurrentVersionId: (fileEntryId) => (fileEntryId === "file-entry" ? "fver-current" : null) },
+    ).find((tool) => tool.name === "document_analysis")!;
+    await entryIdTool.execute({
+      runId: "main-entry-id-run",
+      sessionId: "main-session",
+      runtimeSessionRef: null,
+      prompt: "读下这份文件",
+      pageLabel: "Main Agent",
+      roomId: null,
+    }, {
+      fileEntryId: "file-entry",
+      fileVersionId: "file-entry",
+    });
+    expect(entryIdDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({ fileEntryId: "file-entry", fileVersionId: "fver-current" }),
+    }));
+
     const proseDispatch = vi.fn().mockResolvedValue({
       id: "document-prose-invocation",
       agentDefinitionId: "multimodal-document-parser",
@@ -176,18 +210,22 @@ describe("bundled project Agent", () => {
       fileVersionId: "fver-student-v1",
       question: "这份文档写了什么？",
     });
+    // normalizeDocumentSummary 的纯文本兜底：非结构化输出不再整体丢成 null，
+    // 而是回填 summary=text 并标记 outputFormat:"text" + unstructured 警告。
     expect(JSON.parse(proseResult.content)).toMatchObject({
       status: "completed",
-      summary: null,
+      // 纯文本（非结构化）解析结果按 normalizeDocumentSummary 语义透传全文并标注 text。
+      summary: "文档解析完成。李展萍就读于示例大学，学籍状态为在籍。",
       facts: null,
       missingFields: null,
-      outputFormat: null,
+      outputFormat: "text",
+      warning: "unstructured_subagent_output",
     });
 
     const invocation = await orchestrator.dispatch({
       agentId: "content-analyst",
       task: "分析材料并提炼结论",
-      input: { content: "EverRoom 已把 Agent Bundle 放入项目并随应用打包。" },
+      input: { content: "EverOffice 已把 Agent Bundle 放入项目并随应用打包。" },
       idempotencyKey: "bundled-content-analyst",
       source: "primary_agent",
       parentSessionId: "main-session",

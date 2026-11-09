@@ -65,12 +65,12 @@ function clip(text: string | null | undefined, max: number): string | null {
 export function createLibraryBrowsePiTool(deps: LibraryBrowseToolDeps): PiAgentRuntimeTool {
   return {
     name: "library_browse",
-    label: "分页浏览资料库/产物",
+    label: "分页浏览资料/产物",
     description:
-      "分页浏览当前工作区的「资料库 / 产物」里有哪些文件（按最近更新倒序），返回标题、类型、fileId 与分类摘要。"
+      "分页浏览当前工作区的「资料 / 产物」里有哪些文件（按最近更新倒序），返回标题、类型、fileId 与分类摘要。"
       + "用来回答“库里有线索吗/有没有相关材料”：用户问的自有事实（项目/公司的数字、结论、决策、方案、之前生成的产物）"
       + "一旦可能落在库内材料里，先用本工具或 file_search 确认，再把候选交给 file_read 解析正文后作答。"
-      + "scope 对应界面两个页签：artifacts = 产物库（Agent 生成/产物导入），library = 资料库（上传/本地目录/连接器/剪藏），省略 = 整库；"
+      + "scope 对应界面两个页签：artifacts = 产物（Agent 生成/产物导入），library = 资料（上传/本地目录/连接器/剪藏），省略 = 整库；"
       + "extension 可过滤类型（docx/xlsx/pptx/pdf…，也接受数组）。每页默认 25 条、最多 100 条，"
       + "用 offset 翻页（hasMore/nextOffset 标明还有没有）；total 是符合条件的总数，不是本页条数。"
       + "本工具只列标题级信息，不给正文：要正文用 file_read（PDF/Office 会现场解析）；看标题还不够、想按关键词找就用 file_search。",
@@ -80,7 +80,7 @@ export function createLibraryBrowsePiTool(deps: LibraryBrowseToolDeps): PiAgentR
         Type.Literal("library"),
         Type.Literal("artifacts"),
       ], {
-        description: "浏览范围：artifacts = 产物库，library = 资料库，all 或省略 = 整库",
+        description: "浏览范围：artifacts = 产物，library = 资料，all 或省略 = 整库",
       })),
       extension: Type.Optional(Type.Union([
         Type.String({ minLength: 2, maxLength: 12 }),
@@ -100,7 +100,7 @@ export function createLibraryBrowsePiTool(deps: LibraryBrowseToolDeps): PiAgentR
       workspaceId: Type.Optional(Type.String({
         minLength: 1,
         maxLength: 200,
-        description: "限定工作区；省略 = 当前会话所属工作区（资料库/产物按空间隔离，通常不要传）",
+        description: "限定工作区；省略 = 当前会话所属工作区（资料/产物按空间隔离，通常不要传）",
       })),
     }, { additionalProperties: false }),
     executionMode: "sequential",
@@ -154,7 +154,7 @@ export function createLibraryBrowsePiTool(deps: LibraryBrowseToolDeps): PiAgentR
       });
       const nextOffset = offset + items.length;
       const hasMore = nextOffset < found.total;
-      const scopeLabelText = scope === "artifacts" ? "产物库" : scope === "library" ? "资料库" : "文件库";
+      const scopeLabelText = scope === "artifacts" ? "产物" : scope === "library" ? "资料" : "全部文件";
       const payload = {
         scope,
         ...(extensions.length > 0 ? { extension: extensions.length === 1 ? extensions[0] : extensions } : {}),

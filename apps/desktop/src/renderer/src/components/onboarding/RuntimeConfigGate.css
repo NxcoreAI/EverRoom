@@ -492,6 +492,14 @@
   line-height: 1.5;
 }
 
+.runtime-config-gate-error {
+  /* 连接测试失败时上游会回一段带 request id 的长串，必须能断行 */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .runtime-config-gate-error svg {
   flex: none;
   width: 15px;
@@ -780,7 +788,7 @@
   line-height: var(--ui-leading-tight);
 }
 
-/* 登录卡内的品牌时刻：一处缎带，说明“这是 EverRoom”，不做别的装饰。 */
+/* 登录卡内的品牌时刻：一处缎带，说明“这是 EverOffice”，不做别的装饰。 */
 .runtime-config-gate-ribbon {
   display: flex;
   align-items: center;

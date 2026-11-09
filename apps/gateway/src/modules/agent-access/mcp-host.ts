@@ -23,7 +23,7 @@ import type { AgentAccessState, ResolvedAgentConnection } from "./types.js";
  */
 
 const SERVER_INSTRUCTIONS = [
-  "本服务器把 EverRoom 的积累（会话、文档、文件）按授权范围提供给外部 Agent。",
+  "本服务器把 EverOffice 的积累（会话、文档、文件）按授权范围提供给外部 Agent。",
   "推荐工作流：everroom_get_status 了解范围 → everroom_search 检索 → 命中项用 everroom_fetch 按 everroom:// URI 精读原文 → 引用时携带返回的 version 字段。",
   "所有工具返回 structuredContent.status：ok / empty（换关键词或补问用户）/ no_permission（范围外，附所需能力）/ source_lost（换来源）/ parse_failed（换变体或来源）/ stale（版本过期，data 仍是最新内容）/ duplicate（提交重放，返回原结果）。",
   "回写用 everroom_submit：submissionId 由你生成并在重试时复用（幂等）；候选（记忆/Wiki/偏好）进入待确认队列，未经用户确认不会写入长期记忆。",
@@ -60,7 +60,7 @@ export class AgentAccessMcpHost {
     const token = typeof bearerToken === "string" ? bearerToken.replace(/^Bearer\s+/i, "").trim() : "";
     const connection = token ? this.service.verifyBearer(token) : null;
     if (!connection) {
-      throw new Error("MCP_CONNECTION_INVALID: EverRoom connection token is missing, paused or revoked");
+      throw new Error("MCP_CONNECTION_INVALID: EverOffice connection token is missing, paused or revoked");
     }
     if (message.jsonrpc !== "2.0") throw new Error("Invalid MCP JSON-RPC message");
 
