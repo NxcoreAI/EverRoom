@@ -2271,12 +2271,10 @@
   "settings.planOverviewPurchased": "充值积分",
   "plans.perMonth": "月",
   "settings.planOverviewNoPurchase": "暂无购买积分",
-  "settings.planOverviewBonus": "注册赠送积分"
-  "settings": {
-    "rcMaxTokens": "单次输出上限（tokens）",
-    "rcMaxTokensHint": "留空 = 用服务端默认值（通常 8192）。长任务里思考可能吃掉整份预算，正文还没写完就被截断；把上限调到 16384~32768 可明显减少「达到模型输出上限」。",
-    "rcMaxTokensInvalid": "单次输出上限需在 1024 ~ 1000000 之间"
-  },
+  "settings.planOverviewBonus": "注册赠送积分",
+  "settings.rcMaxTokens": "单次输出上限（tokens）",
+  "settings.rcMaxTokensHint": "留空 = 用服务端默认值（通常 8192）。长任务里思考可能吃掉整份预算，正文还没写完就被截断；把上限调到 16384~32768 可明显减少「达到模型输出上限」。",
+  "settings.rcMaxTokensInvalid": "单次输出上限需在 1024 ~ 1000000 之间",
   "agentChat.cardConfirmTitle": "请确认计划",
   "agentChat.cardQuestionTitle": "需要你的回答",
   "agentChat.cardConfirm": "确认执行",
