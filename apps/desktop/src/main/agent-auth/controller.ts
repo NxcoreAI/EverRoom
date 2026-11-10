@@ -7,6 +7,7 @@ import type {
 } from '../../shared/agent-auth'
 import { extractVerificationUrl, LarkAuthRunner } from './lark-auth-runner'
 import { NtnAuthRunner } from './ntn-auth-runner'
+import { parseLarkCliVersion } from '../runtime/lark-cli-runtime'
 
 /**
  * Agent 授权引导控制器（本地、内存态）。飞书两阶段（应用初始化 → 用户 OAuth）
@@ -20,6 +21,8 @@ const CHALLENGE_TTL_MS = 30 * 60_000
 export interface AgentAuthEnvironment {
   environment?: NodeJS.ProcessEnv
   onEvent?: (frame: AgentAuthEventFrame) => void
+  /** verificationUrl 首次出现时自动打开系统浏览器（数据源卡片点击后直达授权页）。 */
+  onVerificationUrl?: (url: string) => void
   /** 非 token 状态的加密持久化（B-8）：重启后恢复为过期卡片，可一键重新发起。 */
   persist?: {
     save(state: string): void
@@ -144,7 +147,8 @@ export class AgentAuthController {
     if (input.provider === 'feishu') {
       const version = await this.runner.version()
       if (!version) throw new Error('lark-cli 不可用，请先通过产品更新修复导出环境。')
-      return input.phase === 'app_setup'
+      const phase = input.phase ?? (await this.detectFeishuPhase())
+      return phase === 'app_setup'
         ? this.startFeishuAppSetup(input.exportRunId ?? null)
         : this.startFeishuUserAuth(input.exportRunId ?? null)
     }
@@ -167,6 +171,27 @@ export class AgentAuthController {
     this.options.persist?.clear()
     this.emit({ type: 'challenge.removed', challengeId: removed.id })
     return null
+  }
+
+  /** phase 省略时的阶段自动选择：应用已配置直接进用户授权，否则先走应用初始化。 */
+  private async detectFeishuPhase(): Promise<'app_setup' | 'user_auth'> {
+    try {
+      const status = await this.runner.authStatus()
+      return status.appConfigured ? 'user_auth' : 'app_setup'
+    } catch {
+      // 状态探测失败按未配置走两阶段引导，用户可在卡片上重试。
+      return 'app_setup'
+    }
+  }
+
+  /** 断开飞书连接：清除 lark-cli 本机凭据，撤掉关联授权卡，返回最新环境状态。 */
+  async disconnect(provider: 'feishu'): Promise<AgentAuthEnvironmentStatus> {
+    if (this.challenge?.provider === 'feishu') this.cancel(this.challenge.id)
+    const outcome = await this.runner.authLogout()
+    if (outcome.code !== 0) {
+      throw new Error(outcome.stderr.trim() || `lark-cli auth logout 退出码 ${String(outcome.code)}`)
+    }
+    return this.status()
   }
 
   /** 重新检查授权状态（授权完成后卡片刷新；对 feishu 走真实 auth status）。 */
@@ -249,7 +274,7 @@ export class AgentAuthController {
         {
           id: 'wait-local',
           title: '等待本地 CLI 接收配置结果',
-          description: '凭据将写入本机系统安全存储，不经过 EverRoom 服务端',
+          description: '凭据将写入本机系统安全存储，不经过 EverOffice 服务端',
           action: 'wait_local_result',
           completed: false,
         },
@@ -372,7 +397,7 @@ export class AgentAuthController {
         {
           id: 'wait-local',
           title: '本地等待授权完成',
-          description: '凭据由官方 ntn CLI 存入系统钥匙串，不经过 EverRoom 服务端',
+          description: '凭据由官方 ntn CLI 存入系统钥匙串，不经过 EverOffice 服务端',
           action: 'wait_local_result',
           completed: false,
         },
@@ -452,6 +477,11 @@ export class AgentAuthController {
 
   private updateChallenge(patch: Partial<DesktopAgentAuthChallenge>): void {
     if (!this.challenge) return
+    // 授权链接首次出现时自动拉起系统浏览器（每阶段一次；卡片上链接/二维码保留作后备）。
+    const url = patch.verificationUrl
+    if (typeof url === 'string' && url && !this.challenge.verificationUrl) {
+      this.options.onVerificationUrl?.(url)
+    }
     this.challenge = { ...this.challenge, ...patch }
     this.persistChallenge()
     this.emitChallenge()
@@ -470,15 +500,19 @@ export class AgentAuthController {
 
   private async feishuEnvironment(): Promise<AgentAuthEnvironmentStatus['feishu']> {
     const cliPath = this.runner.gatewayEnvironment().NXCORE_LARK_CLI_PATH ?? 'lark-cli'
+    const cliSource = this.runner.cliSource()
     const version = await this.runner.version()
+    const cliVersion = parseLarkCliVersion(version)
     if (!version) {
       return {
         cliState: 'missing',
         cliPath,
+        cliSource,
+        cliVersion: null,
         appConfigured: null,
         userAuthorized: null,
         userName: null,
-        message: 'lark-cli 未随产品预装或不可用（导出环境未就绪）',
+        message: 'lark-cli 不可用（导出环境未就绪），请更新或重新安装应用',
       }
     }
     try {
@@ -486,6 +520,8 @@ export class AgentAuthController {
       return {
         cliState: 'ready',
         cliPath,
+        cliSource,
+        cliVersion,
         appConfigured: status.appConfigured,
         userAuthorized: status.userAuthorized,
         userName: status.userName,
@@ -495,6 +531,8 @@ export class AgentAuthController {
       return {
         cliState: 'error',
         cliPath,
+        cliSource,
+        cliVersion,
         appConfigured: null,
         userAuthorized: null,
         userName: null,

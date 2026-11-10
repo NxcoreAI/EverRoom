@@ -1,0 +1,21 @@
+{
+  "name": "@nxcore/migration-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./local": "./src/local/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^22.10.2",
+    "better-sqlite3": "13.0.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

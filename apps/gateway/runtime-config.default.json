@@ -1,60 +1,50 @@
 {
   "schemaVersion": 1,
   "primary": {
-    "provider": "",
-    "model": "",
+    "provider": "openai",
+    "model": "deepseek-v4.1-flash",
     "baseUrl": "",
     "api": "openai-completions",
-    "apiKey": ""
+    "apiKey": "",
+    "maxTokens": 128000,
+    "contextWindow": 128000,
+    "temperature": 0.3,
+    "reasoning": "off"
   },
   "background": {
-    "provider": "",
-    "model": "",
+    "provider": "openai",
+    "model": "deepseek-v4.1-flash",
     "baseUrl": "",
     "api": "openai-completions",
-    "apiKey": ""
+    "apiKey": "",
+    "maxTokens": 128000,
+    "contextWindow": 128000,
+    "temperature": 0.3,
+    "reasoning": "off"
   },
   "cursorCompletion": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen-flash",
     "baseUrl": "",
-    "api": "openai-completions",
-    "apiKey": ""
-  },
-  "asr": {
-    "provider": "aliyun",
-    "baseUrl": "",
-    "model": "",
-    "apiKey": ""
+    "api": "openai-responses",
+    "apiKey": "",
+    "maxTokens": 512,
+    "contextWindow": 128000,
+    "temperature": 0.1,
+    "reasoning": "off"
   },
   "vlm": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen3-vl-flash",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": ""
   },
   "webSearch": {
-    "provider": "",
-    "model": "",
+    "provider": "qwen",
+    "model": "qwen-plus",
     "baseUrl": "",
     "api": "openai-completions",
     "apiKey": ""
-  },
-  "memory": {
-    "enabled": false,
-    "baseUrl": "",
-    "apiKey": "",
-    "serviceId": "everroom",
-    "teamId": "everroom",
-    "agentId": "everroom",
-    "userId": "local-user"
-  },
-  "knowledge": {
-    "enabled": false,
-    "baseUrl": "",
-    "serviceId": "everroom",
-    "teamId": "everroom",
-    "wikiId": ""
   }
 }

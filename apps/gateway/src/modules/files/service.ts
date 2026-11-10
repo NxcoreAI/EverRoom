@@ -1,22 +1,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
+import { sniffImageMime } from "../../infrastructure/image-mime.js";
+import { enqueueSearchIndex } from "../search/jobs.js";
 import {
   fileBlobs,
-  clipperAssets,
-  clipperCaptures,
   fileClassifications,
-  fileClusterMemberships,
-  fileClusters,
   fileEntries,
   fileVersions,
-  ingestEvents,
   jobs,
   parsedContents,
+  parsedDocuments,
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
 import {
@@ -27,6 +25,7 @@ import {
   storeFileBlob,
   storeFileBlobStream,
 } from "./storage.js";
+import { type SpaceLibraryWriter } from "../workspace-layout/library.js";
 import {
   FILE_FORMAT_CAPABILITIES,
   fileFormatCapability,
@@ -44,7 +43,26 @@ export function isSupportedUploadFilename(filename: string): boolean {
   return SUPPORTED_UPLOAD_EXTENSIONS.has(normalizedFileExtension(filename));
 }
 
-export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload";
+export type FileSourceKind = "manual-upload" | "local-folder" | "connector" | "migration" | "web-clipper" | "legacy-upload" | "agent-generated" | "artifact-imported";
+
+/**
+ * 文件默认归属的工作区（与 agent 模块的 default 工作区同一 id，见 0089 迁移）。
+ * 未显式传 workspaceId 的入库与 NULL 归属的存量行都按它暴露。
+ */
+export const DEFAULT_FILE_WORKSPACE_ID = "default";
+
+/**
+ * 产物库口径：Agent 生成 + 用户导入的产物。其余 sourceKind 一律归资料库
+ * （口径与桌面端 `ROOM_ARTIFACT_SOURCE_KINDS` 一致，改一处必须同步另一处）。
+ *
+ * Agent 侧为什么要这个维度：用户在界面里看到的是「资料库 / 产物」两个页签，
+ * 说「产物库里那本 PPT」时模型只有文件名和扩展名可依，靠猜。file_search 带上
+ * scope 才能把「产物」这个说法翻成确定过滤条件。
+ */
+export const ARTIFACT_SOURCE_KINDS: readonly FileSourceKind[] = ["agent-generated", "artifact-imported"];
+
+/** file_search / files.list 的范围口径：all = 整个文件库。 */
+export type FileCatalogScope = "all" | "library" | "artifacts";
 
 export interface FileImportInput {
   sourceKind: Exclude<FileSourceKind, "legacy-upload">;
@@ -60,8 +78,12 @@ export interface FileImportInput {
   relativePath?: string | undefined;
   sourceUri?: string | undefined;
   sourceModifiedAt?: Date | undefined;
-  pipelines?: { room: boolean; wiki: boolean; memory: boolean } | undefined;
+  pipelines?: { room: boolean; wiki: boolean } | undefined;
   roomId?: string | undefined;
+  /** 归属工作区（资料库/产物库按空间隔离）；缺省归 default。 */
+  workspaceId?: string | undefined;
+  /** 钉住既有条目（新版本入链）：提供时按 fileEntries.id 定位，忽略 (sourceKind, sourceKey) 分组。 */
+  fileEntryId?: string | undefined;
   /** Store a source version without starting normalization/fan-out yet. */
   deferIngest?: boolean | undefined;
 }
@@ -102,13 +124,16 @@ export interface CatalogFileDto {
   processingState: "processing" | "ready" | "failed" | "missing";
   clusterId: string | null;
   contentHash: string;
+  currentVersionId: string | null;
   parsed: boolean;
+  /** 归属工作区 id（资料库/产物库按空间过滤）。 */
+  workspaceId: string;
   updatedAt: string;
 }
 
+/** 解析结果：解析产物 id（无解析器时为空）+ 数据类型。Phase 2 起不再回传 ingest 事件 id。 */
 interface VersionIngestResult {
-  eventId: string;
-  parsedId: string;
+  parsedId: string | null;
   dataType: string;
 }
 
@@ -118,8 +143,6 @@ type VersionIngestor = (input: {
   pipelines?: FileImportInput["pipelines"];
   roomId?: string;
 }) => Promise<VersionIngestResult>;
-type VersionClassifier = (fileEntryId: string, fileVersionId: string) => void;
-
 /** 统一上传结果：deduped = 判重闸 1 命中（同名同内容，零写入）。 */
 export interface FileUploadResult {
   fileId: string;
@@ -131,37 +154,21 @@ export interface FileUploadResult {
   originalName: string;
 }
 
-/** 删除级联钩子（create-server 注入；files 模块不反向依赖 knowledge/memory）。 */
-export interface FileDeletionHooks {
-  /** Room/wiki 链路清理（enqueueCleanup 同款异步 job）。 */
-  requestKnowledgeCleanup?(fileId: string): void;
-  /** 记忆链路：按 caller_ref 删 MemoryCore 文档；返回删除的 documentId 列表。 */
-  deleteMemoryDocuments?(fileId: string): Promise<string[]>;
-  /** 批量版（整源清理用）：一次扫描删多 caller_ref，避免逐文件全量扫描。 */
-  deleteMemoryDocumentsBatch?(fileEntryIds: string[]): Promise<string[]>;
-  /** 批量台账/knowledge 清理（ingest.cleanupSources 同语义）。 */
-  cleanupIngestSources?(fileEntryIds: string[]): void;
-}
-
 export interface FileDeletionResult {
   fileId: string;
-  /** Room/wiki 侧是否已入队清理 job。 */
-  knowledgeCleanup: boolean;
-  /** 记忆侧实际删除的 documentId（MemoryCore 未启用/无文档为空）。 */
-  deletedMemoryDocuments: string[];
   /** 对象库 blob 是否被物理回收（被其他文件共享的内容不回收）。 */
   blobCollected: boolean;
 }
 
 /**
  * 文件管理中心（unified-ingest-plan §8/U9）：对象库 + uploaded_files +
- * parsed_contents 的唯一所有者。knowledge/memory/ingest 的一切字节存取
- * 都经它——上传（闸1 判重）、解析产物（闸2 幂等）、预览、改名、删除级联
- * 与对象库 GC。表与磁盘结构沿用 knowledge 时期的设计，零迁移。
+ * parsed_contents 的唯一所有者。一切字节存取都经它——上传（闸1 判重）、
+ * 解析产物（闸2 幂等）、预览、改名、删除级联与对象库 GC。
  */
 export class FilesService {
   private versionIngestor: VersionIngestor | null = null;
-  private versionClassifier: VersionClassifier | null = null;
+  /** 空间资料库落盘（P1）；未注入时所有条目仍只存对象库（旧行为）。 */
+  private spaceLibrary: SpaceLibraryWriter | null = null;
   private fileJobWorker: Promise<void> | null = null;
   private disposed = false;
 
@@ -170,13 +177,20 @@ export class FilesService {
     private readonly dataDir: string,
   ) {}
 
+  /**
+   * 服务数据根目录。旁路文件（如论文模版 docx 缓存）需要与对象库同盘，
+   * 但不属于 catalog 条目，因此单独暴露根路径给需要的模块。
+   */
+  dataDirectory(): string {
+    return this.dataDir;
+  }
+
   /** Backfill the compatibility table without changing any legacy IDs. */
   initializeCatalog(): void {
     const legacyRows = this.db.select().from(uploadedFiles).all();
     for (const row of legacyRows) {
-      const capability = fileFormatCapability(row.originalName);
-      if (!capability) continue;
-      const versionId = `fver-legacy-${row.id}`;
+      // 对象库索引全量回填（先于 capability 过滤）：素材检索按 content_hash
+      // 内连接 file_blobs，图片等无解析器格式漏行即对检索完全不可见。
       this.db.insert(fileBlobs).values({
         contentHash: row.contentHash,
         storagePath: row.storagePath,
@@ -184,6 +198,9 @@ export class FilesService {
         mime: row.mime,
         createdAt: row.createdAt,
       }).onConflictDoNothing().run();
+      const capability = fileFormatCapability(row.originalName);
+      if (!capability) continue;
+      const versionId = `fver-legacy-${row.id}`;
       this.db.insert(fileEntries).values({
         id: row.id,
         sourceKind: "legacy-upload",
@@ -212,14 +229,18 @@ export class FilesService {
       .where(and(eq(jobs.type, "file.ingest"), eq(jobs.status, "running"))).run();
   }
 
+  /**
+   * 注入空间资料库写盘器：此后带空间目录的条目在入库/改名/删除时同步磁盘。
+   * 见 docs/project-space-layout-plan.zh-CN.md §8.3（P1）。
+   */
+  setSpaceLibrary(writer: SpaceLibraryWriter): void {
+    this.spaceLibrary = writer;
+  }
+
   setVersionIngestor(ingestor: VersionIngestor): void {
     if (this.disposed) throw new Error("FilesService 已关闭");
     this.versionIngestor = ingestor;
     this.kickFileJobs();
-  }
-
-  setVersionClassifier(classifier: VersionClassifier): void {
-    this.versionClassifier = classifier;
   }
 
   async importFile(input: FileImportInput): Promise<FileImportResult> {
@@ -303,12 +324,21 @@ export class FilesService {
     const capability = fileFormatCapability(input.originalName)!;
     const existingBlob = this.db.select().from(fileBlobs)
       .where(eq(fileBlobs.contentHash, contentHash)).get();
-
     const now = new Date();
-    let entry = this.db.select().from(fileEntries).where(and(
-      eq(fileEntries.sourceKind, input.sourceKind),
-      eq(fileEntries.sourceKey, input.sourceKey),
-    )).get();
+    let entry = input.fileEntryId
+      ? this.db.select().from(fileEntries).where(eq(fileEntries.id, input.fileEntryId)).get()
+      : this.db.select().from(fileEntries).where(and(
+          eq(fileEntries.sourceKind, input.sourceKind),
+          eq(fileEntries.sourceKey, input.sourceKey),
+        )).get();
+    if (input.fileEntryId && !entry) throw new Error("file_entry_not_found");
+    // 工作区归属：显式传入（trim 后非空）优先；未传/为空时**保留条目原有归属**，
+    // 新条目才落 default。否则编辑保存回填（office edit-sync 按 fileEntryId 重导入）、
+    // 本地夹重扫（local-file-references）等不带归属的链路，会把已有文件悄悄改归
+    // default —— 用户看到的现象就是「重启后 AI 生成的文件跑去了默认工作区」。
+    const workspaceId = input.workspaceId?.trim()
+      ?? entry?.workspaceId?.trim()
+      ?? DEFAULT_FILE_WORKSPACE_ID;
     const fileEntryId = entry?.id ?? `file-${randomUUID()}`;
     const existingVersion = entry
       ? this.db.select().from(fileVersions).where(and(
@@ -318,6 +348,7 @@ export class FilesService {
       : null;
 
     if (existingVersion) {
+      if (!entry) throw new Error("file_entry_not_found");
       const shouldEnqueue = !input.deferIngest
         && (existingVersion.status === "stored" || existingVersion.status === "failed");
       const jobId = this.fileJobId(existingVersion.id, capability.parserId, capability.parserVersion);
@@ -343,17 +374,43 @@ export class FilesService {
           }).run();
         });
       }
+      const nextState = existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing";
+      // 本地夹来源每次应用启动都会把整批文件重新登记一遍（local-file-references）。
+      // 内容没变时只刷新 lastSeenAt：如果连 updatedAt 一起顶到 now，文件库/首页按
+      // 「最近更新」排序（只取最近 200 条）时，这些没有被改动过的本地文件会反复
+      // 挤到最前面，把用户真正上传的文件挤出可见范围——现象就是「重启后我上传的
+      // 文件不见了」。
+      const metadataChanged = entry.originalName !== input.originalName
+        || (input.relativePath !== undefined && entry.relativePath !== input.relativePath)
+        || (input.sourcePath !== undefined && entry.sourcePath !== input.sourcePath)
+        || (input.sourceUri !== undefined && entry.sourceUri !== input.sourceUri)
+        || entry.workspaceId !== workspaceId
+        || entry.deletedAt !== null
+        || entry.state !== nextState
+        || entry.currentVersionId !== existingVersion.id;
       this.db.update(fileEntries).set({
         originalName: input.originalName,
         relativePath: input.relativePath,
         sourcePath: input.sourcePath,
         sourceUri: input.sourceUri,
+        // 重新导入会覆盖归属：显式传入 workspaceId 时以最新入口为准。
+        workspaceId,
         lastSeenAt: now,
-        updatedAt: now,
+        ...(metadataChanged ? { updatedAt: now } : {}),
         deletedAt: null,
-        state: existingVersion.status === "parsed" ? "ready" : existingVersion.status === "failed" ? "failed" : "processing",
+        state: nextState,
         ...(entry?.currentVersionId === existingVersion.id ? {} : { currentVersionId: existingVersion.id }),
       }).where(eq(fileEntries.id, fileEntryId)).run();
+      await this.materializeLibraryEntry({
+        fileEntryId,
+        workspaceId,
+        contentHash,
+        originalName: input.originalName,
+        extension: capability.extension,
+        sourceKind: input.sourceKind,
+        provider: input.provider ?? null,
+        existingRelativePath: input.relativePath ?? entry?.relativePath ?? null,
+      });
       const result: FileImportResult = {
         fileEntryId,
         fileVersionId: existingVersion.id,
@@ -395,6 +452,7 @@ export class FilesService {
           sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
+          workspaceId,
           currentVersionId: fileVersionId,
           state: "processing",
           lastSeenAt: now,
@@ -410,6 +468,7 @@ export class FilesService {
           sourcePath: input.sourcePath,
           relativePath: input.relativePath,
           sourceUri: input.sourceUri,
+          workspaceId,
           currentVersionId: fileVersionId,
           state: "processing",
           lastSeenAt: now,
@@ -443,7 +502,19 @@ export class FilesService {
       }
     });
     entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    await this.materializeLibraryEntry({
+      fileEntryId,
+      workspaceId,
+      contentHash,
+      originalName: input.originalName,
+      extension: capability.extension,
+      sourceKind: input.sourceKind,
+      provider: input.provider ?? null,
+      existingRelativePath: input.relativePath ?? entry?.relativePath ?? null,
+    });
     if (!input.deferIngest) this.kickFileJobs();
+    // 统一搜索：登记即建 meta（正文等解析完成后再入队补齐）。
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return { fileEntryId, fileVersionId, jobId, contentHash, blobDeduped: Boolean(existingBlob), versionDeduped: false };
   }
 
@@ -454,9 +525,16 @@ export class FilesService {
     storagePath: string;
   } | null {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
-    const version = this.db.select().from(fileVersions).where(and(
+    let version = this.db.select().from(fileVersions).where(and(
       eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId),
     )).get();
+    // 模型常把 fileEntryId 误传进 fileVersionId（2026-11-06 实测连环 not_found）：版本号
+    // 恰等于条目 id 时回退到该条目当前版本，别让一整个解析链路就此报废。
+    if (!version && entry && fileVersionId === fileEntryId && entry.currentVersionId) {
+      version = this.db.select().from(fileVersions).where(and(
+        eq(fileVersions.id, entry.currentVersionId), eq(fileVersions.fileEntryId, fileEntryId),
+      )).get();
+    }
     if (!entry || !version) return null;
     const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, version.contentHash)).get();
     if (!blob) return null;
@@ -470,10 +548,26 @@ export class FilesService {
     };
   }
 
-  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string, ingestEventId: string): void {
+  /** 条目当前版本 id：document_analysis 的 fileVersionId 兜底解析用。 */
+  currentVersionIdOf(fileEntryId: string): string | null {
+    const row = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    return row?.currentVersionId ?? null;
+  }
+
+  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null): void {
     const now = new Date();
+    // parsed_id 的外键指向历史表 parsed_contents；新解析管线落的是
+    // parsed_documents（pdoc-*）。把 pdoc id 直接写进 parsed_id 会触发
+    // FOREIGN KEY constraint failed，整次导入被判 ingest_failed（Office 文件
+    // 因此永远解析不了）。旧表里有同 id 才写，否则置空，正文按 parsed_documents
+    // 反查（见 catalogMarkdownOf）。
+    const legacyParsedId = parsedId
+      ? this.db.select({ id: parsedContents.id }).from(parsedContents)
+          .where(eq(parsedContents.id, parsedId)).get()?.id ?? null
+      : null;
     this.db.update(fileVersions).set({
-      parsedId, ingestEventId, status: "parsed", errorCode: null, errorMessage: null,
+      parsedId: legacyParsedId, status: "parsed", errorCode: null, errorMessage: null,
       processedAt: now,
     }).where(and(eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId))).run();
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
@@ -481,32 +575,38 @@ export class FilesService {
       this.db.update(fileEntries).set({ state: "ready", updatedAt: now })
         .where(eq(fileEntries.id, fileEntryId)).run();
     }
-    this.versionClassifier?.(fileEntryId, fileVersionId);
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
   }
 
-  listCatalog(limit = 100, offset = 0): { items: CatalogFileDto[]; total: number } {
-    const rows = this.db.select({
+  /** 目录查询的公共投影：listCatalog（分页）与 catalogEntry（按 id 直查）共用。 */
+  private catalogQuery() {
+    return this.db.select({
       entry: fileEntries,
       version: fileVersions,
       blob: fileBlobs,
-      membership: fileClusterMemberships,
-      cluster: fileClusters,
       classification: fileClassifications,
     }).from(fileEntries)
       .leftJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
-      .leftJoin(fileClusterMemberships, eq(fileEntries.id, fileClusterMemberships.fileEntryId))
-      .leftJoin(fileClusters, eq(fileClusterMemberships.clusterId, fileClusters.id))
-      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId))
-      .where(isNull(fileEntries.deletedAt))
-      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
-    const items = rows.map(({ entry, version, blob, cluster, classification }) => ({
+      .leftJoin(fileClassifications, eq(fileVersions.id, fileClassifications.fileVersionId));
+  }
+
+  /** 行 → CatalogFileDto（两个入口必须完全同构，否则按 id 直查的字段会与列表不一致）。 */
+  private toCatalogFileDto(row: {
+    entry: typeof fileEntries.$inferSelect;
+    version: typeof fileVersions.$inferSelect | null;
+    blob: typeof fileBlobs.$inferSelect | null;
+    classification: typeof fileClassifications.$inferSelect | null;
+  }): CatalogFileDto {
+    const { entry, version, blob, classification } = row;
+    return ({
       id: entry.id,
       originalName: entry.originalName,
       displayName: entry.displayName,
-      sharedTitle: cluster?.canonicalTitle ?? entry.displayName ?? entry.originalName,
+      // 聚类（同源多份文件的共享标题）随 file-clusters 退役：一律用条目显示名。
+      sharedTitle: entry.displayName ?? entry.originalName,
       sourceKind: entry.sourceKind,
-      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : "历史上传"),
+      sourceLabel: entry.provider ?? (entry.sourceKind === "local-folder" ? "本地文件夹" : entry.sourceKind === "manual-upload" ? "手动上传" : entry.sourceKind === "web-clipper" ? "网页剪藏" : entry.sourceKind === "agent-generated" ? "Agent 生成" : entry.sourceKind === "artifact-imported" ? "产物导入" : "历史上传"),
       relativePath: entry.relativePath,
       provider: entry.provider,
       bytes: blob?.byteSize ?? 0,
@@ -515,18 +615,156 @@ export class FilesService {
       summary: classification?.summary ?? null,
       tags: classification?.tags ?? [],
       processingState: entry.state === "deleted" ? "missing" : entry.state,
-      clusterId: cluster?.id ?? null,
+      clusterId: null,
       contentHash: version?.contentHash ?? "",
-      parsed: Boolean(version?.parsedId),
+      currentVersionId: version?.id ?? null,
+      parsed: Boolean(version?.parsedId) || version?.status === "parsed",
+      workspaceId: entry.workspaceId ?? DEFAULT_FILE_WORKSPACE_ID,
       updatedAt: entry.updatedAt.toISOString(),
-    } satisfies CatalogFileDto));
+    } satisfies CatalogFileDto);
+  }
+
+  listCatalog(
+    limit = 100,
+    offset = 0,
+    options: string[] | { nameLikePatterns?: string[]; workspaceId?: string } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    // 兼容两种第 3 参：旧调用传 string[]（工作区文件多关键词 OR 检索），新调用传 options。
+    const normalizedOptions = Array.isArray(options) ? { nameLikePatterns: options } : options;
+    const patterns = [...new Set(
+      (normalizedOptions.nameLikePatterns ?? []).map((pattern) => pattern.trim().toLowerCase()).filter(Boolean),
+    )];
+    const nameFilter = catalogNameFilter(patterns);
+    // 工作区过滤：未传 = 全库（管理面/主页快照等旧调用不受影响）；
+    // 显式传 workspaceId 时，NULL 归属的旧行按 default 匹配（回填前的同语义兜底）。
+    const normalizedWorkspace = normalizedOptions.workspaceId === undefined
+      ? undefined
+      : normalizedOptions.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const workspaceFilter = normalizedWorkspace === undefined
+      ? undefined
+      : or(
+          eq(fileEntries.workspaceId, normalizedWorkspace),
+          and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+        );
+    const rows = this.catalogQuery()
+      .where(and(isNull(fileEntries.deletedAt), ...(nameFilter ? [nameFilter] : []), ...(workspaceFilter ? [workspaceFilter] : [])))
+      .orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const items = rows.map((row) => this.toCatalogFileDto(row));
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
-      .where(isNull(fileEntries.deletedAt)).all().length;
+      .where(and(isNull(fileEntries.deletedAt), ...(nameFilter ? [nameFilter] : []), ...(workspaceFilter ? [workspaceFilter] : []))).all().length;
     return { items, total };
+  }
+
+  /**
+   * 按文件名搜索目录（file_search 工具用）：LIKE 匹配 originalName 与 displayName。
+   *
+   * 与 listCatalog 同一套工作区口径：未传 workspaceId = 全库；显式传时 NULL 归属的
+   * 存量行按 default 匹配。空 query = 按更新时间倒序列出（「最近改过的那份」场景）。
+   * scope 把「产物库 / 资料库」两个界面页签翻成来源过滤（见 ARTIFACT_SOURCE_KINDS）。
+   * 只返回 Windows/macOS 文件名子串可命中的条目，不做全文检索——正文检索走 search 模块。
+   */
+  searchCatalog(
+    query: string,
+    options: {
+      /** 扩展名过滤（.docx / docx 都接受，大小写不敏感）。 */
+      extensions?: readonly string[];
+      workspaceId?: string;
+      /** 产物库 / 资料库范围（缺省 all = 不按来源过滤）。 */
+      scope?: FileCatalogScope;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    const normalizedQuery = query.trim();
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 100);
+    const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+    const extensions = [...new Set((options.extensions ?? [])
+      .map((extension) => extension.trim().toLowerCase())
+      .filter((extension) => extension.length > 0)
+      .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`)))];
+    const normalizedWorkspace = options.workspaceId === undefined
+      ? undefined
+      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const normalizedScope: FileCatalogScope = options.scope ?? "all";
+    const filters = [isNull(fileEntries.deletedAt)];
+    if (normalizedQuery) {
+      // SQLite LIKE 对 ASCII 大小写不敏感；中文按子串精确匹配。
+      const pattern = `%${normalizedQuery}%`;
+      filters.push(or(
+        like(fileEntries.originalName, pattern),
+        like(fileEntries.displayName, pattern),
+      )!);
+    }
+    if (extensions.length > 0) filters.push(inArray(fileEntries.extension, extensions));
+    if (normalizedScope === "artifacts") {
+      filters.push(inArray(fileEntries.sourceKind, [...ARTIFACT_SOURCE_KINDS]));
+    } else if (normalizedScope === "library") {
+      filters.push(notInArray(fileEntries.sourceKind, [...ARTIFACT_SOURCE_KINDS]));
+    }
+    if (normalizedWorkspace !== undefined) {
+      filters.push(or(
+        eq(fileEntries.workspaceId, normalizedWorkspace),
+        and(isNull(fileEntries.workspaceId), eq(sql`${normalizedWorkspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+      )!);
+    }
+    const where = and(...filters);
+    const rows = this.catalogQuery()
+      .where(where).orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const total = this.db.select({ id: fileEntries.id }).from(fileEntries).where(where).all().length;
+    return { items: rows.map((row) => this.toCatalogFileDto(row)), total };
   }
 
   capabilities() {
     return FILE_FORMAT_CAPABILITIES;
+  }
+
+  /**
+   * 文件库规模（资料库 / 产物各多少份）：只计数，不取条目。
+   *
+   * 给 Agent 运行提示用：库里可能有上千份材料，提示里只报数量，条目一律由模型
+   * 自己用 library_browse（分页）或 file_search（关键词）去取——任何「最近 N 条」
+   * 的快照都是抽样，容易被模型当成全库。
+   */
+  catalogCounts(options: { workspaceId?: string } = {}): { library: number; artifacts: number; total: number } {
+    const workspace = options.workspaceId === undefined
+      ? undefined
+      : options.workspaceId.trim() || DEFAULT_FILE_WORKSPACE_ID;
+    const filters = [isNull(fileEntries.deletedAt)];
+    if (workspace !== undefined) {
+      filters.push(or(
+        eq(fileEntries.workspaceId, workspace),
+        and(isNull(fileEntries.workspaceId), eq(sql`${workspace}`, sql`${DEFAULT_FILE_WORKSPACE_ID}`)),
+      )!);
+    }
+    const row = this.db.select({
+      total: sql<number>`count(*)`,
+      artifacts: sql<number>`sum(case when ${inArray(fileEntries.sourceKind, [...ARTIFACT_SOURCE_KINDS])} then 1 else 0 end)`,
+    }).from(fileEntries).where(and(...filters)).get();
+    const total = Number(row?.total ?? 0);
+    const artifacts = Number(row?.artifacts ?? 0);
+    return { library: Math.max(0, total - artifacts), artifacts, total };
+  }
+
+  /**
+   * 按磁盘路径 + 当前内容指纹查已有条目：系统文件管理器直接打开文件时，
+   * 若该文件已作为「本地文件夹」来源入库且内容未变，直接复用条目打开，
+   * 不再把（可能上百 MB 的）文件重新上传一遍，也不产生重复条目。
+   */
+  findBySourcePath(sourcePath: string, contentHash: string): { fileEntryId: string; originalName: string } | null {
+    if (!sourcePath || !/^[a-f0-9]{64}$/.test(contentHash)) return null;
+    const row = this.db.select({
+      id: fileEntries.id,
+      originalName: fileEntries.originalName,
+      contentHash: fileVersions.contentHash,
+    }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .where(and(
+        eq(fileEntries.sourceKind, "local-folder"),
+        eq(fileEntries.sourcePath, sourcePath),
+        isNull(fileEntries.deletedAt),
+      )).get();
+    if (!row || row.contentHash !== contentHash) return null;
+    return { fileEntryId: row.id, originalName: row.originalName };
   }
 
   isCatalogEntry(fileEntryId: string): boolean {
@@ -535,12 +773,60 @@ export class FilesService {
     return Boolean(entry && entry.sourceKind !== "legacy-upload");
   }
 
+  /**
+   * 按原始文件名查目录条目。
+   *
+   * 用于「丢了 id 但文件还在」的自愈场景：论文模版卡片的 sourceFileEntryId 可能
+   * 是 null（上传通道拿不到），排版时需要靠文件名把模版 docx 找回来。调用方必须
+   * 只在结果唯一时才采用，避免张冠李戴。
+   */
+  catalogEntriesByName(originalName: string): CatalogFileDto[] {
+    return this.catalogQuery()
+      .where(and(eq(fileEntries.originalName, originalName), isNull(fileEntries.deletedAt)))
+      .all()
+      .map((row) => this.toCatalogFileDto(row));
+  }
+
+  /** 单个 catalog 条目（@ 文件引用取当前版本 id 用）。 */
+  /**
+   * 按 id 取单个目录条目。
+   *
+   * 历史实现是 `listCatalog(200, 0).items.find(...)`——只扫「最近更新的 200 条」。
+   * 库大到 1460 个文件后，任何排名 200 之后的文档都查不到：论文排版（reformat /
+   * 资料区设为模版）会立刻以 thesis_source_file_not_found 失败，用户看到的就是
+   * 「点了排版没反应、不生成任何文件」（2026-10-27 实测：目标文档排名 211）。
+   */
+  catalogEntry(fileEntryId: string): CatalogFileDto | null {
+    // 直接按键查（主路径）；查不到再走 listCatalog 分页兜底——目录超过一页时
+    // 靠后的文件也能命中（@ 引用/当前文件读取），并兼容对 listCatalog 的注入测试。
+    const row = this.catalogQuery()
+      .where(and(eq(fileEntries.id, fileEntryId), isNull(fileEntries.deletedAt)))
+      .get();
+    if (row) return this.toCatalogFileDto(row);
+    const pageSize = 200;
+    const first = this.listCatalog(pageSize, 0);
+    const direct = first.items.find((item) => item.id === fileEntryId);
+    if (direct) return direct;
+    for (let offset = pageSize; offset < first.total; offset += pageSize) {
+      const hit = this.listCatalog(pageSize, offset).items.find((item) => item.id === fileEntryId);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   catalogMarkdownOf(fileEntryId: string): string | null {
-    const row = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
+    const legacy = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
       .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .innerJoin(parsedContents, eq(fileVersions.parsedId, parsedContents.id))
       .where(eq(fileEntries.id, fileEntryId)).get();
-    return row?.markdown ?? null;
+    if (legacy) return legacy.markdown;
+    // 现行解析器写 parsed_documents（按 fileVersionId 挂载）；旧 parsed_id 外键
+    // 只对历史行有效，这里按当前版本反查，否则 Office 文件正文永远读不到。
+    const parsed = this.db.select({ markdown: parsedDocuments.markdown }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(parsedDocuments, eq(parsedDocuments.fileVersionId, fileVersions.id))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return parsed?.markdown ?? null;
   }
 
   catalogStoragePathOf(fileEntryId: string): string | null {
@@ -574,7 +860,69 @@ export class FilesService {
       }
       return null;
     }
-    return { buffer: await readFile(path), mime: row.blob.mime, filename: row.entry.originalName };
+    const buffer = await readFile(path);
+    // 旧导入的 blob.mime 常为 octet-stream（multipart 未设 type 时期）：图片字节嗅探兜底。
+    return { buffer, mime: sniffImageMime(buffer) ?? row.blob.mime, filename: row.entry.originalName };
+  }
+
+  /** 版本历史（agent 回滚用）：按版本号倒序，最近 N 条。 */
+  listVersions(
+    fileEntryId: string,
+    limit = 30,
+  ): Array<{ versionNo: number; contentHash: string; createdAt: string; status: string; byteSize: number; current: boolean }> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return [];
+    const rows = this.db.select({ version: fileVersions, blob: fileBlobs })
+      .from(fileVersions)
+      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .where(eq(fileVersions.fileEntryId, fileEntryId))
+      .orderBy(desc(fileVersions.versionNo)).limit(limit).all();
+    return rows.map(({ version, blob }) => ({
+      versionNo: version.versionNo,
+      contentHash: version.contentHash,
+      createdAt: version.createdAt.toISOString(),
+      status: version.status,
+      byteSize: blob?.byteSize ?? 0,
+      current: version.id === entry.currentVersionId,
+    }));
+  }
+
+  /**
+   * 回滚到历史版本：旧 blob 的字节重新走 importFile（按 fileEntryId 钉住条目）。
+   * 内容哈希与旧版本一致 → registerImportedFile 的判重分支只把 currentVersionId
+   * 指回既有版本行（版本不增、字节零拷贝），并重新入队解析让索引跟上。
+   * 返回 null = 条目/版本不存在；返回 current=true 表示目标就是当前版（幂等空操作）。
+   */
+  async revertToVersion(
+    fileEntryId: string,
+    versionNo: number,
+  ): Promise<{ versionNo: number; contentHash: string; alreadyCurrent: boolean } | null> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return null;
+    const target = this.db.select().from(fileVersions)
+      .where(and(eq(fileVersions.fileEntryId, fileEntryId), eq(fileVersions.versionNo, versionNo))).get();
+    if (!target) return null;
+    const alreadyCurrent = entry.currentVersionId === target.id;
+    if (alreadyCurrent) return { versionNo, contentHash: target.contentHash, alreadyCurrent: true };
+    const blob = this.db.select().from(fileBlobs)
+      .where(eq(fileBlobs.contentHash, target.contentHash)).get();
+    if (!blob) return null;
+    // 本地夹条目按引用访问用户磁盘，不持有字节镜像：blob 一定在对象库（导入时
+    // storeFileBlobStream 先落库），这里不区分 sourceKind，统一从对象库读。
+    const blobPath = join(this.dataDir, blob.storagePath);
+    if (!existsSync(blobPath)) return null;
+    const buffer = await readFile(blobPath);
+    const result = await this.importFile({
+      // sourceKind/sourceKey 会被 fileEntryId 钉住逻辑忽略，取合法占位即可。
+      sourceKind: "artifact-imported",
+      sourceKey: `revert:${fileEntryId}`,
+      originalName: entry.originalName,
+      buffer,
+      mime: blob.mime,
+      // 保留条目当前归属：不传 workspaceId 时 registerImportedFile 沿用 entry 上的值。
+      fileEntryId,
+    });
+    return { versionNo, contentHash: result.contentHash, alreadyCurrent: false };
   }
 
   async markLocalFileMissing(localSourceId: string, localItemId: string): Promise<boolean> {
@@ -595,10 +943,9 @@ export class FilesService {
   /**
    * 整源级联清理（桌面端「清空数据源数据」）：按 localSourceId（local-folder/
    * obsidian）或 connector+connectionId（GitHub/GDocs/Notion 导出）锚点收集该源
-   * 全部 catalog 条目，记忆批量删 + 台账/knowledge 批量清 + 逐条目录/对象回收。
-   * 记忆删除失败抛错（整体保留、可重试）；其余步骤幂等。
+   * 全部 catalog 条目，逐条目录/对象回收。全步骤幂等。
    */
-  async purgeLocalSource(localSourceId: string, hooks?: FileDeletionHooks): Promise<{ entries: number; memoryDeleted: string[] }> {
+  async purgeLocalSource(localSourceId: string): Promise<{ entries: number }> {
     const entries = this.db.select({ id: fileEntries.id }).from(fileEntries)
       .where(and(
         isNull(fileEntries.deletedAt),
@@ -608,50 +955,45 @@ export class FilesService {
         ),
       ))
       .all();
-    if (entries.length === 0) return { entries: 0, memoryDeleted: [] };
+    if (entries.length === 0) return { entries: 0 };
     const ids = entries.map((row) => row.id);
-    const memoryDeleted = hooks?.deleteMemoryDocumentsBatch ? await hooks.deleteMemoryDocumentsBatch(ids) : [];
-    hooks?.cleanupIngestSources?.(ids);
     for (const id of ids) await this.deleteCatalogEntry(id);
-    return { entries: ids.length, memoryDeleted };
+    return { entries: ids.length };
   }
 
-  renameCatalogEntry(fileEntryId: string, displayName: string): CatalogFileDto | null {
+  async renameCatalogEntry(fileEntryId: string, displayName: string): Promise<CatalogFileDto | null> {
     const normalized = displayName.trim().slice(0, 300);
     if (!normalized) throw new Error("显示名不能为空");
-    this.db.update(fileEntries).set({ displayName: normalized, updatedAt: new Date() })
-      .where(eq(fileEntries.id, fileEntryId)).run();
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return null;
+    // 已落盘的条目：先改磁盘再改 DB（失败就保持不一致，交给 reconcile 收口）。
+    let relativePath = entry.relativePath;
+    if (this.spaceLibrary && entry.workspaceId && entry.relativePath) {
+      const next = await this.spaceLibrary
+        .renameWithinLibrary(entry.workspaceId, entry.relativePath, normalized)
+        .catch(() => null);
+      if (next) relativePath = next;
+    }
+    this.db.update(fileEntries).set({
+      displayName: normalized,
+      ...(relativePath !== entry.relativePath ? { relativePath } : {}),
+      updatedAt: new Date(),
+    }).where(eq(fileEntries.id, fileEntryId)).run();
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     return this.listCatalog(200, 0).items.find((item) => item.id === fileEntryId) ?? null;
   }
 
-  async deleteCatalogEntry(fileEntryId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
+  async deleteCatalogEntry(fileEntryId: string): Promise<FileDeletionResult | null> {
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
     if (!entry || entry.sourceKind === "legacy-upload") return null;
+    // 先把它挪进空间回收站（.everoffice/trash/<日期>/<uuid>/），可恢复；对象库字节按引用 GC。
+    if (this.spaceLibrary && entry.workspaceId && entry.relativePath) {
+      await this.spaceLibrary.trashWithinLibrary(entry.workspaceId, entry.relativePath).catch(() => undefined);
+    }
     const versions = this.db.select().from(fileVersions).where(eq(fileVersions.fileEntryId, fileEntryId)).all();
-    const clipperAssetHashes = this.db.select({ contentHash: clipperAssets.contentHash }).from(clipperAssets)
-      .innerJoin(clipperCaptures, eq(clipperAssets.captureId, clipperCaptures.id))
-      .where(eq(clipperCaptures.fileEntryId, fileEntryId)).all()
-      .flatMap(({ contentHash }) => contentHash ? [contentHash] : []);
-    const membership = this.db.select().from(fileClusterMemberships)
-      .where(eq(fileClusterMemberships.fileEntryId, fileEntryId)).get();
-    // Keep the local clipping available for retry if its external memory cleanup fails.
-    let deletedMemoryDocuments = entry.sourceKind === "web-clipper" && hooks?.deleteMemoryDocuments
-      ? await hooks.deleteMemoryDocuments(fileEntryId)
-      : [];
     this.db.delete(fileEntries).where(eq(fileEntries.id, fileEntryId)).run();
-    if (membership) {
-      const remaining = this.db.select({ id: fileClusterMemberships.fileEntryId }).from(fileClusterMemberships)
-        .where(eq(fileClusterMemberships.clusterId, membership.clusterId)).limit(1).get();
-      if (!remaining) this.db.delete(fileClusters).where(eq(fileClusters.id, membership.clusterId)).run();
-    }
-    let knowledgeCleanup = false;
-    if (hooks?.requestKnowledgeCleanup) {
-      hooks.requestKnowledgeCleanup(fileEntryId);
-      knowledgeCleanup = true;
-    }
-    if (entry.sourceKind !== "web-clipper" && hooks?.deleteMemoryDocuments) {
-      deletedMemoryDocuments = await hooks.deleteMemoryDocuments(fileEntryId);
-    }
+    // 源行已删：worker 重读时移除索引行。
+    enqueueSearchIndex(this.db, { itemType: "file", refId: fileEntryId, priority: "high" });
     let blobCollected = false;
     for (const version of versions) {
       const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
@@ -674,26 +1016,97 @@ export class FilesService {
         }
       }
     }
-    for (const contentHash of new Set(clipperAssetHashes)) {
-      const catalogReference = this.db.select({ id: fileVersions.id }).from(fileVersions)
-        .where(eq(fileVersions.contentHash, contentHash)).limit(1).get();
-      const legacyReference = this.db.select({ id: uploadedFiles.id }).from(uploadedFiles)
-        .where(eq(uploadedFiles.contentHash, contentHash)).limit(1).get();
-      const clipperReference = this.db.select({ id: clipperAssets.id }).from(clipperAssets)
-        .where(eq(clipperAssets.contentHash, contentHash)).limit(1).get();
-      if (!catalogReference && !legacyReference && !clipperReference) {
-        const blob = this.db.select().from(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).get();
-        this.db.delete(fileBlobs).where(eq(fileBlobs.contentHash, contentHash)).run();
-        if (blob) await rm(join(this.dataDir, blob.storagePath), { force: true }).catch(() => undefined);
-        blobCollected = true;
-      }
-    }
     if (entry.sourceKind === "local-folder") {
       for (const version of versions) {
         await this.collectLocalMirror(version.contentHash);
       }
     }
-    return { fileId: fileEntryId, knowledgeCleanup, deletedMemoryDocuments, blobCollected };
+    return { fileId: fileEntryId, blobCollected };
+  }
+
+  /**
+   * 条目落盘（幂等）：写入 `Library/<dir>/<name>` 后把相对路径回写 DB。
+   *
+   * - 本地夹（local-folder）条目不复制字节——它引用的是用户磁盘上的原文件；
+   * - 空间没绑目录（未注入写盘器 / path 为空）时静默跳过，保持旧行为；
+   * - 已在库里的条目重导入时沿用原目录，不把文件搬到默认落点。
+   */
+  private async materializeLibraryEntry(input: {
+    fileEntryId: string;
+    workspaceId: string;
+    contentHash: string;
+    originalName: string;
+    extension: string;
+    sourceKind: string;
+    provider: string | null;
+    existingRelativePath: string | null;
+  }): Promise<void> {
+    const writer = this.spaceLibrary;
+    if (!writer || input.sourceKind === "local-folder") return;
+    try {
+      const dir = this.libraryDirFor(input.sourceKind, input.provider, input.existingRelativePath);
+      const materialized = await writer.materialize({
+        workspaceId: input.workspaceId,
+        dir,
+        fileName: input.originalName,
+        contentHash: input.contentHash,
+        extension: input.extension,
+      });
+      if (!materialized || materialized.relPath === input.existingRelativePath) return;
+      this.db.update(fileEntries).set({ relativePath: materialized.relPath, updatedAt: new Date() })
+        .where(eq(fileEntries.id, input.fileEntryId)).run();
+    } catch {
+      // 落盘失败不影响入库：资料仍在对象库里，下次 reconcile/backfill 会补。
+    }
+  }
+
+  /**
+   * 落点目录（v2：新条目一律平铺在空间根）。
+   * 已在子目录里的老条目（v1 的 `inbox/`、`outputs/`、`imports/` 或用户自建目录）沿用原目录，
+   * 避免 re-import/回填把文件从用户整理好的位置搬走。
+   */
+  private libraryDirFor(_sourceKind: string, _provider: string | null, existingRelativePath: string | null): string {
+    if (existingRelativePath) {
+      const dir = posix.dirname(existingRelativePath);
+      if (dir !== ".") return dir;
+    }
+    return "";
+  }
+
+  /**
+   * 存量懒回填：把"只在对象库里"的老条目落到空间 Library（方案 §12.1.3）。
+   * 返回 true 表示这次真的写盘（或已在盘上），false 表示无法落盘/无需落盘。
+   */
+  async backfillLibraryFile(fileEntryId: string): Promise<boolean> {
+    const writer = this.spaceLibrary;
+    if (!writer) return false;
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry || !entry.workspaceId) return false;
+    if (entry.relativePath && writer.exists(entry.workspaceId, entry.relativePath)) return true;
+    const version = entry.currentVersionId
+      ? this.db.select().from(fileVersions).where(eq(fileVersions.id, entry.currentVersionId)).get()
+      : null;
+    if (!version) return false;
+    await this.materializeLibraryEntry({
+      fileEntryId: entry.id,
+      workspaceId: entry.workspaceId,
+      contentHash: version.contentHash,
+      originalName: entry.originalName,
+      extension: entry.extension,
+      sourceKind: entry.sourceKind,
+      provider: entry.provider,
+      existingRelativePath: entry.relativePath,
+    });
+    return true;
+  }
+
+  /** 待回填条目（后台补齐任务用）：只挑有空间、有当前版本的。 */
+  listLibraryBacklog(workspaceId: string, limit = 50): string[] {
+    const rows = this.db.select({ id: fileEntries.id }).from(fileEntries).where(and(
+      eq(fileEntries.workspaceId, workspaceId),
+      isNull(fileEntries.deletedAt),
+    )).limit(limit * 10).all();
+    return rows.map((row) => row.id);
   }
 
   private fileJobId(fileVersionId: string, parserId: string, parserVersion: number): string {
@@ -739,7 +1152,7 @@ export class FilesService {
             ...(payload.pipelines ? { pipelines: payload.pipelines } : {}),
             ...(payload.roomId ? { roomId: payload.roomId } : {}),
           });
-          this.touchVersionParsed(payload.fileEntryId, payload.fileVersionId, result.parsedId, result.eventId);
+          this.touchVersionParsed(payload.fileEntryId, payload.fileVersionId, result.parsedId);
           this.db.update(jobs).set({ status: "completed", result, error: null, updatedAt: new Date() })
             .where(eq(jobs.id, job.id)).run();
         } catch (error) {
@@ -775,6 +1188,18 @@ export class FilesService {
    * 旧值直到调用方重新解析后 touchParsed）。
    * 注意：这里只管字节与登记，不解析（归一化是理解引擎的职责）。
    */
+  /** upload 通道的字节同样登记进对象库索引：素材检索按 content_hash 内连接
+   *  file_blobs，图片等无解析器格式漏登记即对检索完全不可见（启动回填也
+   *  曾被 capability 过滤挡住）。幂等，已存在时不覆盖。 */
+  private ensureBlobRow(contentHash: string, storagePath: string, byteSize: number, mime?: string): void {
+    this.db.insert(fileBlobs).values({
+      contentHash,
+      storagePath,
+      byteSize,
+      mime: mime ?? "application/octet-stream",
+    }).onConflictDoNothing().run();
+  }
+
   async upload(input: {
     filename: string;
     buffer: Buffer;
@@ -795,6 +1220,7 @@ export class FilesService {
 
     const existing = this.db.select().from(uploadedFiles).where(eq(uploadedFiles.id, fileId)).get();
     if (existing?.contentHash === contentHash) {
+      this.ensureBlobRow(contentHash, existing.storagePath, existing.bytes, input.mime ?? existing.mime);
       if (input.mime || input.assetKind || input.originChannel || input.visibility || input.capturedAt) {
         this.db.update(uploadedFiles).set({
           ...(input.mime ? { mime: input.mime } : {}),
@@ -816,6 +1242,7 @@ export class FilesService {
     }
 
     await storeFileBlob(this.dataDir, contentHash, input.buffer);
+    this.ensureBlobRow(contentHash, storageRelPath(contentHash), input.buffer.byteLength, input.mime);
     if (existing) {
       this.db.update(uploadedFiles).set({
         contentHash,
@@ -871,7 +1298,6 @@ export class FilesService {
     const rows = this.db.select().from(uploadedFiles).all()
       .filter((row) => !isSupportedUploadFilename(row.originalName));
     for (const row of rows) {
-      this.db.delete(ingestEvents).where(and(eq(ingestEvents.sourceKind, "file"), eq(ingestEvents.sourceId, row.id))).run();
       await this.deleteFile(row.id);
     }
     return rows.length;
@@ -913,7 +1339,7 @@ export class FilesService {
 
   /**
    * 闸2：解析产物幂等入库，(hash, parser_version) 已有则直接复用。
-   * 引擎归一化后调用；knowledge/memory 的既有导入路径同样经此落解析。
+   * 引擎归一化后调用；各类导入路径同样经此落解析。
    */
   ensureParsed(contentHash: string, markdown: string, parserVersion = MARKDOWN_PARSER_VERSION): string {
     const existing = this.db.select().from(parsedContents)
@@ -969,25 +1395,12 @@ export class FilesService {
   }
 
   /**
-   * 删除 + 级联清理（§8.2）：knowledge 走 enqueueCleanup（wiki raw/rm +
-   * 决策回退），memory 按 caller_ref 删文档，登记行随删；parsed_contents
-   * 与对象库 blob 仅当无其他 uploaded_files 行引用同一 hash 时物理回收
-   * （内容寻址天然共享）。
+   * 删除 + 级联清理（§8.2）：登记行随删；parsed_contents 与对象库 blob 仅当
+   * 无其他 uploaded_files 行引用同一 hash 时物理回收（内容寻址天然共享）。
    */
-  async deleteFile(fileId: string, hooks?: FileDeletionHooks): Promise<FileDeletionResult | null> {
+  async deleteFile(fileId: string): Promise<FileDeletionResult | null> {
     const file = this.get(fileId);
     if (!file) return null;
-
-    hooks?.requestKnowledgeCleanup?.(fileId);
-    let deletedMemoryDocuments: string[] = [];
-    if (hooks?.deleteMemoryDocuments) {
-      try {
-        deletedMemoryDocuments = await hooks.deleteMemoryDocuments(fileId);
-      } catch {
-        // 记忆侧清理是 best-effort：登记行照删，失败留给手动 GC/重试
-        deletedMemoryDocuments = [];
-      }
-    }
 
     this.db.delete(uploadedFiles).where(eq(uploadedFiles.id, fileId)).run();
 
@@ -1006,12 +1419,7 @@ export class FilesService {
       }
     }
 
-    return {
-      fileId,
-      knowledgeCleanup: Boolean(hooks?.requestKnowledgeCleanup),
-      deletedMemoryDocuments,
-      blobCollected,
-    };
+    return { fileId, blobCollected };
   }
 
   /**
@@ -1056,4 +1464,14 @@ export class FilesService {
     if (nonLocalCatalogReference || legacyReference) return;
     await rm(join(this.dataDir, storageRelPath(contentHash)), { force: true }).catch(() => undefined);
   }
+}
+
+/** LIKE 通配符转义（与 search 模块同规则）：pattern 由调用方小写化，ASCII 大小写由 SQLite LIKE 天然忽略。 */
+function catalogNameFilter(patterns: string[]): SQL | undefined {
+  if (patterns.length === 0) return undefined;
+  const columns = [fileEntries.originalName, fileEntries.displayName, fileEntries.relativePath];
+  return or(...patterns.flatMap((pattern) => {
+    const escaped = `%${pattern.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    return columns.map((column) => sql`${column} LIKE ${escaped} ESCAPE '\\'`);
+  }));
 }

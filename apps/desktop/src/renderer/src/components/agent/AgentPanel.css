@@ -8,6 +8,9 @@
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  border-top-left-radius: 12px;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -804,4 +807,53 @@
   color: var(--muted, #6a737d);
   font-size: 11px;
   max-width: 260px;
+}
+
+/* ── Agent 授权弹窗（数据源页）：居中对话框 + 出入场过渡 ── */
+@keyframes agent-auth-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes agent-auth-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes agent-auth-backdrop-out-vis { from { opacity: 1; visibility: visible; } to { opacity: 0; visibility: hidden; } }
+@keyframes agent-auth-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes agent-auth-dialog-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(6px) scale(0.99); }
+}
+@keyframes agent-auth-dialog-out-vis {
+  from { opacity: 1; transform: none; visibility: visible; }
+  to { opacity: 0; transform: translateY(6px) scale(0.99); visibility: hidden; }
+}
+.agent-auth-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(21, 26, 34, 0.18);
+  animation: agent-auth-backdrop-in 0.18s ease;
+}
+/* 退场终态必须落到 visibility:hidden：backdrop 是全屏 aria-modal 容器，
+   仅 opacity:0 时 NativeEditorHost 的浮层探测（visibility 仍 visible、矩形非零）
+   会把它当成盖住文档区的模态层，右侧原生文档区从此不再激活——
+   表现为「文件标签点不动」（2026-11-09 模版预览现场的一类锁死源）。 */
+.agent-auth-dialog-backdrop[data-open='false'] { animation: agent-auth-backdrop-out-vis 0.18s ease forwards; }
+.agent-auth-dialog {
+  width: min(420px, 100%);
+  animation: agent-auth-dialog-in 0.22s var(--shell-motion-easing);
+}
+.agent-auth-dialog[data-open='false'] { animation: agent-auth-dialog-out-vis 0.2s var(--shell-motion-easing) forwards; }
+/* 弹窗里的授权卡脱离会话流边距，落在实色卡面上 */
+.agent-auth-dialog .agent-auth-challenge,
+.agent-auth-dialog .agent-auth-challenge-success {
+  margin: 0;
+  background: var(--surface, #ffffff);
+  box-shadow: 0 18px 44px rgba(21, 26, 34, 0.16);
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-auth-dialog-backdrop, .agent-auth-dialog { animation: none !important; }
+  .agent-auth-dialog-backdrop[data-open='false'] { opacity: 0; visibility: hidden; }
+  .agent-auth-dialog[data-open='false'] { opacity: 0; visibility: hidden; }
 }

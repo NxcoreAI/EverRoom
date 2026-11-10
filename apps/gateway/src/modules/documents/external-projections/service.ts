@@ -3,6 +3,7 @@ import type {
   CompleteExternalDocumentPatchInput,
   DocumentOperationCommandResult,
   ExternalDocumentProjectionBinding,
+  ExternalDocumentSourceKind,
   PreparedExternalDocumentPatch,
   PrepareExternalDocumentPatchInput,
   SyncExternalDocumentProjectionInput,
@@ -16,6 +17,7 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
 import { documentBodyContent } from "../content-model.js";
+import { roomScopeId } from "../room-scope.js";
 import type { DocumentCapabilityRegistry } from "../capabilities/registry.js";
 import type { DocumentOperationService } from "../operations/service.js";
 import { DocumentServiceError, type DocumentService } from "../service.js";
@@ -56,8 +58,12 @@ export class ExternalDocumentProjectionService {
   async sync(input: SyncExternalDocumentProjectionInput): Promise<ExternalDocumentProjectionBinding> {
     const existing = this.findSource(input.sourceKind, input.sourceId, input.resourceId);
     const documentId = existing?.documentId ?? stableDocumentId(input);
-    if (existing && existing.roomId !== input.roomId) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "External document belongs to another Room", 409);
+    // 作用域归一：省略/null = 工作区（文稿 roomId 存 null），历史 NOT NULL 列存 sentinel。
+    const scopeRoomId = input.roomId ?? null;
+    // ROOM_MISMATCH 只在调用方显式给了非空作用域且与已有绑定不一致时报：
+    // 省略 roomId 的调用方（新版桌面）一律按工作区处理，不应被旧数据（含真实 roomId）卡死。
+    if (existing && scopeRoomId !== null && existing.roomId !== scopeRoomId) {
+      throw new DocumentServiceError("ROOM_MISMATCH", "External document belongs to another scope", 409);
     }
     if (existing && existing.sourceHash !== input.sourceHash) {
       const current = this.documents.get(documentId);
@@ -65,7 +71,7 @@ export class ExternalDocumentProjectionService {
     }
     await this.documents.syncExternalMarkdown({
       documentId,
-      roomId: input.roomId,
+      roomId: scopeRoomId,
       title: input.title,
       markdown: input.markdown,
     });
@@ -75,7 +81,7 @@ export class ExternalDocumentProjectionService {
       sourceKind: input.sourceKind,
       sourceId: input.sourceId,
       resourceId: input.resourceId,
-      roomId: input.roomId,
+      roomId: roomScopeId(scopeRoomId),
       relativePath: input.relativePath,
       sourceHash: input.sourceHash,
       projectedMarkdown: input.markdown,
@@ -110,7 +116,7 @@ export class ExternalDocumentProjectionService {
     return preparation ? this.operations.get(preparation.operationId) : null;
   }
 
-  async remove(sourceKind: "obsidian-vault", sourceId: string, resourceId?: string): Promise<number> {
+  async remove(sourceKind: ExternalDocumentSourceKind, sourceId: string, resourceId?: string): Promise<number> {
     const rows = this.db.select().from(externalDocumentBindings).where(and(
       eq(externalDocumentBindings.sourceKind, sourceKind),
       eq(externalDocumentBindings.sourceId, sourceId),
@@ -206,7 +212,9 @@ export class ExternalDocumentProjectionService {
     }
     const operation = this.operations.get(preparation.operationId);
     if (!operation
-      || operation.roomId !== input.context.roomId
+      // Phase 2i 后无 Room 维度：操作一律工作区级（roomId 恒 null），
+      // 授权只按 sessionId+runId 比对，不再读 legacy context.roomId。
+      || operation.roomId !== null
       || operation.sessionId !== input.context.sessionId
       || operation.runId !== input.context.runId) {
       throw new DocumentServiceError("OPERATION_FORBIDDEN", "Operation belongs to another Agent run", 403);
@@ -235,7 +243,7 @@ export class ExternalDocumentProjectionService {
     return result;
   }
 
-  private findSource(sourceKind: "obsidian-vault", sourceId: string, resourceId: string): BindingRow | undefined {
+  private findSource(sourceKind: ExternalDocumentSourceKind, sourceId: string, resourceId: string): BindingRow | undefined {
     return this.db.select().from(externalDocumentBindings).where(and(
       eq(externalDocumentBindings.sourceKind, sourceKind),
       eq(externalDocumentBindings.sourceId, sourceId),

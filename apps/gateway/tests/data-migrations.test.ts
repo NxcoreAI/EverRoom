@@ -11,20 +11,14 @@ const migrationsDir = join(import.meta.dirname, "../drizzle");
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), "everroom-migrations-")); dirs.push(directory);
   const database = createDatabase(join(directory, "gateway.sqlite"), migrationsDir);
-  const memory = {
-    enabled: true,
-    replaceConversationBatches: vi.fn(async (input) => ({ sessionId: input.sessionId, messagesImported: input.messages.length })),
-    deleteConversations: vi.fn(async () => ({ deletedCount: 1 })),
-    searchConversations: vi.fn(async () => ({ messages: [{ id: "memory", role: "user", content: "older matching context", timestamp: new Date(0).toISOString(), sessionId: null, sourceKind: null, score: 1 }] })),
-  } as any;
-  return { database, memory, service: new DataMigrationService(database.db, database.sqlite, memory) };
+  return { database, service: new DataMigrationService(database.db, database.sqlite) };
 }
 
 afterEach(async () => { await Promise.all(dirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))); });
 
 describe("data migrations", () => {
   it("upserts visible external messages, indexes search and marks missing threads unavailable", async () => {
-    const { database, memory, service } = await setup();
+    const { database, service } = await setup();
     const first = service.begin({ provider: "openclaw", transport: "local-jsonl", stableSourceKey: "fixture", displayName: "OpenClaw" });
     service.updateProgress(first.run.id, { threadsTotal: 2, messagesTotal: 3 });
     service.appendThreads(first.run.id, [
@@ -39,21 +33,9 @@ describe("data migrations", () => {
     await service.finish(first.run.id);
     await service.idle();
     expect(service.searchConversations("launch", undefined, 20).items[0]).toMatchObject({ title: "Launch notes", messageCount: 2 });
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(2);
-    expect(memory.replaceConversationBatches).toHaveBeenCalledWith(expect.objectContaining({
-      messages: [
-        expect.objectContaining({
-          content: "Plan the launch",
-          timestamp: "2026-01-01T00:00:00.000Z",
-          recordedAt: "2026-01-01T00:00:00.000Z",
-        }),
-        expect.objectContaining({
-          content: "Here is the plan",
-          timestamp: "2026-01-01T00:00:01.000Z",
-          recordedAt: "2026-01-01T00:00:01.000Z",
-        }),
-      ],
-    }));
+    // Phase 1：导入不再产生记忆提炼作业，运行在 finish 时直接完成。
+    expect(database.sqlite.prepare("SELECT count(*) count FROM migration_jobs").get()).toEqual({ count: 0 });
+    expect(service.listRuns()[0]).toMatchObject({ status: "completed" });
 
     const second = service.begin({ provider: "openclaw", transport: "local-jsonl", stableSourceKey: "fixture", displayName: "OpenClaw" });
     service.appendThreads(second.run.id, [{ stableKey: "agent-a:s1", agentId: "agent-a", externalSessionId: "s1", title: "Launch notes", messages: [
@@ -133,8 +115,8 @@ describe("data migrations", () => {
     database.sqlite.close();
   });
 
-  it("clears asynchronously: soft-hides first, then background GC removes rows and memory", async () => {
-    const { database, memory, service } = await setup();
+  it("clears asynchronously: soft-hides first, then background GC removes rows", async () => {
+    const { database, service } = await setup();
     const started = service.begin({ provider: "codex", transport: "local-jsonl", stableSourceKey: "codex-home", displayName: "Codex" });
     service.appendThreads(started.run.id, [{ stableKey: "s1", externalSessionId: "s1", title: "To delete", messages: [
       { stableKey: "m1", role: "user", content: "delete me", occurredAt: "2026-01-01T00:00:00.000Z" },
@@ -149,29 +131,29 @@ describe("data migrations", () => {
 
     expect(service.listSources()).toHaveLength(0);
     expect(database.sqlite.prepare("SELECT count(*) count FROM external_agent_messages").get()).toEqual({ count: 0 });
-    expect(memory.deleteConversations).toHaveBeenCalledWith({ sessionIds: [expect.any(String)] });
     service.dispose();
     database.sqlite.close();
   });
 
-  it("recovers pending memory jobs and completes a stalled run on restart", async () => {
-    const { database, memory, service } = await setup();
+  it("completes a run that was left running when the process died", async () => {
+    const { database, service } = await setup();
     const started = service.begin({ provider: "openclaw", transport: "local-jsonl", stableSourceKey: "fixture", displayName: "OpenClaw" });
     service.appendThreads(started.run.id, [{ stableKey: "s1", externalSessionId: "s1", title: "Stalled", messages: [
       { stableKey: "m1", role: "user", content: "stalled turn", occurredAt: "2026-01-01T00:00:00.000Z" },
     ] }]);
-    await service.finish(started.run.id);
+    // 不调用 finish：模拟导入中途进程被杀，run 停在 running。
     service.dispose();
     database.sqlite.close();
 
     const reopened = createDatabase(join(dirs.at(-1)!, "gateway.sqlite"), migrationsDir);
-    const recovery = new DataMigrationService(reopened.db, reopened.sqlite, memory);
+    const recovery = new DataMigrationService(reopened.db, reopened.sqlite);
     expect(recovery.listRuns()[0]).toMatchObject({ status: "running" });
     recovery.recover();
     await recovery.idle();
     expect(recovery.listRuns()[0]).toMatchObject({ status: "completed" });
     expect(recovery.listSources()[0]).toMatchObject({ status: "completed" });
-    expect(memory.replaceConversationBatches).toHaveBeenCalledTimes(1);
+    // 已导入的线程仍在，可直接检索（无记忆提炼步骤）。
+    expect(recovery.searchConversations("stalled", undefined, 10).items).toHaveLength(1);
     recovery.dispose();
     reopened.sqlite.close();
   });

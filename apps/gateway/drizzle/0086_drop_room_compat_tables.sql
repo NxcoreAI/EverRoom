@@ -1,0 +1,14 @@
+-- P0-2i-4：删除最后一张 Room 兼容表。
+-- `search_index_rooms`（0078 建表）原本只做「命中按 Room 过滤」，Phase 2i 删掉
+-- `SearchFilters.roomIds`、房间回填与 room 命中类型后已无任何读者：只剩
+-- `SearchService.removeItem` 里的旧行清理 DELETE，本相位一并删除，表随之退役。
+--
+-- 未删除的 `document_room_imports`（0054 建表）不是兼容表：单篇导入的
+-- 「导入关联 / 候选版本 / 应用此版本 / 导入历史」链路（`document_room_imports`
+-- 的 relation、importedVersion、candidate_document_id 三列）仍被
+-- `documents/import/service.ts` 与 `documents/core/repository.ts` 读写，删表会
+-- 直接砍掉在用的功能，故本迁移不包含它（详见 Phase 2i-4 报告）。
+--
+-- 幂等：DROP TABLE IF EXISTS，可重复执行。SQLite 的 DROP TABLE 会连带删除该表
+-- 上的索引与触发器（迁移里没有 CREATE VIEW / CREATE TRIGGER），无需先 DROP INDEX。
+DROP TABLE IF EXISTS `search_index_rooms`;

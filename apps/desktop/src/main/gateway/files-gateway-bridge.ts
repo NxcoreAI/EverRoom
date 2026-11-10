@@ -1,7 +1,9 @@
-import { dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { basename, extname, relative, resolve, sep } from 'node:path'
+import { copyFile, mkdir, mkdtemp, readdir, readFile, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import type { AgentAttachmentReference } from '@nxcore/agent-contract'
 import type {
   FileDto,
@@ -13,15 +15,9 @@ import type {
   HighRiskImportResolution,
   IngestPipelines,
 } from '../../shared/ingest'
-import type {
-  BrowserExtensionCapture,
-  BrowserExtensionCaptureResult,
-  BrowserExtensionClipperCapture,
-  BrowserExtensionClipperListInput,
-  BrowserExtensionClipperListResult,
-} from '../../shared/browser-extension'
 import type { GatewaySupervisor } from './gateway-supervisor'
 import { desktopText } from '../desktop-locale'
+import { isArtifactImportFileName } from '../../shared/sources'
 import {
   HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
@@ -37,20 +33,37 @@ export interface ImportCandidate {
   filename: string
 }
 
-const DEFAULT_IMPORT_EXTENSIONS = new Set([
+const DOCUMENT_IMPORT_EXTENSIONS = new Set([
   '.csv', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.html', '.htm', '.md', '.markdown',
   '.mdx', '.ods', '.odp', '.pdf', '.pot', '.potx', '.potm', '.pps', '.ppsx', '.ppsm', '.ppt',
   '.pptx', '.pptm', '.rtf', '.sldx', '.sldm', '.text', '.txt', '.xls', '.xla', '.xlam', '.xlsb',
   '.xlsx', '.xlsm', '.xlt', '.xltx', '.xltm',
 ])
-const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp'])
+/** 手动导入图片；heic 仅 macOS（导入时 sips 转 jpg 后再上传，网关不收裸 heic）。 */
+const IMAGE_FILE_EXTENSIONS = new Set([
+  '.bmp', '.gif', '.jpeg', '.jpg', '.png', '.webp',
+  ...(process.platform === 'darwin' ? ['.heic'] : []),
+])
+const HEIC_EXTENSION = '.heic'
+const DEFAULT_IMPORT_EXTENSIONS = new Set([...DOCUMENT_IMPORT_EXTENSIONS, ...IMAGE_FILE_EXTENSIONS])
+const AGENT_IMAGE_EXTENSIONS = new Set(['.gif', '.jpeg', '.jpg', '.png', '.webp', '.bmp'])
 const AGENT_MAX_ATTACHMENTS = 5
 const AGENT_MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 function imageMime(extension: string): string {
   return extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg'
     : extension === '.png' ? 'image/png'
-      : extension === '.gif' ? 'image/gif' : 'image/webp'
+      : extension === '.gif' ? 'image/gif'
+        : extension === '.bmp' ? 'image/bmp' : 'image/webp'
+}
+
+/** heic 转 jpg（临时文件）：网关识别与应用内显示都不收 heic。 */
+async function convertHeicToJpg(filePath: string): Promise<{ filePath: string; filename: string }> {
+  const base = basename(filePath).replace(/\.heic$/i, '')
+  const directory = await mkdtemp(join(tmpdir(), 'everroom-heic-'))
+  const target = join(directory, `${base}.jpg`)
+  execFileSync('/usr/bin/sips', ['-s', 'format', 'jpeg', filePath, '--out', target], { stdio: 'pipe' })
+  return { filePath: target, filename: `${base}.jpg` }
 }
 
 interface ImportCollectionPlan {
@@ -153,7 +166,6 @@ function skippedOutcome(filename: string, skippedReason: 'unsupported_format' | 
     deduped: false,
     skippedReason,
     pipelines: null,
-    memoryResult: null,
     routeJobId: null,
     error: null,
   }
@@ -186,38 +198,21 @@ export class FilesGatewayBridge {
     return () => this.importProgressListeners.delete(listener)
   }
 
-  list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
+  list(limit = 100, offset = 0, options?: { workspaceId?: string }): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (options?.workspaceId) query.set('workspaceId', options.workspaceId)
     return this.request(`/v1/files/catalog?${query}`)
   }
 
-  listClipCaptures(inputOrLimit: BrowserExtensionClipperListInput | number = {}, legacyOffset = 0): Promise<BrowserExtensionClipperListResult> {
-    const input: BrowserExtensionClipperListInput = typeof inputOrLimit === 'number'
-      ? { limit: inputOrLimit, offset: legacyOffset }
-      : inputOrLimit
-    const query = new URLSearchParams()
-    if (input.query) query.set('query', input.query)
-    if (input.filter) query.set('filter', input.filter)
-    if (input.sort) query.set('sort', input.sort)
-    query.set('limit', String(input.limit ?? 100))
-    query.set('offset', String(input.offset ?? 0))
-    return this.request(`/v1/clipper/captures?${query}`)
-  }
-
-  setClipCaptureFavorite(captureId: string, favorite: boolean): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/favorite`, {
-      method: 'PATCH',
-      body: JSON.stringify({ favorite }),
-    })
-  }
-
-  getClipCaptureDetail(captureId: string): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}`)
-  }
-
-  catalog(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
+  catalog(limit = 100, offset = 0, options?: { workspaceId?: string }): Promise<{ items: FileCatalogDto[]; total: number }> {
     const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+    if (options?.workspaceId) query.set('workspaceId', options.workspaceId)
     return this.request(`/v1/files/catalog?${query}`)
+  }
+
+  /** 单个 catalog 条目（@ 文件引用解析当前版本用）。 */
+  catalogEntry(fileId: string): Promise<FileCatalogDto> {
+    return this.request(`/v1/files/catalog/${encodeURIComponent(fileId)}`)
   }
 
   capabilities(): Promise<{ items: FileFormatCapabilityDto[] }> {
@@ -226,6 +221,21 @@ export class FilesGatewayBridge {
 
   get(fileId: string): Promise<FileDto & { storagePath: string; currentParsedId: string | null }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`)
+  }
+
+  /**
+   * 按磁盘路径 + 当前内容指纹查已有「本地文件夹」条目。系统文件管理器直接打开
+   * 文件时优先复用它：内容未变就不必把整份文件重新上传（大文件尤其明显）。
+   */
+  async lookupSourcePath(
+    sourcePath: string,
+    contentHash: string,
+  ): Promise<{ fileId: string; originalName: string } | null> {
+    const query = `path=${encodeURIComponent(sourcePath)}&contentHash=${encodeURIComponent(contentHash)}`
+    const result = await this.request<{ file: { fileId: string; originalName: string } | null }>(
+      `/v1/files/lookup?${query}`,
+    )
+    return result.file
   }
 
   /** 文件当前解析产物的 markdown（渲染器预览用；未进过链路 404）。 */
@@ -254,12 +264,25 @@ export class FilesGatewayBridge {
     return { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
   }
 
-  async importAgentAttachments(selectedPaths: string[]): Promise<AgentAttachmentReference[]> {
+  /** 本地素材库按内容哈希取图（PPT 打包 everroom-material:// 回源用）；404/失败返回 null。 */
+  async readMaterial(hash: string): Promise<{ buffer: Buffer; mime: string } | null> {
+    const connection = this.supervisor.getConnection()
+    const response = await fetch(`${connection.baseUrl}/v1/materials/${encodeURIComponent(hash)}`, {
+      headers: { Authorization: `Bearer ${connection.token}` },
+    })
+    if (!response.ok) return null
+    const mime = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream'
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return { buffer, mime }
+  }
+
+  async importAgentAttachments(selectedPaths: string[], options?: { workspaceId?: string }): Promise<AgentAttachmentReference[]> {
     const candidates = await collectImportCandidates(
       selectedPaths,
       new Set([...DEFAULT_IMPORT_EXTENSIONS, ...AGENT_IMAGE_EXTENSIONS]),
     )
     if (candidates.length > AGENT_MAX_ATTACHMENTS) throw new Error('最多只能添加 5 个附件')
+    const workspaceId = typeof options?.workspaceId === 'string' && options.workspaceId.trim() ? options.workspaceId.trim() : undefined
     const attachments: AgentAttachmentReference[] = []
     for (const candidate of candidates) {
       const fileStat = await stat(candidate.filePath)
@@ -291,6 +314,10 @@ export class FilesGatewayBridge {
           sourceKey: `agent:${randomUUID()}`,
           originalName: basename(candidate.filename),
           relativePath: candidate.filename,
+          // 附件必须归入当前会话的工作区（资料库按空间隔离）：不传会落 default，
+          // 用户切到非默认工作区拖文件时，Agent 的 file_search/library_browse 在
+          // 本空间查不到刚导入的文件（现象就是「agent 找不到对应文件」）。
+          ...(workspaceId ? { workspaceId } : {}),
         })
         await this.waitForMarkdown(imported.fileEntryId)
         attachments.push({
@@ -305,6 +332,30 @@ export class FilesGatewayBridge {
     return attachments
   }
 
+  /** 「+ → 导入文件」：系统选择框直选文件，导入文件引擎后作为本轮对话附件。 */
+  async pickAgentAttachments(parent?: BrowserWindow | null, options?: { workspaceId?: string }): Promise<AgentAttachmentReference[]> {
+    const dialogOptions: Electron.OpenDialogOptions = {
+      title: '添加文件到对话',
+      buttonLabel: '添加到对话',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+      ],
+    }
+    const picked = parent && !parent.isDestroyed()
+      ? await dialog.showOpenDialog(parent, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+    if (picked.canceled || picked.filePaths.length === 0) return []
+    return this.importAgentAttachments(picked.filePaths, options)
+  }
+
   rename(fileId: string, displayName: string): Promise<FileCatalogDto> {
     return this.request(`/v1/file-entries/${encodeURIComponent(fileId)}`, {
       method: 'PATCH',
@@ -312,17 +363,9 @@ export class FilesGatewayBridge {
     })
   }
 
-  pinClusterTitle(clusterId: string, sharedTitle: string): Promise<{ id: string; canonicalTitle: string; titlePinned: boolean }> {
-    return this.request(`/v1/file-clusters/${encodeURIComponent(clusterId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ sharedTitle }),
-    })
-  }
-
   delete(fileId: string): Promise<{
     deleted: boolean
     knowledgeCleanup: boolean
-    deletedMemoryDocuments: string[]
     blobCollected: boolean
   }> {
     return this.request(`/v1/files/${encodeURIComponent(fileId)}`, { method: 'DELETE' })
@@ -348,6 +391,17 @@ export class FilesGatewayBridge {
     if (error) throw new Error(error)
   }
 
+  /** 把文件本体按原始文件名复制到 ~/Downloads/EverOffice/（同名覆盖）并在系统文件管理器中定位。 */
+  async exportReveal(fileId: string, originalName: string): Promise<void> {
+    const storagePath = await this.storagePath(fileId)
+    const safeName = originalName.replace(/[/\\]/g, '_').trim() || 'export.bin'
+    const dir = join(app.getPath('downloads'), 'EverOffice')
+    await mkdir(dir, { recursive: true })
+    const target = join(dir, safeName)
+    await copyFile(storagePath, target)
+    shell.showItemInFolder(target)
+  }
+
   /**
    * 统一导入（用户主路径）：系统选择框 → 逐文件 multipart 上传（唯一字节
    * 入口）→ ref 形态进引擎。失败互不影响，逐行回报。
@@ -356,6 +410,7 @@ export class FilesGatewayBridge {
   async pickAndImport(options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportOutcome[]> {
     const picked = await dialog.showOpenDialog({
       title: desktopText('dialog.importFiles.title'),
@@ -365,8 +420,18 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
-          name: desktopText('dialog.importFiles.documents'),
+          // 合并过滤器放第一：macOS 选择框默认激活第一项，拆「文档/图片」两项时
+          // 图片在默认档是灰的，用户不切下拉就"选不了"。
+          name: desktopText('dialog.importFiles.all'),
           extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -385,8 +450,17 @@ export class FilesGatewayBridge {
       properties: ['openFile', 'openDirectory', 'multiSelections'],
       filters: [
         {
-          name: desktopText('dialog.importFiles.documents'),
+          // 同 pickAndImport：合并过滤器放第一，图片不再被默认档灰掉。
+          name: desktopText('dialog.importFiles.all'),
           extensions: [...DEFAULT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.documents'),
+          extensions: [...DOCUMENT_IMPORT_EXTENSIONS].map((extension) => extension.slice(1)),
+        },
+        {
+          name: desktopText('dialog.importFiles.images'),
+          extensions: [...IMAGE_FILE_EXTENSIONS].map((extension) => extension.slice(1)),
         },
       ],
     })
@@ -402,15 +476,25 @@ export class FilesGatewayBridge {
   async importPathsOnce(selectedPaths: string[], options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportOutcome[]> {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
+    const manualExtensions = await this.manualImportExtensions()
+    // 目录展开阶段先发 scanning：大目录 walk 可能数分钟且无文件计数，
+    // 不发则界面停在 0/0 且无法区分「扫描中」与「卡死」。
+    this.emitImportProgress({ batchId: randomUUID(), status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+    const scanStartedAt = Date.now()
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
     )
+    console.info('[files] import plan ready', {
+      paths: selectedPaths.length,
+      candidates: importPlan.candidates.length,
+      unsupported: importPlan.unsupported.length,
+      scanMs: Date.now() - scanStartedAt,
+    })
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
@@ -426,6 +510,7 @@ export class FilesGatewayBridge {
         files: highRiskCandidates,
         ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
         ...(options?.roomId ? { roomId: options.roomId } : {}),
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
       }, basename(resolve(selectedPaths[0]!)))
       candidates = lowRiskCandidates
       heldForReview = highRiskCandidates
@@ -447,8 +532,7 @@ export class FilesGatewayBridge {
     roomId?: string
     resourceIdsByRelativePath?: Readonly<Record<string, string>>
   }): Promise<FileImportOutcome[]> {
-    const manualExtensions = new Set((await this.capabilities()).items
-      .filter((item) => item.manualImport).map((item) => item.extension))
+    const manualExtensions = await this.manualImportExtensions()
     const collected = await collectImportCandidates([input.rootPath], manualExtensions)
     const candidates = input.resourceIdsByRelativePath
       ? collected.filter((candidate) => Object.hasOwn(input.resourceIdsByRelativePath!, candidate.filename))
@@ -464,12 +548,20 @@ export class FilesGatewayBridge {
     })
   }
 
+  /** 网关 manualImport 集；darwin 下补 heic（导入前转 jpg，网关能力表不登记 heic）。 */
+  private async manualImportExtensions(): Promise<Set<string>> {
+    const extensions = new Set((await this.capabilities()).items
+      .filter((item) => item.manualImport).map((item) => item.extension))
+    if (process.platform === 'darwin') extensions.add(HEIC_EXTENSION)
+    return extensions
+  }
+
   async importMigrationFile(input: {
     filePath: string
     sourceKey: string
     originalName: string
     relativePath: string
-    provider: 'notion'
+    provider: 'notion' | 'cherry' | 'hermes'
     sourceId: string
   }): Promise<FileImportAcceptedDto> {
     return this.importPath({
@@ -480,7 +572,7 @@ export class FilesGatewayBridge {
       relativePath: input.relativePath,
       provider: input.provider,
       connectionId: input.sourceId,
-      pipelines: { room: true, wiki: true, memory: true },
+      pipelines: { room: true, wiki: true },
     })
   }
 
@@ -492,6 +584,7 @@ export class FilesGatewayBridge {
     const outcomes = await this.importCandidates(batch.files, {
       ...(batch.pipelines ? { pipelines: batch.pipelines } : {}),
       ...(batch.roomId ? { roomId: batch.roomId } : {}),
+      ...(batch.workspaceId ? { workspaceId: batch.workspaceId } : {}),
     })
     return {
       accepted: true,
@@ -503,6 +596,7 @@ export class FilesGatewayBridge {
   private async importCandidates(candidates: ImportCandidate[], options?: {
     pipelines?: IngestPipelines
     roomId?: string
+    workspaceId?: string
     source?: { id: string; label: string; resourceIdsByRelativePath?: Readonly<Record<string, string>> }
   }): Promise<FileImportOutcome[]> {
     const outcomes: FileImportOutcome[] = []
@@ -513,19 +607,31 @@ export class FilesGatewayBridge {
     for (const { filePath, filename } of candidates) {
       this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
       try {
+        let uploadPath = filePath
+        let originalName = basename(filePath)
+        let sourceModifiedAt: string | undefined
+        if (extname(filePath).toLowerCase() === HEIC_EXTENSION && process.platform === 'darwin') {
+          const originalStat = await stat(filePath)
+          const converted = await convertHeicToJpg(filePath)
+          uploadPath = converted.filePath
+          originalName = converted.filename
+          sourceModifiedAt = originalStat.mtime.toISOString()
+        }
         const uploaded = await this.importPath({
-          filePath,
+          filePath: uploadPath,
           sourceKind: 'manual-upload',
           sourceKey: options?.source
             ? `obsidian:${options.source.id}:${options.source.resourceIdsByRelativePath?.[filename] ?? filename}`
             // 确定性 key（同路径重导入命中同一 entry）：版本级去重才生效，
             // 否则每次重导入都铸新 entry + 重复排队路由，决策也挂到新 id 上。
             : `manual:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
-          originalName: basename(filePath),
+          originalName,
           relativePath: filename,
+          ...(sourceModifiedAt ? { sourceModifiedAt } : {}),
           ...(options?.source ? { provider: options.source.label, connectionId: options.source.id } : {}),
           ...(options?.pipelines ? { pipelines: options.pipelines } : {}),
           ...(options?.roomId ? { roomId: options.roomId } : {}),
+          ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
         })
         outcomes.push({
           filename,
@@ -536,12 +642,15 @@ export class FilesGatewayBridge {
           deduped: uploaded.versionDeduped,
           skippedReason: null,
           pipelines: options?.pipelines ?? null,
-          memoryResult: null,
-          routeJobId: uploaded.jobId,
+              routeJobId: uploaded.jobId,
           error: null,
         })
         succeeded += 1
       } catch (error) {
+        console.warn('[files] manual import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
         outcomes.push({
           filename,
           fileId: null,
@@ -551,8 +660,7 @@ export class FilesGatewayBridge {
           deduped: false,
           skippedReason: null,
           pipelines: null,
-          memoryResult: null,
-          routeJobId: null,
+              routeJobId: null,
           error: error instanceof Error ? error.message : String(error),
         })
         failed += 1
@@ -578,6 +686,7 @@ export class FilesGatewayBridge {
     relativePath: string
     sourceModifiedAt: string
     roomId?: string
+    workspaceId?: string
   }): Promise<FileImportAcceptedDto> {
     return this.request('/v1/local-file-references', {
       method: 'POST',
@@ -591,6 +700,7 @@ export class FilesGatewayBridge {
         localItemId: input.localItemId,
         relativePath: input.relativePath,
         sourceModifiedAt: input.sourceModifiedAt,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       }),
     })
   }
@@ -603,7 +713,7 @@ export class FilesGatewayBridge {
   }
 
   /** 整源级联清理：该源在理解引擎的全部文件条目 + 记忆/台账/Room 归属。 */
-  purgeLocalSource(localSourceId: string): Promise<{ entries: number; deletedMemoryDocuments: string[] }> {
+  purgeLocalSource(localSourceId: string): Promise<{ entries: number }> {
     const query = new URLSearchParams({ localSourceId })
     return this.request(`/v1/local-file-references?${query.toString()}`, { method: 'DELETE' })
   }
@@ -644,57 +754,9 @@ export class FilesGatewayBridge {
     return this.importPath({ ...input, sourceKind: 'connector' })
   }
 
-  createClipCapture(input: BrowserExtensionCapture): Promise<BrowserExtensionCaptureResult> {
-    return this.request('/v1/clipper/captures', { method: 'POST', body: JSON.stringify({
-      captureId: input.captureId,
-      sourceUrl: input.url,
-      canonicalUrl: input.canonicalUrl,
-      title: input.title,
-      author: input.author,
-      publishedAt: input.publishedAt,
-      capturedAt: input.capturedAt,
-      extractionMode: input.extractionMode,
-      markdown: input.markdown,
-      extractorVersion: input.extractorVersion,
-      assets: input.assets,
-    }) })
-  }
-
-  uploadClipAsset(captureId: string, assetId: string, data: string): Promise<BrowserExtensionClipperCapture['assets'][number]> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/assets/${encodeURIComponent(assetId)}`, {
-      method: 'PUT', body: JSON.stringify({ data }),
-    })
-  }
-
-  finalizeClipCapture(captureId: string, failures: Array<{ assetId: string; code?: string }>): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/finalize`, {
-      method: 'POST', body: JSON.stringify({ failures }),
-    })
-  }
-
-  retryClipCapture(captureId: string): Promise<{ capture: BrowserExtensionClipperCapture; pendingAssetIds: string[] }> {
-    return this.request(`/v1/clipper/captures/${encodeURIComponent(captureId)}/retry`, { method: 'POST' })
-  }
-
-  getClipCapture(fileEntryId: string): Promise<BrowserExtensionClipperCapture> {
-    return this.request(`/v1/clipper/files/${encodeURIComponent(fileEntryId)}`)
-  }
-
-  async readClipAsset(assetId: string): Promise<{ buffer: Buffer; mime: string }> {
-    const connection = this.supervisor.getConnection()
-    const response = await fetch(`${connection.baseUrl}/v1/clipper/assets/${encodeURIComponent(assetId)}/content`, {
-      headers: { Authorization: `Bearer ${connection.token}` },
-    })
-    if (!response.ok) throw new Error(`网页剪藏图片读取失败（${response.status}）`)
-    return {
-      buffer: Buffer.from(await response.arrayBuffer()),
-      mime: response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream',
-    }
-  }
-
   private async importPath(input: {
     filePath: string
-    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration'
+    sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'migration' | 'agent-generated' | 'artifact-imported'
     sourceKey: string
     originalName: string
     localSourceId?: string
@@ -703,9 +765,13 @@ export class FilesGatewayBridge {
     sourceModifiedAt?: string
     pipelines?: IngestPipelines
     roomId?: string
+    /** 归属工作区（资料库/产物库按空间隔离）；Agent 会话产物 = 会话所属空间。 */
+    workspaceId?: string
     provider?: string
     connectionId?: string
     sourceUri?: string
+    /** 钉住既有条目（编辑回填走版本链）而不是按 (sourceKind, sourceKey) 分组。 */
+    fileEntryId?: string
   }): Promise<FileImportAcceptedDto> {
     const before = await stat(input.filePath)
     const buffer = await readFile(input.filePath)
@@ -727,19 +793,104 @@ export class FilesGatewayBridge {
       sourceModifiedAt: input.sourceModifiedAt ?? after.mtime.toISOString(),
       ...(input.pipelines ? { pipelines: input.pipelines } : {}),
       ...(input.roomId ? { roomId: input.roomId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
     }))
-    form.append('file', new Blob([new Uint8Array(buffer)]), input.originalName)
+    const uploadMime = imageMime(extname(input.originalName).toLowerCase())
+    form.append('file', new Blob([new Uint8Array(buffer)], uploadMime ? { type: uploadMime } : undefined), input.originalName)
     const connection = this.supervisor.getConnection()
+    // 上传必须有超时：网关侧或连接异常挂起时，无超时的 fetch 会把整个
+    // 目录导入循环无声冻结（2026-10-14 实证：扫描完成后 30 分钟零上传）。
     const response = await fetch(`${connection.baseUrl}/v1/file-imports`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${connection.token}` },
       body: form,
+      signal: AbortSignal.timeout(180_000),
     })
     if (!response.ok) {
-      const body = await response.json().catch(() => null) as { error?: unknown } | null
-      throw new Error(typeof body?.error === 'string' ? body.error : `文件上传失败（${response.status}）`)
+      const body = await response.json().catch(() => null) as
+        | { error?: unknown; message?: unknown }
+        | null
+      const base = typeof body?.error === 'string'
+        ? body.error
+        : `文件上传失败（${response.status}）`
+      // Fastify 的默认错误体把真实原因放在 message（error 只有 "Bad Request"）：
+      // 带上它，设置页/访达入口的报错才说得清是哪个环节拒的。
+      const detail = typeof body?.message === 'string' && body.message && body.message !== base
+        ? `${base}: ${body.message}`
+        : base
+      throw new Error(detail)
     }
     return response.json() as Promise<FileImportAcceptedDto>
+  }
+
+  /**
+   * Agent 生成的 Office 文档入库（office-bridge 调用）。sourceKey 由调用方
+   * 携带 idempotencyKey：同键同内容去重、同键新内容走版本链。fileEntryId
+   * 钉住条目（人手编辑回填）：跨会话也能落回原条目。
+   */
+  importAgentGeneratedFile(input: {
+    filePath: string
+    originalName: string
+    sourceKey: string
+    roomId?: string
+    workspaceId?: string
+    fileEntryId?: string
+  }): Promise<FileImportAcceptedDto> {
+    return this.importPath({
+      filePath: input.filePath,
+      sourceKind: 'agent-generated',
+      sourceKey: input.sourceKey,
+      originalName: input.originalName,
+      ...(input.roomId
+        ? { roomId: input.roomId, pipelines: { room: true, wiki: false } }
+        : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.fileEntryId ? { fileEntryId: input.fileEntryId } : {}),
+    })
+  }
+
+  /**
+   * 产物库「导入本地 Office 文件」（渲染端经 webUtils 取路径后调用）：
+   * 以 sourceKind=artifact-imported 入库并显式归属 Room（room 管线，
+   * 与 Agent 产物同组——Room Agent 可引用，不进 wiki）。单文件、用户显式
+   * 意图，不走统一导入的高风险审查队列。同路径重复导入命中同一 entry 走版本链。
+   * 逐文件互不影响，仅回报成功项（fileId 供渲染端选中打开）。
+   */
+  async importArtifactFiles(
+    selectedPaths: string[],
+    roomId: string,
+    workspaceId?: string,
+  ): Promise<Array<{ fileId: string; originalName: string }>> {
+    if (!roomId || typeof roomId !== 'string') throw new Error('缺少目标 Room。')
+    const imported: Array<{ fileId: string; originalName: string }> = []
+    for (const filePath of selectedPaths) {
+      if (typeof filePath !== 'string' || !filePath) continue
+      const filename = basename(filePath)
+      if (!isArtifactImportFileName(filename)) {
+        console.warn('[files] artifact import skipped (unsupported format)', { filename })
+        continue
+      }
+      try {
+        const uploaded = await this.importPath({
+          filePath,
+          sourceKind: 'artifact-imported',
+          // 确定性 key（同路径重导入命中同一 entry，内容变化走版本链）。
+          sourceKey: `artifact:path:${createHash('sha256').update(filePath).digest('hex').slice(0, 40)}`,
+          originalName: filename,
+          roomId,
+          ...(workspaceId ? { workspaceId } : {}),
+          pipelines: { room: true, wiki: false },
+        })
+        imported.push({ fileId: uploaded.fileEntryId, originalName: filename })
+      } catch (error) {
+        console.warn('[files] artifact import failed', {
+          filename,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return imported
   }
 
   private async waitForMarkdown(fileId: string): Promise<void> {
@@ -767,6 +918,7 @@ export class FilesGatewayBridge {
         ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
         ...init?.headers,
       },
+      signal: init?.signal ?? AbortSignal.timeout(60_000),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { message?: unknown; error?: unknown } | null

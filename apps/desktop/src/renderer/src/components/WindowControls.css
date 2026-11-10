@@ -1,9 +1,14 @@
+/* Windows 自绘窗口按钮（macOS 用系统红绿灯，本组件不渲染）。
+   与顶栏 52px 高度对齐：32px 按钮垂直居中；与应用图标按钮之间用 1px hairline 分组。 */
+
 .window-controls {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 2px;
-  margin-left: 8px;
+  margin-left: 2px;
+  padding-left: 8px;
+  border-left: 1px solid var(--ui-border);
   -webkit-app-region: no-drag;
 }
 
@@ -15,29 +20,33 @@
   align-items: center;
   justify-content: center;
   padding: 0;
-  border-radius: 6px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
   background: transparent;
-  color: var(--muted);
+  color: var(--ui-text-2);
   cursor: pointer;
+  transition:
+    background var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease);
 }
 
 .window-control:hover {
-  background: var(--hover);
-  color: var(--text);
+  background: var(--ui-hover-strong);
+  color: var(--ui-text);
 }
 
 .window-control:active {
-  background: var(--border-strong);
+  background: var(--ui-border-strong);
 }
 
 .window-control-close:hover {
-  background: var(--danger);
-  color: #ffffff;
+  background: var(--ui-danger);
+  color: var(--ui-accent-contrast);
 }
 
 .window-control-close:active {
-  background: #a82626;
-  color: #ffffff;
+  background: var(--ui-danger-hover);
+  color: var(--ui-accent-contrast);
 }
 
 .window-control svg {

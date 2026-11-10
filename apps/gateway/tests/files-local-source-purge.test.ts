@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { FilesService, type FileDeletionHooks } from "../src/modules/files/service.js";
+import { FilesService } from "../src/modules/files/service.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
 import { fileEntries } from "../src/infrastructure/database/schema.js";
 
@@ -44,27 +44,6 @@ async function setup() {
   return { database, service, insert };
 }
 
-function hooksFor(log: {
-  memoryBatch: string[][];
-  ingestSources: string[][];
-  knowledge?: string[];
-}, memoryError?: Error): FileDeletionHooks {
-  return {
-    deleteMemoryDocumentsBatch: async (ids) => {
-      if (memoryError) throw memoryError;
-      log.memoryBatch.push(ids);
-      return ids.map((id) => `doc-${id}`);
-    },
-    cleanupIngestSources: (ids) => {
-      log.ingestSources.push(ids);
-    },
-    requestKnowledgeCleanup: (fileId) => {
-      log.knowledge ??= [];
-      log.knowledge.push(fileId);
-    },
-  };
-}
-
 describe("FilesService.purgeLocalSource", () => {
   it("双锚点命中该源全部条目（localSourceId + connector connectionId），他源不受影响", async () => {
     const s = await setup();
@@ -72,40 +51,25 @@ describe("FilesService.purgeLocalSource", () => {
     s.insert({ id: "f2", sourceKind: "connector", sourceKey: "connector:github:srcA:r1", connectionId: "srcA" });
     s.insert({ id: "f3", sourceKind: "local-folder", sourceKey: "local:srcB:i1", localSourceId: "srcB" });
     s.insert({ id: "f4", sourceKind: "connector", sourceKey: "connector:github:srcB:r1", connectionId: "srcB" });
-    const log = { memoryBatch: [] as string[][], ingestSources: [] as string[][] };
-    const result = await s.service.purgeLocalSource("srcA", hooksFor(log));
-    expect(result).toEqual({ entries: 2, memoryDeleted: ["doc-f1", "doc-f2"] });
-    expect(log.memoryBatch).toEqual([["f1", "f2"]]);
-    expect(log.ingestSources).toEqual([["f1", "f2"]]);
+    const result = await s.service.purgeLocalSource("srcA");
+    expect(result).toEqual({ entries: 2 });
     const remaining = s.database.db.select({ id: fileEntries.id }).from(fileEntries).all().map((row) => row.id).sort();
     expect(remaining).toEqual(["f3", "f4"]);
   });
 
-  it("记忆批量失败抛错且条目保留（可重试）", async () => {
-    const s = await setup();
-    s.insert({ id: "f1", sourceKind: "local-folder", sourceKey: "local:srcA:i1", localSourceId: "srcA" });
-    const log = { memoryBatch: [] as string[][], ingestSources: [] as string[][] };
-    await expect(s.service.purgeLocalSource("srcA", hooksFor(log, new Error("memorycore down"))))
-      .rejects.toThrow("memorycore down");
-    expect(s.database.db.select({ id: fileEntries.id }).from(fileEntries).all()).toHaveLength(1);
-  });
-
   it("未知源为 no-op", async () => {
     const s = await setup();
-    const log = { memoryBatch: [] as string[][], ingestSources: [] as string[][] };
-    await expect(s.service.purgeLocalSource("nope", hooksFor(log))).resolves.toEqual({ entries: 0, memoryDeleted: [] });
-    expect(log.memoryBatch).toEqual([]);
+    await expect(s.service.purgeLocalSource("nope")).resolves.toEqual({ entries: 0 });
   });
 
-  it("DELETE /v1/local-file-references 路由透传 hooks", async () => {
+  it("DELETE /v1/local-file-references 返回清掉的条目数", async () => {
     const s = await setup();
     s.insert({ id: "f1", sourceKind: "local-folder", sourceKey: "local:srcA:i1", localSourceId: "srcA" });
-    const log = { memoryBatch: [] as string[][], ingestSources: [] as string[][] };
     const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
-    await app.register(filesRoutes(s.service, hooksFor(log)));
+    await app.register(filesRoutes(s.service));
     const response = await app.inject({ method: "DELETE", url: "/v1/local-file-references?localSourceId=srcA" });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ entries: 1, deletedMemoryDocuments: ["doc-f1"] });
+    expect(response.json()).toEqual({ entries: 1 });
     const missing = await app.inject({ method: "DELETE", url: "/v1/local-file-references" });
     expect(missing.statusCode).toBe(400);
   });

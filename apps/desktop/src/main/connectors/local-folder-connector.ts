@@ -64,6 +64,9 @@ export class LocalFolderConnector implements Connector<LocalFolderConfig> {
 
         try {
           const info = await stat(absolutePath)
+          // 空文件没有可导入的内容：网关侧 `/v1/local-file-references` 要求 byteSize ≥ 1，
+          // blob 存储也以「文件内容为空」拒绝。这里直接跳过，避免每次扫描都打一串 400。
+          if (info.size === 0) continue
           const itemPath = relative(connection.config.rootPath, absolutePath).split(sep).join('/')
           items.push({
             remoteId: info.ino > 0 ? `${info.dev}:${info.ino}` : itemPath,

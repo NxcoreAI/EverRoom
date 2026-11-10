@@ -4,6 +4,8 @@ import type { CloudAccountStatus } from '../../../shared/sources'
 
 interface AccountContextValue {
   account: CloudAccountStatus | null
+  /** 首次状态是否已落定（含失败）；启动门控据此区分「检查中」与「未登录」。 */
+  resolved: boolean
   refreshAccount(): Promise<CloudAccountStatus>
   setAccount(account: CloudAccountStatus): void
 }
@@ -12,10 +14,12 @@ const AccountContext = createContext<AccountContextValue | null>(null)
 
 export function AccountProvider({ children }: { children: ReactNode }) {
   const [account, setAccountState] = useState<CloudAccountStatus | null>(null)
+  const [resolved, setResolved] = useState(false)
   const statusRequestRef = useRef(0)
 
   const setAccount = useCallback((next: CloudAccountStatus) => {
     setAccountState(next)
+    setResolved(true)
     window.dispatchEvent(new CustomEvent('everroom-account-status-changed', { detail: next }))
   }, [])
 
@@ -30,6 +34,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!window.nxcore) {
       setAccountState({ authenticated: false, apiBaseUrl: '' })
+      setResolved(true)
       return
     }
     const onAccountChanged = (event: Event) => {
@@ -37,16 +42,32 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (!next || typeof next !== 'object' || typeof next.authenticated !== 'boolean') return
       statusRequestRef.current += 1
       setAccountState(next)
+      setResolved(true)
     }
     window.addEventListener('everroom-account-status-changed', onAccountChanged)
     const requestId = ++statusRequestRef.current
     void window.nxcore.account.status({ quiet: true }).then((next) => {
-      if (statusRequestRef.current === requestId) setAccountState(next)
-    }).catch(() => undefined)
+      if (statusRequestRef.current !== requestId) return
+      setAccountState(next)
+      setResolved(true)
+      // 启动恢复可能撞上 VPN/TUN 未热身（主进程侧带重试，这里再兜一层）：
+      // 首查未登录时延迟补查一次，避免把「网络没就绪」当「未登录」。
+      if (next.authenticated === false) {
+        window.setTimeout(() => {
+          const retryId = ++statusRequestRef.current
+          void window.nxcore!.account.status({ quiet: true }).then((retry) => {
+            if (statusRequestRef.current !== retryId) return
+            if (retry.authenticated) setAccount(retry)
+          }).catch(() => undefined)
+        }, 8_000)
+      }
+    }).catch(() => {
+      if (statusRequestRef.current === requestId) setResolved(true)
+    })
     return () => window.removeEventListener('everroom-account-status-changed', onAccountChanged)
   }, [])
 
-  const value = useMemo(() => ({ account, refreshAccount, setAccount }), [account, refreshAccount, setAccount])
+  const value = useMemo(() => ({ account, resolved, refreshAccount, setAccount }), [account, resolved, refreshAccount, setAccount])
   return <AccountContext.Provider value={value}>{children}</AccountContext.Provider>
 }
 
@@ -54,4 +75,12 @@ export function useAccount(): AccountContextValue {
   const context = useContext(AccountContext)
   if (!context) throw new Error('useAccount must be used inside AccountProvider.')
   return context
+}
+
+/**
+ * 可选账号上下文：供原型外壳（OfficeProto）这类既要在 Electron 里显示真实账号、
+ * 又可能被单独挂载（浏览器预览 / 组件单测，无 AccountProvider）的组件使用。
+ */
+export function useOptionalAccount(): AccountContextValue | null {
+  return useContext(AccountContext)
 }

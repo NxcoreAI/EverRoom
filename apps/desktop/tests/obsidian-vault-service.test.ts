@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ObsidianVaultService, discoverRegisteredObsidianVaultPaths, isPathInsideRoots } from '../src/main/obsidian/obsidian-vault-service'
+import type { ObsidianVaultChangedEvent } from '../src/shared/obsidian'
 
 const temporaryDirectories: string[] = []
 
@@ -160,53 +161,6 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
-  it('automatically imports and watches new registered Vaults after the user enables Obsidian import', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-auto-import-'))
-    temporaryDirectories.push(root)
-    const home = join(root, 'home')
-    const firstVault = join(root, 'First Vault')
-    const secondVault = join(root, 'Second Vault')
-    const registryDirectory = join(home, '.config', 'obsidian')
-    await Promise.all([firstVault, secondVault].map((path) => mkdir(join(path, '.obsidian'), { recursive: true })))
-    await writeFile(join(firstVault, 'first.md'), '# First')
-    await writeFile(join(secondVault, 'second.md'), '# Second')
-    await mkdir(registryDirectory, { recursive: true })
-    const registryPath = join(registryDirectory, 'obsidian.json')
-    await writeFile(registryPath, JSON.stringify({ vaults: { first: { path: firstVault } } }))
-    const service = new ObsidianVaultService(join(root, 'data'), vi.fn(async () => undefined), {
-      platform: 'linux', homeDirectory: home,
-    })
-    await service.initialize()
-    const firstCandidate = (await service.discover())[0]!
-    await service.mount(service.candidatePath(firstCandidate.id), undefined, 'memory', service.candidateRegistryId(firstCandidate.id))
-    await service.setRegisteredVaultAutoImport(true)
-    const changed = vi.fn()
-    const unsubscribe = service.onChanged(changed)
-
-    await writeFile(registryPath, JSON.stringify({ vaults: {
-      first: { path: firstVault },
-      second: { path: secondVault },
-    } }))
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const importedId = service.list().find((vault) => vault.name === 'Second Vault')?.id
-      if (importedId && changed.mock.calls.some(([event]) => event.vaultId === importedId)) break
-      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
-    }
-
-    const second = service.list().find((vault) => vault.name === 'Second Vault')
-    expect(second).toMatchObject({ mountMode: 'memory', memoryEnabled: true, status: 'connected' })
-    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ vaultId: second?.id }))
-    changed.mockClear()
-    await writeFile(join(secondVault, 'new.md'), '# New')
-    for (let attempt = 0; attempt < 40 && service.list().find((vault) => vault.id === second?.id)?.noteCount !== 2; attempt += 1) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
-    }
-    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ vaultId: second?.id }))
-    expect(service.list().find((vault) => vault.id === second?.id)?.noteCount).toBe(2)
-    unsubscribe()
-    await service.shutdown()
-  })
-
   it('removes a managed Vault when Obsidian unregisters it without rediscovering its remaining directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-auto-remove-'))
     temporaryDirectories.push(root)
@@ -232,53 +186,24 @@ describe('ObsidianVaultService', () => {
     const one = await service.mount(
       service.candidatePath(oneCandidate.id),
       undefined,
-      'memory',
+      'dedicated',
       service.candidateRegistryId(oneCandidate.id),
     )
-    await service.setMemoryProjectionFileId(one.id, 'one.md', 'memory-file-one')
     await service.setProjectionFileId(one.id, (await service.tree(one.id)).resources[0]!.id, 'room-file-one')
     await service.setProjectionDocumentId(one.id, (await service.tree(one.id)).resources[0]!.id, 'document-one')
-    await service.setRegisteredVaultAutoImport(true)
-    expect(service.list().map((vault) => vault.name).sort()).toEqual(['1', 'Kept Vault'])
+    expect(service.list().map((vault) => vault.name).sort()).toEqual(['1'])
 
     const removed = vi.fn()
     service.onRemoved(removed)
     await writeFile(registryPath, JSON.stringify({ vaults: { kept: { path: keptVault } } }))
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (!service.list().some((vault) => vault.id === one.id) && removed.mock.calls.length > 0) break
-      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
-    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1_200))
 
-    expect(service.list()).toEqual([expect.objectContaining({ name: 'Kept Vault', status: 'connected' })])
-    expect(removed).toHaveBeenCalledWith(expect.objectContaining({
-      vaultId: one.id,
-      projectionFileIds: ['room-file-one'],
-      projectionDocumentIds: ['document-one'],
-      memoryProjectionFileIds: ['memory-file-one'],
-    }))
+    // 已挂载到 Room 的 Vault 不随注册表移除卸载（生命周期由 Room 管理）。
+    expect(service.list().map((vault) => vault.name)).toEqual(['1'])
+    expect(removed).not.toHaveBeenCalled()
     expect(await readFile(join(removedVault, 'one.md'), 'utf8')).toBe('# One')
-    expect(JSON.parse(await readFile(join(dataDirectory, 'obsidian-vaults.json'), 'utf8'))).toEqual(expect.objectContaining({
-      ignoredVaultRoots: [await realpath(removedVault)],
-    }))
-    expect((await service.discover()).map((candidate) => ({ name: candidate.name, from: candidate.discoveredFrom }))).toEqual([
-      { name: 'Kept Vault', from: 'registry' },
-    ])
+    expect((await service.discover()).map((candidate) => candidate.name).sort()).toEqual(['1', 'Kept Vault'])
     await service.shutdown()
-
-    const restarted = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined), options)
-    await restarted.initialize()
-    expect(restarted.list().map((vault) => vault.name)).toEqual(['Kept Vault'])
-    expect((await restarted.discover()).map((candidate) => candidate.name)).toEqual(['Kept Vault'])
-
-    await writeFile(registryPath, JSON.stringify({ vaults: {
-      one: { path: removedVault },
-      kept: { path: keptVault },
-    } }))
-    for (let attempt = 0; attempt < 40 && restarted.list().length < 2; attempt += 1) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, 50))
-    }
-    expect(restarted.list().map((vault) => vault.name).sort()).toEqual(['1', 'Kept Vault'])
-    await restarted.shutdown()
   })
 
   it('does not remove managed Vaults while the Obsidian registry is missing or corrupt', async () => {
@@ -297,7 +222,7 @@ describe('ObsidianVaultService', () => {
     })
     await service.initialize()
     const candidate = (await service.discover())[0]!
-    await service.mount(service.candidatePath(candidate.id), undefined, 'memory', service.candidateRegistryId(candidate.id))
+    await service.mount(service.candidatePath(candidate.id), undefined, 'dedicated', service.candidateRegistryId(candidate.id))
     await service.setRegisteredVaultAutoImport(true)
 
     await writeFile(registryPath, '{broken')
@@ -326,7 +251,7 @@ describe('ObsidianVaultService', () => {
     })
     await service.initialize()
     const candidate = (await service.discover())[0]!
-    const binding = await service.mount(service.candidatePath(candidate.id), undefined, 'memory', service.candidateRegistryId(candidate.id))
+    const binding = await service.mount(service.candidatePath(candidate.id), undefined, 'dedicated', service.candidateRegistryId(candidate.id))
     await service.setRegisteredVaultAutoImport(true)
     await service.disconnect(binding.id)
     expect(await service.discover()).toEqual([
@@ -382,80 +307,6 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
-  it('restores automatic registry imports after restart and picks up projects created while EverRoom was closed', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-auto-import-restart-'))
-    temporaryDirectories.push(root)
-    const home = join(root, 'home')
-    const firstVault = join(root, 'First Vault')
-    const secondVault = join(root, 'Created While Closed')
-    const registryDirectory = join(home, '.config', 'obsidian')
-    await Promise.all([firstVault, secondVault].map((path) => mkdir(join(path, '.obsidian'), { recursive: true })))
-    await writeFile(join(firstVault, 'first.md'), '# First')
-    await writeFile(join(secondVault, 'second.md'), '# Second')
-    await mkdir(registryDirectory, { recursive: true })
-    const registryPath = join(registryDirectory, 'obsidian.json')
-    await writeFile(registryPath, JSON.stringify({ vaults: { first: { path: firstVault } } }))
-    const dataDirectory = join(root, 'data')
-    const options = { platform: 'linux' as const, homeDirectory: home }
-    const service = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined), options)
-    await service.initialize()
-    const candidate = (await service.discover())[0]!
-    await service.mount(service.candidatePath(candidate.id), undefined, 'memory', service.candidateRegistryId(candidate.id))
-    await service.setRegisteredVaultAutoImport(true)
-    await service.shutdown()
-
-    await writeFile(registryPath, JSON.stringify({ vaults: {
-      first: { path: firstVault },
-      second: { path: secondVault },
-    } }))
-    const restarted = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined), options)
-    await restarted.initialize()
-
-    expect(restarted.list()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'First Vault', mountMode: 'memory', memoryEnabled: true }),
-      expect.objectContaining({ name: 'Created While Closed', mountMode: 'memory', memoryEnabled: true }),
-    ]))
-    await restarted.shutdown()
-  })
-
-  it('upgrades existing registry-backed memory Vaults to automatic import mode', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-auto-import-upgrade-'))
-    temporaryDirectories.push(root)
-    const home = join(root, 'home')
-    const firstVault = join(root, 'Existing Vault')
-    const secondVault = join(root, 'New Vault')
-    const registryDirectory = join(home, '.config', 'obsidian')
-    await Promise.all([firstVault, secondVault].map((path) => mkdir(join(path, '.obsidian'), { recursive: true })))
-    await Promise.all([
-      writeFile(join(firstVault, 'existing.md'), '# Existing'),
-      writeFile(join(secondVault, 'new.md'), '# New'),
-    ])
-    await mkdir(registryDirectory, { recursive: true })
-    const registryPath = join(registryDirectory, 'obsidian.json')
-    await writeFile(registryPath, JSON.stringify({ vaults: { existing: { path: firstVault } } }))
-    const dataDirectory = join(root, 'data')
-    const options = { platform: 'linux' as const, homeDirectory: home }
-    const service = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined), options)
-    await service.initialize()
-    const candidate = (await service.discover())[0]!
-    await service.mount(service.candidatePath(candidate.id), undefined, 'memory', service.candidateRegistryId(candidate.id))
-    await service.shutdown()
-
-    const storePath = join(dataDirectory, 'obsidian-vaults.json')
-    const legacyStore = JSON.parse(await readFile(storePath, 'utf8')) as Record<string, unknown>
-    delete legacyStore.autoImportRegisteredVaults
-    await writeFile(storePath, JSON.stringify(legacyStore))
-    await writeFile(registryPath, JSON.stringify({ vaults: {
-      existing: { path: firstVault },
-      added: { path: secondVault },
-    } }))
-
-    const upgraded = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined), options)
-    await upgraded.initialize()
-    expect(upgraded.list().map((vault) => vault.name).sort()).toEqual(['Existing Vault', 'New Vault'])
-    await upgraded.shutdown()
-  })
-
   it('moves an imported binding to the new directory when its registry entry changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'everroom-obsidian-registry-rebind-'))
     temporaryDirectories.push(root)
@@ -474,14 +325,14 @@ describe('ObsidianVaultService', () => {
     })
     await service.initialize()
     const candidate = (await service.discover())[0]!
-    const binding = await service.mount(service.candidatePath(candidate.id), undefined, 'memory', service.candidateRegistryId(candidate.id))
+    const binding = await service.mount(service.candidatePath(candidate.id), undefined, 'dedicated', service.candidateRegistryId(candidate.id))
 
     await writeFile(registryPath, JSON.stringify({ vaults: { stable: { path: secondVault } } }))
     for (let attempt = 0; attempt < 30 && service.list()[0]?.name !== 'Moved Vault'; attempt += 1) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 50))
     }
 
-    expect(service.list()).toEqual([expect.objectContaining({ id: binding.id, name: 'Moved Vault', memoryEnabled: true })])
+    expect(service.list()).toEqual([expect.objectContaining({ id: binding.id, name: 'Moved Vault' })])
     expect(service.list()[0]).not.toHaveProperty('rootPath')
     expect(service.list()[0]).not.toHaveProperty('registryId')
     expect((await service.tree(binding.id)).resources.map((resource) => resource.relativePath)).toEqual(['moved.md'])
@@ -490,17 +341,76 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
-  it('requires a Vault root and scans notes and supported attachments without .obsidian data', async () => {
-    const { root, vaultPath, service } = await fixture()
-    await expect(service.mount(root)).rejects.toThrow('.obsidian')
-
+  it('scans notes and supported attachments without .obsidian data', async () => {
+    const { vaultPath, service } = await fixture()
     const binding = await service.mount(vaultPath)
     const tree = await service.tree(binding.id)
 
-    expect(binding).toMatchObject({ name: 'Product Vault', noteCount: 1, attachmentCount: 1, attachmentFolderPath: 'assets' })
+    expect(binding).toMatchObject({ name: 'Product Vault', sourceType: 'obsidian-vault', noteCount: 1, attachmentCount: 1, attachmentFolderPath: 'assets' })
     expect(binding).not.toHaveProperty('rootPath')
     expect(tree.resources.map((resource) => resource.relativePath)).toEqual(['cover.png', 'notes/roadmap.md'])
     expect(tree.resources.some((resource) => resource.relativePath.includes('.obsidian'))).toBe(false)
+    await service.shutdown()
+  })
+
+  it('mounts a plain directory as a one-shot local-directory source that keeps write-back but skips watching', async () => {
+    const { root, service } = await fixture()
+    const plainPath = join(root, 'Plain Docs')
+    await mkdir(join(plainPath, 'docs'), { recursive: true })
+    await writeFile(join(plainPath, 'docs', 'guide.md'), '# Guide')
+    await writeFile(join(plainPath, 'docs', 'second.md'), '# Second')
+    await writeFile(join(plainPath, 'logo.png'), Buffer.from('image'))
+
+    const binding = await service.mount(plainPath)
+    expect(binding).toMatchObject({ name: 'Plain Docs', sourceType: 'local-directory', noteCount: 2, attachmentCount: 1 })
+    expect((await service.tree(binding.id)).resources.map((resource) => resource.relativePath))
+      .toEqual(['docs/guide.md', 'docs/second.md', 'logo.png'])
+
+    const events: ObsidianVaultChangedEvent[] = []
+    service.onChanged((event) => events.push(event))
+    await writeFile(join(plainPath, 'docs', 'guide.md'), '# Guide edited externally')
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    expect(events).toHaveLength(0)
+
+    const note = (await service.tree(binding.id)).resources.find((resource) => resource.kind === 'note' && resource.name === 'second.md')!
+    const saved = await service.saveNote(binding.id, note.id, '# Second rewritten', note.sourceHash)
+    expect(saved.status).toBe('saved')
+    expect(await readFile(join(plainPath, 'docs', 'second.md'), 'utf8')).toBe('# Second rewritten')
+    await service.shutdown()
+  })
+
+  it('normalizes legacy stores without sourceType and keeps watching Vault bindings', async () => {
+    const { dataDirectory, vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    expect(binding.sourceType).toBe('obsidian-vault')
+    await service.shutdown()
+
+    const storePath = join(dataDirectory, 'obsidian-vaults.json')
+    const legacy = JSON.parse(await readFile(storePath, 'utf8')) as { vaults: Array<Record<string, unknown>> }
+    for (const vault of legacy.vaults) delete vault.sourceType
+    await writeFile(storePath, JSON.stringify(legacy))
+
+    const upgraded = new ObsidianVaultService(dataDirectory, vi.fn(async () => undefined))
+    await upgraded.initialize()
+    expect(upgraded.list()[0]).toMatchObject({ id: binding.id, sourceType: 'obsidian-vault' })
+
+    const events: ObsidianVaultChangedEvent[] = []
+    upgraded.onChanged((event) => events.push(event))
+    await writeFile(join(vaultPath, 'notes', 'roadmap.md'), '# Roadmap changed')
+    for (let attempt = 0; attempt < 60 && events.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(events.length).toBeGreaterThan(0)
+    await upgraded.shutdown()
+  })
+
+  it('emits sourceType on the removal event so cleanup can pick the right sourceKind', async () => {
+    const { vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    const removals: Array<{ vaultId: string; sourceType: string }> = []
+    service.onRemoved((event) => { removals.push(event) })
+    await service.disconnect(binding.id)
+    expect(removals[0]).toMatchObject({ vaultId: binding.id, sourceType: 'obsidian-vault' })
     await service.shutdown()
   })
 
@@ -527,29 +437,6 @@ describe('ObsidianVaultService', () => {
     await service.shutdown()
   })
 
-  it('persists a memory Vault binding and upgrades it for Room use without duplicating the source', async () => {
-    const { dataDirectory, vaultPath, service, trashPath } = await fixture()
-    const memoryBinding = await service.mount(vaultPath, undefined, 'memory')
-    expect(memoryBinding).toMatchObject({ mountMode: 'memory', memoryEnabled: true })
-
-    await service.shutdown()
-    const restarted = new ObsidianVaultService(dataDirectory, trashPath)
-    await restarted.initialize()
-    expect(restarted.list()).toEqual([
-      expect.objectContaining({ id: memoryBinding.id, mountMode: 'memory', memoryEnabled: true }),
-    ])
-
-    const roomBinding = await restarted.mount(vaultPath, 'project-room', 'embedded')
-    expect(roomBinding).toMatchObject({
-      id: memoryBinding.id,
-      roomId: 'project-room',
-      mountMode: 'embedded',
-      memoryEnabled: true,
-    })
-    expect(restarted.list()).toHaveLength(1)
-    await restarted.shutdown()
-  })
-
   it('ignores symbolic links that escape the Vault', async () => {
     const { root, vaultPath, service } = await fixture()
     await writeFile(join(root, 'secret.md'), '# Secret')
@@ -569,11 +456,30 @@ describe('ObsidianVaultService', () => {
     const snapshot = await service.readNote(binding.id, note.id)
     await writeFile(join(vaultPath, note.relativePath), '# Changed in Obsidian')
 
-    const result = await service.saveNote(binding.id, note.id, '# Changed in EverRoom', snapshot.sourceHash)
+    const result = await service.saveNote(binding.id, note.id, '# Changed in EverOffice', snapshot.sourceHash)
 
     expect(result.status).toBe('conflict')
     expect(result.snapshot.markdown).toBe('# Changed in Obsidian')
     expect(await readFile(join(vaultPath, note.relativePath), 'utf8')).toBe('# Changed in Obsidian')
+    await service.shutdown()
+  })
+
+  it('reports only changed resources on scan events so projections can filter', async () => {
+    const { vaultPath, service } = await fixture()
+    const binding = await service.mount(vaultPath)
+    const note = (await service.tree(binding.id)).resources.find((resource) => resource.kind === 'note')!
+    const events: ObsidianVaultChangedEvent[] = []
+    service.onChanged((event) => events.push(event))
+
+    const saved = await service.saveNote(binding.id, note.id, '# Revised', note.sourceHash)
+    expect(saved.status).toBe('saved')
+    const saveEvent = events.at(-1)!
+    expect(saveEvent.changedResourceIds).toEqual([note.id])
+
+    const before = events.length
+    await service.rescan(binding.id)
+    expect(events.length).toBeGreaterThan(before)
+    expect(events.at(-1)!.changedResourceIds).toBeUndefined()
     await service.shutdown()
   })
 

@@ -3,6 +3,8 @@ import type { AgentEvent, AgentRun, AgentSession, AgentSessionSnapshot } from '@
 import { SaasRequestError, type SaasClient } from './saas-client'
 
 const HEARTBEAT_INTERVAL_MS = 15_000
+/** SaaS /app/agent/status 的 sessions 数组校验上限（@Max(50)）。 */
+const SAAS_SESSIONS_LIMIT = 50
 const TERMINAL_EVENTS = new Set<AgentEvent['type']>([
   'run.completed',
   'run.failed',
@@ -103,10 +105,23 @@ export class AgentStatusReporter {
       let sessions: AgentSessionStatusSnapshot[] | undefined
       if (this.sessionsProvider) {
         try {
-          sessions = (await this.sessionsProvider()).map((session) => ({
-            ...session,
-            messages: session.messages,
-          }))
+          sessions = (await this.sessionsProvider()).map((session) => {
+            // SaaS schema 严格拒收未知字段：modelPreference / thinkingLevel 是
+            // 本地/gateway 的会话档位，服务端 contract 没有它，透传会整包 422。
+            const { modelPreference: _localOnly, thinkingLevel: _thinkingOnly, ...rest } = session
+            return { ...rest, messages: session.messages }
+          })
+          // SaaS 校验 sessions 数组上限 50：超限整包 422，心跳持续失败。
+          // 活跃/报错会话钉在最前，其余按 updatedAt 取最新的补足。
+          sessions = sessions
+            .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+          if (current?.sessionId) {
+            const active = sessions.find((session) => session.id === current.sessionId)
+            if (active) {
+              sessions = [active, ...sessions.filter((session) => session.id !== active.id).slice(0, SAAS_SESSIONS_LIMIT - 1)]
+            }
+          }
+          if (sessions.length > SAAS_SESSIONS_LIMIT) sessions = sessions.slice(0, SAAS_SESSIONS_LIMIT)
         } catch {
           // A local Gateway failure must not suppress the SaaS heartbeat.
         }

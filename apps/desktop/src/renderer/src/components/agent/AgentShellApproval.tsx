@@ -3,6 +3,7 @@ import { Check, LoaderCircle, ShieldAlert, Terminal, X } from 'lucide-react'
 import { useLocale } from '@/i18n/LocaleContext'
 
 import type { PendingShellApproval } from './agentShellApprovals'
+import { AgentDecisionCard, type AgentCardResolve } from './AgentDecisionCard'
 
 export function AgentShellApproval({
   approvals,
@@ -11,22 +12,38 @@ export function AgentShellApproval({
 }: {
   approvals: PendingShellApproval[]
   resolvingApprovalIds: ReadonlySet<string>
-  onResolve: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied') => void
+  onResolve: (approvalId: string, decision: 'approved' | 'approved_session' | 'denied', feedback?: string, choice?: string, text?: string) => void
 }) {
   const { t } = useLocale()
   const approval = approvals[0]
   if (!approval) return null
 
   const busy = resolvingApprovalIds.has(approval.approvalId)
+  // 通用决策卡（agent_confirm / agent_ask_user）：单独的 UI 分流。
+  if (approval.kind === 'card' && approval.card) {
+    return <AgentDecisionCard approval={approval} busy={busy} onResolve={onResolve as AgentCardResolve} />
+  }
   const queuedCount = approvals.length - 1
+  const titleKey = approval.kind === 'edit'
+    ? 'surface:agentChat.editApprovalTitle'
+    : approval.kind === 'tool'
+      ? 'surface:agentChat.toolApprovalTitle'
+      : 'surface:agentChat.shellApprovalTitle'
+  const descriptionKey = approval.kind === 'edit'
+    ? 'surface:agentChat.editApprovalDescription'
+    : approval.kind === 'tool'
+      ? 'surface:agentChat.toolApprovalDescription'
+      : 'surface:agentChat.shellApprovalDescription'
+  const title = t(titleKey)
+  const description = t(descriptionKey)
 
   return (
-    <section className="agent-shell-approval" aria-label={t('surface:agentChat.shellApprovalTitle')}>
+    <section className="agent-shell-approval" aria-label={title}>
       <header className="agent-shell-approval-header">
         <span className="agent-shell-approval-icon"><ShieldAlert aria-hidden="true" /></span>
         <span>
-          <strong>{t('surface:agentChat.shellApprovalTitle')}</strong>
-          <small>{t('surface:agentChat.shellApprovalDescription')}</small>
+          <strong>{title}</strong>
+          <small>{description}</small>
         </span>
         {queuedCount > 0 ? (
           <span className="agent-shell-approval-count">+{queuedCount}</span>

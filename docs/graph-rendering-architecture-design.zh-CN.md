@@ -1,8 +1,10 @@
 # 桌面端图谱渲染分层架构设计
 
+> **已废弃（Phase 2/3 已移除）**：桌面端图谱渲染（Room / 知识图谱 UI）已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：Implemented（2026-08-27 完成 §4 步骤 1–4；`<ForceGraphSurface>` 组件为可选后续，样板已由 `useForceGraphLayout` 吸收）
 > 日期：2026-08-27
-> 范围：EverRoom Desktop renderer 图谱内核（现位于 `apps/desktop/src/renderer/src/components/graph/`）及其三个图谱使用面
+> 范围：EverOffice Desktop renderer 图谱内核（现位于 `apps/desktop/src/renderer/src/components/graph/`）及其三个图谱使用面
 
 ## 1. 背景与问题
 

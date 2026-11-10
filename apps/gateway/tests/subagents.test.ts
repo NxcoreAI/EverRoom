@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { UnconfiguredAgentRuntime, type AgentRuntime, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import { UnconfiguredAgentRuntime, type AgentRuntime, type RuntimeEvent, type StartRuntimeRunInput } from "@nxcore/agent-runtime";
 import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GatewayConfig, SubagentFrameworkConfig } from "../src/config.js";
@@ -18,7 +18,12 @@ import {
 const temporaryDirectories: string[] = [];
 const logger = { info: () => undefined, warn: () => undefined };
 
-async function createFixture(options: { inputSchema?: boolean; outputSchema?: boolean } = {}) {
+async function createFixture(options: {
+  inputSchema?: boolean;
+  outputSchema?: boolean;
+  /** 追加到 agent.yaml 的 policy 子句（如 model 覆盖）。 */
+  policyLines?: string[];
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "everroom-subagents-"));
   temporaryDirectories.push(root);
   const definitionsDir = join(root, "agents");
@@ -71,6 +76,7 @@ async function createFixture(options: { inputSchema?: boolean; outputSchema?: bo
     "  timeoutMs: 10000",
     "  maxConcurrency: 1",
     "  maxToolCalls: 8",
+    ...(options.policyLines ?? []),
     "",
   ].join("\n"), "utf8");
   const config: SubagentFrameworkConfig = {
@@ -89,6 +95,54 @@ async function createFixture(options: { inputSchema?: boolean; outputSchema?: bo
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+});
+
+describe("shipped slides-planner bundle", () => {
+  it("冒烟期放宽墙钟、长链路不设工具预算：planner 1800s / 显式输出上限", async () => {
+    const root = await mkdtemp(join(tmpdir(), "everroom-subagents-shipped-"));
+    temporaryDirectories.push(root);
+    const database = createDatabase(join(root, "gateway.sqlite"), resolve("drizzle"));
+    const registry = new SubagentRegistry(database.db, {
+      enabled: true,
+      definitionsDir: resolve("../../agents"),
+      runtimeDir: join(root, "runtime"),
+      defaultTimeoutMs: 30_000,
+      maxConcurrent: 4,
+    }, {}, logger);
+    await registry.initialize();
+    const planner = registry.get("slides-planner");
+    expect(planner).not.toBeNull();
+    expect(planner!.revision.policy).toMatchObject({
+      timeoutMs: 1_800_000,
+      model: { reasoning: "off", maxTokens: 32_768 },
+    });
+    expect(planner!.revision.policy.maxToolCalls).toBeUndefined();
+    // arrange 的素材命中由网关预取、长 deck 由网关分批：输入契约必须接住两者。
+    const inputSchema = planner!.revision.inputSchema as { properties?: Record<string, unknown> } | null;
+    expect(inputSchema?.properties).toHaveProperty("materialHits");
+    expect(inputSchema?.properties).toHaveProperty("arrangeBatch");
+    // 布局代理与主 Agent 同底座（主模型）：输出上限显式给 128k（整页 v2 树 + 校验修复轮）；
+    // 思考档按 bundle 配置。工具调用不设硬上限——长链路「读资料 → 多轮校验/提交」
+    // 不能半路被预算 abort。
+    const layouter = registry.get("slides-layouter");
+    expect(layouter).not.toBeNull();
+    expect(layouter!.revision.policy).toMatchObject({
+      timeoutMs: 1_800_000,
+      model: { reasoning: "low", maxTokens: 131_072 },
+    });
+    expect(layouter!.revision.policy.maxToolCalls).toBeUndefined();
+    // 修复器同样不设工具预算；builder/styler 走 background 档，必须显式抬输出上限。
+    expect(registry.get("slides-editor")!.revision.policy).toMatchObject({ timeoutMs: 900_000 });
+    expect(registry.get("slides-editor")!.revision.policy.maxToolCalls).toBeUndefined();
+    expect(registry.get("slides-builder")!.revision.policy).toMatchObject({
+      timeoutMs: 1_800_000,
+      model: { maxTokens: 32_768 },
+    });
+    expect(registry.get("slides-styler")!.revision.policy).toMatchObject({
+      timeoutMs: 600_000,
+      model: { maxTokens: 32_768 },
+    });
+  });
 });
 
 describe("filesystem subagent framework", () => {
@@ -133,6 +187,25 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   });
 
+  it("parses policy.model overrides and rejects invalid reasoning levels", async () => {
+    const fixture = await createFixture({
+      policyLines: ["  model:", "    reasoning: low", "    contextWindow: 96000", "    maxTokens: 16384"],
+    });
+    await fixture.registry.initialize();
+    expect(fixture.registry.get("researcher")?.revision.policy.model).toEqual({
+      reasoning: "low",
+      contextWindow: 96_000,
+      maxTokens: 16_384,
+    });
+    fixture.database.sqlite.close();
+
+    const invalid = await createFixture({ policyLines: ["  model:", "    reasoning: turbo"] });
+    // 非法 bundle 在 initialize 中被拒绝并跳过（warn 记录），不会进入注册表。
+    await invalid.registry.initialize();
+    expect(invalid.registry.get("researcher")).toBeNull();
+    invalid.database.sqlite.close();
+  });
+
   it("dispatches through an isolated runtime and rejects unauthorized or invalid input", async () => {
     const fixture = await createFixture({ inputSchema: true });
     await fixture.registry.initialize();
@@ -158,15 +231,15 @@ describe("filesystem subagent framework", () => {
     await expect(orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "invalid-caller",
       source: "scheduler",
     })).rejects.toThrow("subagent_caller_not_allowed");
 
     const invocation = await orchestrator.dispatch({
       agentId: "researcher",
-      task: "Research the EverRoom architecture",
-      input: { topic: "EverRoom" },
+      task: "Research the EverOffice architecture",
+      input: { topic: "EverOffice" },
       idempotencyKey: "valid-dispatch",
       source: "primary_agent",
       parentSessionId: "session-1",
@@ -184,8 +257,8 @@ describe("filesystem subagent framework", () => {
 
     const duplicate = await orchestrator.dispatch({
       agentId: "researcher",
-      task: "Research the EverRoom architecture",
-      input: { topic: "EverRoom" },
+      task: "Research the EverOffice architecture",
+      input: { topic: "EverOffice" },
       idempotencyKey: "valid-dispatch",
       source: "primary_agent",
       parentSessionId: "session-1",
@@ -210,7 +283,193 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   }, 15_000);
 
-  it("透传 dispatch input 的 roomId 到 runtime.start（子 run 文档工具绑定）", async () => {
+  it("listInvocationTree：按 run 收拢两层调用树，附带展示名并按创建时间排序", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+
+    const parent = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Parent task",
+      input: { topic: "EverOffice" },
+      idempotencyKey: "tree-parent",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: "run-tree",
+    });
+    const child = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Child task",
+      input: { topic: "EverOffice" },
+      idempotencyKey: "tree-child",
+      source: "primary_agent",
+      parentSessionId: "session-tree",
+      parentRunId: parent.id,
+    });
+
+    const tree = orchestrator.listInvocationTree("run-tree");
+    expect(tree.map((node) => [node.id, node.agentName, node.parentRunId])).toEqual([
+      [parent.id, "Researcher", "run-tree"],
+      [child.id, "Researcher", parent.id],
+    ]);
+    expect(orchestrator.listInvocationTree("run-missing")).toEqual([]);
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("listInvocationTree：附带每个子代理自己最近的上下文用量与压缩态", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+
+    const parent = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Parent task",
+      input: { topic: "EverOffice" },
+      idempotencyKey: "usage-parent",
+      source: "primary_agent",
+      parentSessionId: "session-usage",
+      parentRunId: "run-usage",
+    });
+    const child = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Child task",
+      input: { topic: "EverOffice" },
+      idempotencyKey: "usage-child",
+      source: "primary_agent",
+      parentSessionId: "session-usage",
+      parentRunId: parent.id,
+    });
+
+    // 子 run 的 context.usage / context.compaction 事件本就会随 consumeEvents 落库。
+    const insertEvent = (invocationId: string, type: string, payload: unknown) => {
+      const seq = (orchestrator.listInvocationEvents(invocationId).at(-1)?.seq ?? 0) + 1;
+      fixture.database.db.insert(subagentInvocationEvents).values({
+        id: `${invocationId}-${seq}-${type}`,
+        invocationId,
+        seq,
+        type,
+        payload,
+        createdAt: new Date(),
+      }).run();
+    };
+    insertEvent(parent.id, "context.usage", {
+      tokens: 41_200,
+      contextWindow: 128_000,
+      percent: 32.2,
+      segments: [{ key: "systemPrompt", tokens: 5_200 }],
+    });
+    insertEvent(parent.id, "context.compaction", { active: false, reason: "threshold" });
+    insertEvent(parent.id, "context.compaction", { active: true, reason: "threshold" });
+    insertEvent(child.id, "context.usage", { tokens: null, contextWindow: 128_000, percent: null });
+
+    const tree = orchestrator.listInvocationTree("run-usage");
+    const parentNode = tree.find((node) => node.id === parent.id)!;
+    expect(parentNode.contextUsage).toEqual({
+      tokens: 41_200,
+      contextWindow: 128_000,
+      percent: 32.2,
+      segments: [{ key: "systemPrompt", tokens: 5_200 }],
+    });
+    expect(parentNode.contextCompacting).toBe(true);
+    const childNode = tree.find((node) => node.id === child.id)!;
+    // 压缩刚结束的快照：tokens 未知但窗口已知，原样透传给圆环（只剩轨道）。
+    expect(childNode.contextUsage).toEqual({ tokens: null, contextWindow: 128_000, percent: null });
+    expect(childNode.contextCompacting).toBeUndefined();
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("listInvocationEvents：按 seq 升序返回执行事件，afterSeq 增量过滤", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+
+    class ToolEmittingRuntime implements AgentRuntime {
+      readonly id = "fake-tools";
+      async getCapabilities() {
+        return { streaming: true, reasoning: true, tools: true, steering: false, resume: false };
+      }
+      async start(input: StartRuntimeRunInput) {
+        const runId = input.runId;
+        return {
+          runId,
+          runtimeSessionRef: `fake-${runId}`,
+          events: (async function* generate(): AsyncGenerator<RuntimeEvent> {
+            yield { type: "run.started", payload: {} };
+            yield { type: "tool.requested", payload: { toolCallId: "call-1", name: "wiki_search", args: { query: "EverOffice" } } };
+            yield { type: "tool.completed", payload: { toolCallId: "call-1", name: "wiki_search", result: { results: [1, 2, 3] } } };
+            yield { type: "message.completed", payload: { role: "assistant", content: "完成。" } };
+            yield { type: "run.completed", payload: {} };
+          })(),
+        };
+      }
+      async resume(): Promise<never> { throw new Error("no resume"); }
+      async sendInput(): Promise<never> { throw new Error("no steering"); }
+      async cancel(): Promise<void> {}
+      async deleteSession(): Promise<void> {}
+      async dispose(): Promise<void> {}
+    }
+
+    const runtimeManager = new SubagentRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    // 事件结构无关运行时实现：直接替换为带工具事件的桩运行时。
+    (runtimeManager as unknown as { runtimes: Map<string, AgentRuntime> }).runtimes.set(
+      fixture.registry.get("researcher")!.revision.id,
+      new ToolEmittingRuntime(),
+    );
+
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Emit tool events",
+      input: { topic: "EverOffice" },
+      idempotencyKey: "events-dispatch",
+      source: "primary_agent",
+      parentSessionId: "session-events",
+      parentRunId: "run-events",
+    });
+    expect(invocation.status).toBe("completed");
+
+    const all = orchestrator.listInvocationEvents(invocation.id);
+    expect(all.map((event) => event.type)).toEqual([
+      "run.started",
+      "tool.requested",
+      "tool.completed",
+      "message.completed",
+      "run.completed",
+    ]);
+    expect(all[1]!.payload).toMatchObject({ toolCallId: "call-1", name: "wiki_search", args: { query: "EverOffice" } });
+
+    const later = orchestrator.listInvocationEvents(invocation.id, all[1]!.seq);
+    expect(later.map((event) => event.type)).toEqual(["tool.completed", "message.completed", "run.completed"]);
+    expect(orchestrator.listInvocationEvents("unknown-invocation")).toEqual([]);
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("dispatch input 以 runtimeMetadata 透传给 runtime.start（Phase 2i 后无 roomId 字段）", async () => {
     const fixture = await createFixture();
     await fixture.registry.initialize();
 
@@ -241,22 +500,86 @@ describe("filesystem subagent framework", () => {
     await orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom", roomId: "room-9" },
+      input: { topic: "EverOffice", roomId: "room-9" },
       idempotencyKey: "room-passthrough",
       source: "primary_agent",
       parentRunId: "run-room",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBe("room-9");
+    // Phase 2i：runtime.start 不再携带 roomId；结构化输入（含 legacy roomId 字段）
+    // 只作为不透明数据经 runtimeMetadata 交给工具。
+    expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
+      subagentAgentId: "researcher",
+      subagentInput: { topic: "EverOffice", roomId: "room-9" },
+    });
 
     await orchestrator.dispatch({
       agentId: "researcher",
       task: "Research",
-      input: { topic: "EverRoom" },
+      input: { topic: "EverOffice" },
       idempotencyKey: "room-absent",
       source: "primary_agent",
       parentRunId: "run-noroom",
     });
-    expect(recording.startedInputs.at(-1)?.roomId).toBeNull();
+    expect(recording.startedInputs.at(-1)?.runtimeMetadata).toMatchObject({
+      subagentAgentId: "researcher",
+      subagentInput: { topic: "EverOffice" },
+    });
+
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  }, 15_000);
+
+  it("透传 dispatch attachments 到 runtime.start（多模态看图通道），input JSON 不携带", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+
+    class RecordingFakeRuntime extends FakeAgentRuntime {
+      readonly startedInputs: StartRuntimeRunInput[] = [];
+      override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+        this.startedInputs.push(input);
+        return super.start(input);
+      }
+    }
+    class RecordingRuntimeManager extends SubagentRuntimeManager {
+      private readonly recording = new RecordingFakeRuntime();
+      override acquire(_revision: Parameters<SubagentRuntimeManager["acquire"]>[0]): AgentRuntime {
+        return this.recording;
+      }
+    }
+    const runtimeManager = new RecordingRuntimeManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(
+      fixture.database.db,
+      fixture.config,
+      fixture.registry,
+      runtimeManager,
+      logger,
+    );
+    orchestrator.initialize();
+
+    const recording = (runtimeManager as RecordingRuntimeManager)["recording"];
+    const attachment = { filename: "page.png", mimeType: "image/png", kind: "image" as const, dataUrl: "data:image/png;base64,aGk=" };
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Review",
+      input: { pageIndex: 3 },
+      attachments: [attachment],
+      idempotencyKey: "attachment-passthrough",
+      source: "primary_agent",
+      parentRunId: "run-attach",
+    });
+    expect(recording.startedInputs.at(-1)?.attachments).toEqual([attachment]);
+    // 落库 input 不含 base64 附件。
+    expect(JSON.stringify(invocation.input)).not.toContain("data:image/png");
+
+    await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Research",
+      input: { topic: "plain" },
+      idempotencyKey: "attachment-absent",
+      source: "primary_agent",
+      parentRunId: "run-noattach",
+    });
+    expect(recording.startedInputs.at(-1)?.attachments).toBeUndefined();
 
     await orchestrator.dispose();
     fixture.database.sqlite.close();
@@ -334,6 +657,146 @@ describe("filesystem subagent framework", () => {
     fixture.database.sqlite.close();
   });
 
+  it.each((["failed", "timed_out", "cancelled", "interrupted"] as const).flatMap(ending =>
+    [true, false].map(submitted => ({ ending, submitted }))))(
+    "handles closing $ending with submitted=$submitted without overriding cancellation",
+    async ({ ending, submitted }) => {
+      const fixture = await createFixture({ outputSchema: true });
+      await fixture.registry.initialize();
+      const revision = fixture.registry.get("researcher")!.revision;
+      revision.policy.timeoutMs = 30;
+      const collector = new SubagentResultCollector();
+      const submit = collector.createTool(revision)!;
+      class ClosingRuntime extends FakeAgentRuntime {
+        override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+          return {
+            runId: input.runId,
+            runtimeSessionRef: `closing-${input.runId}`,
+            events: (async function* (): AsyncGenerator<RuntimeEvent> {
+              if (submitted) await submit.execute({ ...input, runtimeSessionRef: null }, { answer: "validated answer" });
+              if (ending === "timed_out") {
+                await new Promise(resolve => setTimeout(resolve, 60));
+              } else {
+                yield { type: `run.${ending}`, payload: { message: "closing request failed" } } as RuntimeEvent;
+              }
+            })(),
+          };
+        }
+      }
+      class ClosingManager extends SubagentRuntimeManager {
+        override acquire(): AgentRuntime { return new ClosingRuntime(); }
+        override prepareSubmittedResult(revisionId: string, runId: string, input: unknown) { collector.prepare(revisionId, runId, input); }
+        override takeSubmittedResult(revisionId: string, runId: string) { return collector.take(revisionId, runId); }
+      }
+      const manager = new ClosingManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+      const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+      const invocation = await orchestrator.dispatch({
+        agentId: "researcher", task: "Submit then fail closing reply", input: {},
+        idempotencyKey: `closing-${ending}`, source: "primary_agent", parentRunId: "parent",
+      });
+      if (!submitted || ending === "cancelled" || ending === "interrupted") {
+        expect(invocation).toMatchObject({ status: ending, result: null });
+      } else {
+        expect(invocation).toMatchObject({ status: "completed", errorCode: null, errorMessage: null, result: { structuredOutput: { answer: "validated answer" } } });
+      }
+      await orchestrator.dispose();
+      fixture.database.sqlite.close();
+    },
+  );
+
+  it("dispatch timeoutMs 只能收紧 policy：分批单批使用更短上限", async () => {
+    const fixture = await createFixture();
+    await fixture.registry.initialize();
+    const revision = fixture.registry.get("researcher")!.revision;
+    revision.policy.timeoutMs = 5_000;
+    class HangingRuntime extends FakeAgentRuntime {
+      override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+        return {
+          runId: input.runId,
+          runtimeSessionRef: `hang-${input.runId}`,
+          events: (async function* (): AsyncGenerator<RuntimeEvent> {
+            await new Promise((resolve) => setTimeout(resolve, 2_000));
+            yield { type: "run.completed", payload: {} } as RuntimeEvent;
+          })(),
+        };
+      }
+    }
+    class HangingManager extends SubagentRuntimeManager {
+      override acquire(): AgentRuntime { return new HangingRuntime(); }
+    }
+    const manager = new HangingManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+    const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+    const started = Date.now();
+    const invocation = await orchestrator.dispatch({
+      agentId: "researcher",
+      task: "Bounded batch dispatch",
+      input: {},
+      idempotencyKey: "timeout-override",
+      source: "primary_agent",
+      parentRunId: "parent",
+      timeoutMs: 50,
+    });
+    expect(invocation.status).toBe("timed_out");
+    // 50ms 超时后框架最多再等 2s 收尾（runtime cancel grace）；关键是远早于 policy 5s。
+    expect(Date.now() - started).toBeLessThan(3_500);
+    await orchestrator.dispose();
+    fixture.database.sqlite.close();
+  });
+
+  it.each(["valid", "repair", "forged", "cancel-before", "cancel-during"] as const)(
+    "finishes on a validated submission without a closing model call: %s",
+    async (scenario) => {
+      const fixture = await createFixture({ outputSchema: true });
+      await fixture.registry.initialize();
+      const revision = fixture.registry.get("researcher")!.revision;
+      const collector = new SubagentResultCollector();
+      const submit = collector.createTool(revision)!;
+      const controller = new AbortController();
+      let closingRequest = false;
+      let stops = 0;
+      class SubmittedRuntime extends FakeAgentRuntime {
+        override async cancel() {
+          stops++;
+          if (scenario === "cancel-during" && stops === 1) controller.abort();
+        }
+        override async start(input: StartRuntimeRunInput): Promise<Awaited<ReturnType<AgentRuntime["start"]>>> {
+          return { runId: input.runId, runtimeSessionRef: "submitted-run", events: (async function* (): AsyncGenerator<RuntimeEvent> {
+            if (scenario === "repair") {
+              await expect(submit.execute({ ...input, runtimeSessionRef: null }, {})).rejects.toThrow("subagent_result_schema_invalid");
+              yield { type: "tool.completed", payload: { name: "subagent_submit_result", result: { details: { accepted: false } } } };
+            }
+            if (scenario !== "forged") await submit.execute({ ...input, runtimeSessionRef: null }, { answer: "validated answer" });
+            if (scenario === "cancel-before") controller.abort();
+            yield { type: "context.usage", payload: { runUsage: { input: 100, output: 20 } } };
+            yield { type: "tool.completed", payload: { name: "subagent_submit_result", result: { details: { accepted: true } } } };
+            closingRequest = true;
+            yield { type: scenario === "cancel-before" ? "run.cancelled" : "run.failed", payload: { message: "unnecessary closing request" } };
+          })() };
+        }
+      }
+      class SubmittedManager extends SubagentRuntimeManager {
+        override acquire(): AgentRuntime { return new SubmittedRuntime(); }
+        override prepareSubmittedResult(revisionId: string, runId: string, input: unknown) { collector.prepare(revisionId, runId, input); }
+        override takeSubmittedResult(revisionId: string, runId: string) { return collector.take(revisionId, runId); }
+      }
+      const manager = new SubmittedManager({ agentRuntime: "fake" } as GatewayConfig, fixture.config);
+      const orchestrator = new SubagentOrchestrator(fixture.database.db, fixture.config, fixture.registry, manager, logger);
+      const observedUsage: unknown[] = [];
+      const invocation = await orchestrator.dispatch({ agentId: "researcher", task: "Submit", input: {}, idempotencyKey: scenario, source: "primary_agent", parentRunId: "parent", signal: controller.signal,
+        onUsage: (_id, usage) => observedUsage.push(usage) });
+      if (scenario === "valid" || scenario === "repair") {
+        expect(invocation).toMatchObject({ status: "completed", result: { structuredOutput: { answer: "validated answer" } } });
+        expect(closingRequest).toBe(false);
+        expect(stops).toBe(1);
+        expect(observedUsage).toEqual([{ input: 100, output: 20 }]);
+      } else {
+        expect(invocation).toMatchObject({ status: scenario === "forged" ? "failed" : "cancelled", result: null });
+      }
+      await orchestrator.dispose();
+      fixture.database.sqlite.close();
+    },
+  );
+
   it("degrades to UnconfiguredAgentRuntime when pi fields are empty and invalidate() clears the cache", async () => {
     const fixture = await createFixture({});
     await fixture.registry.initialize();
@@ -358,5 +821,84 @@ describe("filesystem subagent framework", () => {
     const rebuilt = runtimeManager.acquire(researcher!.revision);
     expect(rebuilt).not.toBe(runtime);
     fixture.database.sqlite.close();
+  });
+});
+
+/**
+ * 2026-10-27 事故回归：runtime config 会被周期性重推（桌面端同步 / 中转会话刷新），
+ * 旧实现在 invalidate() 里直接 dispose 全部缓存 runtime，等于每隔几分钟腰斩一次
+ * 长任务——论文模版解析跑到一半就变 cancelled。现在改为「在跑的先标记待回收，
+ * 跑完再 dispose」。
+ */
+describe("subagent runtime invalidate 不打断在跑的调用", () => {
+  it("忙碌中的 runtime 延迟到 release 才 dispose", async () => {
+    const disposed: string[] = [];
+    const runtimeOf = (id: string) => ({
+      id,
+      dispose: async () => { disposed.push(id); },
+      cancel: async () => undefined,
+    });
+    // 私有字段无法从类型面直接构造：只取 invalidate/release 两个方法（原型上），
+    // 其余状态按运行时形状手工装一遍。
+    const manager = Object.create(SubagentRuntimeManager.prototype) as unknown as {
+      runtimes: Map<string, unknown>;
+      users: Map<string, number>;
+      retiring: Map<string, unknown>;
+      resultCollector: { clear: () => void };
+      invalidate(): Promise<void>;
+      release(revisionId: string): void;
+    };
+    manager.runtimes = new Map();
+    manager.users = new Map();
+    manager.retiring = new Map();
+    manager.resultCollector = { clear: () => undefined };
+
+    const busy = runtimeOf("busy");
+    manager.runtimes.set("revision-busy", busy as never);
+    manager.users.set("revision-busy", 1);
+    const idle = runtimeOf("idle");
+    manager.runtimes.set("revision-idle", idle as never);
+
+    await manager.invalidate();
+
+    // 空闲的立即回收；忙碌的留着继续跑
+    expect(disposed).toContain("idle");
+    expect(disposed).not.toContain("busy");
+    expect(manager.retiring.has("revision-busy")).toBe(true);
+    expect(manager.runtimes.size).toBe(0);
+
+    manager.release("revision-busy");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disposed).toContain("busy");
+    expect(manager.retiring.size).toBe(0);
+  });
+
+  it("release 到仍有其他调用时先不回收", async () => {
+    const disposed: string[] = [];
+    // 私有字段无法从类型面直接构造：只取 invalidate/release 两个方法（原型上），
+    // 其余状态按运行时形状手工装一遍。
+    const manager = Object.create(SubagentRuntimeManager.prototype) as unknown as {
+      runtimes: Map<string, unknown>;
+      users: Map<string, number>;
+      retiring: Map<string, unknown>;
+      resultCollector: { clear: () => void };
+      invalidate(): Promise<void>;
+      release(revisionId: string): void;
+    };
+    manager.runtimes = new Map();
+    manager.users = new Map();
+    manager.retiring = new Map();
+    manager.resultCollector = { clear: () => undefined };
+
+    manager.runtimes.set("r1", { dispose: async () => { disposed.push("r1"); } } as never);
+    manager.users.set("r1", 2);
+    await manager.invalidate();
+    manager.release("r1");
+    expect(disposed).toHaveLength(0);
+    manager.release("r1");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(disposed).toEqual(["r1"]);
   });
 });

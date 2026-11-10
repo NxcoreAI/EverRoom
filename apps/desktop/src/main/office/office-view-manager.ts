@@ -6,6 +6,9 @@ import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 
 import type { GenOfficeDocsRuntime } from './office-runtime'
 import { convertLegacyOfficeFile } from './legacy-convert'
+import { ensureWorkingCopyWritable } from './working-copy'
+import { logOfficeDiag, logOfficeViewState, wireOfficeViewDiag } from './office-diag'
+import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
 export const OFFICE_WORKSPACE_BOUNDS_CHANNEL = 'office:workspace-bounds'
 
@@ -73,12 +76,16 @@ export async function prepareOfficeDocument(
     if (legacyTarget) await convertLegacyOfficeFile(source, originalName, directory, legacyTarget)
     else copyFileSync(source, target)
   }
+  // 既有缓存也要修：老版本从只读原文件复制出来的工作副本一直是只读的。
+  ensureWorkingCopyWritable(target)
   return target
 }
 
 export class OfficeViewManager {
   private readonly docs: GenOfficeDocsRuntime
   private readonly view: WebContentsView
+  private readonly editable: boolean
+  private readonly gate: OfficeViewFirstFrameGate
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
@@ -87,26 +94,49 @@ export class OfficeViewManager {
     private readonly window: BrowserWindow,
     docs: GenOfficeDocsRuntime,
     view: WebContentsView,
+    editable: boolean,
   ) {
     this.docs = docs
     this.view = view
+    this.editable = editable
+    this.gate = new OfficeViewFirstFrameGate(view, window)
+  }
+
+  /** docs webContents id：保存事件订阅（编辑回填）按它键控。 */
+  get webContentsId(): number {
+    return this.view.webContents.id
+  }
+
+  /** 未保存修改：Agent 覆盖工作副本前的闸门（脏 → 先把“保存后再改”告诉用户）。 */
+  async isDirty(): Promise<boolean> {
+    if (this.view.webContents.isDestroyed()) return false
+    return this.docs.docsQueryDirty(this.view.webContents)
   }
 
   static createWithRuntime(
     window: BrowserWindow,
     docs: GenOfficeDocsRuntime,
     docxPath: string,
+    options?: { editable?: boolean },
   ): OfficeViewManager {
     const filePath = validateDocxPath(docxPath)
+    const editable = options?.editable === true
     docs.registerDocsIpc()
     docs.setDocsShellWindow(window)
-    const view = docs.createDocsView(filePath, { hostMode: 'everroom', readonly: true })
+    // GenOffice 自带的对话区/侧栏已删除，停靠栏统一由主窗口渲染层挂 SideDock
+    // （见 office-preview-registry.ts）。
+    const view = docs.createDocsView(filePath, {
+      hostMode: 'everroom',
+      readonly: !editable,
+    })
     docs.setActiveDocsResolver(() => view.webContents.isDestroyed() ? null : view.webContents)
     view.setVisible(false)
     window.contentView.addChildView(view)
 
-    const manager = new OfficeViewManager(window, docs, view)
+    const manager = new OfficeViewManager(window, docs, view, editable)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
+    wireOfficeViewDiag(view, window)
+    logOfficeViewState('office.diag.created', view, window, { filePath, editable })
     return manager
   }
 
@@ -116,9 +146,15 @@ export class OfficeViewManager {
     if (active) {
       // 多实例并存时全局激活指针只有一个：每次激活都要重新指向本视图。
       this.docs.setActiveDocsResolver(() => this.view.webContents.isDestroyed() ? null : this.view.webContents)
-      if (this.bounds) this.view.setBounds(this.bounds)
     }
-    this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
+    // 首次显示推迟到首帧提交后（见 OfficeViewFirstFrameGate）：空视图直接显示
+    // 会让宿主 DOM 的占位界面透出来，正是「首次打开文档看不到文档」的现场。
+    this.gate.setActive(active)
+    logOfficeViewState('office.diag.set-active', this.view, this.window, {
+      active,
+      disposed: this.disposed,
+      managerBounds: this.bounds,
+    })
   }
 
   private readonly handleBounds = (event: Electron.IpcMainEvent, input: unknown): void => {
@@ -126,17 +162,28 @@ export class OfficeViewManager {
     const bounds = normalizeBounds(input, this.window)
     if (!bounds) return
     this.bounds = bounds
-    this.view.setBounds(bounds)
-    this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
+    this.gate.setBounds(bounds)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  /** false = 用户在脏关闭守卫里点了取消：实例与视图原样保留。 */
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
+    if (
+      this.editable &&
+      !this.view.webContents.isDestroyed() &&
+      !this.window.isDestroyed()
+    ) {
+      // Save 分支会跑渲染端完整保存流——保存事件照常进回填链，随后由调用方 flush。
+      const proceed = await this.docs.requestDocsClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
+    this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) {
       this.docs.teardownDocsRenderer(this.view.webContents)
       this.view.webContents.close({ waitForBeforeUnload: false })
     }
+    return true
   }
 }

@@ -2,66 +2,48 @@ schemaVersion: 1
 kind: builtin
 id: main
 name: Main Agent
-description: 处理用户对话、管理 Context Room 工作区并调度受控的内部子 Agent
+description: 处理用户对话、产出与修改文档和 Office 产物，并调度受控的内部子 Agent
 runtime: pi
 systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/document-export
+  - ./skills/pptx
 
 capabilities:
   - conversation.respond
-  - memory.read
-  - knowledge.read
-  - context-room.read
-  - context-room.propose-write
+  - connector.query
   - connector.read
-  - connector.write-with-approval
   - web.search
   - subagent.catalog
   - subagent.dispatch
   - notification.send
 
 tools:
-  - memory_search
-  - conversation_search
-  - wiki_search
-  - wiki_read
-  - context_room_list
-  - context_room_document_list
-  - context_room_document_read
-  - context_room_document_intent
-  - context_room_patch_begin
-  - context_room_patch_hunk
-  - context_room_patch_commit
-  - context_room_patch_abort
-  - context_room_write_begin
-  - context_room_write_append
-  - context_room_write_commit
-  - context_room_write_abort
-  - document_draft
-  - room_correction_draft
-  - context_room_context_get
-  - context_room_overview_regenerate
-  - context_room_correction_propose
-  - context_room_correction_apply
-  - context_room_correction_apply_citation
-  - context_room_correction_revoke
-  - context_room_task_create
-  - context_room_schedule_create
-  - context_room_task_complete
-  - context_room_action_delete
-  - connector_data_search
-  - connector_record_get
-  - connector_sync_status
-  - connector_search
-  - connector_schema
-  - connector_apps
-  - connector_run
+  - office_create
+  - slides_create
+  - slides_read
+  - slides_edit
+  - sheets_create
+  - word_agent_read
+  - word_agent_edit
+  - word_agent_ops
+  - word_agent_illustration
+  - word_compare
+  - word_export_pdf
+  - sheets_agent_read
+  - sheets_agent_edit
+  - file_search
+  - document_export
+  - connector_query
+  - connector_read
+  - list_apps
+  - list_connections
+  - search_actions
+  - get_action_guide
+  - execute_action
   - web_search
   - agent_catalog
   - agent_dispatch
   - agent_conversation_query
   - content_analysis
   - send_notification
-  - room_analysis
-  - document_export

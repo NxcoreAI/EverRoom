@@ -16,8 +16,28 @@ describe("loadConfig", () => {
       enabled: true,
       definitionsDir: resolve("../..", "agents"),
       defaultTimeoutMs: 300_000,
-      maxConcurrent: 8,
+      maxConcurrent: 22,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
+  });
+
+  it("reads the desktop-injected lark-cli binary and private home", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {
+      NXCORE_LARK_CLI_PATH: "/Applications/EverOffice.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      NXCORE_LARK_CLI_HOME: "/Users/someone/Library/Application Support/EverOffice/lark-cli/home",
+    });
+    expect(config.larkCli).toEqual({
+      executable: "/Applications/EverOffice.app/Contents/Resources/lark-cli/darwin-arm64/lark-cli",
+      homeDirectory: "/Users/someone/Library/Application Support/EverOffice/lark-cli/home",
+    });
+  });
+
+  it("omits the lark-cli private home when the desktop did not inject it", () => {
+    const config = loadConfig(["--token", "0123456789abcdef"], {});
+    expect(config.larkCli).toEqual({ executable: "lark-cli" });
   });
 
   it("loads server-owned external call budget identity", () => {
@@ -27,21 +47,6 @@ describe("loadConfig", () => {
     });
     expect(config.externalCallUserId).toBe("user-a");
     expect(config.externalCallWorkspaceId).toBe("workspace-a");
-  });
-
-  it("defaults memory room derive on and honours overrides", () => {
-    const defaults = loadConfig(["--token", "0123456789abcdef"], {});
-    expect(defaults.memoryRoomDerive).toEqual({ enabled: true, intervalMs: 300_000 });
-
-    const disabled = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_MEMORY_ROOM_DERIVE_ENABLED: "false",
-    });
-    expect(disabled.memoryRoomDerive?.enabled).toBe(false);
-
-    const faster = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_MEMORY_ROOM_DERIVE_INTERVAL_MS: "60000",
-    });
-    expect(faster.memoryRoomDerive?.intervalMs).toBe(60_000);
   });
 
   it("loads the filesystem subagent directory and execution limits", () => {
@@ -58,6 +63,10 @@ describe("loadConfig", () => {
       runtimeDir: join(config.dataDir, "agent", "subagents"),
       defaultTimeoutMs: 45_000,
       maxConcurrent: 7,
+      slidesMaxConcurrent: 16,
+      defaultMaxConcurrent: 4,
+      backgroundMaxConcurrent: 2,
+      slidesDeckConcurrency: 16,
     });
   });
 
@@ -122,28 +131,9 @@ describe("loadConfig", () => {
       NXCORE_NANGO_SECRET: "legacy-secret",
       NXCORE_NANGO_GMAIL_CONFIG_KEY: "legacy-gmail",
       NXCORE_NANGO_GOOGLE_CLIENT_ID: "legacy-google-id",
-      NXCORE_CONNECTOR_POLL_MS: "120000",
     });
 
     expect(config.cliConnector).toBeNull();
-    // P3：Nango env 全族忽略；link-A 编排恒可用，仅 poll 周期仍读 env
-    expect(config.nangoConnector).toMatchObject({
-      enabled: true,
-      pollingIntervalMs: 120_000,
-    });
-  });
-
-  it("keeps MemoryCore available independently of the Agent runtime", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_AGENT_RUNTIME: "fake",
-      NXCORE_MEMORY_ENABLED: "true",
-    });
-
-    expect(config.pi).toBeNull();
-    expect(config.memory).toMatchObject({
-      baseUrl: "http://127.0.0.1:8420",
-      userId: "local-user",
-    });
   });
 
   it("loads a validated Pi runtime configuration", () => {
@@ -169,7 +159,6 @@ describe("loadConfig", () => {
       model: "deepseek-chat",
       maxTokens: 8192,
     });
-    expect(config.diaryMaxTokens).toBe(16384);
     expect(config.cursorCompletionPi).toMatchObject({
       provider: "deepseek",
       model: "deepseek-chat",
@@ -243,12 +232,10 @@ describe("loadConfig", () => {
       NXCORE_AI_API_KEY: "test-key",
       NXCORE_AI_MAX_TOKENS: "800",
       NXCORE_AI_BACKGROUND_MAX_TOKENS: "4096",
-      NXCORE_DIARY_MAX_TOKENS: "12288",
     });
 
     expect(config.pi).toMatchObject({ model: "qwen-turbo", maxTokens: 800 });
     expect(config.backgroundPi).toMatchObject({ model: "qwen-plus", maxTokens: 4096 });
-    expect(config.diaryMaxTokens).toBe(12288);
   });
 
   it("boots degraded when all primary AI env vars are empty and rejects partial configuration", () => {
@@ -320,132 +307,28 @@ describe("loadConfig", () => {
     })).toThrow("expected an absolute HTTP(S) URL");
   });
 
-  it("loads Aliyun ASR only when explicitly enabled", () => {
-    const disabled = loadConfig(["--token", "0123456789abcdef"], {});
-    expect(disabled.asr).toBeNull();
-
-    const enabled = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_ASR_PROVIDER: "aliyun",
-      NXCORE_ASR_ALIYUN_API_KEY: "test-asr-key",
-      NXCORE_ASR_ALIYUN_BASE_URL: "https://workspace.example.com/api/v1",
-    });
-    expect(enabled.asr).toMatchObject({
-      apiKey: "test-asr-key",
-      baseUrl: "https://workspace.example.com/api/v1",
-      model: "qwen-audio-3.0-asr-flash-filetrans",
-      oss: null,
-    });
-
-    const withOss = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_ASR_PROVIDER: "aliyun",
-      NXCORE_ASR_ALIYUN_API_KEY: "test-asr-key",
-      NXCORE_ASR_ALIYUN_OSS_REGION: "oss-cn-beijing",
-      NXCORE_ASR_ALIYUN_OSS_BUCKET: "private-recordings",
-      NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_ID: "test-oss-id",
-      NXCORE_ASR_ALIYUN_OSS_ACCESS_KEY_SECRET: "test-oss-secret",
-    });
-    expect(withOss.asr?.oss).toMatchObject({
-      region: "oss-cn-beijing",
-      bucket: "private-recordings",
-      prefix: "nxcore-asr",
-    });
-  });
-
-  it("uses Aliyun credentials for web search instead of an unrelated main model key", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
+  it("no longer accepts removed ASR credentials in the web search fallback chain", () => {
+    const base = {
       NXCORE_AGENT_RUNTIME: "pi",
       NXCORE_AI_PROVIDER: "openai",
       NXCORE_AI_MODEL: "gpt-main",
       NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
       NXCORE_AI_API_KEY: "main-model-key",
+    };
+    // 已删子系统（ASR）的凭据不再参与 web 搜索兜底。
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      ...base,
       NXCORE_ASR_ALIYUN_API_KEY: "dashscope-key",
-    });
+    }).webSearch).toBeNull();
 
-    expect(config.webSearch).toMatchObject({
-      apiKey: "dashscope-key",
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      ...base,
+      NXCORE_WEB_SEARCH_API_KEY: "search-key",
+    }).webSearch).toMatchObject({
+      apiKey: "search-key",
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       model: "qwen-plus",
     });
   });
 
-  it("rejects incomplete or unsafe Aliyun ASR configuration", () => {
-    expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_ASR_PROVIDER: "aliyun",
-    })).toThrow("NXCORE_ASR_ALIYUN_API_KEY");
-
-    expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_ASR_PROVIDER: "aliyun",
-      NXCORE_ASR_ALIYUN_API_KEY: "test-key",
-      NXCORE_ASR_ALIYUN_BASE_URL: "http://insecure.example.com/api/v1",
-    })).toThrow("expected an absolute HTTPS URL");
-
-    expect(() => loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_ASR_PROVIDER: "aliyun",
-      NXCORE_ASR_ALIYUN_API_KEY: "test-key",
-      NXCORE_ASR_ALIYUN_OSS_BUCKET: "missing-other-fields",
-    })).toThrow("NXCORE_ASR_ALIYUN_OSS_REGION");
-  });
-
-  it("keeps link-A connector orchestration always enabled after Nango removal (P3)", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {});
-    expect(config.nangoConnector).toMatchObject({ enabled: true, pollingIntervalMs: 300000 });
-    expect(config.nangoConnector?.databasePath).toContain("connectors.sqlite");
-  });
-
-  it("falls back to NXCORE_AI_* for the knowledge arbitration LLM", () => {
-    // 只配 NXCORE_AI_*（未配任何 NXCORE_KNOWLEDGE_LLM_*）→ ⑤ 仲裁可用
-    const fromAi = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_KNOWLEDGE_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
-      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
-      NXCORE_AI_API_KEY: "test-key",
-      NXCORE_AI_MODEL: "deepseek-chat",
-    });
-    expect(fromAi.knowledge?.llm).toEqual({
-      baseUrl: "https://api.deepseek.com",
-      apiKey: "test-key",
-      model: "deepseek-chat",
-    });
-
-    // 部分独立配置（仅 model）→ 其余项回退 NXCORE_AI_*
-    const merged = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_KNOWLEDGE_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
-      NXCORE_KNOWLEDGE_LLM_MODEL: "qwen-plus",
-      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
-      NXCORE_AI_API_KEY: "test-key",
-    });
-    expect(merged.knowledge?.llm).toEqual({
-      baseUrl: "https://api.deepseek.com",
-      apiKey: "test-key",
-      model: "qwen-plus",
-    });
-
-    // 完全独立配置（不依赖 NXCORE_AI_*）→ ⑤ 也可用
-    const standalone = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_KNOWLEDGE_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
-      NXCORE_KNOWLEDGE_LLM_BASE_URL: "https://llm.example.test/v1",
-      NXCORE_KNOWLEDGE_LLM_API_KEY: "test-key",
-      NXCORE_KNOWLEDGE_LLM_MODEL: "qwen-plus",
-    });
-    expect(standalone.knowledge?.llm).toEqual({
-      baseUrl: "https://llm.example.test/v1",
-      apiKey: "test-key",
-      model: "qwen-plus",
-    });
-
-    // 缺 model（两边都没有）→ ⑤ 不可用，但 ④ 仍可借 base/key 开启
-    const incomplete = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_KNOWLEDGE_ENABLED: "true",
-      NXCORE_KNOWLEDGE_ROOM_WIKIS_ENABLED: "true",
-      NXCORE_AI_BASE_URL: "https://api.deepseek.com",
-      NXCORE_AI_API_KEY: "test-key",
-    });
-    expect(incomplete.knowledge?.llm).toBeNull();
-    expect(incomplete.knowledge?.embeddingLlm).toMatchObject({
-      baseUrl: "https://api.deepseek.com",
-      apiKey: "test-key",
-    });
-  });
 });

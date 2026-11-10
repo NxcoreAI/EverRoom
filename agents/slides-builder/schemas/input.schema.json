@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": [
+        "edit"
+      ],
+      "description": "The slides task to execute: modify an existing deck per the instruction."
+    },
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000,
+      "description": "User instruction for this slides task; always the highest priority."
+    },
+    "fileId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Target deck for edit: a file entry id or \"active\" (the deck currently open on the user's desktop). Defaults to \"active\"."
+    }
+  },
+  "required": [
+    "task",
+    "instruction"
+  ],
+  "additionalProperties": false
+}

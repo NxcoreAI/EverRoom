@@ -21,23 +21,26 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@/shared/*": [
+        "src/shared/*"
+      ],
       "@/*": [
         "src/renderer/src/*"
       ],
       "@nxcore/connector-contract": [
-        "../../submodules/everroom-connectors/connector-contract/src/index.ts"
+        "../../submodules/everoffice-connectors/connector-contract/src/index.ts"
       ],
       "@nxcore/connectors-module": [
-        "../../submodules/everroom-connectors/gateway-module/index.ts"
+        "../../submodules/everoffice-connectors/gateway-module/index.ts"
       ],
       "@nxcore/connectors-module/*": [
-        "../../submodules/everroom-connectors/gateway-module/*.ts"
+        "../../submodules/everoffice-connectors/gateway-module/*.ts"
       ],
       "@nxcore/desktop-connector-host": [
-        "../../submodules/everroom-connectors/desktop-host/open-connector/index.ts"
+        "../../submodules/everoffice-connectors/desktop-host/open-connector/index.ts"
       ],
       "@nxcore/desktop-connector-host/*": [
-        "../../submodules/everroom-connectors/desktop-host/open-connector/*.ts"
+        "../../submodules/everoffice-connectors/desktop-host/open-connector/*.ts"
       ]
     },
     "types": [
@@ -46,6 +49,8 @@
   },
   "include": [
     "src",
+    "debug",
+    "vite.agent-debug.config.mts",
     "electron.vite.config.ts"
   ]
 }

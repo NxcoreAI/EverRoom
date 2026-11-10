@@ -1,7 +1,9 @@
-import { mkdtemp, writeFile, chmod } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import Fastify from 'fastify'
+import { WORKSPACE_DOCUMENT_CHANNEL } from '@nxcore/agent-contract'
 import { createDatabase, type GatewayDatabase } from '../src/infrastructure/database/client.js'
 import {
   agentDocumentExports,
@@ -16,10 +18,12 @@ import {
   DocumentImportService,
   ImportServiceError,
 } from '../src/modules/documents/import/service.js'
+import { documentImportRoutes } from '../src/modules/documents/import/routes.js'
 import type { ImportActionRunner } from '../src/modules/documents/import/oo-runner.js'
 import {
   AgentDocumentExportService,
 } from '../src/modules/documents/agent-export/service.js'
+import { agentDocumentExportRoutes } from '../src/modules/documents/agent-export/routes.js'
 import type { OpenConnectorCliConfig } from '../src/config.js'
 
 const connectorConfig: OpenConnectorCliConfig = {
@@ -106,20 +110,30 @@ async function createHarness(options: {
   lark?: { executable: string } | null
   assetBridgeUrl?: string | null
   ntn?: { executable: string } | null
+  /** 连接器页「关闭飞书」（墓碑）的测试缝。 */
+  feishuDisabled?: () => boolean
 } = {}) {
   dataDirectory = await mkdtemp(join(tmpdir(), 'nxcore-doc-import-'))
   const created = createDatabase(join(dataDirectory, 'gateway.sqlite'), resolve('drizzle'))
   db = created.db
   closeDatabase = () => created.sqlite.close()
   const documents = new DocumentService(db, new DocumentEventBroker())
+  const runner = options.actionRunner
   const imports = new DocumentImportService(
     db,
     documents,
     options.connector === undefined ? connectorConfig : options.connector,
     dataDirectory,
     {
-      ...(options.actionRunner ? { actionRunner: options.actionRunner } : {}),
+      ...(runner ? { actionRunner: runner } : {}),
+      // 飞书已换轨 lark-cli：同一 fake 平移到 larkActionFn 缝（适配器优先走它），
+      // 既有 feishu 断言零改动；notion 仍走 actionRunner。
+      ...(runner ? { larkActionFn: (call) => runner(connectorConfig, call) } : {}),
+      // 缺省显式 null：不注入时 feishu 走「lark-cli 未配置」422，绝不碰真二进制。
+      larkCli: options.lark === undefined ? null : options.lark,
+      ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+      ...(options.feishuDisabled ? { isFeishuDisabled: options.feishuDisabled } : {}),
     },
   )
   const exports_ = new AgentDocumentExportService(
@@ -130,6 +144,7 @@ async function createHarness(options: {
     {
       ...(options.assetBridgeUrl !== undefined ? { assetBridgeUrl: options.assetBridgeUrl } : {}),
       ...(options.ntn !== undefined ? { notionCli: options.ntn } : {}),
+      ...(options.feishuDisabled ? { isFeishuDisabled: options.feishuDisabled } : {}),
     },
   )
   return { documents, imports, exports_ }
@@ -144,6 +159,34 @@ async function createRoomDocument(documents: DocumentService): Promise<{ roomId:
     contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '本地正文' }] }] } as never,
   })
   return { roomId, documentId: document.id }
+}
+
+/** 假资产桥：GET /real-bytes.png 出 8 字节 PNG；PUT 记录入 puts。 */
+async function startAssetBridge(): Promise<{ baseUrl: string; puts: Array<{ mime: string; bytes: number }>; close: () => void }> {
+  const { createServer } = await import('node:http')
+  const puts: Array<{ mime: string; bytes: number }> = []
+  const server = createServer((request, response) => {
+    if (request.method === 'GET') {
+      response.writeHead(200, { 'content-type': 'image/png' })
+      response.end(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      return
+    }
+    if (request.method === 'PUT') {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.on('end', () => {
+        puts.push({ mime: String(request.headers['content-type'] ?? ''), bytes: Buffer.concat(chunks).byteLength })
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ src: 'nxcore-document-asset://local/img-test/stored.png' }))
+      })
+      return
+    }
+    response.writeHead(404).end()
+  })
+  await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+  const address = server.address() as { port: number }
+  disposables.push(() => server.close())
+  return { baseUrl: `http://127.0.0.1:${String(address.port)}`, puts, close: () => server.close() }
 }
 
 async function writeFakeLarkCli(behavior: 'ok' | 'no-app'): Promise<string> {
@@ -203,6 +246,82 @@ exit 3
   await chmod(path, 0o755)
   disposables.push(() => undefined)
   return path
+}
+
+/**
+ * 假 lark-cli（导入链路版）：auth status 受状态文件控制、每次调用计数
+ * （TTL 断言用）；drive/wiki/fetch/comments/media 按子命令出 lark 信封
+ * （形状对齐真 CLI 实测：search 嵌套、fetch 无 title、评论 snake、media 落盘）。
+ */
+async function writeFakeLarkImportCli(options: { authOk?: boolean } = {}): Promise<{
+  path: string
+  setAuthOk: (ok: boolean) => Promise<void>
+  authCalls: () => Promise<number>
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'nxcore-lark-import-'))
+  const path = join(dir, 'lark-cli')
+  const authFile = join(dir, 'auth.json')
+  const callsFile = join(dir, 'auth-calls.log')
+  const writeAuth = async (ok: boolean) => writeFile(authFile, ok ? 'yes' : 'no', 'utf8')
+  await writeAuth(options.authOk !== false)
+  const script = `#!/bin/bash
+if [ "$1" = "auth" ]; then
+  echo auth >> "${callsFile}"
+  if [ "$(cat "${authFile}")" = "yes" ]; then
+    echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":true,"tokenStatus":"valid","userName":"导入测试用户"}}}'
+  else
+    echo '{"ok":true,"appId":"cli_test_app","identities":{"user":{"available":false,"tokenStatus":"expired"}}}'
+  fi
+  exit 0
+fi
+if [[ " $* " == *" drive files list "* ]]; then
+  if [[ " $* " == *" --folder-token fldSub "* ]]; then
+    echo '{"ok":true,"data":{"files":[{"token":"tokDoc2","name":"子目录文档","type":"docx","url":"https://feishu.cn/docx/tokDoc2","modified_time":"1760000000"}],"has_more":false}}'
+  else
+    echo '{"ok":true,"data":{"files":[{"token":"fldSub","name":"子目录","type":"folder","url":"https://feishu.cn/drive/folder/fldSub"},{"token":"tokDoc1","name":"根目录文档","type":"docx","url":"https://feishu.cn/docx/tokDoc1","modified_time":"1759000000"}],"has_more":false}}'
+  fi
+  exit 0
+fi
+if [[ " $* " == *" wiki +space-list "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"space_id":"sp1","name":"知识库"}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" wiki +node-list "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"node_token":"n1","obj_token":"tokWiki1","obj_type":"docx","title":"顶层节点","has_child":false}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" docs +fetch "* ]]; then
+  echo '{"ok":true,"data":{"document":{"document_id":"tokDoc1","revision_id":7,"content":"<title>带图文档</title>\\n\\n# 带图文档\\n\\n![示意图](https://feishu.cn/file/IMGTOKEN123456)\\n\\n正文段落。"}}}'
+  exit 0
+fi
+if [[ " $* " == *" drive +list-comments "* ]]; then
+  echo '{"ok":true,"data":{"items":[{"id":"c1","is_solved":true,"quote":"带图文档","reply_list":{"replies":[{"id":"r1","content":{"elements":[{"type":"text","text_run":{"text":"评论甲"}}]},"user_id":"ou_test","created_time":"1788000000"},{"id":"r2","content":{"elements":[{"type":"text","text_run":{"text":"回复乙"}}]},"user_id":"ou_other"}]}}],"has_more":false}}'
+  exit 0
+fi
+if [[ " $* " == *" docs +media-download "* ]]; then
+  OUT=""
+  prev=""
+  for a in "$@"; do if [ "$prev" = "--output" ]; then OUT="$a"; fi; prev="$a"; done
+  printf '\\x89\\x50\\x4e\\x47\\x0d\\x0a\\x1a\\x0a' > "$OUT"
+  printf '{"ok":true,"data":{"output":"%s"}}\\n' "$OUT"
+  exit 0
+fi
+echo '{"ok":false,"error":{"type":"cli","message":"unsupported"}}' >&2
+exit 3
+`
+  await writeFile(path, script, 'utf8')
+  await chmod(path, 0o755)
+  return {
+    path,
+    setAuthOk: writeAuth,
+    authCalls: async () => {
+      try {
+        return (await readFile(callsFile, 'utf8')).split('\n').filter(Boolean).length
+      } catch {
+        return 0
+      }
+    },
+  }
 }
 
 /** 假 ntn：状态文件控制登录态（可中途翻转，用于 retry 场景）；api 走 stdin body。 */
@@ -345,6 +464,44 @@ describe('document import service', () => {
     expect(preview.comments).toHaveLength(6)
     expect(preview.comments.filter((comment) => comment.id === 'c-dup')).toHaveLength(1)
     expect(preview.warnings.some((warning) => warning.code === 'comments_pages_capped')).toBe(true)
+  })
+
+  it('飞书 lark-cli 端到端：列举(BFS+wiki) → preview（<title> 标题 + 评论 + 图片经 media-download 物化）', async () => {
+    const bridge = await startAssetBridge()
+    const cli = await writeFakeLarkImportCli()
+    const { imports } = await createHarness({
+      connector: null,
+      lark: { executable: cli.path },
+      assetBridgeUrl: bridge.baseUrl,
+    })
+    const list = await imports.listAllDocuments('feishu')
+    expect(list.items.map((item) => item.remoteDocumentId).sort()).toEqual(['tokDoc1', 'tokDoc2', 'tokWiki1'])
+    const preview = await imports.preview('feishu', 'tokDoc1')
+    // 标题来自 +fetch 正文首部 <title> 标签（get_document 短路、信封无 title）。
+    expect(preview.title).toBe('带图文档')
+    expect(preview.commentsStatus).toBe('complete')
+    expect(preview.comments).toHaveLength(2)
+    expect(preview.comments[0]!.body).toBe('评论甲')
+    expect(preview.comments[0]!.resolved).toBe(true)
+    // feishu.cn/file 图片走 docs +media-download 落盘读字节，再 PUT 资产桥改写正文。
+    expect(preview.bodyExcerpt).not.toContain('feishu.cn/file')
+    expect(preview.warnings.some((w) => w.code === 'remote_assets_materialized')).toBe(true)
+    expect(bridge.puts.length).toBeGreaterThanOrEqual(1)
+    expect(bridge.puts[0]!.mime).toBe('image/png')
+  })
+
+  it('飞书门禁：auth 不可用 → 422 引导数据源页；30s TTL 内连续两次只 spawn 一次 auth status', async () => {
+    const cli = await writeFakeLarkImportCli({ authOk: false })
+    const { imports } = await createHarness({ connector: null, lark: { executable: cli.path } })
+    const first = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect(first).toBeInstanceOf(ImportServiceError)
+    const serviceError = first as ImportServiceError
+    expect(serviceError.code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(serviceError.statusCode).toBe(422)
+    expect(serviceError.message).toContain('数据源页')
+    const second = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect((second as ImportServiceError).code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(await cli.authCalls()).toBe(1)
   })
 
   it('notion comments via list_page_comments action: 线程分组 + 块锚点 + 分页 + 降级', async () => {
@@ -490,7 +647,7 @@ exit 1
     const preview = await imports.preview('feishu', 'tokA')
     const primary = await imports.commitToRoom({ runId: preview.runId, roomId })
     bodySuffix = '\n\n结构化 diff 专用新段落。'
-    const check = await imports.checkExternalUpdate(roomId, primary.documentId)
+    const check = await imports.checkExternalUpdate(primary.documentId)
     expect(check.noChange).toBeUndefined()
     const structured = await imports.candidateStructuredDiff(check.roomImportId!)
     expect(structured.candidate.provider).toBe('feishu')
@@ -504,13 +661,19 @@ exit 1
     expect((applied as ImportServiceError).code).toBe('CANDIDATE_ALREADY_APPLIED')
   })
 
-  it('throws OPEN_CONNECTOR_UNAVAILABLE when connector is not configured', async () => {
+  it('connector 未配置：feishu 走 lark 缝 422（引导配置 lark-cli），notion 仍 OPEN_CONNECTOR_UNAVAILABLE', async () => {
     const { imports } = await createHarness({ connector: null })
-    const error = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
-    expect(error).toBeInstanceOf(ImportServiceError)
-    const serviceError = error as ImportServiceError
-    expect(serviceError.code).toBe('OPEN_CONNECTOR_UNAVAILABLE')
-    expect(serviceError.statusCode).toBe(503)
+    const feishuError = await imports.search('feishu', 'x').then(() => null, (caught: unknown) => caught)
+    expect(feishuError).toBeInstanceOf(ImportServiceError)
+    const feishuServiceError = feishuError as ImportServiceError
+    expect(feishuServiceError.code).toBe('IMPORT_CONNECTION_REQUIRED')
+    expect(feishuServiceError.statusCode).toBe(422)
+    expect(feishuServiceError.message).toContain('lark-cli')
+    const notionError = await imports.search('notion', 'x').then(() => null, (caught: unknown) => caught)
+    expect(notionError).toBeInstanceOf(ImportServiceError)
+    const notionServiceError = notionError as ImportServiceError
+    expect(notionServiceError.code).toBe('OPEN_CONNECTOR_UNAVAILABLE')
+    expect(notionServiceError.statusCode).toBe(503)
   })
 
   it('commits preview to a room as primary version 1', async () => {
@@ -524,9 +687,29 @@ exit 1
     expect(rows).toHaveLength(1)
     expect(rows[0]!.relation).toBe('primary')
     expect(rows[0]!.importedVersion).toBe(1)
-    const history = await imports.importHistory(roomId, result.documentId)
+    const history = await imports.importHistory(result.documentId)
     expect(history.entries).toHaveLength(1)
     expect(history.entries[0]!.relation).toBe('primary')
+  })
+
+  it('空文档（fetch 成功但 content 空串）报明确的 content_empty 提示而非形状异常', async () => {
+    // 形状来自线上真实响应：C7tFdfDpoo6aCKxW4oecQJtTnBc（revision 17、无标题、
+    // 零内容块——markdown/xml/outline 三种格式均空）。
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.get_document': { documentId: 'tokEmpty', revisionId: 17, title: '', raw: {} },
+      'feishu.fetch_document': {
+        document: { document_id: 'tokEmpty', revision_id: 17, content: '' },
+      },
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const error = await imports.preview('feishu', 'tokEmpty').then(() => null, (caught: unknown) => caught)
+    expect(error).toBeInstanceOf(ImportServiceError)
+    const serviceError = error as ImportServiceError
+    expect(serviceError.code).toBe('IMPORT_CONTENT_EMPTY')
+    expect(serviceError.statusCode).toBe(422)
+    expect(serviceError.message).toContain('内容为空')
+    expect(serviceError.message).toContain('tokEmpty')
   })
 
   it('re-import creates a candidate, never overwrites, then apply creates v2', async () => {
@@ -553,10 +736,10 @@ exit 1
     const before = documents.get(documentId)!
 
     // 同内容检查 → noChange；内容变化后检查 → 候选。
-    const unchanged = await imports.checkExternalUpdate(roomId, documentId)
+    const unchanged = await imports.checkExternalUpdate(documentId)
     expect(unchanged.noChange).toBe(true)
     bodySuffix = '\n\n远端更新段落。'
-    const check = await imports.checkExternalUpdate(roomId, documentId)
+    const check = await imports.checkExternalUpdate(documentId)
     expect(check.relation).toBe('candidate')
     // 目标文档未被覆盖
     expect(documents.get(documentId)!.version).toBe(before.version)
@@ -565,7 +748,7 @@ exit 1
     const candidate = documents.get(check.documentId)!
     expect(candidate.title).toContain('外部更新候选')
 
-    const history = await imports.importHistory(roomId, documentId)
+    const history = await imports.importHistory(documentId)
     expect(history.entries.some((entry) => entry.relation === 'candidate')).toBe(true)
     // 评论两侧 complete 才可比
     expect(history.commentDiff?.comparable).toBe(true)
@@ -592,6 +775,20 @@ describe('agent document export service', () => {
     const row = db.select().from(agentDocumentExports).all()[0]!
     expect(row.payloadHash).toBeTruthy()
     expect(row.payloadMarkdownRef).toBeTruthy()
+  })
+
+  it('连接器页关闭飞书后：lark-cli 导出被拦截（凭据保留，重新开启即恢复）', async () => {
+    const larkPath = await writeFakeLarkCli('ok')
+    let disabled = true
+    const harness = await createHarness({ connector: null, lark: { executable: larkPath }, feishuDisabled: () => disabled })
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const blocked = await harness.exports_.runExport({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    expect(blocked.status).toBe('failed')
+    expect(blocked.errorCode).toBe('FEISHU_CONNECTOR_DISABLED')
+
+    disabled = false
+    const resumed = await harness.exports_.runExport({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    expect(resumed.status).toBe('succeeded')
   })
 
   it('update mode requires explicit confirmation before overwrite', async () => {
@@ -755,7 +952,7 @@ describe('agent document export service', () => {
     const preview = await imports.preview('feishu', 'tokA')
     const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
     const commit = await imports.commitToRoom({ runId: preview.runId, roomId })
-    const history = await imports.importHistory(roomId, commit.documentId)
+    const history = await imports.importHistory(commit.documentId)
     expect(history.comments).toHaveLength(2)
     expect(history.comments[0]!.body).toBe('第一段评论')
   })
@@ -923,5 +1120,159 @@ describe('import service error mapping', () => {
       expect(serviceError.statusCode).toBe(422)
       return true
     })
+  })
+})
+
+/**
+ * Room 已删除：导入/导出的 roomId 全部可省略，缺省落工作区作用域；
+ * 显式传 roomId 的旧桌面路径保持原行为（兼容）。
+ */
+describe('document import/export workspace scope (Room removed)', () => {
+  async function createWorkspaceDocument(documents: DocumentService): Promise<string> {
+    const document = await documents.import({
+      id: `doc-${Math.random().toString(36).slice(2, 12)}`,
+      roomId: null,
+      title: '工作区文档',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '工作区正文' }] }] } as never,
+    })
+    return document.id
+  }
+
+  it('commit 省略 roomId 走工作区导入：不写 document_room_imports，DTO 与旧路径同形', async () => {
+    const { imports } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const result = await imports.commit({ runId: preview.runId })
+
+    expect(result.relation).toBe('primary')
+    expect(result.roomImportId).toBeNull()
+    expect(result.document.roomId).toBeNull()
+    expect(result.document.version).toBe(1)
+    expect(result.documentId).toBe(result.document.id)
+    // 工作区路径不产生 Room 时代的导入关联行。
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
+    // 旧桌面读取的 run 视图仍可用（targetRoomId 恒 null）。
+    expect(result.run.status).toBe('succeeded')
+    expect(result.run.targetRoomId).toBeNull()
+  })
+
+  it('commit 显式 roomId 保持旧 Room 行为（写 document_room_imports）', async () => {
+    const { imports } = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const preview = await imports.preview('feishu', 'tokA')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const result = await imports.commit({ runId: preview.runId, roomId })
+
+    expect(result.roomImportId).toBeTruthy()
+    // Phase 2i 起文稿本身恒为工作区级（roomId=null），Room 只保留在导入关联行上做旧版兼容。
+    expect(result.document.roomId).toBeNull()
+    const rows = db.select().from(documentRoomImports).all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.roomId).toBe(roomId)
+    expect(rows[0]!.relation).toBe('primary')
+  })
+
+  it('commit 无 roomId 重导同一来源：正文未变走 noChange，不再落新文档', async () => {
+    let bodySuffix = ''
+    const actions = {
+      ...FEISHU_READ,
+      'feishu.fetch_document': () => ({
+        document: {
+          document_id: 'tokA',
+          revision_id: 5,
+          title: '远端需求文档',
+          url: 'https://vyi-tech.feishu.cn/docx/tokA',
+          content: `# 远端需求文档\n\n这是导入的正文段落。${bodySuffix}`,
+        },
+      }),
+    }
+    const { imports } = await createHarness({ actionRunner: fakeRunner(actions) })
+    const first = await imports.preview('feishu', 'tokA')
+    const committed = await imports.commit({ runId: first.runId })
+
+    const again = await imports.preview('feishu', 'tokA')
+    const second = await imports.commit({ runId: again.runId })
+    expect(second.noChange).toBe(true)
+    expect(second.documentId).toBe(committed.documentId)
+
+    // 远端内容变了：追加新版本（不新开文稿）。
+    bodySuffix = '\n\n新增段落。'
+    const changed = await imports.preview('feishu', 'tokA')
+    const third = await imports.commit({ runId: changed.runId })
+    expect(third.noChange).toBeUndefined()
+    expect(third.documentId).toBe(committed.documentId)
+    expect(third.document.version).toBe(2)
+  })
+
+  it('POST /v1/document-import/runs 省略 roomId 返回 200 并导入工作区；显式 roomId 仍兼容', async () => {
+    const harness = await createHarness({ actionRunner: fakeRunner(FEISHU_READ) })
+    const app = Fastify()
+    await app.register(documentImportRoutes(harness.imports))
+
+    const preview = await harness.imports.preview('feishu', 'tokA')
+    const workspace = await app.inject({
+      method: 'POST',
+      url: '/v1/document-import/runs',
+      payload: { runId: preview.runId },
+    })
+    expect(workspace.statusCode).toBe(200)
+    const workspaceBody = workspace.json() as Record<string, unknown>
+    expect(workspaceBody.roomImportId).toBeNull()
+    expect(workspaceBody.relation).toBe('primary')
+    expect((workspaceBody.document as { roomId: string | null }).roomId).toBeNull()
+    expect(db.select().from(documentRoomImports).all()).toHaveLength(0)
+
+    // 旧桌面：roomId 传入时仍走 Room 路径。
+    const legacyPreview = await harness.imports.preview('feishu', 'tokB')
+    const roomId = `room-${Math.random().toString(36).slice(2, 8)}`
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/v1/document-import/runs',
+      payload: { runId: legacyPreview.runId, roomId },
+    })
+    expect(legacy.statusCode).toBe(200)
+    expect((legacy.json() as { roomImportId: string | null }).roomImportId).toBeTruthy()
+    await app.close()
+  })
+
+  it('导出省略 roomId 落 scope sentinel（列 NOT NULL），显式 roomId 保持原值', async () => {
+    const harness = await createHarness({ connector: null, lark: null })
+    const workspaceDocumentId = await createWorkspaceDocument(harness.documents)
+    const runId = await harness.exports_.createRun({
+      documentId: workspaceDocumentId,
+      provider: 'feishu',
+      mode: 'create',
+    })
+    const row = db.select().from(agentDocumentExports).all().find((item) => item.id === runId)!
+    expect(row.roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+    expect(harness.exports_.getRun(runId).roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const legacyRunId = await harness.exports_.createRun({ roomId, documentId, provider: 'feishu', mode: 'create' })
+    const legacyRow = db.select().from(agentDocumentExports).all().find((item) => item.id === legacyRunId)!
+    expect(legacyRow.roomId).toBe(roomId)
+  })
+
+  it('POST /v1/agent/document-exports 省略 roomId 可创建任务（旧桌面携带 roomId 仍兼容）', async () => {
+    const harness = await createHarness({ connector: null, lark: null })
+    const app = Fastify()
+    await app.register(agentDocumentExportRoutes(harness.exports_))
+    const workspaceDocumentId = await createWorkspaceDocument(harness.documents)
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/v1/agent/document-exports',
+      payload: { documentId: workspaceDocumentId, provider: 'feishu', mode: 'create' },
+    })
+    expect(created.statusCode).toBe(200)
+    expect((created.json() as { roomId: string }).roomId).toBe(WORKSPACE_DOCUMENT_CHANNEL)
+
+    const { roomId, documentId } = await createRoomDocument(harness.documents)
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/v1/agent/document-exports',
+      payload: { roomId, documentId, provider: 'feishu', mode: 'create' },
+    })
+    expect(legacy.statusCode).toBe(200)
+    expect((legacy.json() as { roomId: string }).roomId).toBe(roomId)
+    await app.close()
   })
 })

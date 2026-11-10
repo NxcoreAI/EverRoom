@@ -1,13 +1,20 @@
 import { spawn } from "node:child_process";
 
+import { larkCliSpawnEnvironment } from "./lark-cli-environment.js";
+
 /**
  * 网关侧 lark-cli 执行器（飞书导出通道）。遵循 CLI 的 JSON 输出契约：
  * 成功 {ok:true, identity, data, meta} 走 stdout + exit 0；失败
  * {ok:false, error:{type, code, message, hint}} 走 stderr + 非零 exit。
  * 正文经 stdin 传递（--content -），不进 argv；不采集任何 token/secret。
+ *
+ * 环境隔离见 `lark-cli-environment.ts`：桌面注入的私有 HOME 下运行，不读写
+ * 用户终端里 `~/.lark-cli` 的配置。
  */
 export interface LarkCliConfig {
   executable: string;
+  /** 应用私有 HOME（桌面经 NXCORE_LARK_CLI_HOME 注入）；缺省时回退全量继承。 */
+  homeDirectory?: string | null;
 }
 
 export class LarkCliError extends Error {
@@ -36,7 +43,10 @@ export function runLarkCli(
 ): Promise<LarkRunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(config.executable, [...arguments_, "--json"], {
-      env: { ...process.env, NO_COLOR: "1" },
+      env: larkCliSpawnEnvironment(
+        process.env,
+        config.homeDirectory ? { homeDirectory: config.homeDirectory } : {},
+      ),
       shell: false,
       windowsHide: true,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
@@ -169,7 +179,10 @@ export async function larkCliVersion(config: LarkCliConfig): Promise<string | nu
   // --version 不走 JSON 契约，直接探测可执行文件存在。
   return new Promise((resolve) => {
     const child = spawn(config.executable, ["--version"], {
-      env: { ...process.env, NO_COLOR: "1" },
+      env: larkCliSpawnEnvironment(
+        process.env,
+        config.homeDirectory ? { homeDirectory: config.homeDirectory } : {},
+      ),
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "ignore", "ignore"],

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { contextRooms, jobs } from "../src/infrastructure/database/schema.js";
+import { jobs } from "../src/infrastructure/database/schema.js";
 import { DOCUMENT_INDEX_BACKFILL_JOB_TYPE } from "../src/modules/documents/index-backfill/jobs.js";
 import { DocumentIndexBackfillReadTrigger } from "../src/modules/documents/index-backfill/read-trigger.js";
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
@@ -31,7 +31,6 @@ async function createHarness() {
   const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
   closables.push(() => database.sqlite.close());
   const documents = new DocumentService(database.db, new DocumentEventBroker());
-  database.db.insert(contextRooms).values({ id: "room-1", title: "测试房间", data: {} }).run();
   const warn = vi.fn();
   const createTrigger = (cooldownMs: number) =>
     new DocumentIndexBackfillReadTrigger(database.db, { warn }, cooldownMs);
@@ -67,7 +66,6 @@ describe("document index backfill read trigger", () => {
     expect(rows[0]!.status).toBe("pending");
     expect(rows[0]!.payload).toMatchObject({
       documentId: "doc-target",
-      roomId: "room-1",
       version: document.version,
     });
   });

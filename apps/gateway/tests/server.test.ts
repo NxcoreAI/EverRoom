@@ -25,16 +25,12 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    memory: null,
     pi: null,
     cursorCompletionPi: null,
-    knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
+    litePi: null,
     backgroundPi: null,
-    asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
-    asr: null,
   };
 }
 
@@ -44,6 +40,35 @@ afterEach(async () => {
 });
 
 describe("gateway server", () => {
+  it("serves the skill catalog and applies enable/disable", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+
+    const listed = await app.inject({ method: "GET", url: "/v1/skills", headers });
+    expect(listed.statusCode).toBe(200);
+    const catalog = listed.json() as {
+      skills: Array<{ id: string; enabled: boolean; ownerKind: string }>;
+      counts: { total: number; enabled: number };
+    };
+    // 内置 bundle 的技能在清单里；子 Agent 的技能也并进同一份清单。
+    expect(catalog.skills.some((skill) => skill.id === "builtin:main:document-export")).toBe(true);
+    expect(catalog.skills.some((skill) => skill.ownerKind === "subagent")).toBe(true);
+    expect(catalog.counts.enabled).toBe(catalog.counts.total);
+
+    const skillId = encodeURIComponent("builtin:main:document-export");
+    const patched = await app.inject({
+      method: "PATCH",
+      url: `/v1/skills/${skillId}`,
+      headers,
+      payload: { enabled: false },
+    });
+    await app.close();
+
+    expect(patched.statusCode).toBe(200);
+    expect((patched.json() as { enabled: boolean }).enabled).toBe(false);
+  });
+
   it("reports liveness without authentication", async () => {
     const app = await createServer(await testConfig());
     const response = await app.inject({ method: "GET", url: "/v1/health/live" });
@@ -84,9 +109,9 @@ describe("gateway server", () => {
     expect(mcp.statusCode).toBe(200);
     const runtime = await app.inject({
       method: "PUT",
-      url: "/v1/runtime-config/saas",
+      url: "/v1/runtime-config/user",
       headers,
-      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "saas-search-51" } },
+      payload: { schemaVersion: 1, webSearch: { provider: "openai-compatible", api: "openai-completions", model: "search", baseUrl: "https://search.test/v1", apiKey: "user-search-51" } },
     });
     expect(runtime.statusCode).toBe(200);
     const logout = await app.inject({ method: "POST", url: "/v1/security/secrets/logout", headers });
@@ -100,241 +125,69 @@ describe("gateway server", () => {
     else process.env.NXCORE_SECRET_STORE_KEY = previousKey;
   });
 
-  it("keeps memory routes enabled without a Pi runtime", async () => {
-    const config = await testConfig();
-    config.memory = {
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "memory-key",
-      serviceId: "everroom",
-      teamId: "everroom",
-      agentId: "pi-agent",
-      userId: "local-user",
-      recallLimit: 5,
-      charBudget: 2_000,
-    };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
-      code: 0,
-      message: "ok",
-      data: { items: [], total: 0 },
-    }), { headers: { "content-type": "application/json" } })));
-    const app = await createServer(config);
-
-    const response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/atomic?limit=1&offset=0",
-      headers: { authorization: `Bearer ${config.authToken}` },
-    });
-    await app.close();
-
-    expect(config.pi).toBeNull();
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ items: [], total: 0 });
-  });
-
-  it("keeps env-backed memory config when runtime config default only has empty placeholders", async () => {
-    const config = await testConfig();
-    config.memory = {
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "memory-key",
-      serviceId: "everroom",
-      teamId: "everroom",
-      agentId: "pi-agent",
-      userId: "local-user",
-      recallLimit: 5,
-      charBudget: 2_000,
-    };
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
-      const url = String(input);
-      const data = url.includes("/v2/pipeline/status")
-        ? { l1: {}, l2: {}, l3: {} }
-        : url.includes("/v3/core/read")
-          ? { content: null, version: 0, created_at: "", updated_at: "" }
-          : { total: 0 };
-      return new Response(JSON.stringify({ code: 0, message: "ok", data }), {
-        headers: { "content-type": "application/json" },
-      });
-    }));
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-
-    // 启动时 applyRuntimeConfig 会拿 runtime-config.default.json（全空串占位）
-    // 覆盖 config；空串若被当作有效值，baseUrl 会被清成 ""，fetch 将收到
-    // 相对路径 /v3/atomic/count 并抛 Failed to parse URL（memory_unreachable）。
-    expect(config.memory?.baseUrl).toBe("http://127.0.0.1:8420");
-    let response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/overview",
-      headers,
-    });
-    expect(response.statusCode).toBe(200);
-
-    // SaaS 下发的 memory 段（云端凭据指向本地自管 MemoryCore）不得覆盖 env：
-    // 本地实例的 apiKey 由主进程每次启动随机轮换，云端值必然 401。
-    await app.inject({
-      method: "PUT",
-      url: "/v1/runtime-config/saas",
-      headers,
-      payload: {
-        schemaVersion: 1,
-        memory: {
-          enabled: true,
-          baseUrl: "http://127.0.0.1:8420",
-          apiKey: "sk-mem-cloud-delivered-wrong-key",
-        },
-      },
-    });
-    expect(config.memory?.apiKey).toBe("memory-key");
-    response = await app.inject({
-      method: "GET",
-      url: "/v1/memory/overview",
-      headers,
-    });
-    await app.close();
-
-    expect(response.statusCode).toBe(200);
-  });
-
-  it("accepts runtime memory injection without persisting or resetting it", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const memory = {
-      enabled: true,
-      baseUrl: "http://127.0.0.1:8420",
-      apiKey: "runtime-memory-key",
-      serviceId: "service-from-saas",
-      teamId: "team-from-saas",
-      agentId: "agent-from-saas",
-      userId: "local-user",
-      recallLimit: 7,
-      charBudget: 4_000,
-    };
-
-    const injected = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
-    expect(injected.statusCode).toBe(200);
-    expect(injected.json()).toEqual({ enabled: true });
-    const persisted = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
-    expect(persisted.json<{ config: { memory?: { apiKey?: string } } }>().config.memory?.apiKey).toBe("");
-
-    // Runtime config persistence must not be used as the secret-bearing
-    // transport, and a later config event must leave the injected client live.
-    await app.inject({
-      method: "PUT",
-      url: "/v1/runtime-config/saas",
-      headers,
-      payload: { schemaVersion: 1, memory: { serviceId: "service-from-saas" } },
-    });
-    const stillEnabled = await app.inject({ method: "PUT", url: "/v1/memory/config", headers, payload: memory });
-    expect(stillEnabled.json()).toEqual({ enabled: true });
-
-    const disabled = await app.inject({ method: "DELETE", url: "/v1/memory/config", headers });
-    await app.close();
-    expect(disabled.statusCode).toBe(200);
-    expect(disabled.json()).toEqual({ enabled: false });
-  });
-
-  it("degrades manual file imports to the memory pipeline when the knowledge router is off", async () => {
-    // Packaged desktop injects NXCORE_KNOWLEDGE_* but never
-    // NXCORE_KNOWLEDGE_ROUTER_ENABLED; without the connector-style degrade
-    // every manual import is rejected whole by router_disabled.
+  it("imports a manual file through the files pipeline to ready", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
     const form = new FormData();
     form.append("metadata", JSON.stringify({
       sourceKind: "manual-upload",
-      sourceKey: "manual:router-off:1",
-      originalName: "router-off.md",
+      sourceKey: "manual:files-pipeline:1",
+      originalName: "manual-import.md",
     }));
-    form.append("file", new Blob(["# Router off\n\nmemory-only degrade"], { type: "text/markdown" }), "router-off.md");
+    form.append("file", new Blob(["# Manual import\n\nfiles-pipeline"], { type: "text/markdown" }), "manual-import.md");
     const accepted = await app.inject({ method: "POST", url: "/v1/file-imports", headers, payload: form });
     expect(accepted.statusCode).toBe(202);
 
-    // file.ingest 是异步 job；修复前终态 failed（router_disabled），修复后 ready。
+    // 解析登记是异步 job：轮询 catalog 直到 processingState 离开 processing。
     let entry: { processingState?: string } | undefined;
     for (let attempt = 0; attempt < 200 && (!entry || entry.processingState === "processing"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       const catalog = await app.inject({ url: "/v1/files/catalog", headers });
       entry = catalog.json<{ items: Array<{ originalName: string; processingState: string }> }>()
-        .items.find((item) => item.originalName === "router-off.md");
+        .items.find((item) => item.originalName === "manual-import.md");
     }
     expect(entry?.processingState).toBe("ready");
     await app.close();
   });
 
-  it("serves persisted perception and diary settings with local visual nodes", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const perceptionSettings = await app.inject({ method: "GET", url: "/v1/perception/settings", headers });
-    const initialPerception = perceptionSettings.json<{ configVersion: number }>();
-    const updatedPerception = await app.inject({
-      method: "PATCH", url: "/v1/perception/settings", headers,
-      payload: { configVersion: initialPerception.configVersion, captureEnabled: true, captureIntervalSeconds: 60 },
-    });
-    const capturedAt = new Date().toISOString();
-    const uploaded = await app.inject({
-      method: "POST", url: "/v1/files", headers,
-      payload: {
-        filename: "api-photo.jpg", contentBase64: Buffer.from("local photo").toString("base64"),
-        mime: "image/jpeg", assetKind: "photo", capturedAt,
-      },
-    });
-    const fileId = uploaded.json<{ id: string }>().id;
-    const observed = await app.inject({
-      method: "POST", url: "/v1/perception/visual-observations", headers,
-      payload: { fileId, kind: "photo", capturedAt, width: 100, height: 80 },
-    });
-    const nodes = await app.inject({ method: "GET", url: "/v1/perception/nodes?kind=photo", headers });
-    const diarySettings = await app.inject({ method: "GET", url: "/v1/diary/settings", headers });
-    const initialDiary = diarySettings.json<{ configVersion: number }>();
-    const updatedDiary = await app.inject({
-      method: "PATCH", url: "/v1/diary/settings", headers,
-      payload: { configVersion: initialDiary.configVersion, enabled: true, localTime: "23:30", timezone: "UTC" },
-    });
-    const diaryConflict = await app.inject({
-      method: "PATCH", url: "/v1/diary/settings", headers,
-      payload: { configVersion: initialDiary.configVersion, localTime: "22:00" },
-    });
-    await app.close();
-
-    expect(updatedPerception.json()).toMatchObject({ captureEnabled: true, captureIntervalSeconds: 60 });
-    expect(uploaded.statusCode).toBe(201);
-    expect(observed.statusCode).toBe(200);
-    expect(nodes.json<{ items: unknown[] }>().items).toHaveLength(1);
-    expect(updatedDiary.json()).toMatchObject({ enabled: true, localTime: "23:30", timezone: "UTC" });
-    expect(diaryConflict.statusCode).toBe(409);
-  });
-
-  it("manages agent schedules and delegates the diary task to the scheduler", async () => {
+  it("lists only user schedules: the built-in diary slot is gone (Phase 1)", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
 
     const initial = await app.inject({ method: "GET", url: "/v1/agent/schedules", headers });
     expect(initial.statusCode).toBe(200);
-    const task = initial.json<Array<{ id: string; enabled: boolean; configVersion: number }>>()[0]!;
-    expect(task.id).toBe("diary.daily");
+    expect(initial.json<unknown[]>()).toEqual([]);
+
+    const created = await app.inject({
+      method: "POST", url: "/v1/agent/schedules", headers,
+      payload: { agentId: "primary", name: "每日复盘", prompt: "总结进展", localTime: "08:15", timezone: "UTC" },
+    });
+    expect(created.statusCode).toBe(201);
+    const task = created.json<{ id: string; enabled: boolean; configVersion: number }>();
+    expect(task.enabled).toBe(true);
 
     const updated = await app.inject({
-      method: "PATCH",
-      url: "/v1/agent/schedules/diary.daily",
-      headers,
-      payload: { enabled: !task.enabled, localTime: "08:15", timezone: "UTC", configVersion: task.configVersion },
+      method: "PATCH", url: `/v1/agent/schedules/${task.id}`, headers,
+      payload: { localTime: "08:30", timezone: "UTC", configVersion: task.configVersion },
     });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json()).toMatchObject({ id: "diary.daily", enabled: !task.enabled, localTime: "08:15", timezone: "UTC" });
+    expect(updated.json()).toMatchObject({ id: task.id, localTime: "08:30", timezone: "UTC" });
 
-    const runNow = await app.inject({ method: "POST", url: "/v1/agent/schedules/diary.daily/run", headers });
-    expect(runNow.statusCode).toBe(202);
-    expect(runNow.json()).toMatchObject({ runId: expect.any(String) });
-
+    const missingPatch = await app.inject({
+      method: "PATCH", url: "/v1/agent/schedules/missing", headers,
+      payload: { localTime: "08:30", configVersion: 1 },
+    });
     const missing = await app.inject({ method: "POST", url: "/v1/agent/schedules/missing/run", headers });
+    const removed = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
     await app.close();
+    expect(missingPatch.statusCode).toBe(404);
     expect(missing.statusCode).toBe(404);
+    expect(removed.statusCode).toBe(204);
   });
 
-  it("supports user schedules while protecting built-in tasks and exposing MCP execution", async () => {
+  it("supports user schedules and exposes MCP execution", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -343,170 +196,13 @@ describe("gateway server", () => {
       payload: { agentId: "primary", name: "整理收件箱", description: "测试任务", prompt: "整理今天的收件箱", localTime: "10:00", timezone: "UTC" },
     });
     const task = created.json<{ id: string; builtin: boolean }>();
-    const builtinDelete = await app.inject({ method: "DELETE", url: "/v1/agent/schedules/diary.daily", headers });
     const mcpList = await app.inject({ method: "POST", url: "/v1/mcp/agent-schedules", headers, payload: { jsonrpc: "2.0", id: 1, method: "tools/list" } });
     const deleted = await app.inject({ method: "DELETE", url: `/v1/agent/schedules/${task.id}`, headers });
     await app.close();
     expect(created.statusCode).toBe(201);
     expect(task.builtin).toBe(false);
-    expect(builtinDelete.statusCode).toBe(409);
     expect(mcpList.json<{ result: { tools: Array<{ name: string }> } }>().result.tools.map((tool) => tool.name)).toContain("agent_schedule_run");
     expect(deleted.statusCode).toBe(204);
-  });
-
-  it("serves authenticated background transcription summaries", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const payload = {
-      jobId: "job-1",
-      sourceRecordId: "source-1",
-      transcript: "这是待总结的转写内容。",
-    };
-
-    const unauthorized = await app.inject({
-      method: "POST",
-      url: "/v1/processing/transcription-summary",
-      payload,
-    });
-    const authorized = await app.inject({
-      method: "POST",
-      url: "/v1/processing/transcription-summary",
-      headers: { authorization: `Bearer ${config.authToken}` },
-      payload,
-    });
-    await app.close();
-
-    expect(unauthorized.statusCode).toBe(401);
-    expect(authorized.statusCode).toBe(200);
-    const response = authorized.json<{ content: string }>();
-    expect(JSON.parse(response.content)).toMatchObject({
-      title: expect.any(String),
-      overview: expect.any(String),
-      keyPoints: expect.any(Array),
-      decisions: expect.any(Array),
-      actionItems: expect.any(Array),
-      topics: expect.any(Array),
-    });
-  });
-
-  it("persists and serves the complete Context Room snapshot", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const empty = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
-    const saved = await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{
-          id: "room-active",
-          title: "活动 Room",
-          kind: "项目",
-          data: { id: "room-active", title: "活动 Room", materials: [] },
-        }],
-        deletedRooms: [{
-          id: "room-deleted",
-          title: "回收站 Room",
-          kind: "主题",
-          data: { id: "room-deleted", title: "回收站 Room", materials: ["资料"] },
-        }],
-      },
-    });
-    const loaded = await app.inject({ method: "GET", url: "/v1/context-rooms", headers });
-    await app.close();
-
-    expect(empty.statusCode).toBe(200);
-    expect(empty.json()).toEqual({ rooms: [], deletedRooms: [], updatedAt: null, duplicateOpenCount: 0 });
-    expect(saved.statusCode).toBe(200);
-    expect(loaded.json()).toMatchObject({
-      rooms: [{ id: "room-active", title: "活动 Room", kind: "项目" }],
-      deletedRooms: [{ id: "room-deleted", title: "回收站 Room", kind: "主题" }],
-      updatedAt: expect.any(String),
-    });
-  });
-
-  it("requires duplicate review before creation and runs a confirmed irreversible merge", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-existing", title: "校园生活", kind: "主题", data: { id: "room-existing", title: "校园生活" } }],
-        deletedRooms: [],
-      },
-    });
-
-    const review = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/duplicate-check",
-      headers,
-      payload: { title: "校园生活", description: "校园资料" },
-    });
-    const blocked = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms",
-      headers,
-      payload: { title: "校园生活", description: "校园资料" },
-    });
-    const reviewBody = review.json<{ overrideToken: string; candidates: unknown[] }>();
-    const created = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms",
-      headers,
-      payload: { title: "校园生活", description: "校园资料", duplicateOverrideToken: reviewBody.overrideToken },
-    });
-    const createdRoomId = created.json<{ room: { id: string } }>().room.id;
-    const preview = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/merge-preview",
-      headers,
-      payload: { sourceAId: createdRoomId, sourceBId: "room-existing" },
-    });
-    const previewHash = preview.json<{ previewHash: string }>().previewHash;
-    const started = await app.inject({
-      method: "POST",
-      url: "/v1/context-rooms/merge-operations",
-      headers,
-      payload: {
-        sourceAId: createdRoomId,
-        sourceBId: "room-existing",
-        title: "合并后的校园生活",
-        previewHash,
-        idempotencyKey: "server-merge-test",
-      },
-    });
-    const operationId = started.json<{ id: string }>().id;
-    let operation: { status: string; commitReached: boolean } = { status: "queued", commitReached: false };
-    for (let attempt = 0; attempt < 100 && operation.status !== "completed"; attempt += 1) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
-      operation = (await app.inject({
-        method: "GET",
-        url: `/v1/context-rooms/merge-operations/${operationId}`,
-        headers,
-      })).json<typeof operation>();
-    }
-    const snapshot = (await app.inject({ method: "GET", url: "/v1/context-rooms", headers })).json<{
-      rooms: Array<{ id: string }>;
-    }>();
-    await app.close();
-
-    expect(review.statusCode).toBe(200);
-    expect(reviewBody.candidates).toHaveLength(1);
-    expect(blocked.statusCode).toBe(409);
-    expect(blocked.json()).toMatchObject({ error: "duplicate_review_required" });
-    expect(created.statusCode).toBe(200);
-    expect(preview.statusCode).toBe(200);
-    expect(started.statusCode).toBe(200);
-    expect(operation).toMatchObject({ status: "completed", commitReached: true });
-    // 新建式合并：两个旧 Room 双双退役，快照只剩承载内容的新 Room。
-    const snapshotRoomIds = snapshot.rooms.map((room) => room.id);
-    expect(snapshotRoomIds).toHaveLength(1);
-    expect(snapshotRoomIds).not.toContain(createdRoomId);
-    expect(snapshotRoomIds).not.toContain("room-existing");
   });
 
   it("supports the complete authenticated document CRUD lifecycle", async () => {
@@ -526,7 +222,7 @@ describe("gateway server", () => {
     });
     const listedAfterCreate = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     const readAfterCreate = await app.inject({
@@ -556,12 +252,12 @@ describe("gateway server", () => {
     });
     const listedAfterDelete = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     const listedTrash = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete&trashed=true",
+      url: "/v1/documents?trashed=true",
       headers,
     });
     const restored = await app.inject({
@@ -571,7 +267,7 @@ describe("gateway server", () => {
     });
     const listedAfterRestore = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete",
+      url: "/v1/documents",
       headers,
     });
     await app.inject({
@@ -607,18 +303,18 @@ describe("gateway server", () => {
     });
     const emptied = await app.inject({
       method: "DELETE",
-      url: "/v1/documents/trash?roomId=room-delete",
+      url: "/v1/documents/trash",
       headers,
     });
     const trashAfterEmpty = await app.inject({
       method: "GET",
-      url: "/v1/documents?roomId=room-delete&trashed=true",
+      url: "/v1/documents?trashed=true",
       headers,
     });
     await app.close();
 
     expect(imported.statusCode).toBe(201);
-    expect(imported.json()).toMatchObject({ id: "document-to-delete", roomId: "room-delete", version: 1 });
+    expect(imported.json()).toMatchObject({ id: "document-to-delete", roomId: null, version: 1 });
     expect(listedAfterCreate.json()).toEqual([expect.objectContaining({ id: "document-to-delete" })]);
     expect(readAfterCreate.json()).toMatchObject({ id: "document-to-delete", version: 1 });
     expect(updated.statusCode).toBe(200);
@@ -645,15 +341,6 @@ describe("gateway server", () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-test", title: "MCP Room", data: {} }],
-        deletedRooms: [],
-      },
-    });
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",
@@ -667,7 +354,7 @@ describe("gateway server", () => {
       payload: {
         prompt: "列出当前文档",
         idempotencyKey: "mcp-http-run",
-        context: { selectedRoomId: "room-test" },
+        context: { selectedRoomId: "room-test", rooms: [{ id: "room-test", title: "MCP Room" }] },
       },
     })).json<AgentRun>();
     const trusted = (await app.inject({
@@ -710,21 +397,9 @@ describe("gateway server", () => {
     expect(initialize.statusCode).toBe(200);
     expect(initialize.json()).toMatchObject({ jsonrpc: "2.0", id: 1 });
     expect(initialized.statusCode).toBe(202);
-    expect(tools.json().result.tools.map((tool: { name: string }) => tool.name)).toEqual([
-      "context_room_list",
-      "context_room_create",
-      "context_room_document_list",
-      "context_room_document_read",
-      "context_room_patch_begin",
-      "context_room_patch_hunk",
-      "context_room_patch_commit",
-      "context_room_patch_abort",
-      "context_room_write_begin",
-      "context_room_write_append",
-      "context_room_write_commit",
-      "context_room_write_abort",
-      "context_room_document_comment_add",
-    ]);
+    // Markdown 文稿工具链已下线（2026-11）；无 officeBridge 的测试配置下能力注册表为空，
+    // 这里只验证 MCP 协议通路（initialize → initialized → tools/list 正常返回数组）。
+    expect(Array.isArray(tools.json().result.tools)).toBe(true);
   });
 
   it("is compatible with the official Streamable HTTP MCP client", async () => {
@@ -732,15 +407,6 @@ describe("gateway server", () => {
     const app = await createServer(config);
     const address = await app.listen({ host: "127.0.0.1", port: 0 });
     const headers = { authorization: `Bearer ${config.authToken}` };
-    await app.inject({
-      method: "PUT",
-      url: "/v1/context-rooms/snapshot",
-      headers,
-      payload: {
-        rooms: [{ id: "room-client-test", title: "Client Room", data: {} }],
-        deletedRooms: [],
-      },
-    });
     const session = (await app.inject({
       method: "POST",
       url: "/v1/agent/sessions",
@@ -754,7 +420,10 @@ describe("gateway server", () => {
       payload: {
         prompt: "列出当前文档",
         idempotencyKey: "mcp-client-run",
-        context: { selectedRoomId: "room-client-test" },
+        context: {
+          selectedRoomId: "room-client-test",
+          rooms: [{ id: "room-client-test", title: "Client Room" }],
+        },
       },
     })).json<AgentRun>();
     const trusted = (await app.inject({
@@ -772,21 +441,8 @@ describe("gateway server", () => {
     try {
       await client.connect(transport as unknown as Parameters<Client["connect"]>[0]);
       const listed = await client.listTools();
-      expect(listed.tools.map((tool) => tool.name)).toEqual([
-        "context_room_list",
-        "context_room_create",
-        "context_room_document_list",
-        "context_room_document_read",
-        "context_room_patch_begin",
-        "context_room_patch_hunk",
-        "context_room_patch_commit",
-        "context_room_patch_abort",
-        "context_room_write_begin",
-        "context_room_write_append",
-        "context_room_write_commit",
-        "context_room_write_abort",
-        "context_room_document_comment_add",
-      ]);
+      // 同上：工具面依赖 officeBridge，协议兼容性以 tools/list 正常应答为准。
+      expect(Array.isArray(listed.tools)).toBe(true);
     } finally {
       await client.close();
       await app.close();
@@ -853,47 +509,25 @@ describe("gateway server", () => {
           apiKey: "user-key",
           api: "openai-completions",
         },
-        knowledge: {
-          embedding: {
-            provider: "openai-compatible",
-            model: "text-embedding-test",
-            baseUrl: "http://127.0.0.1:9/v1",
-            apiKey: "embed-key",
-          },
-        },
         vlm: {
           provider: "openai-compatible",
           model: "vlm-test-model",
           baseUrl: "http://127.0.0.1:9/v1",
           apiKey: "vlm-key",
         },
-        asr: {
-          provider: "aliyun",
-          model: "asr-test-model",
-          baseUrl: "https://dashscope.aliyuncs.com/api/v1",
-          apiKey: "asr-key",
-          oss: {
-            region: "oss-cn-beijing",
-            bucket: "test-bucket",
-            accessKeyId: "ak",
-            accessKeySecret: "sk",
-          },
-        },
       },
     });
     expect(saved.statusCode).toBe(200);
     expect(saved.json()).toMatchObject({ primaryConfigured: true, selectedSource: "user" });
 
-    // embedding apiKey 落库后在快照中脱敏（********），provider/model 不脱敏。
+    // 槽位 apiKey 落库后在快照中脱敏（********），provider/model 不脱敏。
     const snapshot = await app.inject({ method: "GET", url: "/v1/runtime-config", headers });
     expect(snapshot.statusCode).toBe(200);
     expect(snapshot.json()).toMatchObject({
       config: {
-        knowledge: {
-          embedding: {
-            model: "text-embedding-test",
-            apiKey: "********",
-          },
+        vlm: {
+          model: "vlm-test-model",
+          apiKey: "********",
         },
       },
     });
@@ -906,7 +540,7 @@ describe("gateway server", () => {
       primaryConfigured: true,
       config: {
         primary: { apiKey: "user-key" },
-        knowledge: { embedding: { apiKey: "embed-key" } },
+        vlm: { apiKey: "vlm-key" },
       },
     });
 
@@ -921,35 +555,24 @@ describe("gateway server", () => {
     expect(body.valid).toBe(false);
     expect(body.error).toContain("runtime_config_test_unreachable");
 
-    // 端点恢复 2xx → valid=true（primary/vlm 走 /chat/completions，embedding
-    // 走 /embeddings 并返回向量维度）。
-    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
-      const url = String(input);
-      if (url.endsWith("/embeddings")) {
-        return new Response(
-          JSON.stringify({ data: [{ embedding: Array.from({ length: 8 }, () => 0.1) }] }),
-          { status: 200 },
-        );
-      }
-      return new Response("{}", { status: 200 });
-    }));
+    // 端点恢复 2xx → valid=true（primary/vlm 都走 /chat/completions）。
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     const ok = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
     vi.unstubAllGlobals();
     expect(ok.statusCode).toBe(200);
     expect(ok.json()).toMatchObject({
       valid: true,
-      embedding: { valid: true, dimensions: 8 },
       vlm: { valid: true },
     });
 
     await app.inject({ method: "DELETE", url: "/v1/runtime-config/user", headers });
-    // 清空 user source 后 embedding 未配置 → /test 不带 embedding 字段。
+    // 清空 user source 后 vlm 未配置 → /test 不带 vlm 字段。
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     const cleared = await app.inject({ method: "POST", url: "/v1/runtime-config/test", headers, payload: {} });
     vi.unstubAllGlobals();
-    const clearedBody = cleared.json<{ valid: boolean; embedding?: unknown }>();
+    const clearedBody = cleared.json<{ valid: boolean; vlm?: unknown }>();
     expect(clearedBody.valid).toBe(false);
-    expect(clearedBody.embedding).toBeUndefined();
+    expect(clearedBody.vlm).toBeUndefined();
     await app.close();
   });
 });

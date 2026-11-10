@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import Fastify from "fastify";
 import type { TypeBoxTypeProvider } from "@fastify/type-provider-typebox";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { FilesService, type FileDeletionHooks } from "../src/modules/files/service.js";
+import { FilesService } from "../src/modules/files/service.js";
 import { filesRoutes } from "../src/modules/files/routes.js";
 import { contentHashOf, fileIdOf, storageRelPath } from "../src/modules/files/storage.js";
 
@@ -112,28 +112,15 @@ describe("统一上传（闸1/版本更新）", () => {
 });
 
 describe("删除级联与对象库 GC", () => {
-  it("删除：级联钩子触发、登记行随删、blob 与解析产物回收", async () => {
+  it("删除：登记行随删、blob 与解析产物回收", async () => {
     const test = await serviceForTest();
     const buffer = Buffer.from("# 要删的", "utf8");
     const uploaded = await test.service.upload({ filename: "待删.md", buffer });
     const parsedId = test.service.ensureParsed(uploaded.contentHash, "# 要删的");
     test.service.touchParsed(uploaded.fileId, parsedId);
 
-    const hookCalls: string[] = [];
-    const hooks: FileDeletionHooks = {
-      requestKnowledgeCleanup: (fileId) => hookCalls.push(`knowledge:${fileId}`),
-      deleteMemoryDocuments: async (fileId) => {
-        hookCalls.push(`memory:${fileId}`);
-        return ["doc-1"];
-      },
-    };
-    const result = await test.service.deleteFile(uploaded.fileId, hooks);
-    expect(result).toMatchObject({
-      knowledgeCleanup: true,
-      deletedMemoryDocuments: ["doc-1"],
-      blobCollected: true,
-    });
-    expect(hookCalls).toEqual([`knowledge:${uploaded.fileId}`, `memory:${uploaded.fileId}`]);
+    const result = await test.service.deleteFile(uploaded.fileId);
+    expect(result).toMatchObject({ fileId: uploaded.fileId, blobCollected: true });
     expect(test.service.get(uploaded.fileId)).toBeNull();
     await expect(test.exists(storageRelPath(uploaded.contentHash))).resolves.toBe(false);
     expect(test.sqlite.prepare("SELECT COUNT(*) c FROM parsed_contents").get())
@@ -315,27 +302,62 @@ describe("REST /v1/files", () => {
     test.sqlite.close();
   });
 
-  it("DELETE /v1/files 级联钩子生效（knowledge 入队 + memory 删文档）", async () => {
+  it("DELETE /v1/files 删除登记行并回收对象库 blob", async () => {
     const test = await serviceForTest();
     const uploaded = await test.service.upload({
       filename: "级联.md",
       buffer: Buffer.from("# 级联", "utf8"),
     });
     const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
-    const hookCalls: string[] = [];
-    await app.register(filesRoutes(test.service, {
-      requestKnowledgeCleanup: (fileId) => hookCalls.push(`k:${fileId}`),
-      deleteMemoryDocuments: async (fileId) => {
-        hookCalls.push(`m:${fileId}`);
-        return ["doc-x"];
-      },
-    }));
+    await app.register(filesRoutes(test.service));
     const removed = await app.inject({ method: "DELETE", url: `/v1/files/${uploaded.fileId}` });
     expect(removed.statusCode).toBe(200);
-    expect((removed.json() as { deletedMemoryDocuments: string[] }).deletedMemoryDocuments)
-      .toEqual(["doc-x"]);
-    expect(hookCalls).toEqual([`k:${uploaded.fileId}`, `m:${uploaded.fileId}`]);
+    expect(removed.json()).toEqual({ deleted: true, blobCollected: true });
+    expect(test.service.get(uploaded.fileId)).toBeNull();
+    await expect(test.exists(storageRelPath(uploaded.contentHash))).resolves.toBe(false);
     await app.close();
+    test.sqlite.close();
+  });
+});
+
+/**
+ * 2026-10-27 回归：论文排版（reformat / 资料区设为模版）在真实库（1460 个文件）上
+ * 一律报 thesis_source_file_not_found——catalogEntry 当时只扫「最近更新的 200 条」，
+ * 排名之外的文件永远查不到，用户点「排版」没有任何产出。
+ */
+describe("catalogEntry 按 id 直查（不受目录分页窗口限制）", () => {
+  it("排名 200 之外的老文件仍能按 id 取到", async () => {
+    const test = await serviceForTest();
+    // 先传目标文档（最老），再传 205 个新文件把它挤出前 200；initializeCatalog 把
+    // 历史上传迁成 file_entries（listCatalog 的数据源）。
+    const target = await test.service.upload({ filename: "开题与需求、系统设计报告.docx", buffer: Buffer.from("target", "utf8") });
+    for (let index = 0; index < 205; index += 1) {
+      await test.service.upload({ filename: `填充-${index}.docx`, buffer: Buffer.from(`fill-${index}`, "utf8") });
+    }
+    test.service.initializeCatalog();
+
+    const page = test.service.listCatalog(200, 0);
+    expect(page.total).toBeGreaterThan(200);
+    expect(page.items.some((item) => item.id === target.fileId)).toBe(false);
+
+    const entry = test.service.catalogEntry(target.fileId);
+    expect(entry?.id).toBe(target.fileId);
+    expect(entry?.originalName).toBe("开题与需求、系统设计报告.docx");
+    test.sqlite.close();
+  });
+
+  it("不存在的 id 返回 null；软删除的条目不返回", async () => {
+    const test = await serviceForTest();
+    const uploaded = await test.service.upload({ filename: "文档.docx", buffer: Buffer.from("x", "utf8") });
+    test.service.initializeCatalog();
+    expect(test.service.catalogEntry(uploaded.fileId)?.id).toBe(uploaded.fileId);
+    expect(test.service.catalogEntry("file-does-not-exist")).toBeNull();
+
+    // initializeCatalog 迁出的行是 legacy-upload（deleteCatalogEntry 明确不处理这一类），
+    // 这里改成普通上传来源，模拟真实产物文件后再验证删除后的可查性。
+    test.sqlite.prepare("UPDATE file_entries SET source_kind = 'manual-upload' WHERE id = ?").run(uploaded.fileId);
+    await test.service.deleteCatalogEntry(uploaded.fileId);
+    expect(test.service.catalogEntry(uploaded.fileId)).toBeNull();
     test.sqlite.close();
   });
 });

@@ -1,5 +1,7 @@
 # 智能感知数据进入 Wiki 链路
 
+> **已废弃（Phase 2/3 已移除）**：智能感知（reality / perception）数据进入 Wiki 的链路已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 ## 目标
 
 智能感知数据不新建一套 Wiki 写入逻辑，而是复用文件模块已经采用的统一理解引擎：先把源数据确定性转换为 Markdown，再经过策略、Room 路由和 Wiki ingest。

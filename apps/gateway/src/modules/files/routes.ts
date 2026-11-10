@@ -1,11 +1,10 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import multipart from "@fastify/multipart";
 import { Type } from "@sinclair/typebox";
-import { isSupportedUploadFilename, type FileDeletionHooks, type FilesService, type UploadedFileRow } from "./service.js";
+import { isSupportedUploadFilename, type FilesService, type UploadedFileRow } from "./service.js";
 import { MAX_FORMAT_FILE_BYTES } from "./format-registry.js";
-import type { FileClusteringService } from "./clustering-service.js";
 
-/** 上传原件体积上限（与 knowledge file-convert 同源，唯一字节入口统一把关）。 */
+/** 上传原件体积上限：唯一字节入口统一把关。 */
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 export type FileStoreErrorCode = "empty_file" | "too_large" | "unsupported_file_type";
@@ -30,6 +29,7 @@ const CatalogFileDto = Type.Object({
   sourceKind: Type.Union([
     Type.Literal("manual-upload"), Type.Literal("local-folder"),
     Type.Literal("connector"), Type.Literal("migration"), Type.Literal("web-clipper"), Type.Literal("legacy-upload"),
+    Type.Literal("agent-generated"), Type.Literal("artifact-imported"),
   ]),
   sourceLabel: Type.String(),
   relativePath: Type.Union([Type.String(), Type.Null()]),
@@ -44,7 +44,10 @@ const CatalogFileDto = Type.Object({
   ]),
   clusterId: Type.Union([Type.String(), Type.Null()]),
   contentHash: Type.String(),
+  currentVersionId: Type.Union([Type.String(), Type.Null()]),
   parsed: Type.Boolean(),
+  /** 归属工作区 id（资料库/产物库按空间过滤；NULL 归一为 default）。 */
+  workspaceId: Type.String(),
   updatedAt: Type.String(),
 });
 
@@ -106,11 +109,7 @@ function errorOf(code: string): { error: string } {
  * POST /v1/files 是全系统接收文件字节的唯一通道（multipart 或 JSON base64），
  * 幂等（闸1 同名同内容 deduped）；列表/详情/预览/本体路径/改名/删除级联。
  */
-export function filesRoutes(
-  service: FilesService,
-  deletionHooks?: FileDeletionHooks,
-  clustering?: FileClusteringService,
-): FastifyPluginAsyncTypebox {
+export function filesRoutes(service: FilesService): FastifyPluginAsyncTypebox {
   return async (app) => {
     await app.register(multipart, {
       // busboy 触达 fileSize 上限时是"静默截断"而非报错：上限必须高于任何
@@ -140,23 +139,29 @@ export function filesRoutes(
       async () => ({ items: [...service.capabilities()] }),
     );
 
-    app.patch(
-      "/v1/file-clusters/:id",
+    // 系统文件管理器直接打开：按磁盘路径 + 内容指纹复用已入库的「本地文件夹」条目。
+    app.get(
+      "/v1/files/lookup",
       {
         schema: {
           tags: ["files"],
-          params: FileIdParams,
-          body: Type.Object({ sharedTitle: Type.String({ minLength: 1, maxLength: 200 }) }),
+          querystring: Type.Object({
+            path: Type.String({ minLength: 1, maxLength: 4096 }),
+            contentHash: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+          }),
           response: {
-            200: Type.Object({ id: Type.String(), canonicalTitle: Type.String(), titlePinned: Type.Boolean() }),
-            404: Type.Object({ error: Type.String() }),
+            200: Type.Object({
+              file: Type.Union([
+                Type.Object({ fileId: Type.String(), originalName: Type.String() }),
+                Type.Null(),
+              ]),
+            }),
           },
         },
       },
-      async (request, reply) => {
-        const cluster = clustering?.pinTitle(request.params.id, request.body.sharedTitle) ?? null;
-        if (!cluster) return reply.code(404).send(errorOf("cluster_not_found"));
-        return { id: cluster.id, canonicalTitle: cluster.canonicalTitle, titlePinned: cluster.titlePinned };
+      async (request) => {
+        const hit = service.findBySourcePath(request.query.path, request.query.contentHash);
+        return { file: hit ? { fileId: hit.fileEntryId, originalName: hit.originalName } : null };
       },
     );
 
@@ -171,7 +176,7 @@ export function filesRoutes(
         },
       },
       async (request, reply) => {
-        const entry = service.renameCatalogEntry(request.params.id, request.body.displayName);
+        const entry = await service.renameCatalogEntry(request.params.id, request.body.displayName);
         return entry ?? reply.code(404).send(errorOf("file_not_found"));
       },
     );
@@ -184,11 +189,33 @@ export function filesRoutes(
           querystring: Type.Object({
             limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, default: 100 })),
             offset: Type.Optional(Type.Integer({ minimum: 0, default: 0 })),
+            /** 工作区过滤（资料库/产物页）：缺省 = 全库。 */
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
           }),
           response: { 200: Type.Object({ items: Type.Array(CatalogFileDto), total: Type.Integer() }) },
         },
       },
-      async (request) => service.listCatalog(request.query.limit, request.query.offset),
+      async (request) => service.listCatalog(request.query.limit, request.query.offset, {
+        ...(request.query.workspaceId !== undefined ? { workspaceId: request.query.workspaceId } : {}),
+      }),
+    );
+
+    app.get(
+      "/v1/files/catalog/:id",
+      {
+        schema: {
+          tags: ["files"],
+          params: FileIdParams,
+          response: { 200: CatalogFileDto, 404: Type.Object({ error: Type.String() }) },
+        },
+      },
+      async (request, reply) => {
+        // 存量懒回填（P1）：老条目第一次被打开时落到空间 Library，之后就是真文件。
+        await service.backfillLibraryFile(request.params.id).catch(() => undefined);
+        const item = service.catalogEntry(request.params.id);
+        if (!item) return reply.code(404).send(errorOf("file_not_found"));
+        return item;
+      },
     );
 
     app.post(
@@ -206,6 +233,8 @@ export function filesRoutes(
             localItemId: Type.String({ minLength: 1 }),
             relativePath: Type.String({ minLength: 1 }),
             sourceModifiedAt: Type.String(),
+            /** 归属工作区（资料库/产物库按空间隔离）；缺省归 default。 */
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
           }),
           response: {
             202: Type.Object({
@@ -229,6 +258,7 @@ export function filesRoutes(
             localItemId: request.body.localItemId,
             relativePath: request.body.relativePath,
             sourceModifiedAt: new Date(request.body.sourceModifiedAt),
+            ...(request.body.workspaceId ? { workspaceId: request.body.workspaceId } : {}),
           });
           return reply.code(202).send(result);
         } catch (error) {
@@ -268,6 +298,7 @@ export function filesRoutes(
             }),
             400: Type.Object({ error: Type.String() }),
             413: Type.Object({ error: Type.String() }),
+            422: Type.Object({ error: Type.String() }),
           },
         },
       },
@@ -282,14 +313,15 @@ export function filesRoutes(
           sourceKind?: unknown; sourceKey?: unknown; originalName?: unknown;
           provider?: unknown; connectionId?: unknown; localSourceId?: unknown; localItemId?: unknown;
           relativePath?: unknown; sourceUri?: unknown; sourceModifiedAt?: unknown;
-          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown;
+          pipelines?: unknown; roomId?: unknown; clipCaptureId?: unknown; fileEntryId?: unknown;
+          workspaceId?: unknown;
         };
         try {
           metadata = JSON.parse(metadataText) as typeof metadata;
         } catch {
           return reply.code(400).send(errorOf("metadata_invalid"));
         }
-        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper") {
+        if (metadata.sourceKind !== "manual-upload" && metadata.sourceKind !== "connector" && metadata.sourceKind !== "migration" && metadata.sourceKind !== "web-clipper" && metadata.sourceKind !== "agent-generated" && metadata.sourceKind !== "artifact-imported") {
           return reply.code(400).send(errorOf("source_kind_invalid"));
         }
         if (typeof metadata.sourceKey !== "string" || !metadata.sourceKey.trim()) {
@@ -299,7 +331,7 @@ export function filesRoutes(
         const sourceModifiedAt = text(metadata.sourceModifiedAt);
         const parsedModifiedAt = sourceModifiedAt ? new Date(sourceModifiedAt) : undefined;
         const pipelines = metadata.pipelines && typeof metadata.pipelines === "object"
-          ? metadata.pipelines as { room: boolean; wiki: boolean; memory: boolean }
+          ? metadata.pipelines as { room: boolean; wiki: boolean }
           : undefined;
         try {
           const result = await service.importFileStream({
@@ -317,11 +349,14 @@ export function filesRoutes(
             ...(parsedModifiedAt && !Number.isNaN(parsedModifiedAt.getTime()) ? { sourceModifiedAt: parsedModifiedAt } : {}),
             ...(pipelines ? { pipelines } : {}),
             ...(text(metadata.roomId) ? { roomId: text(metadata.roomId) } : {}),
+            ...(text(metadata.workspaceId) ? { workspaceId: text(metadata.workspaceId) } : {}),
+            ...(text(metadata.fileEntryId) ? { fileEntryId: text(metadata.fileEntryId) } : {}),
           });
           return reply.code(202).send(result);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          return reply.code(message.includes("MB 上限") ? 413 : 400).send({ error: message });
+          const code = message === "file_entry_not_found" ? 422 : message.includes("MB 上限") ? 413 : 400;
+          return reply.code(code).send({ error: message });
         }
       },
     );
@@ -551,17 +586,11 @@ export function filesRoutes(
           tags: ["files"],
           querystring: Type.Object({ localSourceId: Type.String({ minLength: 1 }) }),
           response: {
-            200: Type.Object({
-              entries: Type.Integer(),
-              deletedMemoryDocuments: Type.Array(Type.String()),
-            }),
+            200: Type.Object({ entries: Type.Integer() }),
           },
         },
       },
-      async (request) => {
-        const result = await service.purgeLocalSource(request.query.localSourceId, deletionHooks);
-        return { entries: result.entries, deletedMemoryDocuments: result.memoryDeleted };
-      },
+      async (request) => service.purgeLocalSource(request.query.localSourceId),
     );
 
     app.delete(
@@ -573,8 +602,6 @@ export function filesRoutes(
           response: {
             200: Type.Object({
               deleted: Type.Boolean(),
-              knowledgeCleanup: Type.Boolean(),
-              deletedMemoryDocuments: Type.Array(Type.String()),
               blobCollected: Type.Boolean(),
             }),
             404: Type.Object({ error: Type.String() }),
@@ -583,15 +610,10 @@ export function filesRoutes(
       },
       async (request, reply) => {
         const result = service.isCatalogEntry(request.params.id)
-          ? await service.deleteCatalogEntry(request.params.id, deletionHooks)
-          : await service.deleteFile(request.params.id, deletionHooks);
+          ? await service.deleteCatalogEntry(request.params.id)
+          : await service.deleteFile(request.params.id);
         if (!result) return reply.code(404).send(errorOf("file_not_found"));
-        return {
-          deleted: true,
-          knowledgeCleanup: result.knowledgeCleanup,
-          deletedMemoryDocuments: result.deletedMemoryDocuments,
-          blobCollected: result.blobCollected,
-        };
+        return { deleted: true, blobCollected: result.blobCollected };
       },
     );
 

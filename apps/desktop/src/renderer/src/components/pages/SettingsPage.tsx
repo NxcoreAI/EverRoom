@@ -1,76 +1,75 @@
 import {
   Activity,
-  AudioLines,
   Brain,
-  Bell,
-  Camera,
   CalendarClock,
   Cloud,
-  ExternalLink,
   LoaderCircle,
   Languages,
-  LockKeyhole,
   LogOut,
   Laptop,
-  Mic,
-  MonitorSpeaker,
+  Palette,
   Plug,
-  Puzzle,
   RefreshCw,
+  Rocket,
   ShieldCheck,
   ShieldAlert,
   Sparkles,
   Smartphone,
-  Trash2,
   WalletCards,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
+import { useTranslation } from 'react-i18next'
 import { useAccount } from '@/state/AccountContext'
 import { ConnectorModeSection } from '@/components/settings/ConnectorModeSection'
 import { UpdateSection } from '@/components/settings/UpdateSection'
-import { loadRealitySettings, saveRealitySettings, type RealitySettings } from '@/state/realitySettings'
 import {
   loadDocumentCursorCompletionSettings,
   saveDocumentCursorCompletionSettings,
   type DocumentCursorCompletionSettings,
 } from '@/state/documentCursorCompletionSettings'
+import {
+  loadConversationSuggestionSettings,
+  saveConversationSuggestionSettings,
+  type ConversationSuggestionSettings,
+} from '@/state/conversationSuggestionSettings'
 import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
-import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
-import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
-import type { BrowserExtensionStatus } from '../../../../shared/browser-extension'
-import type { NotificationPreferences } from '../../../../shared/notifications'
+import { formatCredits, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
+import type { AccountKeyringStatus, CloudDevice } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
 import { useLocale, type AppLocale, type Translate } from '@/i18n/LocaleContext'
-import { LocalModelSettingsSection } from '@/components/settings/LocalModelSettingsSection'
 import { LocalAgentSettingsSection } from '@/components/settings/LocalAgentSettingsSection'
 import { UsageAndBudgetSettingsSection } from '@/components/settings/UsageAndBudgetSettingsSection'
+import { AppearanceSettingsSection } from '@/components/settings/AppearanceSettingsSection'
 import { RuntimeConfigSettingsSection } from '@/components/settings/RuntimeConfigSettingsSection'
 import { RedeemCodeField, useRedeemCode } from '@/components/account/RedeemCodeField'
 import { QrLoginPanel } from '@/components/account/QrLoginPanel'
+import { PlanUpgradeModal } from '@/workbench/shell/PlanUpgradeModal'
+import { TopupModal } from '@/workbench/shell/TopupModal'
+
 import './SettingsPage.css'
 
-const SETTINGS_NAV = [
-  { id: 'settings-account', label: 'surface:settings.navigationAccount', description: 'surface:settings.navigationAccountDescription', icon: Cloud },
-  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', description: 'surface:settings.connectorModeNavDescription', icon: Plug },
-  { id: 'settings-notifications', label: 'surface:settings.notifications', description: 'surface:settings.notificationsDescription', icon: Bell },
-  { id: 'settings-models', label: 'surface:settings.navigationModels', description: 'surface:settings.navigationModelsDescription', icon: Brain },
-  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', description: 'surface:settings.navigationRuntimeConfigDescription', icon: ShieldCheck },
-  { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', description: 'surface:settings.usageAndBudgetsDescription', icon: Activity },
-  { id: 'settings-extensions', label: 'surface:settings.extensions', description: 'surface:settings.extensionsDescription', icon: Puzzle },
-  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', description: 'surface:settings.onboardingSetupDescription', icon: Sparkles },
-  { id: 'settings-reality', label: 'surface:settings.realityPerception', description: 'surface:settings.navigationRealityDescription', icon: AudioLines },
-  { id: 'settings-capture', label: 'surface:settings.windowScreenshots', description: 'surface:settings.navigationCaptureDescription', icon: Camera },
-  { id: 'settings-editor', label: 'surface:settings.documentEditing', description: 'surface:settings.navigationEditorDescription', icon: Sparkles },
-  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', description: 'surface:settings.chooseTheDisplayLanguageForEverroom', icon: Languages },
-  { id: 'settings-update', label: 'surface:settings.navigationUpdate', description: 'surface:settings.navigationUpdateDescription', icon: RefreshCw },
-  { id: 'settings-data', label: 'surface:settings.dataManagement', description: 'surface:settings.clearAllUserDataDescription', icon: Trash2 },
+type SettingsNavItem = { id: string; label: string; icon: typeof Cloud }
+
+/** 分区顺序：先「你是谁」，再「套餐与积分」，再「界面长什么样」，然后是能力（连接 / 模型 / 用量），最后是维护动作。 */
+const SETTINGS_NAV: SettingsNavItem[] = [
+  { id: 'settings-account', label: 'surface:settings.navigationAccount', icon: Cloud },
+  { id: 'settings-plan', label: 'surface:settings.navigationPlan', icon: WalletCards },
+  { id: 'settings-appearance', label: 'surface:settings.appearanceTitle', icon: Palette },
+  { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
+  { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
+  { id: 'settings-connector-mode', label: 'surface:settings.connectorModeTitle', icon: Plug },
+  { id: 'settings-models', label: 'surface:settings.navigationModels', icon: Brain },
+  { id: 'settings-runtime-config', label: 'surface:settings.navigationRuntimeConfig', icon: ShieldCheck },
+  { id: 'settings-token-usage', label: 'surface:settings.usageAndBudgets', icon: Activity },
+  { id: 'settings-onboarding', label: 'surface:settings.onboardingSetupTitle', icon: Rocket },
+  { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
 ]
 
-type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'clear-data' | 'admission' | null
+type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'admission' | null
 type PairingSession = { pairingSessionId: string; pairingToken?: string; status: string; confirmationCode: string; expiresAt: string; origin?: string; targetDeviceId?: string | null; targetDeviceName?: string | null; targetPublicKey?: string | null }
 
 function formatMinutes(seconds: number, locale: AppLocale, t: Translate, rounding: 'down' | 'up' = 'down'): string {
@@ -108,70 +107,40 @@ function subscriptionStatusLabel(status: string, t: Translate): string {
   return t(labels[status] ?? status)
 }
 
-function formatSyncTime(value: string | null, locale: AppLocale, t: Translate): string {
-  if (!value) return t('surface:settings.notSyncedYet')
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return t('surface:settings.syncTimeUnknown')
-  return t('surface:settings.lastSyncTime', { time: date.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' }) })
-}
-
-export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?: () => void }) {
+export function SettingsPage({
+  onStartFullOnboarding,
+  hideHeader = false,
+  section = null,
+}: {
+  onStartFullOnboarding?: () => void
+  /** 嵌进工作台主页时由外壳提供导航，隐藏组件自带的页头（避免与侧栏/分区导航重复）。 */
+  hideHeader?: boolean
+  /** 外部指定要打开的分区（如账号菜单直达「账号与同步」）。 */
+  section?: string | null
+}) {
   const { locale, preference, setLocale, t } = useLocale()
   const { account, refreshAccount, setAccount } = useAccount()
   const [pending, setPending] = useState<PendingAction>(null)
-  const [realitySettings, setRealitySettings] = useState<RealitySettings>(loadRealitySettings)
   const [cursorCompletionSettings, setCursorCompletionSettings] =
     useState<DocumentCursorCompletionSettings>(loadDocumentCursorCompletionSettings)
+  const [conversationSuggestionSettings, setConversationSuggestionSettings] =
+    useState<ConversationSuggestionSettings>(loadConversationSuggestionSettings)
   const [keyring, setKeyring] = useState<AccountKeyringStatus | null>(null)
-  const [syncedCount, setSyncedCount] = useState<number | null>(null)
-  const [syncedAudioCount, setSyncedAudioCount] = useState<number | null>(null)
-  const [lastSyncAt, setLastSyncAt] = useState<string | null>(() => {
-    try {
-      return window.localStorage.getItem('everroom:last-private-sync-at')
-    } catch {
-      return null
-    }
-  })
   const [devices, setDevices] = useState<CloudDevice[]>([])
   const [pairing, setPairing] = useState<PairingSession | null>(null)
   const [pairingQr, setPairingQr] = useState<string | null>(null)
   const [pairingError, setPairingError] = useState<string | null>(null)
-  const [screenCaptureStatus, setScreenCaptureStatus] = useState<WindowScreenshotStatus | null>(null)
-  const [screenCaptureInterval, setScreenCaptureInterval] = useState(5)
-  const [screenCaptureBusy, setScreenCaptureBusy] = useState(false)
-  const [perceptionSettings, setPerceptionSettings] = useState<PerceptionSettings | null>(null)
-  const [perceptionBusy, setPerceptionBusy] = useState(false)
-  const [lastScreenshotPath, setLastScreenshotPath] = useState<string | null>(null)
-  const [activeSetting, setActiveSetting] = useState(SETTINGS_NAV[0].id)
-  const [extensionStatus, setExtensionStatus] = useState<BrowserExtensionStatus | null>(null)
-  const [extensionBusy, setExtensionBusy] = useState(false)
-  const [extensionError, setExtensionError] = useState<string | null>(null)
-  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
-  const [notificationBusy, setNotificationBusy] = useState(false)
+  const [activeSetting, setActiveSetting] = useState<string>(section ?? SETTINGS_NAV[0].id)
   const [aiRelayStatus, setAiRelayStatus] = useState<AiGatewayStatus | null>(null)
+  const refreshAiRelay = useRef<(() => void) | null>(null)
   const redeemCode = useRedeemCode()
+  const [qrActive, setQrActive] = useState(false)
+  const [planModalOpen, setPlanModalOpen] = useState(false)
+  const [topupModalOpen, setTopupModalOpen] = useState(false)
 
   useEffect(() => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    let cancelled = false
-    const refresh = async () => {
-      try {
-        const status = await api.status()
-        if (!cancelled) setExtensionStatus(status)
-      } catch (error) {
-        if (!cancelled) setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionUnavailable'))
-      }
-    }
-    void refresh()
-    const removeStatus = api.onStatus((status) => setExtensionStatus(status))
-    const timer = window.setInterval(() => void refresh(), 2_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-      removeStatus()
-    }
-  }, [t])
+    if (section) setActiveSetting(section)
+  }, [section])
 
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -205,18 +174,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
   }, [account?.authenticated, account?.user?.id])
 
-  useEffect(() => {
-    if (!account?.authenticated || !window.nxcore) {
-      setNotificationPreferences(null)
-      return
-    }
-    let cancelled = false
-    void window.nxcore.notifications.preferences()
-      .then((preferences) => { if (!cancelled) setNotificationPreferences(preferences) })
-      .catch(() => undefined)
-    return () => { cancelled = true }
-  }, [account?.authenticated, account?.user?.id])
-
   // LLM 中转余量：随订阅区拉取一次 + 额度尽事件即时刷新（保持最小 UI，无独立页面）。
   useEffect(() => {
     if (!account?.authenticated || !window.nxcore) {
@@ -224,37 +181,17 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       return
     }
     let cancelled = false
-    const refresh = () => {
+    refreshAiRelay.current = () => {
       void window.nxcore?.aiRelay.status()
         .then((status) => { if (!cancelled) setAiRelayStatus(status) })
         .catch(() => undefined)
     }
-    refresh()
+    refreshAiRelay.current()
     const removeListener = window.nxcore.aiRelay.onEvent((event) => {
-      if (event.type === 'quota-exhausted' || event.type === 'fallback-restored') refresh()
+      if (event.type === 'quota-exhausted') refreshAiRelay.current?.()
     })
-    return () => { cancelled = true; removeListener() }
+    return () => { cancelled = true; refreshAiRelay.current = null; removeListener() }
   }, [account?.authenticated, account?.user?.id])
-
-  const updateNotificationPreference = (input: Partial<NotificationPreferences>) => {
-    if (!window.nxcore || notificationBusy) return
-    setNotificationBusy(true)
-    void window.nxcore.notifications.updatePreferences(input)
-      .then(setNotificationPreferences)
-      .finally(() => setNotificationBusy(false))
-  }
-
-  useEffect(() => {
-    const removeListener = window.nxcore?.transcriptions.onSyncCompleted(({ completedAt }) => {
-      setLastSyncAt(completedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', completedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
-    })
-    return () => removeListener?.()
-  }, [])
 
   useEffect(() => {
     if (!pairing || !window.nxcore) return
@@ -308,32 +245,18 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     } finally { setPending(null) }
   }
 
-  useEffect(() => {
-    if (!window.nxcore) return
-    void Promise.all([
-      window.nxcore.screenCapture.status(),
-      window.nxcore.screenCapture.perceptionSettings(),
-    ])
-      .then(([status, settings]) => {
-        setScreenCaptureStatus(status)
-        setScreenCaptureInterval(Math.max(1, Math.round(status.intervalMs / 60_000)))
-        setPerceptionSettings(settings)
-      })
-      .catch(() => undefined)
-  }, [])
-
-  const updateRealitySettings = (patch: Partial<RealitySettings>) => {
-    setRealitySettings((current) => {
-      const next = { ...current, ...patch }
-      saveRealitySettings(next)
-      return next
-    })
-  }
-
   const updateCursorCompletionSettings = (patch: Partial<DocumentCursorCompletionSettings>) => {
     setCursorCompletionSettings((current) => {
       const next = { ...current, ...patch }
       saveDocumentCursorCompletionSettings(next)
+      return next
+    })
+  }
+
+  const updateConversationSuggestionSettings = (patch: Partial<ConversationSuggestionSettings>) => {
+    setConversationSuggestionSettings((current) => {
+      const next = { ...current, ...patch }
+      saveConversationSuggestionSettings(next)
       return next
     })
   }
@@ -351,7 +274,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         redeemCode.reset()
       }
       try {
-        window.sessionStorage.setItem('everroom:post-login-memory-check', '1')
         window.sessionStorage.setItem('everroom:post-login-room-check', '1')
       } catch {
         // Session storage is optional; mounted gates still receive the event.
@@ -404,155 +326,23 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
     }
   }
 
-  const syncPrivate = async () => {
-    if (!window.nxcore) return
-    setPending('sync')
-    try {
-      const [result, audio] = await Promise.all([
-        window.nxcore.transcriptions.syncPrivate(),
-        window.nxcore.privateAudio.list(0),
-      ])
-      setKeyring(result.status)
-      setSyncedCount(result.synced)
-      setSyncedAudioCount(audio.assets.filter((asset) => asset.status === 'uploaded').length)
-      const syncedAt = new Date().toISOString()
-      setLastSyncAt(syncedAt)
-      try {
-        window.localStorage.setItem('everroom:last-private-sync-at', syncedAt)
-      } catch {
-        // Storage may be unavailable in a restricted renderer context.
-      }
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setPending(null)
-    }
-  }
-
-  const updateScreenCapture = async (enabled: boolean) => {
-    if (!window.nxcore) return
-    setScreenCaptureBusy(true)
-    try {
-      const status = enabled
-        ? await window.nxcore.screenCapture.start(screenCaptureInterval * 60_000)
-        : await window.nxcore.screenCapture.stop()
-      setScreenCaptureStatus(status)
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setScreenCaptureBusy(false)
-    }
-  }
-
-  const updateOnlineVlm = async (enabled: boolean) => {
-    if (!window.nxcore || !perceptionSettings) return
-    setPerceptionBusy(true)
-    try {
-      const settings = await window.nxcore.screenCapture.updateOnlineVlm(enabled, perceptionSettings.configVersion)
-      setPerceptionSettings(settings)
-    } catch {
-      // The preload request interceptor reports configuration and provider errors globally.
-    } finally {
-      setPerceptionBusy(false)
-    }
-  }
-
-  const captureWindowNow = async () => {
-    if (!window.nxcore) return
-    setScreenCaptureBusy(true)
-    try {
-      const result = await window.nxcore.screenCapture.captureCurrentWindow()
-      if (result.ok) setLastScreenshotPath(result.filePath)
-      const status = await window.nxcore.screenCapture.status()
-      setScreenCaptureStatus(status)
-    } catch {
-      // The preload request interceptor reports the error globally.
-    } finally {
-      setScreenCaptureBusy(false)
-    }
-  }
-
-  const clearAllUserData = async () => {
-    if (!window.nxcore || !window.confirm(t('surface:settings.clearAllUserDataConfirm'))) return
-    setPending('clear-data')
-    try {
-      await window.nxcore.app.clearUserData()
-    } catch {
-      setPending(null)
-    }
-  }
-
   const isBusy = pending !== null
   const accountName = account?.user?.email
     || account?.user?.name
     || account?.user?.phone
     || t('surface:settings.everroomUser')
-
-  const installExtension = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.install())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionInstallFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const createExtensionPairing = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.createPairing())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionPairingFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const revokeExtension = async () => {
-    const api = window.nxcore?.browserExtension
-    if (!api) return
-    setExtensionBusy(true)
-    setExtensionError(null)
-    try {
-      setExtensionStatus(await api.revoke())
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionRevokeFailed'))
-    } finally {
-      setExtensionBusy(false)
-    }
-  }
-
-  const openExtensionDirectory = async () => {
-    try {
-      await window.nxcore?.browserExtension.openDirectory()
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionDirectoryFailed'))
-    }
-  }
-
-  const openBrowserExtensionsPage = async () => {
-    try {
-      await window.nxcore?.browserExtension.openBrowserPage()
-    } catch (error) {
-      setExtensionError(error instanceof Error ? error.message : t('surface:settings.extensionBrowserPageFailed'))
-    }
-  }
+  // 第二行只放与主行不同的真实身份（姓名/手机号/邮箱），没有就不显示。
+  const accountDetail = [account?.user?.name, account?.user?.phone, account?.user?.email]
+    .filter((value): value is string => Boolean(value))
+    .find(value => value !== accountName) ?? null
 
   return (
-    <div className="page settings-page">
-      <PageHeader title={t('surface:settings.settings')} />
+    <div className={hideHeader ? 'page settings-page is-embedded' : 'page settings-page'}>
+      {hideHeader ? null : <PageHeader title={t('surface:settings.settings')} />}
 
       <div className="settings-layout">
         <nav className="settings-navigation" aria-label={t('surface:settings.settingsNavigation')}>
-          {SETTINGS_NAV.map(({ id, label, description, icon: Icon }) => (
+          {SETTINGS_NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
@@ -564,7 +354,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               <span className="settings-navigation-icon"><Icon aria-hidden="true" /></span>
               <span>
                 <strong>{t(label)}</strong>
-                <small>{t(description)}</small>
               </span>
             </button>
           ))}
@@ -572,18 +361,18 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
         <main className="settings-content" data-active-setting={activeSetting}>
 
+      <AppearanceSettingsSection />
+
       <section id="settings-interface" className="reality-settings-section settings-anchor-section" aria-labelledby="interface-language-settings-title">
         <header>
           <span><Languages aria-hidden="true" /></span>
           <div>
             <h2 id="interface-language-settings-title">{t('surface:settings.interfaceLanguage')}</h2>
-            <p>{t('surface:settings.chooseTheDisplayLanguageForEverroom')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.interfaceLanguageLabel')}</strong>
-            <small>{t('surface:settings.changesApplyImmediatelyAndAreSavedOnThis')}</small>
           </div>
           <div className="segmented-control" aria-label={t('surface:settings.interfaceLanguageLabel')}>
             <button
@@ -614,38 +403,16 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
         </div>
       </section>
 
-      <section id="settings-data" className="reality-settings-section settings-anchor-section" aria-labelledby="data-management-settings-title">
-        <header>
-          <span><Trash2 aria-hidden="true" /></span>
-          <div>
-            <h2 id="data-management-settings-title">{t('surface:settings.dataManagement')}</h2>
-            <p>{t('surface:settings.clearAllUserDataDescription')}</p>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.clearAllUserData')}</strong>
-            <small>{t('surface:settings.clearAllUserDataBody')}</small>
-          </div>
-          <button type="button" className="danger-button" disabled={isBusy || !window.nxcore} onClick={() => void clearAllUserData()}>
-            {pending === 'clear-data' ? <LoaderCircle className="spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-            {t('surface:settings.clearAllUserData')}
-          </button>
-        </div>
-      </section>
-
       <section id="settings-onboarding" className="reality-settings-section settings-anchor-section" aria-labelledby="onboarding-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
             <h2 id="onboarding-settings-title">{t('surface:settings.onboardingSetupTitle')}</h2>
-            <p>{t('surface:settings.onboardingSetupBody')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.fullOnboardingActionTitle')}</strong>
-            <small>{t('surface:settings.fullOnboardingActionBody')}</small>
           </div>
           <button type="button" className="primary-button" onClick={onStartFullOnboarding} disabled={!onStartFullOnboarding}>
             <Sparkles aria-hidden="true" />{t('surface:settings.fullOnboardingAction')}
@@ -655,88 +422,12 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
 
       <UpdateSection />
 
-      <section id="settings-extensions" className="reality-settings-section settings-anchor-section browser-extension-settings" aria-labelledby="browser-extension-settings-title">
-        <header>
-          <span><Puzzle aria-hidden="true" /></span>
-          <div>
-            <h2 id="browser-extension-settings-title">{t('surface:settings.extensions')}</h2>
-            <p>{t('surface:settings.extensionsBody')}</p>
-          </div>
-        </header>
-        <div className="browser-extension-status-row">
-          <div className="browser-extension-status-indicator" data-state={extensionStatus?.state ?? 'unavailable'} aria-hidden="true" />
-          <div>
-            <strong>{t(extensionStatus?.state === 'paired'
-              ? 'surface:settings.extensionPaired'
-              : extensionStatus?.state === 'waiting-for-extension'
-                ? 'surface:settings.extensionWaiting'
-                  : 'surface:settings.extensionNotConnected')}</strong>
-            <small>{extensionStatus?.pairedExtensionId
-              ? t('surface:settings.extensionId', { id: extensionStatus.pairedExtensionId })
-              : t('surface:settings.extensionLocalOnly')}</small>
-          </div>
-        </div>
-        {extensionStatus?.pairing ? (
-          <div className="browser-extension-pairing-panel" aria-live="polite">
-            <div>
-              <strong>{t(extensionStatus.state === 'paired'
-                ? 'surface:settings.extensionPaired'
-                : 'surface:settings.extensionPairingInProgress')}</strong>
-              <small>{t('surface:settings.extensionPairingExpires', { time: new Date(extensionStatus.pairing.expiresAt).toLocaleTimeString(locale) })}</small>
-            </div>
-            {extensionStatus.pairing.extensionId ? <code>{extensionStatus.pairing.extensionId}</code> : null}
-          </div>
-        ) : null}
-        <div className="browser-extension-actions">
-          {extensionStatus?.state === 'paired' ? (
-            <button type="button" className="danger-button" disabled={extensionBusy} onClick={() => void revokeExtension()}>
-              {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Puzzle aria-hidden="true" />}
-              {t('surface:settings.revokeExtension')}
-            </button>
-          ) : (
-            <>
-              <button type="button" className="primary-button" disabled={extensionBusy} onClick={() => void installExtension()}>
-                {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Puzzle aria-hidden="true" />}
-                {t(extensionStatus?.mode === 'development'
-                  ? 'surface:settings.loadDevelopmentExtension'
-                  : 'surface:settings.installExtension')}
-              </button>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void createExtensionPairing()}>
-                {extensionBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                {t('surface:settings.connectExtension')}
-              </button>
-            </>
-          )}
-          {extensionStatus?.mode === 'development' ? (
-            <>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void openExtensionDirectory()}>
-                <Puzzle aria-hidden="true" />{t('surface:settings.openExtensionDirectory')}
-              </button>
-              <button type="button" className="secondary-button" disabled={extensionBusy} onClick={() => void openBrowserExtensionsPage()}>
-                <ExternalLink aria-hidden="true" />{t('surface:settings.openBrowserExtensionsPage')}
-              </button>
-            </>
-          ) : null}
-        </div>
-        <p className="browser-extension-note">{t(extensionStatus?.mode === 'development'
-          ? 'surface:settings.extensionsDevelopmentNote'
-          : 'surface:settings.extensionsInstallNote')}</p>
-        {extensionError ? <p className="browser-extension-error" role="alert">{extensionError}</p> : null}
-        {extensionStatus?.lastMessage ? (
-          <div className="browser-extension-last-message">
-            <span>{t('surface:settings.extensionLastMessage')}</span>
-            <code>{extensionStatus.lastMessage.type}</code>
-          </div>
-        ) : null}
-      </section>
-
       <ConnectorModeSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">
         <header className="cloud-account-header">
           <span className="cloud-account-icon"><Cloud aria-hidden="true" /></span>
           <div>
             <h2 id="cloud-account-title">{t('surface:settings.everroomAccount')}</h2>
-            <p>{t(account?.authenticated ? 'surface:settings.cloudServicesConnected' : 'surface:settings.signInToUseSubscriptionQuotaAndHosted')}</p>
           </div>
           <div className="cloud-account-header-actions">
             {account?.authenticated ? (
@@ -766,10 +457,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </span>
               <div className="cloud-account-identity">
                 <strong>{accountName}</strong>
-                <span>{account.user?.name && account.user.name !== accountName
-                  ? account.user.name
-                  : account.user?.phone || t('surface:settings.verifiedByLogto')}</span>
-                <small>{account.apiBaseUrl}</small>
+                {accountDetail ? <span>{accountDetail}</span> : null}
               </div>
               <button className="secondary-button" type="button" disabled={isBusy} onClick={logout}>
                 {pending === 'logout'
@@ -809,82 +497,25 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
               </div>
             ) : null}
 
-            {account.subscription ? (
-              <div className="cloud-subscription">
-                <div className="cloud-subscription-plan">
-                  <span><WalletCards aria-hidden="true" />{t('surface:settings.currentPlan')}</span>
-                  <strong>{account.subscription.planName}</strong>
-                  <small>{subscriptionStatusLabel(account.subscription.status, t)}</small>
-                </div>
-                <div className="cloud-subscription-quota">
-                  <div>
-                    <span>{t('surface:settings.transcriptionRemaining')}</span>
-                    <strong>{formatMinutes(account.subscription.remainingSeconds, locale, t, 'up')}</strong>
-                  </div>
-                  <progress
-                    aria-label={t('surface:settings.transcriptionRemainingThisPeriod')}
-                    max={Math.max(1, account.subscription.quotaSeconds)}
-                    value={Math.min(
-                      Math.max(0, account.subscription.remainingSeconds),
-                      account.subscription.quotaSeconds,
-                    )}
-                  />
-                  <small>
-                    {t('surface:settings.usedUsedTotalTotal', {
-                      used: formatMinutes(account.subscription.usedSeconds, locale, t),
-                      total: formatMinutes(account.subscription.quotaSeconds, locale, t),
-                    })}
-                  </small>
-                </div>
-                {aiRelayStatus?.configured && aiRelayStatus.llmCredits !== null ? (
-                  <div className="cloud-subscription-quota">
-                    <div>
-                      <span>{t('surface:settings.llmRemaining')}</span>
-                      <strong>{formatLlmUsd(aiRelayStatus.remainingCredits, locale)}</strong>
-                    </div>
-                    <progress
-                      aria-label={t('surface:settings.llmRemaining')}
-                      max={Math.max(1, aiRelayStatus.llmCredits)}
-                      value={Math.min(Math.max(0, aiRelayStatus.remainingCredits), aiRelayStatus.llmCredits)}
-                    />
-                    <small>
-                      {aiRelayStatus.remainingCredits <= 0
-                        ? t('surface:settings.llmQuotaExhausted')
-                        : t('surface:settings.usedUsedTotalTotal', {
-                            used: formatLlmUsd(Number(aiRelayStatus.usedCredits || '0'), locale),
-                            total: formatLlmUsd(aiRelayStatus.llmCredits, locale),
-                          })}
-                    </small>
-                  </div>
-                ) : null}
-                <div className="cloud-subscription-period">
-                  <span><CalendarClock aria-hidden="true" />{t('surface:settings.periodEnds')}</span>
-                  <strong>{formatPeriodEnd(account.subscription.periodEnd, locale)}</strong>
-                </div>
-              </div>
-            ) : null}
 
             <div className="cloud-devices" aria-label={t('surface:settings.connectedDevices')}>
               <div className="cloud-devices-heading">
                 <div>
                   <strong>{t('surface:settings.connectedDevices')}</strong>
-                  <small>{devices.length ? t('surface:settings.countDevicesCanSyncPrivateData', { count: devices.length }) : t('surface:settings.loadingDevices')}</small>
                 </div>
                 <Laptop aria-hidden="true" />
               </div>
               {devices.length ? (
                 <div className="cloud-device-list">
                   {devices.map((device) => {
-                    const isCurrent = device.id === account.device?.id
-                    const isOnline = device.status === 'online'
+                    const isOnline = device.connectionStatus === 'online'
                     return (
                       <div key={device.id} className="cloud-device-row">
                         <span className="cloud-device-icon" aria-hidden="true">
                           {device.platform.toLowerCase().includes('ios') ? <Smartphone /> : <Laptop />}
                         </span>
                         <div className="cloud-device-info">
-                          <strong>{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
-                          <span>{device.platform}{device.appVersion ? ` · v${device.appVersion}` : ''}{isCurrent ? ` · ${t('surface:settings.thisDevice')}` : ''}</span>
+                          <strong className="cloud-device-line">{device.name || (device.platform.toLowerCase().includes('ios') ? 'iPhone' : 'Mac')}</strong>
                         </div>
                         <div className="cloud-device-status" data-online={String(isOnline)}>
                           <span aria-hidden="true" />
@@ -897,124 +528,226 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
                 </div>
               ) : <small className="cloud-device-empty">{t('surface:settings.noConnectedDevicesFound')}</small>}
             </div>
-
-            <div className="cloud-keyring" aria-label={t('surface:settings.cloudSync')}>
-              <div className="cloud-keyring-main">
-                <div className="cloud-keyring-heading">
-                  <span><ShieldCheck aria-hidden="true" /></span>
-                  <div>
-                    <strong>{t('surface:settings.cloudSync')}</strong>
-                    <small>{t('surface:settings.syncRecordingsTranscriptsAndSummariesAcrossSignedIn')}</small>
-                  </div>
-                </div>
-                {syncedCount !== null ? <small className="cloud-keyring-result">{t('surface:settings.syncedCountTranscriptsAndFoundAudiocountAudioClips', { count: syncedCount, audioCount: syncedAudioCount ?? 0 })}</small> : null}
-              </div>
-              <div className="cloud-keyring-actions">
-                <button
-                  className="secondary-button cloud-keyring-sync"
-                  type="button"
-                  disabled={isBusy}
-                  onClick={() => void syncPrivate()}
-                >
-                  {pending === 'sync' ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
-                  {t('surface:settings.syncDeviceData')}
-                </button>
-                <small className="cloud-keyring-last-sync">{formatSyncTime(lastSyncAt, locale, t)}</small>
-              </div>
-            </div>
           </div>
         ) : (
           <div className="cloud-login-content">
-            <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)}/>
-            <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
-              <button
-                className="social-login-button apple-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('apple')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'apple'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={appleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithApple')}
-              </button>
-              <button
-                className="social-login-button google-login"
-                type="button"
-                disabled={isBusy}
-                onClick={() => loginWithOidc('google')}
-              >
-                <span className="brand-login-icon" aria-hidden="true">
-                  {pending === 'google'
-                    ? <LoaderCircle className="spin" />
-                    : <img src={googleLogo} alt="" />}
-                </span>
-                {t('surface:settings.signInWithGoogle')}
-              </button>
-            </div>
+            {!qrActive ? (
+              <div className="qr-login-methods" key="cloud-methods">
+                <RedeemCodeField value={redeemCode.code} state={redeemCode.state} open={redeemCode.open} disabled={isBusy} onChange={redeemCode.change} onToggle={()=>redeemCode.setOpen(value=>!value)} onVerify={()=>{void redeemCode.prepare().catch(()=>{})}}/>
+                <div className="social-login-grid" aria-label={t('surface:settings.quickSignIn')}>
+                  <button
+                    className="social-login-button apple-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('apple')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'apple'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={appleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithApple')}
+                  </button>
+                  <button
+                    className="social-login-button google-login"
+                    type="button"
+                    disabled={isBusy}
+                    onClick={() => loginWithOidc('google')}
+                  >
+                    <span className="brand-login-icon" aria-hidden="true">
+                      {pending === 'google'
+                        ? <LoaderCircle className="spin" />
+                        : <img src={googleLogo} alt="" />}
+                    </span>
+                    {t('surface:settings.signInWithGoogle')}
+                  </button>
+                  {pending === 'apple' || pending === 'google' ? (
+                    <button
+                      className="cloud-login-cancel"
+                      type="button"
+                      onClick={() => { void window.nxcore?.account.cancelOidcLogin() }}
+                    >
+                      {t('surface:configGate.cancelLogin')}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
-            <div className="qr-login-entry">
-              <QrLoginPanel account={account} onAccountChanged={setAccount} />
-            </div>
-
-            <p className="oidc-login-note">
-              <LockKeyhole aria-hidden="true" />
-              {pending === 'apple' || pending === 'google'
-                ? t('surface:settings.completeSignInInYourBrowserYouWill')
-                : t('surface:settings.signInIsCompletedSecurelyInYourBrowser')}
-            </p>
-
+            <QrLoginPanel
+              account={account}
+              onAccountChanged={setAccount}
+              onActiveChange={setQrActive}
+              entryDisabled={isBusy}
+            />
           </div>
         )}
       </section>
 
-      {account?.authenticated && notificationPreferences ? (
-        <section id="settings-notifications" className="reality-settings-section settings-anchor-section" aria-labelledby="notification-settings-title">
-          <header>
-            <span><Bell aria-hidden="true" /></span>
-            <div>
-              <h2 id="notification-settings-title">{t('surface:settings.notifications')}</h2>
-              <p>{t('surface:settings.notificationsDescription')}</p>
+      <section id="settings-plan" className="reality-settings-section settings-anchor-section" aria-labelledby="plan-credits-title">
+        <header>
+          <span><WalletCards aria-hidden="true" /></span>
+          <div>
+            <h2 id="plan-credits-title">{t('surface:settings.navigationPlan')}</h2>
+          </div>
+        </header>
+        {account?.authenticated && account.subscription ? (() => {
+          const isProActive = account.subscription.planCode === 'pro' && ['active', 'trialing'].includes(account.subscription.status)
+          /* 字段单位(2026-11-04 后端 87ef144 起):quotaStatus 所有 *Credits
+             字段一律 quota 原值(500000 quota=$1),formatCredits 统一 ÷50000
+             出积分——前端不做任何还原换算。 */
+          const periodRemaining = aiRelayStatus?.planPeriodQuota != null
+            ? Math.min(aiRelayStatus.periodRemainingCredits ?? 0, aiRelayStatus.planPeriodQuota)
+            : (aiRelayStatus?.periodRemainingCredits ?? 0)
+          const planPeriodQuota = aiRelayStatus?.planPeriodQuota ?? periodRemaining
+          const usedQuota = aiRelayStatus?.usedCredits ?? 0
+          const grants = aiRelayStatus?.grants ?? []
+          // 无 grants 明细(旧后端)且充值合计>0:合成一条合计兜底行,不显示"暂无"
+          const grantRows = grants.length
+            ? grants
+            : (aiRelayStatus?.topupRemainingCredits ?? 0) > 0
+              ? [{ id: '__topup_total__', remainingCredits: aiRelayStatus?.topupRemainingCredits ?? 0, amountCredits: aiRelayStatus?.topupRemainingCredits ?? 0, expiresAt: null, source: 'paypal_topup' }]
+              : []
+          const totalRemaining = aiRelayStatus?.remainingCredits ?? 0
+          // 注册赠送独立成行(用完不显示——后端只返回 remaining≠0 的 grant)
+          const signupGrant = grantRows.find((grant) => grant.source === 'signup_bonus') ?? null
+          const purchaseGrants = grantRows.filter((grant) => grant.source !== 'signup_bonus')
+          // 永不过期的充值包合成一行合计;有到期日的各自一行
+          const perpetualGrants = purchaseGrants.filter((grant) => !grant.expiresAt)
+          const expiringGrants = purchaseGrants.filter((grant) => grant.expiresAt)
+          return (
+          <>
+            <div className="reality-setting-row plan-summary-row">
+              <div>
+                <strong>{account.subscription.planName} · {subscriptionStatusLabel(account.subscription.status, t)}</strong>
+                <small>{t('surface:settings.planOverviewTotal', { credits: aiRelayStatus?.configured ? formatCredits(totalRemaining, locale) : '—' })}{t('surface:settings.periodEnds')} {formatPeriodEnd(account.subscription.periodEnd, locale)}</small>
+              </div>
+              <div className="plan-summary-actions">
+                {aiRelayStatus?.configured ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setTopupModalOpen(true)}>
+                    {t('surface:settings.topupBuy')}
+                  </button>
+                ) : null}
+                {!isProActive ? (
+                  <button type="button" className="topup-buy-button" onClick={() => setPlanModalOpen(true)}>
+                    {t('surface:plans.buyPro')}
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </header>
-          {([
-            ['enabled', 'surface:settings.notificationsAll', false],
-            ['iosEnabled', 'surface:settings.notificationsIos', !notificationPreferences.enabled],
-            ['macosEnabled', 'surface:settings.notificationsMacos', !notificationPreferences.enabled],
-          ] as const).map(([key, label, parentDisabled]) => (
-            <div className="reality-setting-row" key={key}>
-              <div><strong>{t(label)}</strong></div>
-              <button
-                type="button"
-                className="settings-toggle"
-                role="switch"
-                aria-checked={notificationPreferences[key]}
-                data-active={String(notificationPreferences[key])}
-                disabled={notificationBusy || parentDisabled}
-                onClick={() => updateNotificationPreference({ [key]: !notificationPreferences[key] })}
-              >
-                <span aria-hidden="true" />
-                {t(notificationPreferences[key] ? 'surface:settings.notificationsOn' : 'surface:settings.notificationsOff')}
-              </button>
+            {aiRelayStatus?.configured ? (
+            <>
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBuiltin')}</span>
+                  <strong>{formatCredits(periodRemaining, locale)} / {formatCredits(planPeriodQuota, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBuiltin')}
+                  max={Math.max(1, planPeriodQuota)}
+                  value={Math.min(Math.max(0, periodRemaining), Math.max(1, planPeriodQuota))}
+                />
+                <small>
+                  {(aiRelayStatus.remainingCredits ?? 0) <= 0
+                    ? t('surface:settings.llmQuotaExhausted')
+                    : t('surface:settings.usedUsedTotalTotal', {
+                      used: formatCredits(usedQuota, locale),
+                      total: formatCredits(planPeriodQuota, locale),
+                    })}
+                </small>
+              </div>
             </div>
-          ))}
-        </section>
-      ) : null}
+            {signupGrant ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewBonus')}</span>
+                  <strong>{formatCredits(signupGrant.remainingCredits, locale)} / {formatCredits(signupGrant.amountCredits, locale)}</strong>
+                </div>
+                <progress
+                  aria-label={t('surface:settings.planOverviewBonus')}
+                  max={Math.max(1, signupGrant.amountCredits)}
+                  value={Math.min(Math.max(0, signupGrant.remainingCredits), Math.max(1, signupGrant.amountCredits))}
+                />
+                <small>
+                  {signupGrant.expiresAt
+                    ? t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(signupGrant.expiresAt, locale) })
+                    : t('surface:settings.topupBalanceNote')}
+                </small>
+              </div>
+            </div>
+            ) : null}
+            {purchaseGrants.length ? (
+            <div className="reality-setting-row plan-credit-row">
+              <div className="plan-credit-row-main">
+                <div className="plan-overview-row-head">
+                  <span>{t('surface:settings.planOverviewPurchased')}</span>
+                  <strong>{formatCredits(purchaseGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)}</strong>
+                </div>
+                {perpetualGrants.length ? (
+                  <div className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), locale)} / {formatCredits(perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0), locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                      value={Math.min(perpetualGrants.reduce((sum, grant) => sum + grant.remainingCredits, 0), perpetualGrants.reduce((sum, grant) => sum + grant.amountCredits, 0))}
+                    />
+                    <small>{t('surface:settings.topupBalanceNote')}</small>
+                  </div>
+                ) : null}
+                {expiringGrants.map((grant) => (
+                  <div key={grant.id} className="plan-overview-grant">
+                    <div className="plan-overview-grant-head">
+                      <span>{t('surface:settings.topupCredits')}</span>
+                      <strong>{formatCredits(grant.remainingCredits, locale)} / {formatCredits(grant.amountCredits, locale)}</strong>
+                    </div>
+                    <progress
+                      aria-label={t('surface:settings.topupCredits')}
+                      max={Math.max(1, grant.amountCredits)}
+                      value={Math.min(Math.max(0, grant.remainingCredits), Math.max(1, grant.amountCredits))}
+                    />
+                    <small>{t('surface:settings.topupGrantExpires', { date: formatPeriodEnd(grant.expiresAt!, locale) })}</small>
+                  </div>
+                ))}
+              </div>
+            </div>
+            ) : null}
+            </>
+            ) : null}
+          </>
+          )
+        })() : (
+          <div className="reality-setting-row">
+            <div><strong>{t('surface:settings.signedOut')}</strong></div>
+          </div>
+        )}
+        <PlanUpgradeModal
+          open={planModalOpen}
+          onOpenChange={setPlanModalOpen}
+          currentPlanCode={account?.subscription?.planCode ?? null}
+          onSettled={() => { void refreshAccountStatus(); refreshAiRelay.current?.() }}
+        />
+        <TopupModal
+          open={topupModalOpen}
+          onOpenChange={setTopupModalOpen}
+          onSettled={() => refreshAiRelay.current?.()}
+        />
+      </section>
 
       <section id="settings-editor" className="reality-settings-section settings-anchor-section" aria-labelledby="document-editing-settings-title">
         <header>
           <span><Sparkles aria-hidden="true" /></span>
           <div>
             <h2 id="document-editing-settings-title">{t('surface:settings.documentEditing')}</h2>
-            <p>{t('surface:settings.manageEditorAssistanceFeatures')}</p>
           </div>
         </header>
         <div className="reality-setting-row">
           <div>
             <strong>{t('surface:settings.smartDocumentCompletion')}</strong>
-            <small>{t('surface:settings.suggestContinuationsAfterTypingDeletingOrMovingThe')}</small>
           </div>
           <button
             className="settings-toggle"
@@ -1032,10 +765,7 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
           </button>
         </div>
         <div className="reality-setting-row">
-          <div>
-            <strong>{t('surface:settings.paragraphCompletion')}</strong>
-            <small>{t('surface:settings.paragraphCompletionDescription')}</small>
-          </div>
+          <div><strong>{t('surface:settings.paragraphCompletion')}</strong></div>
           <button
             className="settings-toggle"
             type="button"
@@ -1052,11 +782,43 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
             {t(cursorCompletionSettings.paragraphEnabled ? 'surface:settings.on' : 'surface:settings.off')}
           </button>
         </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.conversationCompletion')}</strong></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.conversationCompletion')}
+            aria-checked={conversationSuggestionSettings.completionEnabled}
+            data-active={String(conversationSuggestionSettings.completionEnabled)}
+            onClick={() => updateConversationSuggestionSettings({
+              completionEnabled: !conversationSuggestionSettings.completionEnabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {t(conversationSuggestionSettings.completionEnabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
+        <div className="reality-setting-row">
+          <div><strong>{t('surface:settings.starterPrompts')}</strong></div>
+          <button
+            className="settings-toggle"
+            type="button"
+            role="switch"
+            aria-label={t('surface:settings.starterPrompts')}
+            aria-checked={conversationSuggestionSettings.starterPromptsEnabled}
+            data-active={String(conversationSuggestionSettings.starterPromptsEnabled)}
+            onClick={() => updateConversationSuggestionSettings({
+              starterPromptsEnabled: !conversationSuggestionSettings.starterPromptsEnabled,
+            })}
+          >
+            <span aria-hidden="true" />
+            {t(conversationSuggestionSettings.starterPromptsEnabled ? 'surface:settings.on' : 'surface:settings.off')}
+          </button>
+        </div>
       </section>
 
       <div id="settings-models" className="settings-anchor-section settings-models-group">
-        <LocalModelSettingsSection />
-
         <LocalAgentSettingsSection />
 
         <McpSettingsSection />
@@ -1067,106 +829,6 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       <div id="settings-token-usage" className="settings-anchor-section settings-token-usage-group">
         <UsageAndBudgetSettingsSection />
       </div>
-
-      <section id="settings-reality" className="reality-settings-section settings-anchor-section" aria-labelledby="reality-settings-title">
-        <header>
-          <span><AudioLines aria-hidden="true" /></span>
-          <div>
-            <h2 id="reality-settings-title">{t('surface:settings.realityPerception')}</h2>
-            <p>{t('surface:settings.configureAudioSourcesAndTranscriptionForListening')}</p>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionService')}</strong><small>{t('surface:settings.autoModePrefersSaasAfterSignIn')}</small></div>
-          <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionService')}>
-            {([['auto', 'surface:settings.automatic'], ['cloud', 'surface:settings.saas'], ['local', 'surface:settings.local']] as const).map(([value, label]) => (
-              <button key={value} type="button" data-active={String(realitySettings.mode === value)} disabled={value === 'cloud' && !account?.authenticated} onClick={() => updateRealitySettings({ mode: value })}>{t(label)}</button>
-            ))}
-          </div>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.recordingSource')}</strong><small>{t(window.nxcore?.platform === 'win32' ? 'surface:settings.computerAudioUnavailableOnWindows' : 'surface:settings.computerAudioRequiresMacosSystemPermission')}</small></div>
-          <div className="segmented-control reality-source-setting" aria-label={t('surface:settings.realityPerceptionRecordingSource')}>
-            <button type="button" data-active={String(realitySettings.audioSource === 'microphone')} onClick={() => updateRealitySettings({ audioSource: 'microphone' })}><Mic aria-hidden="true" />{t('surface:settings.microphone')}</button>
-            <button type="button" data-active={String(realitySettings.audioSource === 'system')} disabled={window.nxcore?.platform !== 'darwin'} onClick={() => updateRealitySettings({ audioSource: 'system' })}><MonitorSpeaker aria-hidden="true" />{t('surface:settings.computerAudio')}</button>
-          </div>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.transcriptionLanguages')}</strong><small>{t('surface:settings.keepAtLeastOnePrimaryLanguage')}</small></div>
-          <div className="segmented-control" aria-label={t('surface:settings.realityPerceptionTranscriptionLanguages')}>
-            {([['zh', 'surface:settings.chinese'], ['en', 'surface:settings.english']] as const).map(([value, label]) => {
-              const active = realitySettings.languages.includes(value)
-              return <button key={value} type="button" data-active={String(active)} onClick={() => updateRealitySettings({ languages: active && realitySettings.languages.length > 1 ? realitySettings.languages.filter((item) => item !== value) : active ? realitySettings.languages : [...realitySettings.languages, value] })}>{t(label)}</button>
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section id="settings-capture" className="reality-settings-section settings-anchor-section" aria-labelledby="screen-capture-settings-title">
-        <header>
-          <span><Camera aria-hidden="true" /></span>
-          <div>
-            <h2 id="screen-capture-settings-title">{t('surface:settings.windowScreenshots')}</h2>
-            <p>{t('surface:settings.onlyTheCurrentEverroomWindowIsSavedOther')}</p>
-          </div>
-        </header>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.automaticScreenshots')}</strong><small>{t('surface:settings.screenshotsAreSavedInTheProjectScreenshotsFolder')}</small></div>
-          <button
-            className="settings-toggle"
-            type="button"
-            role="switch"
-            aria-checked={Boolean(screenCaptureStatus?.enabled)}
-            disabled={screenCaptureBusy || screenCaptureStatus === null}
-            data-active={String(Boolean(screenCaptureStatus?.enabled))}
-            onClick={() => void updateScreenCapture(!screenCaptureStatus?.enabled)}
-          >
-            <span aria-hidden="true" />
-            {t(screenCaptureStatus?.enabled ? 'surface:settings.on' : 'surface:settings.off')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.visualUnderstanding')}</strong><small>{t('surface:settings.visualUnderstandingDescription')}</small></div>
-          <button
-            className="settings-toggle"
-            type="button"
-            role="switch"
-            aria-label={t('surface:settings.visualUnderstanding')}
-            aria-checked={Boolean(perceptionSettings?.onlineVlmEnabled)}
-            disabled={perceptionBusy || perceptionSettings === null}
-            data-active={String(Boolean(perceptionSettings?.onlineVlmEnabled))}
-            onClick={() => void updateOnlineVlm(!perceptionSettings?.onlineVlmEnabled)}
-          >
-            <span aria-hidden="true" />
-            {t(perceptionSettings?.onlineVlmEnabled ? 'surface:settings.on' : 'surface:settings.off')}
-          </button>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.screenshotInterval')}</strong><small>{t('surface:settings.theMinimumAutomaticScreenshotIntervalIs30Seconds')}</small></div>
-          <select
-            value={screenCaptureInterval}
-            disabled={screenCaptureBusy || screenCaptureStatus === null}
-            onChange={(event) => {
-              const minutes = Number(event.target.value)
-              setScreenCaptureInterval(minutes)
-              if (window.nxcore) {
-                void window.nxcore.screenCapture.updateInterval(minutes * 60_000)
-                  .then(setScreenCaptureStatus)
-                  .catch(() => undefined)
-              }
-            }}
-          >
-            {[1, 5, 10, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{t('surface:settings.minutesMinutes', { minutes })}</option>)}
-          </select>
-        </div>
-        <div className="reality-setting-row">
-          <div><strong>{t('surface:settings.captureNow')}</strong><small>{lastScreenshotPath || t('surface:settings.useThisToConfirmTheCurrentWindowIs')}</small></div>
-          <button className="secondary-button" type="button" disabled={screenCaptureBusy} onClick={() => void captureWindowNow()}>
-            {screenCaptureBusy ? <LoaderCircle className="spin" aria-hidden="true" /> : <Camera aria-hidden="true" />}
-            {t('surface:settings.captureCurrentWindow')}
-          </button>
-        </div>
-      </section>
 
         </main>
       </div>

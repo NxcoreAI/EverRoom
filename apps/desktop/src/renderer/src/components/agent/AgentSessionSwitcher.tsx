@@ -21,7 +21,7 @@ export function AgentSessionSwitcher({
   displayTitle: string
   sessionId: string | null
   sessions: AgentSession[]
-  onCreate: () => Promise<AgentSession>
+  onCreate: () => Promise<void>
   onDelete: (session: AgentSession) => Promise<void>
   onRename: (sessionId: string, title: string) => Promise<void>
   onSelect: (session: AgentSession) => Promise<void>
@@ -54,6 +54,14 @@ export function AgentSessionSwitcher({
   }, [menuOpen])
 
   const create = () => {
+    // 运行中不能新建只是「暂时不可用」，不是失败：给中性提示，不报「新建会话失败」。
+    if (activeRunId) {
+      showToast({
+        title: t('surface:agentSessionSwitcher.newConversation'),
+        message: t('surface:useAgentSession.stopBeforeCreating'),
+      })
+      return
+    }
     void onCreate().then(() => setMenuOpen(false)).catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotCreateConversation'), error))
   }
 
@@ -89,7 +97,7 @@ export function AgentSessionSwitcher({
       >
           <div className="agent-session-menu-header">
             <strong>{t('surface:agentSessionSwitcher.conversations')}</strong>
-            <button type="button" title={t('surface:agentSessionSwitcher.newConversation')} aria-label={t('surface:agentSessionSwitcher.newConversation')} disabled={Boolean(activeRunId)} onClick={create}>
+            <button type="button" title={t(activeRunId ? 'surface:useAgentSession.stopBeforeCreating' : 'surface:agentSessionSwitcher.newConversation')} aria-label={t('surface:agentSessionSwitcher.newConversation')} disabled={Boolean(activeRunId)} onClick={create}>
               <Plus aria-hidden="true" />
             </button>
           </div>
@@ -115,7 +123,7 @@ export function AgentSessionSwitcher({
                     <button
                       type="button"
                       className="agent-session-select"
-                      disabled={Boolean(activeRunId) && session.id !== sessionId}
+                      // 长任务不再是整机人质：允许切走，原会话在后台继续跑；切回来靠事件重放恢复。
                       onClick={() => {
                         if (session.id !== sessionId) {
                           void onSelect(session).catch((error) => reportError(t('surface:agentSessionSwitcher.couldNotSwitchConversations'), error))

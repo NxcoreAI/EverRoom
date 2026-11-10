@@ -1,5 +1,7 @@
 # NxCore PC、iOS 与 Apple Watch 转写方案
 
+> **已废弃（Phase 2/3 已移除）**：PC / iOS / Apple Watch 录音转写（ASR）链路已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 状态：方案草案  
 目标：让用户在 PC、iPhone 和 Apple Watch 上可靠录音，并通过同一账号完成云端转写与跨端同步。  
 依赖：[SaaS 后端与管理端方案](./saas-platform-plan.md)中定义的账号、订阅、ASR 和同步服务。  

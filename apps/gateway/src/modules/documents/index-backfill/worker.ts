@@ -8,13 +8,12 @@ import { buildIndexProbe } from "@nxcore/document-model";
 
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
-  contextRooms,
   documents as documentsTable,
   gatewayMetadata,
   jobs,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
+import { roomScopeId } from "../room-scope.js";
 import {
   DOCUMENT_INDEX_BACKFILL_JOB_TYPE,
   enqueueDocumentIndexBackfill,
@@ -31,7 +30,6 @@ import {
   matchDeterministic,
   type ExistingIndexMark,
   type IndexCandidate,
-  type IndexMemoryCandidate,
   type IndexSourceCandidate,
   type MarkRemovalReason,
   type PlannedIndexMark,
@@ -54,7 +52,8 @@ interface IndexBackfillLogger {
 /** 管线依赖的最小文档面（生产传 DocumentService，测试可 stub）。 */
 export interface DocumentIndexBackfillDocuments {
   get(documentId: string): RoomDocument | null;
-  list(roomId: string): RoomDocument[];
+  /** 工作区级文稿库（Room 过滤维度已随 Phase 2i 删除）。 */
+  list(): RoomDocument[];
   listBlocks(documentId: string): DocumentBlockSummary[];
   save(documentId: string, input: { baseVersion: number; contentJson: TiptapJsonContent }): Promise<RoomDocument>;
 }
@@ -67,16 +66,6 @@ export interface DocumentIndexBackfillWorkerOptions {
   maxEnqueuePerScan?: number;
   /** 全量重扫周期（游标回绕）；0 表示每轮扫描都从头重走（测试用）。 */
   rescanMs?: number;
-  /**
-   * Room 记忆项投影（Room 归属清单，候选与复检默认源）；缺省则跳过记忆来源。
-   * 候选生成只用它：禁用/晋升未回链的快照条目不再产生新标记。
-   */
-  listMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
-  /**
-   * 复检存在性判定源（含 data.memoryItems 快照条目——禁用 shadow 与 legacy id）：
-   * 归属清单 ∪ 快照条目，防止已挂标记被误摘（memory_missing）。缺省回退 listMemoryItems。
-   */
-  listAllMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
 }
 
 interface ScanCursor {
@@ -94,10 +83,15 @@ export class DocumentIndexBackfillWorker {
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentIndexBackfillDocuments,
-    private readonly llm: IndexBackfillLlm | null,
+    private llm: IndexBackfillLlm | null,
     private readonly logger: IndexBackfillLogger,
     private readonly options: DocumentIndexBackfillWorkerOptions = {},
   ) {}
+
+  /** LLM 兜底热替换：SaaS 登录后 runtime 配置才到达，boot 快照的 null 会只剩确定性匹配。 */
+  replaceLlm(llm: IndexBackfillLlm | null): void {
+    this.llm = llm;
+  }
 
   start(): void {
     if (this.timer) return;
@@ -118,7 +112,11 @@ export class DocumentIndexBackfillWorker {
 
   async drain(): Promise<void> {
     if (this.drainPromise) return this.drainPromise;
-    this.drainPromise = this.drainPending().finally(() => {
+    // drain 由 void 调用（定时轮询），整链漏接即未处理拒绝、直接杀死网关进程
+    // （2026-10-17 排障）。整轮兜底记日志。
+    this.drainPromise = this.drainPending().catch((error: unknown) => {
+      this.logger.warn({ err: error }, "document index backfill drain failed");
+    }).finally(() => {
       this.drainPromise = null;
     });
     return this.drainPromise;
@@ -179,7 +177,6 @@ export class DocumentIndexBackfillWorker {
         isNull(documentsTable.deletedAt),
         isNull(documentsTable.activeTransactionId),
         lte(documentsTable.updatedAt, cutoff),
-        isNull(contextRooms.deletedAt),
       ];
       if (cursor.updatedAt != null) {
         const cursorUpdatedAt = new Date(cursor.updatedAt);
@@ -195,10 +192,7 @@ export class DocumentIndexBackfillWorker {
         id: documentsTable.id,
         version: documentsTable.version,
         updatedAt: documentsTable.updatedAt,
-        roomId: roomDocumentLinks.roomId,
       }).from(documentsTable)
-        .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documentsTable.id))
-        .innerJoin(contextRooms, eq(contextRooms.id, roomDocumentLinks.roomId))
         .where(and(...conditions))
         .orderBy(asc(documentsTable.updatedAt), asc(documentsTable.id))
         .limit(batchSize)
@@ -220,7 +214,6 @@ export class DocumentIndexBackfillWorker {
           seen.add(row.id);
           enqueueDocumentIndexBackfill(tx, {
             documentId: row.id,
-            roomId: row.roomId,
             version: row.version,
           }, now);
           enqueued += 1;
@@ -259,8 +252,7 @@ export class DocumentIndexBackfillWorker {
     if (removal) return removal;
 
     const candidates = this.collectCandidates(document);
-    const memories = this.collectMemoryCandidates(document.roomId);
-    const allCandidates: IndexCandidate[] = [...candidates, ...memories];
+    const allCandidates: IndexCandidate[] = [...candidates];
     const targets = collectParagraphTargets(document.contentJson);
     if (!targets.length) return { marks: 0 };
     if (!allCandidates.length) return { marks: 0, sources: 0 };
@@ -278,21 +270,13 @@ export class DocumentIndexBackfillWorker {
             documentTitle: candidate.documentTitle,
             textPreview: candidate.textPreview,
           })),
-          memories: memories.map((candidate) => ({
-            memoryId: candidate.memoryId,
-            type: candidate.type,
-            content: candidate.content,
-          })),
         });
         const candidateByBlockId = new Map(candidates.map((candidate) => [candidate.blockId, candidate]));
-        const memoryById = new Map(memories.map((candidate) => [candidate.memoryId, candidate]));
         for (const verdict of verdicts) {
           const target = targets.find((item) => item.ordinal === verdict.paragraphOrdinal);
           const source = parseJudgeSourceId(verdict.sourceId);
           const candidate = source?.kind === "document"
             ? candidateByBlockId.get(source.blockId)
-            : source?.kind === "memory"
-            ? memoryById.get(source.memoryId)
             : undefined;
           if (!candidate || !target) continue;
           llmPlanned.push({
@@ -351,15 +335,15 @@ export class DocumentIndexBackfillWorker {
         if (llmHit) planned.push({ paragraphBlockId: target.blockId, paragraphOrdinal: target.ordinal, candidate: llmHit.candidate });
       }
       if (!planned.length) return { marks: 0, superseded: true };
-      const { content, applied, documentMarks, memoryMarks } = applyPlannedMarks(current.contentJson, planned);
+      const { content, applied, documentMarks } = applyPlannedMarks(current.contentJson, planned);
       if (!applied) return { marks: 0, superseded: true };
       try {
         await this.documents.save(documentId, { baseVersion: current.version, contentJson: content });
         this.logger.info(
-          { event: "document.index-backfill.applied", documentId, marks: applied, documentMarks, memoryMarks },
+          { event: "document.index-backfill.applied", documentId, marks: applied, documentMarks },
           "document index backfill applied marks",
         );
-        return { marks: applied, documentMarks, memoryMarks };
+        return { marks: applied, documentMarks };
       } catch (error) {
         lastError = error;
         if (error instanceof DocumentServiceError && error.code === "DOCUMENT_CONFLICT") continue;
@@ -383,30 +367,7 @@ export class DocumentIndexBackfillWorker {
     const removals: PlannedMarkRemoval[] = [];
     const driftEntries: VerifyEntry[] = [];
     const driftMarks: ExistingIndexMark[] = [];
-    // null = 无法读取（不判定，保留记忆标记）；[] = 确认没有任何记忆项。
-    const memoryItems = this.readMemoryItems(document.roomId);
-
     for (const mark of existingMarks) {
-      if (mark.kind === "memory") {
-        if (!mark.targetMemoryId || memoryItems === null) continue;
-        const item = memoryItems.find((candidate) => candidate.id === mark.targetMemoryId);
-        if (!item) {
-          removals.push(removalFrom(mark, "memory_missing"));
-          continue;
-        }
-        const currentProbe = buildIndexProbe(item.content);
-        if (isDriftSuspect(mark, mark.paragraphNormalized, currentProbe)) {
-          driftMarks.push(mark);
-          driftEntries.push({
-            index: driftEntries.length,
-            paragraph: mark.paragraphNormalized,
-            sourceKind: "memory",
-            sourceLabel: item.type,
-            sourcePreview: item.content,
-          });
-        }
-        continue;
-      }
       if (!mark.targetDocumentId) continue;
       const target = this.documents.get(mark.targetDocumentId);
       if (!target) {
@@ -500,31 +461,12 @@ export class DocumentIndexBackfillWorker {
     throw lastError;
   }
 
-  /** 记忆项读取（复检用，含快照条目）；抛错返回 null 表示不可判定，不据此摘除。 */
-  private readMemoryItems(roomId: string): Array<{ id: string; content: string; type: string }> | null {
-    const listMemoryItems = this.options.listAllMemoryItems ?? this.options.listMemoryItems;
-    if (!listMemoryItems) return null;
-    try {
-      return listMemoryItems(roomId);
-    } catch (error) {
-      this.logger.warn(
-        {
-          event: "document.index-backfill.memory_list_failed",
-          roomId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "index backfill memory item listing failed; skipping memory mark verification",
-      );
-      return null;
-    }
-  }
-
   private quietWindowMs(): number {
     return Math.max(0, this.options.quietWindowMs ?? 300_000);
   }
 
   private collectCandidates(document: RoomDocument): IndexSourceCandidate[] {
-    const sourceDocuments = this.documents.list(document.roomId)
+    const sourceDocuments = this.documents.list()
       .filter((candidate) =>
         candidate.id !== document.id
         && !candidate.deletedAt
@@ -544,7 +486,7 @@ export class DocumentIndexBackfillWorker {
         const probe = buildIndexProbe(block.textPreview);
         if (!probe) continue;
         candidates.push({
-          roomId: source.roomId,
+          roomId: roomScopeId(source.roomId),
           documentId: source.id,
           blockId: block.blockId,
           documentTitle: source.title,
@@ -558,45 +500,6 @@ export class DocumentIndexBackfillWorker {
     return candidates;
   }
 
-  /**
-   * Room 记忆项候选：内容归一化 probe ≥20 字符才可作候选（与文档块同规）。
-   * 记忆项没有时间戳，不做方向过滤；listMemoryItems 未注入或抛错时返回空
-   * （记忆来源缺失只影响召回，不失败整个 job）。
-   */
-  private collectMemoryCandidates(roomId: string): IndexMemoryCandidate[] {
-    const listMemoryItems = this.options.listMemoryItems;
-    if (!listMemoryItems) return [];
-    let items: Array<{ id: string; content: string; type: string }>;
-    try {
-      items = listMemoryItems(roomId);
-    } catch (error) {
-      this.logger.warn(
-        {
-          event: "document.index-backfill.memory_list_failed",
-          roomId,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "index backfill memory item listing failed; continuing without memory sources",
-      );
-      return [];
-    }
-    const candidates: IndexMemoryCandidate[] = [];
-    for (const item of items) {
-      if (typeof item?.id !== "string" || !item.id) continue;
-      if (typeof item.content !== "string" || !item.content) continue;
-      const probe = buildIndexProbe(item.content);
-      if (!probe) continue;
-      candidates.push({
-        roomId,
-        memoryId: item.id,
-        type: typeof item.type === "string" ? item.type : "",
-        content: item.content,
-        probe,
-      });
-      if (candidates.length >= INDEX_BACKFILL_MATCH_LIMITS.maxMemoryItems) break;
-    }
-    return candidates;
-  }
 
   private retryReady(updatedAt: Date, attempts: number): boolean {
     if (attempts <= 0) return true;

@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDatabase } from '../src/infrastructure/database/client.js'
 import { AgentEventBroker } from '../src/modules/agent/event-broker.js'
 import { AgentService } from '../src/modules/agent/service.js'
-import { ContextRoomService } from '../src/modules/context-rooms/service.js'
 import { DocumentEventBroker } from '../src/modules/documents/event-broker.js'
 import { DocumentMcpHost } from '../src/modules/documents/mcp-host.js'
 import { documentMcpRoutes } from '../src/modules/documents/mcp-routes.js'
@@ -59,14 +58,6 @@ describe('trusted document MCP sessions', () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'nxcore-trusted-mcp-'))
     temporaryDirectories.push(dataDir)
     const database = createDatabase(join(dataDir, 'gateway.sqlite'), resolve('drizzle'))
-    const rooms = new ContextRoomService(database.db)
-    rooms.saveSnapshot({
-      rooms: [
-        { id: 'room-a', title: '产品规划', data: {} },
-        { id: 'room-b', title: '其他 Room', data: {} },
-      ],
-      deletedRooms: [],
-    })
     const runtime = new HoldingRuntime()
     const documents = new DocumentService(database.db, new DocumentEventBroker())
     const agent = new AgentService(
@@ -74,38 +65,36 @@ describe('trusted document MCP sessions', () => {
       runtime,
       new AgentEventBroker(),
       undefined,
-      rooms,
       documents,
     )
-    const session = agent.createSession({ pageLabel: 'Context Room', roomId: 'room-a' })
+    const session = agent.createSession({ pageLabel: 'Context Room' })
     const run = await agent.startRun(session.id, {
-      prompt: '读取当前 Room 文档',
+      prompt: '读取当前文档',
       idempotencyKey: 'trusted-mcp-run',
-      context: { selectedRoomId: 'room-a' },
     })
 
-    expect(() => agent.createTrustedMcpSession(session.id, run.id, 'room-b'))
-      .toThrow('mcp_agent_context_mismatch')
-    expect(() => agent.createTrustedMcpSession('missing-session', run.id, 'room-a'))
+    // Phase 2i 去 Room 化：createTrustedMcpSession 只校验 (agentSessionId, runId)
+    // 与活跃执行上下文的绑定，跨 Room 拒绝语义已删除——改为校验不同 runId 仍被拒。
+    expect(() => agent.createTrustedMcpSession(session.id, 'missing-run'))
+      .toThrow('mcp_agent_context_not_found')
+    expect(() => agent.createTrustedMcpSession('missing-session', run.id))
       .toThrow('mcp_agent_context_not_found')
     expect(() => agent.validateDocumentOperationContext({
       capabilityId: 'document.edit',
       agentSessionId: session.id,
-      runId: run.id,
-      roomId: 'room-b',
+      runId: 'missing-run',
     })).toThrow('agent_operation_context_invalid')
     expect(() => agent.validateDocumentOperationContext({
       capabilityId: 'document.edit',
       agentSessionId: session.id,
       runId: run.id,
-      roomId: 'room-a',
     })).not.toThrow()
-    const trusted = agent.createTrustedMcpSession(session.id, run.id, 'room-a')
+    const trusted = agent.createTrustedMcpSession(session.id, run.id)
     expect(trusted).toEqual({ sessionId: expect.any(String), expiresAt: expect.any(String) })
     expect(trusted.sessionId).not.toContain(session.id)
     expect(trusted.sessionId).not.toContain(run.id)
 
-    const host = new DocumentMcpHost(documents, rooms)
+    const host = new DocumentMcpHost(documents)
     const app = Fastify()
     await app.register(documentMcpRoutes(host))
     const initialize = {
@@ -121,12 +110,12 @@ describe('trusted document MCP sessions', () => {
 
     const invalid = await app.inject({
       method: 'POST',
-      url: '/v1/mcp/documents/not-a-token?agentSessionId=forged&runId=forged&roomId=room-b',
+      url: '/v1/mcp/documents/not-a-token?agentSessionId=forged&runId=forged',
       payload: initialize,
     })
     const initialized = await app.inject({
       method: 'POST',
-      url: `/v1/mcp/documents/${trusted.sessionId}?agentSessionId=forged&runId=forged&roomId=room-b`,
+      url: `/v1/mcp/documents/${trusted.sessionId}?agentSessionId=forged&runId=forged`,
       payload: initialize,
     })
     const get = await app.inject({
@@ -151,7 +140,7 @@ describe('trusted document MCP sessions', () => {
     expect(deleted.statusCode).toBe(204)
     expect(revoked.statusCode).toBe(404)
 
-    const terminalSession = agent.createTrustedMcpSession(session.id, run.id, 'room-a')
+    const terminalSession = agent.createTrustedMcpSession(session.id, run.id)
     runtime.queues.get(run.id)?.push({ type: 'run.completed', payload: {} })
     runtime.queues.get(run.id)?.end()
     await new Promise<void>((resolvePromise) => setImmediate(resolvePromise))
@@ -161,19 +150,13 @@ describe('trusted document MCP sessions', () => {
       payload: initialize,
     })
     expect(terminalRevoked.statusCode).toBe(404)
-    expect(() => agent.createTrustedMcpSession(session.id, run.id, 'room-a'))
+    expect(() => agent.createTrustedMcpSession(session.id, run.id))
       .toThrow('mcp_agent_context_not_active')
-    expect(() => agent.validateDocumentOperationContext({
-      capabilityId: 'document.selection-rewrite',
-      agentSessionId: session.id,
-      runId: run.id,
-      roomId: 'room-a',
-    })).not.toThrow()
+    // 划词改写宽限期随 selection-rewrite 链路移除：结束后任何能力都不可再校验。
     expect(() => agent.validateDocumentOperationContext({
       capabilityId: 'document.edit',
       agentSessionId: session.id,
       runId: run.id,
-      roomId: 'room-a',
     })).toThrow('agent_operation_context_invalid')
 
     await app.close()

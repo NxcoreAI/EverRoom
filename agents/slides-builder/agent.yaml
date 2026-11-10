@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: slides-builder
+name: Slides Builder
+description: 承接 EverOffice 演示文稿（PPT）的修改——按指令读取既有 deck 大纲并发编辑事务（整页重排走 set_page spec 形态），保持全篇风格一致
+mode: dispatch_only
+# ppt 生成/修改已切换到主 Agent 的 pptx skill（slides_create 脚本 + slides_read/slides_edit）路径。
+enabled: false
+
+systemPrompt: ./SYSTEM.md
+
+skills: []
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  maxConcurrency: 2
+  # 不设工具调用上限：edit 事务是「read + edit 若干 + 失败重试 + 提交」的长链路，
+  # 硬预算中途 abort 会把已写好的编辑事务一起丢掉；run 只受 timeoutSeconds 与
+  # 输出预算约束（与 planner/layouter/editor 同一决策）。
+  timeoutSeconds: 1800
+  model:
+    # builder 走 background 档，未显式声明会继承 8192 输出上限：多条编辑事务的
+    # JSON 一旦打满就被判 length 失败，这里显式给足（与 planner/layouter 同档）。
+    maxTokens: 32768

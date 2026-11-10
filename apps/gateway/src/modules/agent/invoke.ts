@@ -31,7 +31,13 @@ export async function invokeRuntime(
   const timeout = options.timeoutMs
     ? setTimeout(() => {
         controller.abort();
-        void runtime.cancel(runId);
+        // ACP 渠道的 cancel 会向 adapter 子进程 stdin 写 JSON-RPC：子进程已死
+        // 时 write 照样 reject（child.stdin 的 'error' 监听只吞流事件），漏接
+        // 即未处理拒绝、杀进程（2026-10-17 排障）。超时本就要放弃本次调用，
+        // cancel 失败只记日志。
+        runtime.cancel(runId).catch((error: unknown) => {
+          console.warn(`[agent-invoke] cancel after timeout failed (${options.pageLabel}):`, error);
+        });
       }, options.timeoutMs)
     : null;
   timeout?.unref();
@@ -43,9 +49,6 @@ export async function invokeRuntime(
       runtimeSessionRef: null,
       prompt,
       pageLabel: options.pageLabel,
-      roomId: null,
-      captureMemory: false,
-      recallMemory: false,
     });
     runtimeSessionRef = run.runtimeSessionRef;
     let content = "";

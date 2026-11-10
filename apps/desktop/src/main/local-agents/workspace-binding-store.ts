@@ -1,18 +1,13 @@
-import { randomUUID } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
-import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { access, realpath, stat } from 'node:fs/promises'
+
+import { VersionedJsonStore } from '@nxcore/migration-kit'
 
 export interface StoredLocalAgentWorkspaceBinding {
   agentId: string
   sessionId: string
   rootPath: string
   permissionProfile: 'workspace_write'
-}
-
-interface WorkspaceBindingFile {
-  version: 1
-  bindings: StoredLocalAgentWorkspaceBinding[]
 }
 
 function bindingKey(agentId: string, sessionId: string): string {
@@ -22,8 +17,22 @@ function bindingKey(agentId: string, sessionId: string): string {
 export class LocalAgentWorkspaceBindingStore {
   private loaded = false
   private readonly bindings = new Map<string, StoredLocalAgentWorkspaceBinding>()
+  private readonly store: VersionedJsonStore<StoredLocalAgentWorkspaceBinding[]>
 
-  constructor(private readonly storePath: string) {}
+  constructor(storePath: string, backupDir?: string) {
+    this.store = new VersionedJsonStore<StoredLocalAgentWorkspaceBinding[]>({
+      filePath: storePath,
+      migrations: [],
+      adoptBaseline: (raw) => {
+        const parsed = raw as Partial<{ version: unknown; bindings: unknown }>
+        if (!parsed || typeof parsed !== 'object' || parsed.version !== 1 || !Array.isArray(parsed.bindings)) return []
+        return parsed.bindings.filter((binding): binding is StoredLocalAgentWorkspaceBinding =>
+          Boolean(binding?.agentId) && Boolean(binding.sessionId) && Boolean(binding.rootPath) && binding.permissionProfile === 'workspace_write')
+      },
+      fallback: [],
+      ...(backupDir !== undefined ? { backupDir } : {}),
+    })
+  }
 
   async find(agentId: string, sessionId: string): Promise<StoredLocalAgentWorkspaceBinding | null> {
     await this.load()
@@ -65,15 +74,8 @@ export class LocalAgentWorkspaceBindingStore {
   private async load(): Promise<void> {
     if (this.loaded) return
     this.loaded = true
-    try {
-      const parsed = JSON.parse(await readFile(this.storePath, 'utf8')) as WorkspaceBindingFile
-      if (parsed.version !== 1 || !Array.isArray(parsed.bindings)) return
-      for (const binding of parsed.bindings) {
-        if (!binding?.agentId || !binding.sessionId || !binding.rootPath || binding.permissionProfile !== 'workspace_write') continue
-        this.bindings.set(bindingKey(binding.agentId, binding.sessionId), binding)
-      }
-    } catch {
-      // Missing or invalid state is treated as an empty binding store.
+    for (const binding of this.store.read()) {
+      this.bindings.set(bindingKey(binding.agentId, binding.sessionId), binding)
     }
   }
 
@@ -86,10 +88,6 @@ export class LocalAgentWorkspaceBindingStore {
   }
 
   private async persist(): Promise<void> {
-    await mkdir(dirname(this.storePath), { recursive: true })
-    const temporaryPath = `${this.storePath}.${randomUUID()}.tmp`
-    const payload: WorkspaceBindingFile = { version: 1, bindings: [...this.bindings.values()] }
-    await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    await rename(temporaryPath, this.storePath)
+    this.store.write([...this.bindings.values()])
   }
 }

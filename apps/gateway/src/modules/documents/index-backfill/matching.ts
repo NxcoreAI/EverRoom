@@ -14,9 +14,6 @@ const MIN_PARAGRAPH_LENGTH = 40;
 const MAX_SOURCE_DOCUMENTS = 50;
 /** 候选来源块全 Room 封顶。 */
 const MAX_SOURCE_BLOCKS = 200;
-/** 候选记忆项封顶（记忆量级远小于文档块，实际很少触顶）。 */
-const MAX_MEMORY_ITEMS = 50;
-
 export interface IndexSourceCandidate {
   roomId: string;
   documentId: string;
@@ -27,24 +24,7 @@ export interface IndexSourceCandidate {
   sourceCreatedAt: number;
 }
 
-/**
- * 记忆项候选（contextRooms.data.memoryItems 投影）。记忆是蒸馏产物没有
- * 时间戳，方向启发式不适用；逐字包含级匹配本身高精度，精度由匹配算法
- * 与 LLM 置信护栏兜住。
- */
-export interface IndexMemoryCandidate {
-  roomId: string;
-  memoryId: string;
-  type: string;
-  content: string;
-  probe: string;
-}
-
-export type IndexCandidate = IndexSourceCandidate | IndexMemoryCandidate;
-
-export function isMemoryCandidate(candidate: IndexCandidate): candidate is IndexMemoryCandidate {
-  return "memoryId" in candidate;
-}
+export type IndexCandidate = IndexSourceCandidate;
 
 export interface IndexParagraphTarget {
   node: TiptapJsonContent;
@@ -114,31 +94,11 @@ function betterCandidate(challenger: IndexCandidate, incumbent: IndexCandidate):
   if (challenger.probe.length !== incumbent.probe.length) {
     return challenger.probe.length > incumbent.probe.length;
   }
-  const challengerMemory = isMemoryCandidate(challenger);
-  const incumbentMemory = isMemoryCandidate(incumbent);
-  if (challengerMemory !== incumbentMemory) return incumbentMemory;
-  if (!challengerMemory && !incumbentMemory) {
-    return challenger.sourceCreatedAt < incumbent.sourceCreatedAt;
-  }
-  return false;
+  return challenger.sourceCreatedAt < incumbent.sourceCreatedAt;
 }
 
 /** 构造追加到段末的 blockIndexMark 节点（attrs 形态与 headless 扩展一致）。 */
 export function buildIndexMarkNode(candidate: IndexCandidate): TiptapJsonContent {
-  if (isMemoryCandidate(candidate)) {
-    return {
-      type: BLOCK_INDEX_MARK_NODE,
-      attrs: {
-        kind: "memory",
-        targetRoomId: candidate.roomId,
-        targetDocumentId: "",
-        targetBlockId: "",
-        targetMemoryId: candidate.memoryId,
-        fallbackTitle: candidate.type.slice(0, 120),
-        fallbackPreview: candidate.content.slice(0, 240),
-      },
-    };
-  }
   return {
     type: BLOCK_INDEX_MARK_NODE,
     attrs: {
@@ -163,12 +123,11 @@ export function buildIndexMarkNode(candidate: IndexCandidate): TiptapJsonContent
 export function applyPlannedMarks(
   content: TiptapJsonContent,
   planned: PlannedIndexMark[],
-): { content: TiptapJsonContent; applied: number; documentMarks: number; memoryMarks: number } {
+): { content: TiptapJsonContent; applied: number; documentMarks: number } {
   const clone = structuredClone(content);
   const children = clone.content ?? [];
   let applied = 0;
   let documentMarks = 0;
-  let memoryMarks = 0;
   for (const mark of planned) {
     const paragraph = children.find((node, ordinal) => node.type === "paragraph"
       && (mark.paragraphBlockId
@@ -177,23 +136,20 @@ export function applyPlannedMarks(
     if (!paragraph || containsIndexMark(paragraph)) continue;
     paragraph.content = [...(paragraph.content ?? []), buildIndexMarkNode(mark.candidate)];
     applied += 1;
-    if (isMemoryCandidate(mark.candidate)) memoryMarks += 1;
-    else documentMarks += 1;
+    documentMarks += 1;
   }
-  return { content: clone, applied, documentMarks, memoryMarks };
+  return { content: clone, applied, documentMarks };
 }
 
 export const INDEX_BACKFILL_MATCH_LIMITS = {
   minParagraphLength: MIN_PARAGRAPH_LENGTH,
   maxSourceDocuments: MAX_SOURCE_DOCUMENTS,
   maxSourceBlocks: MAX_SOURCE_BLOCKS,
-  maxMemoryItems: MAX_MEMORY_ITEMS,
 } as const;
 
 export type MarkRemovalReason =
   | "document_gone"
   | "document_trashed"
-  | "memory_missing"
   | "llm_not_derived";
 
 /** 文档中已存在的 blockIndexMark 标记投影（复检阶段的输入）。 */

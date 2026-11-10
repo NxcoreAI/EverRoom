@@ -10,10 +10,13 @@ const idText = { minLength: 1, maxLength: 128 } as const;
  * 章节刻度线 hover 的 AI 章节预览：单端点（无 GET——正文与 hash 随请求
  * 携带，持久缓存命中在同一 POST 里廉价返回）。生成只写
  * document_section_previews 表，不影响正文与 version。
+ *
+ * runtime 以 getter 注入：SaaS 登录后配置才到达，boot 快照会是 null，
+ * getter 保证每次请求拿到热替换后的最新实例。
  */
 export function documentSectionPreviewRoutes(
   service: DocumentService,
-  runtime: AgentRuntime | null,
+  runtime: () => AgentRuntime | null,
 ): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.post("/v1/documents/:id/section-preview", {
@@ -32,7 +35,7 @@ export function documentSectionPreviewRoutes(
         return await service.getOrGenerateSectionPreview(
           request.params.id,
           request.body,
-          runtime,
+          runtime(),
         );
       } catch (error) {
         if (error instanceof DocumentServiceError) {

@@ -20,6 +20,7 @@ const capability = (
   dataType: string,
   parserId: string,
   maxBytes: number = DEFAULT_FILE_MAX_BYTES,
+  overrides?: Partial<Pick<FileFormatCapability, "manualImport" | "autoScan" | "connectorImport">>,
 ): FileFormatCapability[] => extensions.map((extension) => ({
   extension,
   dataType,
@@ -28,6 +29,7 @@ const capability = (
   manualImport: true,
   autoScan: true,
   connectorImport: true,
+  ...overrides,
   maxBytes,
 }));
 
@@ -37,14 +39,18 @@ export const FILE_FORMAT_CAPABILITIES: readonly FileFormatCapability[] = [
   ...capability([".txt", ".text"], "document", "plain-text"),
   ...capability([".pdf"], "document", "pdf-unpdf", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".docx", ".docm", ".dotx", ".dotm"], "office-doc", "docx-mammoth", RICH_MEDIA_FILE_MAX_BYTES),
-  ...capability([".doc", ".dot", ".rtf", ".odt"], "office-doc", "legacy-word-soffice", RICH_MEDIA_FILE_MAX_BYTES),
+  ...capability([".doc", ".dot", ".rtf"], "office-doc", "legacy-word-text", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam"], "spreadsheet", "xlsx-exceljs", RICH_MEDIA_FILE_MAX_BYTES),
-  ...capability([".xls", ".xlsb", ".xlt", ".xla", ".ods"], "spreadsheet", "legacy-sheet-soffice", RICH_MEDIA_FILE_MAX_BYTES),
+  ...capability([".xls", ".xlsb", ".xlt", ".xla", ".ods"], "spreadsheet", "legacy-sheet-text", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".sldx", ".sldm"], "slides", "pptx-jszip", RICH_MEDIA_FILE_MAX_BYTES),
-  ...capability([".ppt", ".pot", ".pps", ".odp"], "slides", "legacy-slides-soffice", RICH_MEDIA_FILE_MAX_BYTES),
+  ...capability([".ppt", ".pot", ".pps", ".odp"], "slides", "legacy-slides-text", RICH_MEDIA_FILE_MAX_BYTES),
   ...capability([".csv"], "spreadsheet", "csv-rfc4180"),
   ...capability([".html", ".htm"], "html", "html-turndown"),
+  ...capability([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"], "image", "image-vlm",
+    RICH_MEDIA_FILE_MAX_BYTES, { autoScan: false, connectorImport: false }),
 ];
+
+export const IMAGE_IMPORT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
 const byExtension = new Map(FILE_FORMAT_CAPABILITIES.map((item) => [item.extension, item]));
 

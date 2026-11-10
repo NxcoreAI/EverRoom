@@ -7,6 +7,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:c
 import { app } from 'electron'
 import type { GatewayStatus } from '../../shared/sources'
 import { createLoggedHttpClient } from '../network/http-client'
+import { captureSentryLog } from '../monitoring/sentry'
 import { forgetProcessRecord, registerProcessRecord } from '../process-cleanup'
 
 interface GatewayManifest {
@@ -24,13 +25,18 @@ export interface GatewayConnection {
   version: string
 }
 
-// 冷启动（全新数据目录跑迁移 + electron/KS/MemoryCore 并行 tsx 编译争抢 IO）实测可达
+// 冷启动（全新数据目录跑迁移 + electron/KS 并行 tsx 编译争抢 IO）实测可达
 // 一分钟以上，60s 会误杀：拉长到 3 分钟只影响异常场景的失败反馈时延。
 const STARTUP_TIMEOUT_MS = 180_000
 const SHUTDOWN_TIMEOUT_MS = 5_000
 // A dev hot reload may spend five seconds terminating the previous tsx process
 // before the replacement can publish its runtime manifest.
 const CONNECTION_RECOVERY_TIMEOUT_MS = 15_000
+// 意外退出后的自动重启退避序列：连续失败逐级放慢（封顶 60s）；进程稳定运行
+// 满 5 分钟后重置回 1s。定时器触发的 start() 与渲染层 gateway:recover 触发的
+// start() 共用 startup 在途去重，并发安全；确定性的迁移失败（exit 78）不重试。
+const RESPAWN_BACKOFF_MS = [1_000, 5_000, 15_000, 60_000]
+const RESPAWN_STABLE_RESET_MS = 5 * 60_000
 // ingest 扇出期间 gateway 事件循环会被同步 sqlite 写入卡 >1s，1s 超时会把
 // 忙碌误判成宕机；这是状态轮询不是时延探测，放宽到 10s。
 const healthHttp = createLoggedHttpClient('gateway-health', { timeout: 10_000 }, { quiet: true })
@@ -39,20 +45,49 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
+const GATEWAY_REMOTE_LOG_WINDOW_MS = 60_000
+const GATEWAY_REMOTE_LOG_LIMIT = 30
+const gatewayRemoteLogTimes: number[] = []
+
+/** 网关子进程的输出只进本地控制台；stderr/error 行抽样上报远端，卡死/崩溃时
+ *  Pro 用户排障才有网关侧现场（本地日志文件拿不到）。限频防雪崩刷屏。 */
+export function captureGatewayOutputRemote(label: string, stream: 'stdout' | 'stderr', line: string, now = Date.now()): void {
+  const errorLike = /\b(error|fatal|unhandled|uncaught)\b/i.test(line)
+  // pino warn 级（"level":40+，如批量导入单篇失败、ingest 重试）不含 error
+  // 字样，线上排障恰恰需要这类现场（2026-09-14 实证：导入失败 warn 全留本地）。
+  const pinoWarnLike = /"level":([45]\d)/.test(line)
+  if (stream === 'stdout' && !errorLike && !pinoWarnLike) return
+  while (gatewayRemoteLogTimes.length > 0 && now - gatewayRemoteLogTimes[0]! > GATEWAY_REMOTE_LOG_WINDOW_MS) {
+    gatewayRemoteLogTimes.shift()
+  }
+  if (gatewayRemoteLogTimes.length >= GATEWAY_REMOTE_LOG_LIMIT) return
+  gatewayRemoteLogTimes.push(now)
+  captureSentryLog(`gateway-${label}`, errorLike ? 'error' : 'warn', {
+    event: 'gateway.output',
+    stream,
+    line: line.slice(0, 2000),
+  })
+}
+
 function forwardGatewayOutput(
   stream: NodeJS.ReadableStream,
   destination: NodeJS.WriteStream,
   label: string,
+  streamName: 'stdout' | 'stderr',
 ): void {
   let pending = ''
+  const emit = (line: string): void => {
+    destination.write(`[${label}] ${line}\n`)
+    captureGatewayOutputRemote(label, streamName, line)
+  }
   stream.on('data', (chunk: string) => {
     pending += chunk
     const lines = pending.split(/\r?\n/)
     pending = lines.pop() ?? ''
-    for (const line of lines) destination.write(`[${label}] ${line}\n`)
+    for (const line of lines) emit(line)
   })
   stream.on('end', () => {
-    if (pending) destination.write(`[${label}] ${pending}\n`)
+    if (pending) emit(pending)
   })
 }
 
@@ -87,11 +122,15 @@ export class GatewaySupervisor {
   private startup: Promise<GatewayConnection> | null = null
   private stopping = false
   private lastError: string | null = null
+  /** 意外退出自动重启：退避定时器、当前档位与稳定计时起点。 */
+  private respawnTimer: NodeJS.Timeout | null = null
+  private respawnAttempt = 0
+  private lastStableAt = 0
 
   constructor(
     private readonly dataDirectory: string,
     /**
-     * 注入 gateway 子进程的额外环境变量(如托管 MemoryCore 的连接信息)。
+     * 注入 gateway 子进程的额外环境变量。
      * 支持 getter:每次 start() 求值——惰性 spawn 的服务(cursor-completion)
      * 在 respawn 时拿到最新 runtime config 派生的 env。
      */
@@ -101,6 +140,14 @@ export class GatewaySupervisor {
       packagedEntry?: string
       logLabel?: string
       devPortEnvironment?: string
+      /**
+       * 固定端口（外部 Agent 访问等需要稳定地址的场景）：每次 launchGatewayOnce
+       * 求值，返回 >0 的端口时覆盖 --port（优先级高于 dev 环境变量与 0）。
+       * 端口被占用时 gateway 启动失败走既有的重试/报错路径。
+       */
+      portProvider?: () => number | null
+      /** 连接变化（首次建立、dev 热重载换端口/token、恢复）时回调——依赖 gateway 稳定地址的子进程 env 需要联动刷新。 */
+      onConnectionChanged?: (connection: GatewayConnection) => void
     } = {},
   ) {}
 
@@ -121,6 +168,31 @@ export class GatewaySupervisor {
 
   private async launchGateway(): Promise<GatewayConnection> {
     this.lastError = null
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        return await this.launchGatewayOnce()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        // 数据迁移失败是确定性故障（exit 78，已回滚），重试无意义；其余的
+        // 启动即退/超时在 Windows 上多为杀软扫描、残留进程锁库等偶发因素，
+        // 自动重试一次可自愈，避免用户面对"启动即挂"。
+        if (message.includes('数据迁移失败') || attempt >= 2) throw error
+        console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] 启动失败，1s 后重试一次：${message}`)
+        await delay(1_000)
+      }
+    }
+    throw new Error('unreachable')
+  }
+
+  private stderrTail = ''
+
+  private collectStderrTail(chunk: string): void {
+    this.stderrTail = `${this.stderrTail}${chunk}`.slice(-4_000)
+  }
+
+  private async launchGatewayOnce(): Promise<GatewayConnection> {
+    this.lastError = null
+    this.stderrTail = ''
 
     const gatewayDirectory = app.isPackaged
       ? join(process.resourcesPath, 'gateway')
@@ -145,13 +217,17 @@ export class GatewaySupervisor {
       environment.NXCORE_NANGO_SECRET = ''
       environment.NXCORE_ENV_FILE = join(this.dataDirectory, 'runtime', '.desktop-gateway.env')
     }
+    const fixedPort = this.options.portProvider?.() ?? null
+    const portArgument = fixedPort && fixedPort > 0
+      ? String(fixedPort)
+      : app.isPackaged
+        ? '0'
+        : (process.env[this.options.devPortEnvironment ?? 'NXCORE_GATEWAY_DEV_PORT'] ?? '0')
     const gatewayArguments = [
       '--host',
       '127.0.0.1',
       '--port',
-      app.isPackaged
-        ? '0'
-        : (process.env[this.options.devPortEnvironment ?? 'NXCORE_GATEWAY_DEV_PORT'] ?? '0'),
+      portArgument,
       '--data-dir',
       this.dataDirectory,
       '--migrations-dir',
@@ -186,8 +262,9 @@ export class GatewaySupervisor {
 
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway')
-    forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway')
+    forwardGatewayOutput(child.stdout, process.stdout, this.options.logLabel ?? 'gateway', 'stdout')
+    forwardGatewayOutput(child.stderr, process.stderr, this.options.logLabel ?? 'gateway', 'stderr')
+    child.stderr.on('data', (chunk: string) => this.collectStderrTail(chunk))
     child.on('exit', (code, signal) => {
       this.child = null
       this.connection = null
@@ -195,17 +272,24 @@ export class GatewaySupervisor {
       if (!this.stopping) {
         this.lastError = `${this.serviceLabel()} 进程已退出（code=${String(code)}, signal=${String(signal)}）`
         console.error(this.lastError)
+        this.scheduleRespawn()
       }
     })
 
     try {
       const manifest = await this.waitUntilReady(child, manifestPath, token)
+      const previous = this.connection
       this.connection = {
         pid: manifest.pid,
         baseUrl: manifest.baseUrl,
         token,
         version: manifest.version,
       }
+      // 就绪即重置退避：本次拉起成功，下一轮意外退出重新从 1s 起步；
+      // lastStableAt 同时是「稳定满 5 分钟重置档位」的计时起点。
+      this.respawnAttempt = 0
+      this.lastStableAt = Date.now()
+      this.notifyConnectionChanged(previous, this.connection)
       return this.connection
     } catch (error) {
       this.killChild(child, 'SIGTERM', detached)
@@ -239,12 +323,14 @@ export class GatewaySupervisor {
         throw new Error(`${this.serviceLabel()} 健康检查失败（${response.status}）`)
       }
 
+      const previous = this.connection
       this.connection = {
         pid: parsed.pid,
         baseUrl: parsed.baseUrl,
         token: connection.token,
         version: parsed.version,
       }
+      this.notifyConnectionChanged(previous, this.connection)
       return {
         state: 'ready',
         pid: parsed.pid,
@@ -296,8 +382,37 @@ export class GatewaySupervisor {
     }
   }
 
+  /** 意外退出后的自动重启（带退避）：渲染层 gateway:recover 只在有界面流量时
+   * 才拉起网关，后台任务自崩时没有流量，网关会一直躺着。这里补上主动拉起：
+   * 连续失败逐级放慢（1s/5s/15s/60s 封顶），稳定满 5 分钟重置；确定性的迁移
+   * 失败（exit 78，已回滚到备份）不重试——重试无意义，保留 lastError 供展示。 */
+  private scheduleRespawn(): void {
+    if (this.stopping) return
+    const now = Date.now()
+    if (this.lastStableAt > 0 && now - this.lastStableAt >= RESPAWN_STABLE_RESET_MS) {
+      this.respawnAttempt = 0
+    }
+    const delay = RESPAWN_BACKOFF_MS[Math.min(this.respawnAttempt, RESPAWN_BACKOFF_MS.length - 1)]!
+    this.respawnAttempt += 1
+    console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] ${delay}ms 后自动重启（第 ${this.respawnAttempt} 次）`)
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = null
+      if (this.stopping || this.connection || this.child) return
+      this.start().catch((error: unknown) => {
+        console.error(`[${this.options.logLabel ?? 'gateway'}-supervisor] 自动重启失败：`, error)
+        // 启动失败的确定性场景（迁移失败）不无限重试；其余继续退避重试。
+        if (error instanceof Error && error.message.includes('数据迁移失败')) return
+        this.scheduleRespawn()
+      })
+    }, delay)
+  }
+
   async shutdown(): Promise<void> {
     this.stopping = true
+    if (this.respawnTimer) {
+      clearTimeout(this.respawnTimer)
+      this.respawnTimer = null
+    }
     const child = this.child
     this.connection = null
     if (!child) return
@@ -332,7 +447,17 @@ export class GatewaySupervisor {
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}`)
+        if (child.exitCode === 78) {
+          // 退出码 78 = 数据迁移失败（已用备份恢复整库）。给用户可读的说明，
+          // 详细原因在 gateway stderr（含备份路径）里。
+          throw new Error(
+            `${this.serviceLabel()} 数据迁移失败：老数据升级到当前版本时出错，已恢复到迁移前的备份。请查看日志；如持续失败请保留数据目录后联系支持。`,
+          )
+        }
+        const tail = this.stderrTail.trim().split('\n').slice(-8).join('\n')
+        throw new Error(
+          `${this.serviceLabel()} exited during startup with code ${String(child.exitCode)}${tail ? `\n--- stderr 尾部 ---\n${tail}` : ''}`,
+        )
       }
 
       try {
@@ -377,12 +502,14 @@ export class GatewaySupervisor {
         }
         if (this.stopping) throw new Error(`${this.serviceLabel()} 正在停止。`)
 
+        const previous = this.connection
         this.connection = {
           pid: parsed.pid,
           baseUrl: parsed.baseUrl,
           token: staleConnection.token,
           version: parsed.version,
         }
+        this.notifyConnectionChanged(previous, this.connection)
         this.lastError = null
         return this.connection
       } catch (error) {
@@ -399,6 +526,15 @@ export class GatewaySupervisor {
     throw lastError instanceof Error
       ? lastError
       : new Error(`${this.serviceLabel()} 连接恢复失败`)
+  }
+
+  private notifyConnectionChanged(previous: GatewayConnection | null, next: GatewayConnection): void {
+    if (previous && this.isSameConnection(previous, next)) return
+    try {
+      this.options.onConnectionChanged?.(next)
+    } catch (error) {
+      console.warn(`[${this.options.logLabel ?? 'gateway'}-supervisor] onConnectionChanged 回调失败：`, error)
+    }
   }
 
   private isSameConnection(left: GatewayConnection, right: GatewayConnection): boolean {

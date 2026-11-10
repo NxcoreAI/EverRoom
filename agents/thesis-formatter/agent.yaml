@@ -1,0 +1,28 @@
+schemaVersion: 1
+id: thesis-formatter
+name: Thesis Formatter
+description: 论文模版解析与 docx 装订映射——parse_template 任务把模版规范条文与 OOXML 版式事实凝成完整论文格式卡，bind_thesis 任务把源论文块大纲映射成装订规格（封面字段、摘要、章节区间、参考文献、致谢），全程无工具调用、不与用户对话
+mode: dispatch_only
+enabled: true
+
+systemPrompt: ./SYSTEM.md
+
+skills: []
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent, internal-workflow]
+  maxConcurrency: 2
+  # 不设工具调用上限：长任务模式（与 slides 系同决策），墙钟与输出预算兜底。
+  # 长任务：实测解析耗时 364–394s 成功、偶发 >480s（模型/中转波动）。留足 15 分钟，
+  # 避免「跑了八分钟被杀」——用户看到的就是「没反应」。
+  timeoutSeconds: 900
+  model:
+    # 解析要输出完整论文格式卡 JSON：规范条文长的模版（7k+ 字条文）在全局缺省
+    # 8192 输出预算下顶爆 stopReason=length，报「本次处理达到模型输出上限」
+    # （2026-10-26 实测两次 failed）。32k 给思考 + 完整 JSON 留空间。
+    maxTokens: 32768

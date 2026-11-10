@@ -1,15 +1,24 @@
 import type {
   AgentStatusSnapshot,
-  AgentWorkspaceRunStatus,
   AgentWorkspaceRunSummary,
   AgentWorkspaceState,
   AgentWorkspaceStatus,
   SubagentInvocation,
 } from "@nxcore/agent-contract";
 import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
-import type { AgentResolver, AgentRuntimeRunActivity } from "./resolver.js";
+import { bundledAgentDefinitionsDir } from "../../config.js";
+import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
+import type { AgentResolver, AgentRuntimeRunActivity, BuiltinAgentId } from "./resolver.js";
 
-const TERMINAL_ERRORS = new Set<AgentWorkspaceRunStatus>(["failed", "interrupted", "timed_out"]);
+/** Agent 本体（人格）快照：内置 Agent 读 bundle 的 SYSTEM.md，开发者 Agent 只有清单字段。 */
+export interface AgentPersonaSnapshot {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  skills: string[];
+  capabilities: string[];
+}
 
 function runtimeRun(run: AgentRuntimeRunActivity | null): AgentWorkspaceRunSummary | null {
   if (!run) return null;
@@ -35,9 +44,14 @@ function invocationRun(invocation: SubagentInvocation | null): AgentWorkspaceRun
   };
 }
 
-function state(activeRunCount: number, lastStatus: AgentWorkspaceRunStatus | null): AgentWorkspaceState {
+/**
+ * 运行一结束就回海：办公室只区分「运行中」和「待命」。
+ * 失败的运行已经落进「最近活动」（lastRun.status 仍是 failed），
+ * 不能再把 Agent 长期挂在 error 上、让鹈鹕一直停在路肩。
+ */
+function state(activeRunCount: number): AgentWorkspaceState {
   if (activeRunCount > 0) return "running";
-  return lastStatus && TERMINAL_ERRORS.has(lastStatus) ? "error" : "idle";
+  return "idle";
 }
 
 function runTimestamp(run: AgentWorkspaceRunSummary | null): string | null {
@@ -49,6 +63,38 @@ export class AgentStatusService {
     private readonly resolver: AgentResolver,
     private readonly subagents: SubagentOrchestrator,
   ) {}
+
+  /** 单个 Agent 的人格定义（「智能体」页人格段的数据源）。 */
+  persona(agentId: string): AgentPersonaSnapshot | null {
+    const definition = this.resolver.list().find((candidate) => candidate.id === agentId);
+    if (!definition) return null;
+    if (definition.kind === "builtin") {
+      try {
+        const bundle = loadBuiltinAgentBundle(
+          bundledAgentDefinitionsDir(),
+          definition.id as BuiltinAgentId,
+        );
+        return {
+          id: definition.id,
+          name: bundle.name,
+          description: bundle.description,
+          systemPrompt: bundle.systemPrompt,
+          skills: bundle.skills,
+          capabilities: bundle.capabilities,
+        };
+      } catch {
+        // bundle 读不到（缺 SYSTEM.md / 清单损坏）时退回清单字段，不让接口整体失败。
+      }
+    }
+    return {
+      id: definition.id,
+      name: definition.name,
+      description: definition.description,
+      systemPrompt: "",
+      skills: [],
+      capabilities: [],
+    };
+  }
 
   snapshot(): AgentStatusSnapshot {
     const invocations = this.subagents.listInvocations(500);
@@ -67,7 +113,7 @@ export class AgentStatusService {
           name: definition.name,
           description: definition.description,
           kind: definition.kind,
-          state: state(activeInvocations.length, lastRun?.status ?? null),
+          state: state(activeInvocations.length),
           activeRunCount: activeInvocations.length,
           workspace: {
             id: `agent://${definition.id}`,
@@ -88,7 +134,7 @@ export class AgentStatusService {
         name: definition.name,
         description: definition.description,
         kind: definition.kind,
-        state: state(activity.activeRuns.length, lastRun?.status ?? null),
+        state: state(activity.activeRuns.length),
         activeRunCount: activity.activeRuns.length,
         workspace: {
           id: `agent://${definition.id}`,

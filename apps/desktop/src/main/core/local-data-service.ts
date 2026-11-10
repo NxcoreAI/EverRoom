@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, createWriteStream, mkdirSync } from 'node:fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, statSync } from 'node:fs'
 import { mkdir, readFile, rename, stat, unlink } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { DatabaseSync } from 'node:sqlite'
+import { runSqliteMigrations } from '@nxcore/migration-kit'
 
 import { ConnectorRegistry } from '../connectors/connector-registry'
 import type {
@@ -13,6 +14,7 @@ import type {
   ConnectorSubscription,
 } from '../connectors/types'
 import { EvidenceService } from '../evidence/evidence-service'
+import { nxcoreDataMigrations } from './data-migrations'
 import {
   HIGH_RISK_FILE_BATCH_THRESHOLD,
   isIgnoredLocalDirectory,
@@ -127,6 +129,7 @@ interface FileSummaryRow {
 export class LocalDataService {
   private readonly database: DatabaseSync
   private readonly objectsDirectory: string
+  private readonly isFreshDatabase: boolean
   private readonly evidence: EvidenceService
   private readonly activeScans = new Map<string, Promise<SyncResult>>()
   private readonly disconnectingSources = new Set<string>()
@@ -151,10 +154,17 @@ export class LocalDataService {
   ) {
     this.objectsDirectory = join(dataDirectory, 'objects', 'sha256')
     mkdirSync(join(dataDirectory, 'database'), { recursive: true })
-    this.database = new DatabaseSync(join(dataDirectory, 'database', 'nxcore.db'))
+    const databasePath = join(dataDirectory, 'database', 'nxcore.db')
+    try {
+      this.isFreshDatabase = !existsSync(databasePath) || statSync(databasePath).size === 0
+    } catch {
+      this.isFreshDatabase = true
+    }
+    this.database = new DatabaseSync(databasePath)
     this.evidence = new EvidenceService(
       this.database,
       (hash) => this.objectPath(hash),
+      (sourceId, relativePath) => this.resolveLocalItemPath(sourceId, relativePath),
       (sourceId) => this.notifyChanged(sourceId, true),
     )
     this.highRiskImports?.setAutoResolver((batch, accepted) => this.resolveAutoScanBatch(batch, accepted))
@@ -379,6 +389,18 @@ export class LocalDataService {
     this.backfillLatestChangeRuns()
     this.evidence.initialize()
 
+    // 数据级迁移：在全部建表与探测式补列之后执行。失败时框架用备份恢复
+    // 整库并抛 MigrationFailureError，由 index.ts 的启动 catch 停机提示。
+    runSqliteMigrations({
+      storeId: 'nxcore.db',
+      sqlite: this.database,
+      databasePath: join(this.dataDirectory, 'database', 'nxcore.db'),
+      backupDir: join(this.dataDirectory, 'backups'),
+      isFreshStore: this.isFreshDatabase,
+      migrations: nxcoreDataMigrations,
+      close: () => this.database.close(),
+    })
+
     const recoveredAt = new Date().toISOString()
     this.database.prepare(`
       UPDATE sync_runs
@@ -389,6 +411,19 @@ export class LocalDataService {
       UPDATE data_sources
       SET status = 'error', last_error = '上次同步未完成，请重新扫描', updated_at = ?
       WHERE status = 'syncing'
+    `).run(recoveredAt)
+    // 上个版本可能把「条目已 missing 但导出仍 pending/exporting」的脏行留在表里
+    // （曾引发导出 worker 死循环）；启动时统一落成 failed，自愈存量数据。
+    this.database.prepare(`
+      UPDATE source_exports
+      SET status = 'failed', last_error = '本地文件已不存在，跳过导出', updated_at = ?
+      WHERE status IN ('pending', 'exporting')
+        AND source_version_id IN (
+          SELECT source_versions.id
+          FROM source_versions
+          JOIN source_items ON source_items.id = source_versions.source_item_id
+          WHERE source_items.state = 'missing'
+        )
     `).run(recoveredAt)
     this.database.prepare(`
       UPDATE source_exports SET status = 'pending', updated_at = ? WHERE status = 'exporting'
@@ -714,7 +749,7 @@ export class LocalDataService {
   }
 
   async previewFile(dataSourceId: string, fileId: string): Promise<MarkdownPreview> {
-    this.requireSource(dataSourceId)
+    const source = this.requireSource(dataSourceId)
     const row = this.database.prepare(`
       SELECT relative_path, extension, modified_at, content_hash, state
       FROM source_items WHERE id = ? AND data_source_id = ?
@@ -728,7 +763,13 @@ export class LocalDataService {
     if (!row) throw new Error('文件记录不存在。')
     if (row.state !== 'present' || !row.content_hash) throw new Error('文件当前不可预览。')
     if (!['.md', '.mdx', '.markdown'].includes(row.extension.toLowerCase())) throw new Error('仅支持 Markdown 文件预览。')
-    const content = await readFile(this.objectPath(row.content_hash), 'utf8')
+    // 本地文件夹来源不落对象库，直接读原文件。
+    const contentPath = source.kind === 'local-folder'
+      ? this.resolveLocalItemPath(dataSourceId, row.relative_path)
+      : this.objectPath(row.content_hash)
+    const content = await readFile(contentPath, 'utf8').catch((error: NodeJS.ErrnoException) => {
+      throw error.code === 'ENOENT' ? new Error('源文件已不存在，请恢复文件后重新扫描数据源。') : error
+    })
     if (Buffer.byteLength(content, 'utf8') > 2 * 1024 * 1024) throw new Error('Markdown 文件过大，无法预览。')
     return { fileName: basename(row.relative_path), relativePath: row.relative_path, modifiedAt: row.modified_at, content }
   }
@@ -1158,9 +1199,18 @@ export class LocalDataService {
               last_change_run_id = ?, last_changed_at = ?
           WHERE id = ?
         `)
+        // 条目转 missing 后，其 pending 导出将永远不可达（processExports 只取
+        // present 条目）；不及时落成 failed 会留下与取件条件分歧的脏行。
+        const failMissingExports = this.database.prepare(`
+          UPDATE source_exports
+          SET status = 'failed', last_error = ?, updated_at = ?
+          WHERE status = 'pending'
+            AND source_version_id IN (SELECT id FROM source_versions WHERE source_item_id = ?)
+        `)
         const changedAt = new Date().toISOString()
         for (const item of missingItems) {
           markMissing.run(runId, changedAt, item.id)
+          failMissingExports.run('本地文件已不存在，跳过导出', changedAt, item.id)
           await this.fileExports?.markLocalFileMissing?.({ localSourceId: id, localItemId: item.id }).catch(() => undefined)
         }
         counts.removed = missingItems.length
@@ -1542,7 +1592,7 @@ export class LocalDataService {
       deferExport ? 'pending' : 'normal',
       new Date().toISOString(),
     )
-    if (!shouldExport && !deferExport && isLocalParseableExtension(item.extension)) {
+    if (!deferExport && isLocalParseableExtension(item.extension)) {
       this.evidence.enqueueVersion(versionId, item.extension)
     }
     if (shouldExport && this.fileExports) {
@@ -1560,7 +1610,7 @@ export class LocalDataService {
   ): Promise<HighRiskImportResolution> {
     const findVersion = this.database.prepare(`
       SELECT source_versions.id, source_versions.object_hash, source_versions.source_item_id,
-        source_items.remote_id, source_items.relative_path,
+        source_items.remote_id, source_items.relative_path, source_items.extension,
         (
           SELECT COUNT(*)
           FROM source_versions AS accepted_version
@@ -1599,12 +1649,16 @@ export class LocalDataService {
         source_item_id: string
         remote_id: string
         relative_path: string
+        extension: string
         accepted_version_count: number
       } | undefined
       if (!version) continue
       if (accepted) {
         updatePolicy.run('approved', versionId)
         enqueue.run(versionId, new Date().toISOString())
+        if (isLocalParseableExtension(version.extension)) {
+          this.evidence.enqueueVersion(versionId, version.extension)
+        }
       } else {
         addIgnored.run(batch.sourceId, version.remote_id, version.relative_path, new Date().toISOString())
         if (Number(version.accepted_version_count) === 0) {
@@ -1632,8 +1686,17 @@ export class LocalDataService {
   }
 
   private hasPendingExports(): boolean {
+    // 必须与 processExports 的取件条件保持一致（联表限定 state = 'present'）：
+    // 若只看 status，missing 条目的残留 pending 行会让这里恒为真，而 worker
+    // 又取不到任务，kickExportWorker 的 finally 便形成纯微任务死循环，把主
+    // 进程事件循环打满（整个应用无响应）。
     return Boolean(this.database.prepare(`
-      SELECT 1 FROM source_exports WHERE status = 'pending' LIMIT 1
+      SELECT 1
+      FROM source_exports
+      JOIN source_versions ON source_versions.id = source_exports.source_version_id
+      JOIN source_items ON source_items.id = source_versions.source_item_id
+      WHERE source_exports.status = 'pending' AND source_items.state = 'present'
+      LIMIT 1
     `).get())
   }
 
@@ -1782,6 +1845,13 @@ export class LocalDataService {
       finishedAt,
       runId,
     )
+  }
+
+  private resolveLocalItemPath(sourceId: string, relativePath: string): string {
+    const source = this.requireSource(sourceId)
+    const connector = this.connectors.get(source.kind)
+    if (!connector.resolveLocalPath) throw new Error('该数据源没有本机文件可读。')
+    return connector.resolveLocalPath(this.toConnection(source), relativePath)
   }
 
   private requireSource(id: string): SourceRow {

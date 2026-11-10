@@ -1,7 +1,10 @@
 # 连接器栈 token 链路时序（connector-mode = 'saas'）
 
+> **2026-10-28 更新**：同步链路已删除；本文的 token 分层、会话换取与授权时序仍然有效，查询改为 Agent 即席检索（见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)）。
+
+
 > 范围：仅连接器栈的 saas 连接层（默认模式），不含 local 模式、本地数据源与迁移导入。
-> 代码依据：`apps/desktop/src/main/cloud/saas-client.ts`、`apps/desktop/src/main/gateway/saas-connector-bridge.ts`、`apps/desktop/src/main/index.ts`（connector-mode 段）、`submodules/everroom-connectors/gateway-module/open-connector-sync-executor.ts`。
+> 代码依据：`apps/desktop/src/main/cloud/saas-client.ts`、`apps/desktop/src/main/gateway/saas-connector-bridge.ts`、`apps/desktop/src/main/index.ts`（connector-mode 段）、`submodules/everoffice-connectors/gateway-module/open-connector-sync-executor.ts`。
 
 ## 参与者
 
@@ -28,9 +31,9 @@ sequenceDiagram
 
     rect rgb(235, 244, 255)
     Note over Main,OO: 阶段一 · 换取 oo 会话并注入（启动期 saas 模式 / 账号登录事件 / 授权前预热）
-    Main->>SaaS: POST /app/connectors/oo/token（EverRoom 登录态）
+    Main->>SaaS: POST /app/connectors/oo/token（EverOffice 登录态）
     SaaS-->>Main: { baseUrl, tenantId, token(oct_…) }<br/>SaaS 侧幂等：已登记直接返回，否则代发并登记
-    Note over Main: 缓存 connectorOoSessionCache（按 userId 去重）<br/>oo token 与 EverRoom 会话生命周期解耦（持久稳定）
+    Note over Main: 缓存 connectorOoSessionCache（按 userId 去重）<br/>oo token 与 EverOffice 会话生命周期解耦（持久稳定）
     Main->>Main: applyConnectorOoSession()<br/>重建 ooCliBridge（桌面直连 oo 的在线工具面）
     Main->>GW: 注入 env（未运行则首次 spawn，已运行则重启生效）<br/>NXCORE_CLI_CONNECTOR_URL / RUNTIME_TOKEN / MANAGED=false
     Note over GW,GW: gateway 与桌面持同一 oo 用户 token，直连 oo 数据面
@@ -88,7 +91,7 @@ sequenceDiagram
 
 | token | 谁持有 | 用途 |
 | --- | --- | --- |
-| EverRoom SaaS 会话（refresh token） | 主进程 SaasClient | 登录态；换 oo 会话；代发起授权 |
+| EverOffice SaaS 会话（refresh token） | 主进程 SaasClient | 登录态；换 oo 会话；代发起授权 |
 | oo 用户 runtime token（`oct_…`） | 主进程缓存 + 注入 gateway env（两者共用） | 桌面探测 oo（授权落地/对账）；gateway 数据面取数；租户锁定在 token 内 |
 | provider OAuth token | 仅 oo 用户租户 | oo 调上游 provider 用；客户端与 gateway 全程不经手 |
 | gateway 本地 token | 主进程 ↔ 本地 gateway | `/v1/nango-connectors/*` 等本地内部通道，与 oo 无关 |

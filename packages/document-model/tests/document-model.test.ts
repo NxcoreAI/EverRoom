@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  createEverroomBlockReferenceUrl,
-  createEverroomMemoryIndexUrl,
+  createEverofficeBlockReferenceUrl,
   everroomBlockIndexUrl,
   formatBlockIndexMarkMarkdown,
   freshenDocumentContent,
@@ -9,8 +8,7 @@ import {
   normalizeDocumentContent,
   normalizeDocumentFragment,
   parseBlockIndexMarkMarkdown,
-  parseEverroomBlockReferenceUrl,
-  parseEverroomMemoryIndexUrl,
+  parseEverofficeBlockReferenceUrl,
   stripDocumentTitle,
 } from "../src/index.js";
 
@@ -23,15 +21,15 @@ describe("document model", () => {
       fallbackTitle: "  计划草案  ",
       fallbackPreview: "第一阶段：调研",
     };
-    const url = createEverroomBlockReferenceUrl(reference);
+    const url = createEverofficeBlockReferenceUrl(reference);
 
     expect(url).toContain("everroom://room/room%2Fa/doc%201/block-1?");
-    expect(parseEverroomBlockReferenceUrl(url)).toEqual({
+    expect(parseEverofficeBlockReferenceUrl(url)).toEqual({
       ...reference,
       fallbackTitle: "计划草案",
     });
-    expect(parseEverroomBlockReferenceUrl("https://example.com")).toBeNull();
-    expect(parseEverroomBlockReferenceUrl("everroom://room/only/two")).toBeNull();
+    expect(parseEverofficeBlockReferenceUrl("https://example.com")).toBeNull();
+    expect(parseEverofficeBlockReferenceUrl("everroom://room/only/two")).toBeNull();
   });
 
   it("detects embedded image bytes but allows stable asset URLs", () => {
@@ -128,7 +126,7 @@ describe("document model", () => {
 
   it("freshens imported block IDs and remaps only internal references", () => {
     const generated = ["fresh-source", "fresh-reference"];
-    const internalReference = createEverroomBlockReferenceUrl({
+    const internalReference = createEverofficeBlockReferenceUrl({
       roomId: "room-1",
       documentId: "doc-import",
       blockId: "source",
@@ -165,7 +163,7 @@ describe("document model", () => {
       targetBlockId: "fresh-source",
     });
     const rewrittenLinks = content.content?.[0]?.content?.[0]?.marks?.map((mark) => mark.attrs?.href);
-    expect(parseEverroomBlockReferenceUrl(String(rewrittenLinks?.[0]))).toEqual({
+    expect(parseEverofficeBlockReferenceUrl(String(rewrittenLinks?.[0]))).toEqual({
       roomId: "room-1",
       documentId: "doc-import",
       blockId: "fresh-source",
@@ -175,40 +173,13 @@ describe("document model", () => {
     expect(rewrittenLinks?.[1]).toBe("everroom://room/room-1/doc-other/source");
   });
 
-  it("round trips memory index URLs and keeps them disjoint from block reference URLs", () => {
-    const memory = {
-      roomId: "room-1",
-      memoryId: "room-1-memory-2",
-      fallbackTitle: "  用户偏好  ",
-      fallbackPreview: "偏好简述",
-    };
-    const url = createEverroomMemoryIndexUrl(memory);
-    expect(url).toContain("everroom://memory/room-1/room-1-memory-2?");
-    expect(parseEverroomMemoryIndexUrl(url)).toEqual({
-      ...memory,
-      fallbackTitle: "用户偏好",
-    });
-    // The memory host must never be readable as a document block reference
-    // (3-segment room URL) and vice versa.
-    expect(parseEverroomBlockReferenceUrl(url)).toBeNull();
-    expect(parseEverroomMemoryIndexUrl(
-      createEverroomBlockReferenceUrl({ roomId: "r", documentId: "d", blockId: "b" }),
-    )).toBeNull();
-    expect(parseEverroomMemoryIndexUrl("everroom://memory/only-one")).toBeNull();
-    expect(parseEverroomMemoryIndexUrl("https://example.com")).toBeNull();
-  });
 
-  it("round trips block index mark markdown for both target kinds", () => {
+  it("round trips block index mark markdown", () => {
     const documentTarget = {
       kind: "document" as const,
       roomId: "room-1",
       documentId: "doc-2",
       blockId: "block-9",
-    };
-    const memoryTarget = {
-      kind: "memory" as const,
-      roomId: "room-1",
-      memoryId: "room-1-memory-3",
     };
 
     const documentMarkdown = formatBlockIndexMarkMarkdown(documentTarget, "来源 [草稿]");
@@ -224,21 +195,12 @@ describe("document model", () => {
     expect(parsedDocument?.label).toBe("来源 [草稿]");
     expect(parsedDocument?.raw).toBe(documentMarkdown);
 
-    const memoryMarkdown = formatBlockIndexMarkMarkdown(memoryTarget, "记忆项");
-    expect(memoryMarkdown).toBe("^[记忆项](everroom://memory/room-1/room-1-memory-3)");
-    const parsedMemory = parseBlockIndexMarkMarkdown(memoryMarkdown);
-    expect(parsedMemory?.target).toEqual({
-      ...memoryTarget,
-      fallbackTitle: "记忆项",
-      fallbackPreview: null,
-    });
-
     // Fallback title fills an empty label; redundant title query is omitted
     // (label already carries it — writing both would grow on every round trip).
     expect(formatBlockIndexMarkMarkdown(
-      { ...memoryTarget, fallbackTitle: "备用标题" },
+      { ...documentTarget, fallbackTitle: "备用标题" },
       "",
-    )).toBe("^[备用标题](everroom://memory/room-1/room-1-memory-3)");
+    )).toBe("^[备用标题](everroom://room/room-1/doc-2/block-9)");
   });
 
   it("rejects non-index markdown shapes without throwing", () => {
@@ -248,17 +210,12 @@ describe("document model", () => {
     expect(parseBlockIndexMarkMarkdown("普通文本")).toBeNull();
   });
 
-  it("keeps everroomBlockIndexUrl aligned with each target kind", () => {
+  it("keeps everroomBlockIndexUrl aligned with the document target kind", () => {
     expect(everroomBlockIndexUrl({
       kind: "document",
       roomId: "r",
       documentId: "d",
       blockId: "b",
     })).toBe("everroom://room/r/d/b");
-    expect(everroomBlockIndexUrl({
-      kind: "memory",
-      roomId: "r",
-      memoryId: "m",
-    })).toBe("everroom://memory/r/m");
   });
 });

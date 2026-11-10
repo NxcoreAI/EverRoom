@@ -108,3 +108,65 @@ describe('SaasClient OIDC loopback callback', () => {
     await expect(loginPromise).rejects.toThrow('User cancelled')
   })
 })
+
+describe('SaasClient OIDC callback outcomes', () => {
+  it('treats non-callback URLs as unrelated', () => {
+    const client = createClient(false)
+    expect(client.handleOidcCallback('everroom://auth/other?code=1')).toBe('unrelated')
+    expect(client.handleOidcCallback('https://example.com/auth/callback?code=1')).toBe('unrelated')
+    expect(client.handleOidcCallback('not a url')).toBe('unrelated')
+  })
+
+  it('reports a completed browser authorization when no login is in progress instead of dropping it silently', () => {
+    const client = createClient(false)
+    expect(client.handleOidcCallback(`${OIDC_CALLBACK_URL}?state=abc&code=x`)).toBe('no-login-in-progress')
+  })
+
+  it('keeps the current login alive when a stale callback from an earlier attempt arrives', async () => {
+    const client = createClient(false)
+    const openExternal = vi.fn(async () => undefined)
+    Object.defineProperty(client, 'openExternal', { value: openExternal })
+
+    const loginPromise = client.loginWithOidc('google')
+    await vi.waitFor(() => {
+      expect(openExternal).toHaveBeenCalledTimes(1)
+    })
+    const state = authorizationParam(authorizationUrl(openExternal.mock.calls[0]), 'state')
+
+    expect(client.handleOidcCallback(`${OIDC_CALLBACK_URL}?state=stale-state&code=x`)).toBe('stale')
+
+    // 迟到回调不打断当前登录：登录仍在等待，可正常取消。
+    client.cancelOidcLogin('still-waiting')
+    await expect(loginPromise).rejects.toThrow('still-waiting')
+  })
+
+  it('rejects the current login when the callback carries an error with matching state', async () => {
+    const client = createClient(false)
+    const openExternal = vi.fn(async () => undefined)
+    Object.defineProperty(client, 'openExternal', { value: openExternal })
+
+    const loginPromise = client.loginWithOidc('google')
+    await vi.waitFor(() => {
+      expect(openExternal).toHaveBeenCalledTimes(1)
+    })
+    const state = authorizationParam(authorizationUrl(openExternal.mock.calls[0]), 'state')
+
+    expect(client.handleOidcCallback(`${OIDC_CALLBACK_URL}?state=${encodeURIComponent(state)}&error=access_denied&error_description=User+cancelled`)).toBe('rejected')
+    await expect(loginPromise).rejects.toThrow('User cancelled')
+  })
+
+  it('rejects the current login when the callback has no authorization code', async () => {
+    const client = createClient(false)
+    const openExternal = vi.fn(async () => undefined)
+    Object.defineProperty(client, 'openExternal', { value: openExternal })
+
+    const loginPromise = client.loginWithOidc('google')
+    await vi.waitFor(() => {
+      expect(openExternal).toHaveBeenCalledTimes(1)
+    })
+    const state = authorizationParam(authorizationUrl(openExternal.mock.calls[0]), 'state')
+
+    expect(client.handleOidcCallback(`${OIDC_CALLBACK_URL}?state=${encodeURIComponent(state)}`)).toBe('rejected')
+    await expect(loginPromise).rejects.toThrow('Logto 登录回调缺少授权码。')
+  })
+})

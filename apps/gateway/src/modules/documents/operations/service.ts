@@ -47,7 +47,8 @@ export interface CreateDocumentOperationInput {
   capabilityVersion: number;
   interactionMode: DocumentOperationInteractionMode;
   presenterKey: string;
-  roomId: string;
+  /** 工作区级操作为 null（P0-2d）。 */
+  roomId: string | null;
   documentId?: string | null;
   documentTitle: string;
   sessionId: string;
@@ -178,14 +179,12 @@ export class DocumentOperationService {
     private readonly broker: DocumentEventBroker,
   ) {
     this.repository = new DocumentRepository(db);
-    const engine = new DocumentContentEngine({
-      findDocumentRoom: (documentId) => this.repository.get(documentId)?.roomId ?? null,
-    });
+    const engine = new DocumentContentEngine();
     this.commits = new DocumentCommitService(db, this.repository, engine);
   }
 
   create(input: CreateDocumentOperationInput): DocumentOperation {
-    if (!input.capabilityId.trim() || !input.presenterKey.trim() || !input.roomId.trim()) {
+    if (!input.capabilityId.trim() || !input.presenterKey.trim() || (input.roomId !== null && !input.roomId.trim())) {
       throw new DocumentServiceError("INVALID_OPERATION", "Document operation identity is incomplete");
     }
     const id = input.id ?? randomUUID();
@@ -225,7 +224,7 @@ export class DocumentOperationService {
             documentId: input.documentId,
             currentVersion: current.version,
             retryable: true,
-            nextAction: "context_room_document_read",
+            nextAction: "document_read",
           });
         }
       }
@@ -710,7 +709,8 @@ export class DocumentOperationService {
     input: AtomicDocumentCommitInput,
   ): PreparedDocumentCommit {
     const operationDocumentId = operation.documentId ?? this.draftDocumentId(operation);
-    if (!operationDocumentId || input.documentId !== operationDocumentId || input.roomId !== operation.roomId) {
+    // Phase 2i：roomId 不再参与目标校验（文稿恒为工作区级，commit 也忽略它）。
+    if (!operationDocumentId || input.documentId !== operationDocumentId) {
       throw new DocumentServiceError("OPERATION_DOCUMENT_MISMATCH", "Commit target does not match the operation", 409);
     }
     const current = this.repository.get(input.documentId);
@@ -745,7 +745,6 @@ export class DocumentOperationService {
       || operation.documentId !== null
       || !draftDocumentId
       || input.documentId !== draftDocumentId
-      || input.roomId !== operation.roomId
     ) {
       throw new DocumentServiceError("OPERATION_DOCUMENT_MISMATCH", "Create target does not match the operation", 409);
     }

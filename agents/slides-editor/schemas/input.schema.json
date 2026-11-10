@@ -1,0 +1,132 @@
+{
+  "type": "object",
+  "properties": {
+    "instruction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16000,
+      "description": "User instruction for this deck generation; always the highest priority."
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "Deck title from the user-confirmed draft document."
+    },
+    "draftPages": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 32,
+      "description": "User-confirmed draft pages. This is the only content source of truth.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "points": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "materialHints": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "priorStoryboard": {
+      "type": "object",
+      "description": "页级修复模式：已经定稿的整册 storyboard（只含 repairPageIds 命中的页）。默认压缩由网关代码完成，不带此字段时你不需要输出整册。",
+      "additionalProperties": true
+    },
+    "repairPageIds": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "string"
+      },
+      "description": "页级修复模式：允许改动的页 id（单轮最多 12 页，覆盖一个 arrange 批次）。改到其它页会被网关丢弃。"
+    },
+    "defects": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "description": "页级修复模式：校对器给出的具体缺陷，逐条指名到页。"
+    },
+    "contentMode": {
+      "type": "string",
+      "const": "semantic-v3"
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 512,
+      "items": {
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "pageId",
+          "kind",
+          "value",
+          "mustShow"
+        ],
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "pageId": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "kind": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          },
+          "value": {
+            "minLength": 1,
+            "maxLength": 8000,
+            "type": "string"
+          },
+          "mustShow": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "instruction",
+    "draftPages",
+    "contentMode",
+    "sources",
+    "priorStoryboard",
+    "repairPageIds",
+    "defects"
+  ],
+  "additionalProperties": false
+}

@@ -1,3 +1,4 @@
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import type {
   DocumentBlockBacklink,
   DocumentBlockResolution,
@@ -12,11 +13,9 @@ import type {
 import { and, asc, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
-  contextRooms,
   documentBlockReferences,
   documentBlocks,
   documents,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
 import { DocumentContentEngine } from "./content-engine.js";
@@ -31,8 +30,8 @@ export class DocumentQueryService {
     readonly yjsHistory: YjsHistoryService = new YjsHistoryService(),
   ) {}
 
-  list(roomId: string, trashed = false): RoomDocument[] {
-    return this.repository.list(roomId, trashed);
+  list(trashed = false, origin?: "native" | "import"): RoomDocument[] {
+    return this.repository.list(trashed, origin);
   }
 
   get(documentId: string): RoomDocument | null {
@@ -109,19 +108,18 @@ export class DocumentQueryService {
     return this.db.select({
       reference: documentBlockReferences,
       sourceDocument: documents,
-      sourceRoomId: roomDocumentLinks.roomId,
       sourceBlock: documentBlocks,
     }).from(documentBlockReferences)
       .innerJoin(documents, eq(documents.id, documentBlockReferences.sourceDocumentId))
-      .innerJoin(roomDocumentLinks, eq(roomDocumentLinks.documentId, documents.id))
       .innerJoin(documentBlocks, and(
         eq(documentBlocks.documentId, documentBlockReferences.sourceDocumentId),
         eq(documentBlocks.blockId, documentBlockReferences.sourceBlockId),
       ))
       .where(and(...conditions))
       .orderBy(asc(documentBlockReferences.ordinal)).all()
-      .map(({ reference, sourceDocument, sourceRoomId, sourceBlock }) => ({
-        sourceRoomId,
+      .map(({ reference, sourceDocument, sourceBlock }) => ({
+        // 工作区级文稿没有 Room 归属：契约要求的 sourceRoomId 用工作区频道占位。
+        sourceRoomId: WORKSPACE_DOCUMENT_CHANNEL,
         sourceDocumentId: sourceDocument.id,
         sourceDocumentTitle: sourceDocument.title,
         sourceBlockId: reference.sourceBlockId,
@@ -132,17 +130,11 @@ export class DocumentQueryService {
   }
 
   resolveBlockReferences(input: ResolveDocumentBlockReferencesInput): DocumentBlockResolution[] {
-    if (!input.sourceRoomId) throw new DocumentServiceError("ROOM_REQUIRED", "sourceRoomId is required");
+    // Phase 2i：文档库只剩工作区，跨 Room 引用校验与 Room 存在性检查一并删除；
+    // 契约里的 sourceRoomId / roomId 仍由调用方携带，只作为引用元数据不再校验。
     return input.references.map((reference) => {
-      if (reference.roomId !== input.sourceRoomId) {
-        throw new DocumentServiceError("CROSS_ROOM_REFERENCE", "Document block references must stay in one Room", 409);
-      }
-      const room = this.db.select().from(contextRooms).where(eq(contextRooms.id, reference.roomId)).get();
-      if (!room || room.deletedAt) {
-        return { ...reference, status: "room_unavailable", title: null, textPreview: null, version: null };
-      }
       const document = this.repository.get(reference.documentId);
-      if (!document || document.roomId !== reference.roomId) {
+      if (!document) {
         return { ...reference, status: "document_deleted", title: null, textPreview: null, version: null };
       }
       if (document.deletedAt) {
@@ -178,7 +170,6 @@ export class DocumentQueryService {
     const normalized = this.engine.normalizeDocument(
       document.contentJson,
       document.id,
-      document.roomId,
       document.version,
     );
     const hasAddressableContent = normalized.blocks.length > 0;

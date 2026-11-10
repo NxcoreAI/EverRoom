@@ -24,16 +24,12 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: "silent",
     authToken: "test-token-0123456789",
     agentRuntime: "fake",
-    memory: null,
     pi: null,
     cursorCompletionPi: null,
-    knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
+    litePi: null,
     backgroundPi: null,
-    asrInputDir: join(dataDir, "recordings"),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
-    asr: null,
   };
 }
 
@@ -336,47 +332,7 @@ describe("agent gateway", () => {
     await restartedApp.close();
   });
 
-  it("rejects a stale Room selection before creating an Agent run", async () => {
-    const config = await testConfig();
-    const app = await createServer(config);
-    const headers = { authorization: `Bearer ${config.authToken}` };
-    const session = (await app.inject({
-      method: "POST",
-      url: "/v1/agent/sessions",
-      headers,
-      payload: { pageLabel: "首页", roomId: null },
-    })).json<AgentSession>();
-
-    const response = await app.inject({
-      method: "POST",
-      url: `/v1/agent/sessions/${session.id}/runs`,
-      headers,
-      payload: {
-        prompt: "在已删除的 Room 中创建文档",
-        idempotencyKey: "stale-room-selection-key",
-        context: {
-          rooms: [{ id: "room-current", title: "当前 Room" }],
-          selectedRoomId: "room-deleted",
-        },
-      },
-    });
-    const snapshot = (await app.inject({
-      method: "GET",
-      url: `/v1/agent/sessions/${session.id}`,
-      headers,
-    })).json<AgentSessionSnapshot>();
-
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({
-      error: "room_not_available",
-      message: "The selected Context Room is no longer available",
-    });
-    expect(snapshot.messages).toEqual([]);
-    expect(snapshot.activeRun).toBeNull();
-    await app.close();
-  });
-
-  it("rejects an unknown memoryScope value at the run schema boundary", async () => {
+  it("Phase 2i 去 Room：run 不再携带 rooms/selectedRoomId，正常创建且 run.roomId 恒 null", async () => {
     const config = await testConfig();
     const app = await createServer(config);
     const headers = { authorization: `Bearer ${config.authToken}` };
@@ -386,19 +342,22 @@ describe("agent gateway", () => {
       headers,
       payload: { pageLabel: "首页" },
     })).json<AgentSession>();
+    // Phase 2i 后会话仍暴露 legacy roomId 字段（恒 null），不再作为分区键。
+    expect(session.roomId).toBeNull();
 
     const response = await app.inject({
       method: "POST",
       url: `/v1/agent/sessions/${session.id}/runs`,
       headers,
       payload: {
-        prompt: "聚焦模式枚举校验",
-        idempotencyKey: "memory-scope-schema-key",
-        memoryScope: "galaxy",
+        prompt: "帮我在工作区新建一份文档",
+        idempotencyKey: "workspace-run-no-room-key",
       },
     });
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(202);
+    const run = response.json<AgentRun>();
+    expect(run.roomId).toBeNull();
     await app.close();
   });
 
@@ -499,8 +458,101 @@ describe("agent gateway", () => {
       type: "run.interrupted",
       payload: { reason: "gateway-restarted" },
     }));
+    // 重启只中断 run，不销毁续聊上下文：runtimeSessionRef 指向的 pi 会话
+    // 文件保留全部历史（含被打断那轮的工具调用与推理）。旧实现把它置 null，
+    // 用户「请继续工作」只能从零开始；恢复保留后下一轮 start 走
+    // SessionManager.open 续聊（#重启不能影响继续工作）。
     expect(restartedApp.db.select().from(agentSessions)
-      .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef).toBeNull();
+      .where(eq(agentSessions.id, sessionId)).get()?.runtimeSessionRef)
+      .toBe("stale-runtime-session");
     await restartedApp.close();
+  });
+
+  it("persists noteCards on the user message and returns them in the session snapshot", async () => {
+    const config = await testConfig();
+    const app = await createServer(config);
+    const headers = { authorization: `Bearer ${config.authToken}` };
+    const sessionResponse = await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "EverOffice" },
+    });
+    if (sessionResponse.statusCode !== 201) {
+      throw new Error(`create session ${sessionResponse.statusCode}: ${sessionResponse.body.slice(0, 300)}`);
+    }
+    const session = sessionResponse.json<AgentSession>();
+
+    await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${session.id}/runs`,
+      headers,
+      payload: {
+        prompt: "我在 Word《报告》选中了这段内容：改一下。 idempotency-padding",
+        displayPrompt: "我对 1 处做了批注",
+        // 纯批注发送：气泡正文为空串 → 前端只渲染卡片、不渲染气泡。
+        displayContent: "",
+        noteCards: [
+          { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
+          { excerpt: "第二段原文内容", note: "这句删掉" },
+        ],
+        idempotencyKey: "note-cards-persist-key",
+      },
+    });
+
+    const snapshotResponse = await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${session.id}`,
+      headers,
+    });
+    if (snapshotResponse.statusCode !== 200) {
+      throw new Error(`snapshot ${snapshotResponse.statusCode}: ${snapshotResponse.body.slice(0, 300)}`);
+    }
+    const snapshot = snapshotResponse.json<AgentSessionSnapshot>();
+    const userMessage = snapshot.messages.find((message) => message.role === "user");
+    expect(userMessage?.noteCards).toEqual([
+      { excerpt: "第一段原文内容", note: "改一下这段", title: "报告" },
+      { excerpt: "第二段原文内容", note: "这句删掉" },
+    ]);
+    // displayPrompt 仍是落库 content（标题/检索语义），displayContent 只管气泡。
+    expect(userMessage?.content).toBe("我对 1 处做了批注");
+    expect(userMessage?.displayContent).toBe("");
+
+    // 坏数据（空数组）静默降级为普通消息：不落 note_cards。
+    const secondSessionResponse = await app.inject({
+      method: "POST",
+      url: "/v1/agent/sessions",
+      headers,
+      payload: { pageLabel: "EverOffice-2" },
+    });
+    if (secondSessionResponse.statusCode !== 201) {
+      throw new Error(`second create ${secondSessionResponse.statusCode}: ${secondSessionResponse.body.slice(0, 300)}`);
+    }
+    const secondSession = secondSessionResponse.json<AgentSession>();
+    const secondRunResponse = await app.inject({
+      method: "POST",
+      url: `/v1/agent/sessions/${secondSession.id}/runs`,
+      headers,
+      payload: {
+        prompt: "普通消息一条 idempotency-padding",
+        noteCards: [],
+        idempotencyKey: "note-cards-empty-key",
+      },
+    });
+    if (secondRunResponse.statusCode >= 300) {
+      throw new Error(`second run ${secondRunResponse.statusCode}: ${secondRunResponse.body.slice(0, 300)}`);
+    }
+    const secondResponse = await app.inject({
+      method: "GET",
+      url: `/v1/agent/sessions/${secondSession.id}`,
+      headers,
+    });
+    if (secondResponse.statusCode !== 200) {
+      throw new Error(`second snapshot ${secondResponse.statusCode}: ${secondResponse.body.slice(0, 200)}`);
+    }
+    const secondSnapshot = secondResponse.json<AgentSessionSnapshot>();
+    expect(secondSnapshot.messages.find((message) => message.role === "user")?.noteCards)
+      .toBeUndefined();
+    await app.close();
   });
 });

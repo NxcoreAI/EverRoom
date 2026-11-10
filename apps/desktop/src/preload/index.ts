@@ -2,24 +2,42 @@ import '@sentry/electron/preload'
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
-import type { KnowledgeAttachInput, KnowledgeEntityStatus } from '../shared/knowledge'
 import type {
-  CreateContextRoomInput,
-  RoomDuplicateCheckInput,
-  RoomDuplicateCandidateStatus,
-  SaveContextRoomSnapshotInput,
+  AgentAccessCreateInput,
+  AgentAccessExampleQueryDto,
+  AgentAccessInstallOutcomeDto,
+  AgentAccessSelftestDto,
+  AgentAccessSettingsDto,
+  AgentAccessUninstallOutcomeDto,
+  AgentAccessUpdateInput,
+  AgentConnectionDto,
+} from '../shared/agent-access'
+import type {
+  AgentDebugAgentResponse,
+  AgentDebugAgentsResponse,
+  AgentDebugUsageResponse,
+} from '../shared/agent-debug'
+import type {
+  AgentAttachmentReference,
+  CreatePlanItemInput,
+  MovePlanItemInput,
+  PlanBatchInput,
+  PlanChangePayload,
+  PlanItemListQuery,
+  UpdatePlanItemInput,
 } from '@nxcore/agent-contract'
 import type {
-  MemoryAtomicListOptions,
-  MemoryConversationListOptions,
-  MemoryDocumentRewriteInput,
-  MemoryOnboardingInput,
-  MemoryRoomMemoriesPageDto,
-} from '../shared/memory'
+  SearchItemType,
+  SearchMessageContextDto,
+  SearchPageDto,
+  SearchRequestDto,
+  SearchScopeDto,
+} from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { AiRelayKeeperEventType, CloudAccountStatus, DesktopRequestError, NxcoreDesktopApi, RoomAgentSelectionRewriteInput } from '../shared/sources'
-import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent, OsOpenedDocument } from '../shared/office'
+import type { SlidesPageImagesStatus } from '../shared/slides'
+import { OIDC_LOGIN_CANCELLED_MESSAGE, OFFICE_PREVIEW_REQUEST_CHANNEL, type AiRelayKeeperEventType, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewKind, type OfficePreviewRequest, type SubagentSelectionRewriteInput } from '../shared/sources'
 import { isCursorCompletionAgentErrorPayload } from '../shared/cursor-completion'
 import {
   isDesktopLocale,
@@ -29,6 +47,11 @@ import {
 
 const requestErrorListeners = new Set<(error: DesktopRequestError) => void>()
 let pendingRequestError: DesktopRequestError | null = null
+let pendingRequestErrorAt = 0
+/** 无监听者（AppErrorDialog 未挂载，如登录页阶段）时错误的暂存时效：
+ * 只重放挂载间隙内的新鲜错误；陈年错误（登录页积压的登录超时等用户
+ * 早已知情并处理过）不该在进入应用后突然弹出。 */
+const PENDING_REQUEST_ERROR_TTL_MS = 10_000
 let currentLocale: DesktopLocale = 'zh-CN'
 
 function desktopText(key: Parameters<typeof translateDesktopMessage>[1]): string {
@@ -38,6 +61,11 @@ function desktopText(key: Parameters<typeof translateDesktopMessage>[1]): string
 function isRateLimitMessage(message: string): boolean {
   return message === translateDesktopMessage('zh-CN', 'error.rateLimited.message')
     || message === translateDesktopMessage('en-US', 'error.rateLimited.message')
+}
+
+function isQuotaMessage(message: string): boolean {
+  return message === translateDesktopMessage('zh-CN', 'error.quota.message')
+    || message === translateDesktopMessage('en-US', 'error.quota.message')
 }
 
 function errorMessage(error: unknown): string {
@@ -52,7 +80,6 @@ function networkOperation(channel: string): string {
   if (/agent.*session|session.*agent/i.test(channel)) return desktopText('error.network.agentSessions')
   if (/runtime-config/i.test(channel)) return desktopText('error.network.runtimeConfig')
   if (/gateway.*status/i.test(channel)) return desktopText('error.network.gatewayStatus')
-  if (/memory/i.test(channel)) return desktopText('error.network.memory')
   if (/knowledge|wiki/i.test(channel)) return desktopText('error.network.knowledge')
   if (/document/i.test(channel)) return desktopText('error.network.document')
   if (/source|file/i.test(channel)) return desktopText('error.network.files')
@@ -62,7 +89,13 @@ function networkOperation(channel: string): string {
 
 function networkErrorDetail(channel: string, error: unknown): Pick<DesktopRequestError, 'title' | 'message'> | null {
   const raw = error instanceof Error ? error.message : String(error)
-  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(raw)) return null
+  // 带 [code] 前缀的结构化网关错误说明本地网关已应答，其文本里可能含上游的
+  // "fetch failed"，不能据此判定本地网关断连（桥接层错误码前缀约定）。
+  if (/^\[[a-z][a-z0-9_]*\]/.test(raw)) return null
+  // timeout of 10000ms exceeded：gateway 忙碌（ingest 高峰同步写卡事件循环）时
+  // loopback axios 客户端（reality bridge / supervisor 健康探活）的响应超时原话，
+  // 与 ECONNRESET 同属可自愈的瞬断——issue #181。
+  if (!/fetch failed|failed to fetch|network error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout of 10000ms exceeded/i.test(raw)) return null
   return {
     title: desktopText('error.network.title'),
     message: desktopText('error.network.message')
@@ -78,13 +111,18 @@ function requestError(channel: string, error: unknown): DesktopRequestError {
   if (isRateLimitMessage(message)) {
     return { channel, severity: 'notice', title: desktopText('error.rateLimited.title'), message }
   }
+  if (isQuotaMessage(message)) {
+    return { channel, severity: 'error', title: desktopText('error.quota.title'), message }
+  }
   return { channel, severity: 'error', message }
 }
 
 function reportRequestError(detail: DesktopRequestError): void {
   ipcRenderer.send('app:request-error', detail)
-  if (requestErrorListeners.size === 0) pendingRequestError = detail
-  else for (const listener of requestErrorListeners) listener(detail)
+  if (requestErrorListeners.size === 0) {
+    pendingRequestError = detail
+    pendingRequestErrorAt = Date.now()
+  } else for (const listener of requestErrorListeners) listener(detail)
 }
 
 function rateLimitNotice(value: unknown): DesktopRequestError | null {
@@ -134,7 +172,9 @@ async function invokeWithRecovery<T>(channel: string, args: unknown[], attempt: 
       }
     }
     const detail = requestError(channel, error)
-    reportRequestError(detail)
+    // 用户主动取消 OIDC 登录是预期结局而非故障：不进全局错误上报，
+    // 原样抛回调用方由登录页静默收场（renderer 按 message 哨兵识别）。
+    if (detail.message !== OIDC_LOGIN_CANCELLED_MESSAGE) reportRequestError(detail)
     throw new Error(detail.message)
   }
 }
@@ -163,6 +203,18 @@ const api: NxcoreDesktopApi = {
   updater: {
     getStatus: () => ipcRenderer.invoke('update:get-status'),
     checkNow: () => ipcRenderer.invoke('update:check-now'),
+    onProgress: (listener) => {
+      ipcRenderer.on('update:progress', (_event, progress) => listener(progress))
+      return () => ipcRenderer.removeAllListeners('update:progress')
+    },
+    onDownloaded: (listener) => {
+      ipcRenderer.on('update:downloaded', (_event, info) => listener(info))
+      return () => ipcRenderer.removeAllListeners('update:downloaded')
+    },
+    onError: (listener) => {
+      ipcRenderer.on('update:error', (_event, payload) => listener(payload))
+      return () => ipcRenderer.removeAllListeners('update:error')
+    },
   },
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
@@ -175,11 +227,63 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('window:maximized-changed', handler)
     },
   },
+  appearance: {
+    setTheme: (theme) => ipcRenderer.invoke('appearance:set-theme', theme),
+  },
   office: {
-    testAvailable: Boolean(process.env.ELECTRON_RENDERER_URL),
     setActiveInstance: (id) => ipcRenderer.invoke('office:instance:set-active', id),
     closeInstance: (id) => ipcRenderer.invoke('office:instance:close', id),
+    /**
+     * 干净画布：隐藏/显示 Word 编辑器操作区（Ribbon/状态栏/标尺/导航）。
+     * fileId 省略 = 当前焦点 Word 页签；hidden 省略 = 切换。
+     */
+    toggleChrome: (input?: { fileId?: string; hidden?: boolean }) =>
+      ipcRenderer.invoke('office:chrome-toggle', input ?? {}),
+    /** Doc 生成流程原型：真实走 genoffice 管线生成 docx 并入库，返回 fileId。 */
+    generateDocxPrototype: (input) => ipcRenderer.invoke('office:generate-docx-prototype', input),
     setWorkspaceBounds: (bounds) => ipcRenderer.send('office:workspace-bounds', bounds),
+    /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
+    onAgentFile: (listener: (event: OfficeAgentFileEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentFileEvent) => listener(payload)
+      ipcRenderer.on('office:agent-file', handler)
+      return () => ipcRenderer.removeListener('office:agent-file', handler)
+    },
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
+    syncAskQueue: (input: { fileId: string; items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+      anchor?: OfficeAskAnchor
+    }> }) => ipcRenderer.send('office:ask-queue-sync', input),
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction: (listener: (event: OfficeAskQueueActionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAskQueueActionEvent) => listener(payload)
+      ipcRenderer.on('office:ask-queue-action', handler)
+      return () => ipcRenderer.removeListener('office:ask-queue-action', handler)
+    },
+    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    onAgentAsk: (listener: (event: OfficeAgentAskEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
+      ipcRenderer.on('office:agent-ask', handler)
+      return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded: (listener: (event: { id: string; kind: OfficePreviewKind }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { id: string; kind: OfficePreviewKind }) => listener(payload)
+      ipcRenderer.on('office:instance-reloaded', handler)
+      return () => ipcRenderer.removeListener('office:instance-reloaded', handler)
+    },
+    /**
+     * 主进程主动打开的预览实例（排版面板 👁 预览模版原文件等）：
+     * 实例已在主进程建好，渲染端只需开顶栏标签并激活——不接这条事件，
+     * 原生视图会一直隐藏，用户看到的就是「点了预览没反应」。
+     */
+    onPreviewRequest: (listener: (request: OfficePreviewRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficePreviewRequest) => listener(payload)
+      ipcRenderer.on(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
+      return () => ipcRenderer.removeListener(OFFICE_PREVIEW_REQUEST_CHANNEL, handler)
+    },
   },
   locale: {
     system: ipcRenderer.sendSync('app:get-system-locale-sync') as string,
@@ -197,7 +301,7 @@ const api: NxcoreDesktopApi = {
     onRequestError: (listener) => {
       requestErrorListeners.add(listener)
       if (pendingRequestError) {
-        listener(pendingRequestError)
+        if (Date.now() - pendingRequestErrorAt <= PENDING_REQUEST_ERROR_TTL_MS) listener(pendingRequestError)
         pendingRequestError = null
       }
       return () => requestErrorListeners.delete(listener)
@@ -218,6 +322,9 @@ const api: NxcoreDesktopApi = {
     chooseLocalAgentDirectory: (provider) => invoke('migrations:choose-local-agent-directory', provider),
     importLocalAgentMigration: (provider, id) => invoke('migrations:import-local-agent-migration', provider, id),
     importNotionZip: () => invoke('migrations:import-notion-zip'),
+    importCherry: (id?: string) => invoke('migrations:import-cherry', id),
+    setCherrySync: (sourceId: string, active: boolean) => invoke('migrations:set-cherry-sync', sourceId, active),
+    exportCherry: (sourceId: string) => invoke<string | null>('migrations:export-cherry', sourceId),
     sources: () => invokeQuietly('migrations:sources'),
     runs: (sourceId) => invokeQuietly('migrations:runs', sourceId),
     cancel: (runId) => invoke('migrations:cancel', runId),
@@ -232,46 +339,15 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('migrations:progress', handle)
     },
   },
-  browserExtension: {
-    status: () => invokeQuietly<BrowserExtensionStatus>('browser-extension:status'),
-    install: () => invoke<BrowserExtensionStatus>('browser-extension:install'),
-    openDirectory: () => invoke('browser-extension:open-directory'),
-    openBrowserPage: () => invoke('browser-extension:open-browser-page'),
-    createPairing: () => invoke<BrowserExtensionStatus>('browser-extension:create-pairing'),
-    revoke: () => invoke<BrowserExtensionStatus>('browser-extension:revoke'),
-    onStatus: (listener: (status: BrowserExtensionStatus) => void) => {
-      const handleStatus = (_event: Electron.IpcRendererEvent, status: BrowserExtensionStatus) => listener(status)
-      ipcRenderer.on('browser-extension:status', handleStatus)
-      return () => ipcRenderer.removeListener('browser-extension:status', handleStatus)
-    },
-    onMessage: (listener: (message: BrowserExtensionMessage) => void) => {
-      const handleMessage = (_event: Electron.IpcRendererEvent, message: BrowserExtensionMessage) => listener(message)
-      ipcRenderer.on('browser-extension:message', handleMessage)
-      return () => ipcRenderer.removeListener('browser-extension:message', handleMessage)
-    },
-  },
   nangoConnector: {
-    runtimeStatus: () => invokeQuietly('nango-connector:runtime-status'),
     status: () => invoke('nango-connector:status'),
     providers: () => invoke('nango-connector:providers'),
-    oauthConfigs: () => invokeQuietly<string[] | null>('nango-connector:oauth-configs'),
+    oauthConfigs: () => invokeQuietly<Array<{ provider: string; displayName: string | null; iconUrl: string | null }> | string[] | null>('nango-connector:oauth-configs'),
     startAuthorization: (provider) => invoke('nango-connector:start-authorization', provider),
     authorizationStatus: (id) => invoke('nango-connector:authorization-status', id),
     remoteAccount: (provider) => invoke('nango-connector:remote-account', provider),
-    registerConnection: (input) => invoke('nango-connector:register-connection', input),
-    createWebcalSubscription: (url) => invoke('nango-connector:create-webcal-subscription', url),
-    disableConnection: (id) => invoke('nango-connector:disable-connection', id),
-    enableConnection: (id) => invoke('nango-connector:enable-connection', id),
     purgeConnection: (id) => invoke('nango-connector:purge-connection', id),
-    triggerSync: (id, mode) => invoke('nango-connector:trigger-sync', id, mode),
-    cancelRun: (id) => invoke('nango-connector:cancel-run', id),
-    scopes: (connectionId) => invoke('nango-connector:list-scopes', connectionId),
-    runs: (connectionId) => invoke('nango-connector:list-runs', connectionId),
-    mail: (query) => invoke('nango-connector:list-mail', query),
-    documents: (connectionId) => invoke('nango-connector:list-documents', connectionId),
-    document: (connectionId, documentId) => invoke('nango-connector:read-document', connectionId, documentId),
-    records: (connectionId, type) => invoke('nango-connector:list-records', connectionId, type),
-    recordTotals: (connectionId) => invoke('nango-connector:record-totals', connectionId),
+    reconnectConnection: (id) => invoke('nango-connector:reconnect-connection', id),
   },
   cliConnector: {
     // 通道名与主进程 OPEN_CONNECTOR_CHANNELS 对齐（open-connector:*；统一改名前的
@@ -297,6 +373,7 @@ const api: NxcoreDesktopApi = {
     start: (input) => invoke('agent-auth:start', input),
     resume: (challengeId) => invokeQuietly('agent-auth:resume', challengeId),
     cancel: (challengeId) => invokeQuietly('agent-auth:cancel', challengeId),
+    disconnect: (provider: 'feishu') => invoke('agent-auth:disconnect', provider),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
@@ -304,29 +381,6 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('agent-auth:event', handleEvent)
       return () => ipcRenderer.removeListener('agent-auth:event', handleEvent)
     },
-  },
-  externalDocuments: {
-    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
-    importList: (provider, connectionName, cachedOnly) => invoke('external-documents:import-list', provider, connectionName, cachedOnly),
-    importBatch: (input) => invoke('external-documents:import-batch', input),
-    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
-    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
-    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
-    importCommit: (input) => invoke('external-documents:import-commit', input),
-    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
-    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
-    importHistory: (roomId, documentId) => invokeQuietly('external-documents:import-history', roomId, documentId),
-    checkExternalUpdate: (roomId, documentId) => invoke('external-documents:check-external-update', roomId, documentId),
-    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
-    createExport: (input) => invoke('external-documents:create-export', input),
-    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
-    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
-    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
-    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
-    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
-    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
-    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
-    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
   },
   mcp: {
     listServers: () => invoke('mcp:servers:list'),
@@ -338,28 +392,6 @@ const api: NxcoreDesktopApi = {
     deletePolicy: (id) => invoke('external-calls:policies:delete', id),
     listUsage: (query) => invokeQuietly('external-calls:usage:list', query),
     listAudits: (query) => invokeQuietly('external-calls:audits:list', query),
-  },
-  screenCapture: {
-    captureCurrentWindow: () => invoke('screen-capture:capture-current-window'),
-    start: (intervalMs: number) => invoke('screen-capture:start', intervalMs),
-    updateInterval: (intervalMs: number) => invoke('screen-capture:update-interval', intervalMs),
-    stop: () => invoke('screen-capture:stop'),
-    status: () => invoke('screen-capture:status'),
-    perceptionSettings: () => invoke('perception:settings'),
-    updateOnlineVlm: (enabled, configVersion) => invoke('perception:update-online-vlm', enabled, configVersion),
-    listPerceptionNodes: (query) => invokeQuietly('perception:nodes', query),
-    getPerceptionNode: (id) => invokeQuietly('perception:node', id),
-    retryPerceptionNode: (id) => invoke('perception:retry', id),
-    deletePerceptionNode: (id, deleteAssets) => invoke('perception:delete', id, deleteAssets),
-  },
-  diary: {
-    settings: () => invoke('diary:settings'),
-    updateSettings: (input) => invoke('diary:update-settings', input),
-    generate: (date) => invoke('diary:generate', date),
-    run: (id) => invoke('diary:run', id),
-    activeRun: () => invokeQuietly('diary:active-run'),
-    days: (start, end) => invoke('diary:days', start, end),
-    day: (date) => invoke('diary:day', date),
   },
   writingStyle: {
     profile: () => invoke('writing-style:get'),
@@ -384,48 +416,103 @@ const api: NxcoreDesktopApi = {
     remove: (id) => invoke('agent-scheduler:remove', id),
     runNow: (id) => invoke('agent-scheduler:run-now', id),
   },
-  contextRooms: {
-    list: () => invokeQuietly('context-rooms:list'),
-    create: (input: CreateContextRoomInput) => invokeQuietly('context-rooms:create', input),
-    syncSnapshot: (input: SaveContextRoomSnapshotInput) =>
-      invokeQuietly('context-rooms:sync-snapshot', input),
-    checkDuplicates: (input: RoomDuplicateCheckInput) => invokeQuietly('context-rooms:check-duplicates', input),
-    listDuplicateCandidates: (status?: RoomDuplicateCandidateStatus) =>
-      invokeQuietly('context-rooms:list-duplicate-candidates', status),
-    updateDuplicateCandidate: (id: string, status: 'related' | 'distinct') =>
-      invokeQuietly('context-rooms:update-duplicate-candidate', id, status),
-    previewMerge: (sourceAId: string, sourceBId: string) =>
-      invokeQuietly('context-rooms:preview-merge', sourceAId, sourceBId),
-    startMerge: (input: { sourceAId: string; sourceBId: string; title: string; kind?: string; previewHash: string; idempotencyKey: string; wait?: boolean }) =>
-      invokeQuietly('context-rooms:start-merge', input),
-    suggestMergeNames: (input: { sourceAId: string; sourceBId: string; responseLanguage?: string }) =>
-      invokeQuietly('context-rooms:suggest-merge-names', input),
-    checkRoomDuplicates: (roomId: string) => invokeQuietly('context-rooms:check-room-duplicates', roomId),
-    getMergeOperation: (id: string) => invokeQuietly('context-rooms:get-merge-operation', id),
-    retryMerge: (id: string) => invokeQuietly('context-rooms:retry-merge', id),
-    cancelMerge: (id: string) => invokeQuietly('context-rooms:cancel-merge', id),
-    dispatchSelectionRewrite: (input: RoomAgentSelectionRewriteInput) =>
-      invokeQuietly('context-rooms:dispatch-selection-rewrite', input),
+  agentAccess: {
+    listConnections: () => invokeQuietly<{ connections: AgentConnectionDto[] }>('agent-access:list-connections'),
+    createConnection: (input: AgentAccessCreateInput) =>
+      invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:create-connection', input),
+    updateConnection: (id: string, input: AgentAccessUpdateInput) =>
+      invoke<{ connection: AgentConnectionDto }>('agent-access:update-connection', id, input),
+    revokeConnection: (id: string) => invoke<{ connection: AgentConnectionDto }>('agent-access:revoke-connection', id),
+    rotateToken: (id: string) => invoke<{ connection: AgentConnectionDto; token: string }>('agent-access:rotate-token', id),
+    submissions: (id: string) =>
+      invokeQuietly<{ submissions: Array<Record<string, unknown>> }>('agent-access:submissions', id),
+    events: (id: string) =>
+      invokeQuietly<{ events: Array<Record<string, unknown>> }>('agent-access:events', id),
+    selftest: (id: string) => invoke<AgentAccessSelftestDto>('agent-access:selftest', id),
+    exampleQuery: (id: string, query?: string) =>
+      invoke<AgentAccessExampleQueryDto>('agent-access:example-query', id, query),
+    install: (connectionId: string, target: string, token: string) =>
+      invoke<{ outcome: AgentAccessInstallOutcomeDto; plan: { url: string; notes: string[] } }>(
+        'agent-access:install',
+        connectionId,
+        target,
+        token,
+      ),
+    uninstall: (target: string) => invoke<AgentAccessUninstallOutcomeDto>('agent-access:uninstall', target),
+    settingsGet: () => invoke<AgentAccessSettingsDto>('agent-access:settings-get'),
+    setFixedPort: (port: number | null) =>
+      invoke<{ fixedPort: number | null; needsRestart: boolean }>('agent-access:settings-set-fixed-port', port),
+    restartGateway: () => invoke<{ baseUrl: string }>('agent-access:restart-gateway'),
+  },
+  memory: {
+    listEntries: (input?: { limit?: number; scope?: string }) =>
+      invokeQuietly('memory:list-entries', input ?? {}),
+    getProfile: (input?: { limit?: number }) =>
+      invokeQuietly('memory:get-profile', input ?? {}),
+  },
+  // 主页「今日洞察」：静默调用——卡片自己渲染空态/失败态，不弹全局错误。
+  workspaceInsight: {
+    get: (workspaceId: string, options?: { force?: boolean }) =>
+      invoke('workspace-insight:get', workspaceId, options) as Promise<import('../shared/sources').WorkspaceInsightDto>,
+  },
+  journal: {
+    today: () => invokeQuietly('journal:today'),
+    refresh: () => invokeQuietly('journal:refresh'),
+  },
+  // 工作空间「计划」：读写走普通 invoke（失败要能被看板接住并回滚）。
+  plan: {
+    list: (query: PlanItemListQuery) => invoke('plan:list', query),
+    create: (input: CreatePlanItemInput) => invoke('plan:create', input),
+    get: (itemId: string) => invoke('plan:get', itemId),
+    update: (itemId: string, input: UpdatePlanItemInput) => invoke('plan:update', itemId, input),
+    move: (itemId: string, input: MovePlanItemInput) => invoke('plan:move', itemId, input),
+    release: (itemId: string, reason: string) => invoke('plan:release', itemId, reason),
+    assign: (itemId: string, agentId?: string) => invoke('plan:assign', itemId, agentId),
+    remove: (itemId: string) => invoke('plan:remove', itemId),
+    events: (itemId: string) => invoke('plan:events', itemId),
+    claimPackage: (itemId: string) => invoke('plan:claim-package', itemId),
+    batch: (input: PlanBatchInput) => invoke('plan:batch', input),
+    subscribe: (workspaceId: string) => invoke('plan:subscribe', workspaceId),
+    unsubscribe: (workspaceId?: string) => invoke('plan:unsubscribe', workspaceId),
+    onChanged: (listener: (payload: PlanChangePayload) => void) => {
+      const handleChange = (_event: Electron.IpcRendererEvent, payload: PlanChangePayload) => listener(payload)
+      ipcRenderer.on('plan:changed', handleChange)
+      return () => ipcRenderer.removeListener('plan:changed', handleChange)
+    },
+  },
+  agentDebug: {
+    // 调试面板是只读查询：quiet 调用（不弹全局错误、不做 gateway recovery 重试），
+    // 失败文本由面板自己以一行弱化文字展示。
+    listAgents: () => invokeQuietly<AgentDebugAgentsResponse>('agent-debug:list-agents'),
+    getAgent: (id: string) => invokeQuietly<AgentDebugAgentResponse>('agent-debug:get-agent', id),
+    listUsage: (id: string, limit?: number) =>
+      invokeQuietly<AgentDebugUsageResponse>('agent-debug:list-usage', id, limit),
+    // 打开独立调试窗口（单例）。窗口的生命周期由主进程持有，渲染层只触发。
+    openWindow: () => invoke<void>('agent-debug:open-window'),
+  },
+  slides: {
+    /** 配图过目卡轮询：后台逐张生成期间按草稿文档拉最新会话快照。 */
+    pageImagesStatus: (documentId: string) =>
+      invokeQuietly<SlidesPageImagesStatus | null>('slides:page-images-status', documentId),
+  },
+  subagents: {
+    dispatchSelectionRewrite: (input: SubagentSelectionRewriteInput) =>
+      invokeQuietly('subagents:dispatch-selection-rewrite', input),
     getSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:get-subagent-invocation', invocationId),
+      invokeQuietly('subagents:get-invocation', invocationId),
     cancelSubagentInvocation: (invocationId: string) =>
-      invokeQuietly('context-rooms:cancel-subagent-invocation', invocationId),
-    refreshBrief: (roomId: string) => invokeQuietly('context-rooms:refresh-brief', roomId),
-    promoteMemoryItem: (roomId: string, itemId: string) =>
-      invokeQuietly('context-rooms:promote-memory-item', roomId, itemId),
-    overview: (roomId: string) => invokeQuietly('context-rooms:overview', roomId),
-    refreshOverview: (roomId: string) => invokeQuietly('context-rooms:refresh-overview', roomId),
-    listMails: (roomId: string) => invokeQuietly('context-rooms:list-mails', roomId),
-    readMail: (roomId: string, sourceId: string) => invokeQuietly('context-rooms:read-mail', roomId, sourceId),
-    roomEntities: (roomId: string) => invokeQuietly('context-rooms:room-entities', roomId),
-    completeLocalAction: (roomId: string, actionId: string, completed?: boolean) =>
-      invokeQuietly('context-rooms:complete-local-action', roomId, actionId, completed),
+      invokeQuietly('subagents:cancel-invocation', invocationId),
+    listRunSubagentInvocations: (rootRunId: string) =>
+      invokeQuietly('subagents:list-run-invocations', rootRunId),
+    listSubagentInvocationEvents: (invocationId: string, afterSeq = 0) =>
+      invokeQuietly('subagents:list-invocation-events', invocationId, afterSeq),
   },
   account: {
     status: (options) => options?.quiet ? invokeQuietly('account:status', false) : invoke('account:status', true),
     devices: (options) => options?.quiet ? invokeQuietly('account:devices') : invoke('account:devices'),
     login: (input) => invoke('account:login', input),
     validateInvitationCode: (invitationCode) => invokeQuietly('account:invitation-code-validate', invitationCode),
+    redeemInvitationCode: (invitationCode) => invokeQuietly('account:invitation-code-redeem', invitationCode),
     loginWithOidc: (provider, invitationCode) => invoke('account:oidc-login', { provider, invitationCode }),
     cancelOidcLogin: () => invoke('account:oidc-cancel'),
     logout: () => invoke('account:logout'),
@@ -448,21 +535,29 @@ const api: NxcoreDesktopApi = {
   },
   aiRelay: {
     status: () => invokeQuietly('ai-relay:status'),
+    verdict: () => invokeQuietly('ai-relay:verdict'),
     onEvent: (listener: (event: { type: AiRelayKeeperEventType }) => void) => {
       const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
         const eventType = value && typeof value === 'object' ? (value as { type?: unknown }).type : null
-        if (eventType !== 'quota-exhausted' && eventType !== 'fallback-user' && eventType !== 'fallback-restored') return
+        if (eventType !== 'quota-exhausted' && eventType !== 'session-activated') return
         listener({ type: eventType })
       }
-      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+      for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
         ipcRenderer.on(channel, handle)
       }
       return () => {
-        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:fallback-user', 'ai-relay:fallback-restored']) {
+        for (const channel of ['ai-relay:quota-exhausted', 'ai-relay:session-activated']) {
           ipcRenderer.removeListener(channel, handle)
         }
       }
     },
+  },
+  billing: {
+    packs: () => invoke('billing:packs') as Promise<import('../shared/sources').CreditPack[]>,
+    topup: (packCode: string, channel?: import('../shared/sources').TopupChannel) => invoke('billing:topup', packCode, channel) as Promise<import('../shared/sources').TopupOrder>,
+    topupStatus: (orderId: string) => invoke('billing:topup-status', orderId) as Promise<{ status: import('../shared/sources').TopupStatus; amountCents: number }>,
+    topupMockApprove: (orderId: string) => invoke('billing:topup-mock-approve', orderId) as Promise<{ status: 'completed'; amountCents: number }>,
+    plans: () => invoke('billing:plans') as Promise<import('../shared/sources').PlanTier[]>,
   },
   notifications: {
     preferences: () => invokeQuietly('notifications:preferences'),
@@ -480,127 +575,68 @@ const api: NxcoreDesktopApi = {
     get: () => invoke('runtime-config:get'),
     saveUser: (input: unknown) => invoke('runtime-config:save-user', input),
     clearUser: () => invoke('runtime-config:clear-user'),
-    refreshSaas: () => invoke('runtime-config:refresh-saas'),
-    clearSaas: () => invoke('runtime-config:clear-saas'),
-    selectSource: (source: 'user' | 'saas' | 'default') => invoke('runtime-config:select-source', source),
+    relayReady: () => invoke('runtime-config:relay-ready'),
+    selectSource: (source: 'user' | 'default') => invoke('runtime-config:select-source', source),
     test: () => invoke('runtime-config:test'),
   },
-  asr: {
-    requestMicrophoneAccess: () => invoke('asr:request-microphone-access'),
-    getMicrophoneAccessStatus: () => invoke('asr:get-microphone-access-status'),
-    openMicrophoneSettings: () => invoke('asr:open-microphone-settings'),
-    openSystemAudioSettings: () => invoke('asr:open-system-audio-settings'),
-    beginRecording: (mimeType) => invoke('asr:begin-recording', mimeType),
-    appendRecording: (id, chunk) => invoke('asr:append-recording', id, chunk),
-    finishRecording: (id) => invoke('asr:finish-recording', id),
-    cancelRecording: (id) => invoke('asr:cancel-recording', id),
-    createJob: (input) => invoke('asr:create-job', input),
-    getJob: (id) => invoke('asr:get-job', id),
+  permissions: {
+    /** OS 麦克风授权状态（本地 TCC 查询，不经网关）。属本地系统能力而非网关调用。 */
+    getMicrophoneAccessStatus: () => invoke('permissions:microphone-access-status'),
+    /** 弹出系统麦克风授权请求（本地 TCC，不经网关）。 */
+    requestMicrophoneAccess: () => invoke('permissions:request-microphone-access'),
+    /** 打开系统「麦克风」隐私设置页。 */
+    openMicrophoneSettings: () => invoke('permissions:open-microphone-settings'),
   },
-  privateAudio: {
-    list: (cursor?: number) => invoke('private-audio:list', cursor ?? 0),
-    download: (assetId: string, outputPath: string) => invoke('private-audio:download', assetId, outputPath),
-    read: (assetId: string) => invoke('private-audio:read', assetId),
-  },
-  transcriptions: {
-    syncPrivate: (options) => options?.quiet ? invokeQuietly('transcription:sync-private') : invoke('transcription:sync-private'),
-    onSyncCompleted: (listener) => {
-      const handle = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        if (!value || typeof value !== 'object' || typeof (value as { completedAt?: unknown }).completedAt !== 'string') return
-        listener(value as { completedAt: string })
-      }
-      ipcRenderer.on('transcription:sync-completed', handle)
-      return () => ipcRenderer.removeListener('transcription:sync-completed', handle)
-    },
-    listPrivate: () => invoke('transcription:list-private'),
-    listTags: () => invoke('transcription:list-tags'),
-    replaceSummaryTags: (summaryRecordId, tags) => invoke('transcription:replace-summary-tags', summaryRecordId, tags),
-    renameTag: (tagId, label) => invoke('transcription:rename-tag', tagId, label),
-    mergeTag: (targetTagId, sourceTagId) => invoke('transcription:merge-tag', targetTagId, sourceTagId),
-  },
-  memory: {
-    overview: () => invoke('memory:overview'),
-    startOnboarding: (input: MemoryOnboardingInput) => invoke('memory:onboarding:start', input),
-    /** 引导结束通知（fire-and-forget）：解除主进程云端同步延迟。 */
-    onboardingFinished: () => { ipcRenderer.send('memory:onboarding-finished') },
-    listAtomic: (options: MemoryAtomicListOptions) => invoke('memory:list-atomic', options),
-    listRoomMemories: (roomId: string): Promise<MemoryRoomMemoriesPageDto> =>
-      invoke('memory:list-room-memories', roomId),
-    searchAtomic: (query: string, limit?: number) => invoke('memory:search-atomic', query, limit),
-    updateAtomic: (id: string, content: string, background?: string) =>
-      invoke('memory:update-atomic', id, content, background),
-    deleteAtomic: (ids: string[]) => invoke('memory:delete-atomic', ids),
-    /** 指派/清除原子记忆的 Room 归属（roomId=null 清除）；snapshot 为绑定时的记忆快照。 */
-    setAtomicRoom: (
-      id: string,
-      roomId: string | null,
-      snapshot?: { content: string; type: string; memoryUpdatedAt: string },
-    ) => invoke('memory:set-atomic-room', id, roomId, snapshot),
-    listScenarios: (pathPrefix?: string) => invoke('memory:list-scenarios', pathPrefix),
-    readScenario: (path: string) => invoke('memory:read-scenario', path),
-    readCore: () => invoke('memory:read-core'),
-    writeCore: (content: string) => invoke('memory:write-core', content),
-    listConversations: (options: MemoryConversationListOptions) =>
-      invoke('memory:list-conversations', options),
-    searchConversations: (query: string, limit?: number, sessionId?: string) =>
-      invoke('memory:search-conversations', query, limit, sessionId),
-    deleteConversations: (target: { sessionIds?: string[]; messageIds?: string[] }) =>
-      invoke('memory:delete-conversations', target),
-    importMarkdown: (input: { title: string; markdown: string; filename?: string }) =>
-      invoke('memory:import-markdown', input),
-    pickMarkdownFiles: () => invoke('memory:pick-markdown-files'),
-    listDocuments: (limit?: number, offset?: number) =>
-      invoke('memory:documents:list', limit, offset),
-    getDocument: (id: string) => invoke('memory:documents:get', id),
-    deleteDocument: (id: string) => invoke('memory:documents:delete', id),
-    atomicProvenance: (id: string) => invoke('memory:atomic-provenance', id),
-    captureDocumentRewrite: (input: MemoryDocumentRewriteInput) =>
-      invoke('memory:capture-document-rewrite', input),
-  },
-  reality: {
-    listEvents: (filters) => invoke('reality:list-events', filters),
-    getEvent: (id) => invoke('reality:get-event', id),
-    createEvent: (input) => invoke('reality:create-event', input),
-    finishCapture: (id, input) => invoke('reality:finish-capture', id, input),
-    updateTranscript: (id, input) => invoke('reality:update-transcript', id, input),
-    addMarker: (id, input) => invoke('reality:add-marker', id, input),
-    setImportant: (id, important) => invoke('reality:set-important', id, important),
-    confirm: (id) => invoke('reality:confirm', id),
-    discard: (id) => invoke('reality:discard', id),
-    fail: (id, error) => invoke('reality:fail', id, error),
-    readAudio: (id) => invoke('reality:read-audio', id),
-    exportTranscript: (input) => invoke('reality:export-transcript', input),
-    subscribe: () => invoke('reality:subscribe'),
-    unsubscribe: () => invoke('reality:unsubscribe'),
-    onEvent: (listener) => {
-      const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
-        listener(frame)
-      }
-      ipcRenderer.on('reality:event', handleEvent)
-      return () => ipcRenderer.removeListener('reality:event', handleEvent)
-    },
+  search: {
+    invoke: (request: SearchRequestDto): Promise<SearchPageDto> => invoke('search:invoke', request),
+    status: (): Promise<SearchScopeDto> => invoke('search:status'),
+    prioritize: (itemType: SearchItemType, refId: string): Promise<{ ok: boolean }> =>
+      invoke('search:prioritize', itemType, refId),
+    messageContext: (messageId: string, before?: number, after?: number): Promise<SearchMessageContextDto> =>
+      invoke('search:message-context', messageId, before, after),
   },
   agent: {
     discoverLocalAgents: () => invokeQuietly('agent:discover-local-agents'),
+    checkLocalAgentAdapters: (agentIds: string[]) => invokeQuietly('agent:check-local-agent-adapters', agentIds),
+    installLocalAgentAdapter: (agentId: string) => invoke('agent:install-local-agent-adapter', agentId),
     importLocalAgentHistory: (agentId: string) => invoke('agent:import-local-agent-history', agentId),
     bindLocalAgentWorkspace: (agentId: string, sessionId: string) => invoke('agent:bind-local-agent-workspace', agentId, sessionId),
     getStatus: () => invokeQuietly('agent:get-status'),
+    getDefinition: (agentId: string) => invokeQuietly('agent:get-definition', agentId),
+    listSkills: () => invokeQuietly('agent:list-skills'),
+    getSkill: (skillId: string) => invokeQuietly('agent:get-skill', skillId),
+    setSkillEnabled: (skillId: string, enabled: boolean) =>
+      invoke('agent:set-skill-enabled', skillId, enabled),
+    createSkill: (input) => invoke('agent:create-skill', input),
+    importSkillDirectory: (sourceDirectory: string) => invoke('agent:import-skill-directory', sourceDirectory),
+    pickSkillDirectory: () => invokeQuietly('agent:pick-skill-directory'),
+    deleteSkill: (skillId: string) => invoke('agent:delete-skill', skillId),
     getUsage: (range) => invoke('agent:get-usage', range),
-    listSessions: (pageLabel, roomId) => invoke('agent:list-sessions', pageLabel, roomId),
+    /** 「+ → 挂载目录」：系统选择框选本地目录，取消返回 null。 */
+    pickMountDirectory: () => invoke<string | null>('agent:pick-mount-directory'),
+    listSessions: (pageLabel, roomId, workspaceId) => invoke('agent:list-sessions', pageLabel, roomId, workspaceId),
     createSession: (input) => invoke('agent:create-session', input),
     createSessionLink: (input) => invoke('agent:create-session-link', input),
     listSessionLinks: (sessionId) => invoke('agent:list-session-links', sessionId),
     markSessionLinkReturned: (linkId) => invoke('agent:mark-session-link-returned', linkId),
     updateSession: (sessionId, input) => invoke('agent:update-session', sessionId, input),
+    generateSessionTitle: (input) => invoke('agent:generate-session-title', input),
+    suggestConversationPrompt: (input) => invoke('agent:suggest-conversation-prompt', input),
+    suggestStarterPrompts: (input) => invoke('agent:suggest-starter-prompts', input),
     deleteSession: (sessionId) => invoke('agent:delete-session', sessionId),
     getSession: (sessionId) => invoke('agent:get-session', sessionId),
     getEvents: (sessionId, runId, afterSeq) =>
       invoke('agent:get-events', sessionId, runId, afterSeq),
+    getLocalAgentDispatch: (sessionId, taskId) =>
+      invoke('agent:get-local-agent-dispatch', sessionId, taskId),
     startRun: (sessionId, input) => invoke('agent:start-run', sessionId, input),
     submitPendingIntent: (intentId, input) =>
       invokeQuietly('agent:submit-pending-intent', intentId, input),
     cancelRun: (runId) => invoke('agent:cancel-run', runId),
-    resolveApproval: (approvalId, decision) => invoke('agent:resolve-approval', approvalId, decision),
+    resolveApproval: (approvalId, decision, feedback, choice, text) => invoke('agent:resolve-approval', approvalId, decision, feedback, choice, text),
+    getPermissionMode: (sessionId) => invoke('agent:get-permission-mode', sessionId),
+    setPermissionMode: (sessionId, mode) => invoke('agent:set-permission-mode', sessionId, mode),
+    setThinkingLevel: (sessionId, level) => invoke('agent:set-thinking-level', sessionId, level),
     subscribe: (sessionId) => invoke('agent:subscribe', sessionId),
     unsubscribe: () => invoke('agent:unsubscribe'),
     onEvent: (listener) => {
@@ -610,6 +646,44 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('agent:event', handleEvent)
       return () => ipcRenderer.removeListener('agent:event', handleEvent)
     },
+  },
+  workspace: {
+    list: () => invoke('workspace:list'),
+    create: (input) => invoke('workspace:create', input),
+    update: (workspaceId, input) => invoke('workspace:update', workspaceId, input),
+    /** 概览「动态」：按 (at, id) 游标分页的派生事件流（runs + 文件库 + 计划）。 */
+    activities: (workspaceId: string, query?: { limit?: number; beforeAt?: string; beforeId?: string }) =>
+      invoke('workspace:activities', workspaceId, query ?? {}),
+    remove: (workspaceId) => invoke('workspace:remove', workspaceId),
+    pickDirectory: () => invoke('workspace:pick-directory'),
+    /** 新建弹窗的默认落点预览（`<dataDir>/Workspace/<slug>`）。 */
+    defaultRoot: (name: string) => invoke('workspace:default-root', name),
+    /** 判定目录是否为项目空间（读 `.everoffice/space.json`）。 */
+    detect: (dir: string) => invoke('workspace:detect', dir),
+    /** 扫容器根，发现未注册/失效的项目空间。 */
+    discover: () => invoke('workspace:discover'),
+    /** 接管已有目录（复制品传 reassignSpaceId=true 另立身份）。 */
+    adopt: (input: { dir: string; name?: string; reassignSpaceId?: boolean }) =>
+      invoke('workspace:adopt', input),
+    /** 搬移空间目录。 */
+    relocate: (workspaceId: string, dir: string) => invoke('workspace:relocate', workspaceId, dir),
+    /** 空间目录快照（路径 + 健康）；未绑定目录时抛错，调用方按空态处理。 */
+    layout: (workspaceId: string) => invoke('workspace:layout', workspaceId),
+    /** 幂等修复：补缺失目录 / 补缺失标记。 */
+    repair: (workspaceId: string) => invoke('workspace:repair', workspaceId),
+    /** 在访达里选中某个目录。 */
+    reveal: (dir: string) => invoke('workspace:reveal', dir),
+    /** 资料库对账：盘上删了→missing、回来了→恢复、多了→入库。 */
+    reconcileLibrary: (workspaceId: string) => invoke('workspace:library-reconcile', workspaceId),
+    /** 存量懒回填：把只在对象库里的老条目落到空间 Library。 */
+    backfillLibrary: (workspaceId: string, limit?: number) =>
+      invoke('workspace:library-backfill', workspaceId, limit),
+    /** 空间缓存占用（tmp / derived / objects）。 */
+    cacheStats: (workspaceId: string) => invoke('workspace:cache-stats', workspaceId),
+    /** 缓存回收（tmp/derived 按龄、objects 按引用、回收站 30 天）。 */
+    gcCache: (workspaceId: string) => invoke('workspace:cache-gc', workspaceId),
+    /** `.tmp/` 只读清单（临时文件入口，不入资料库索引）。 */
+    scratchFiles: (workspaceId: string) => invoke('workspace:cache-scratch', workspaceId),
   },
   cursorCompletionAgent: {
     createSession: (input) => invokeQuietly('cursor-completion-agent:create-session', input),
@@ -631,9 +705,11 @@ const api: NxcoreDesktopApi = {
     },
   },
   documents: {
-    list: (roomId) => invoke('documents:list', roomId),
-    listTrash: (roomId) => invoke('documents:list-trash', roomId),
+    // roomId 传 null/undefined = 整个工作区的文稿（P0-2）
+    list: (roomId?: string | null) => invoke('documents:list', roomId),
+    listTrash: (roomId?: string | null) => invoke('documents:list-trash', roomId),
     get: (documentId) => invoke('documents:get', documentId),
+    readMarkdown: (documentId: string) => invoke('documents:read-markdown', documentId),
     listBlocks: (documentId) => invoke('documents:list-blocks', documentId),
     listBlockBacklinks: (documentId, blockId) => invoke('documents:list-block-backlinks', documentId, blockId),
     listVersions: (documentId, options) => invoke('documents:list-versions', documentId, options),
@@ -659,12 +735,14 @@ const api: NxcoreDesktopApi = {
     import: (input) => invoke('documents:import', input),
     save: (documentId, input) => invoke('documents:save', documentId, input),
     delete: (documentId) => invoke('documents:delete', documentId),
+    move: (documentId, fromRoomId, roomId) => invoke('documents:move', documentId, fromRoomId, roomId),
+    moveMany: (documentIds, fromRoomId, roomId) => invoke('documents:move-many', documentIds, fromRoomId, roomId),
     restore: (documentId) => invoke('documents:restore', documentId),
     deletePermanently: (documentId) => invoke('documents:delete-permanently', documentId),
-    emptyTrash: (roomId) => invoke('documents:empty-trash', roomId),
+    emptyTrash: (roomId?: string | null) => invoke('documents:empty-trash', roomId),
     exportPdf: (input) => invoke('documents:export-pdf', input),
-    subscribe: (roomId) => invoke('documents:subscribe', roomId),
-    unsubscribe: (roomId) => invoke('documents:unsubscribe', roomId),
+    subscribe: (roomId?: string | null) => invoke('documents:subscribe', roomId),
+    unsubscribe: (roomId?: string | null) => invoke('documents:unsubscribe', roomId),
     onEvent: (listener) => {
       const handleEvent = (_event: Electron.IpcRendererEvent, frame: Parameters<typeof listener>[0]) => {
         listener(frame)
@@ -686,6 +764,30 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('documents:ready', handleEvent)
       return () => ipcRenderer.removeListener('documents:ready', handleEvent)
     },
+  },
+  externalDocuments: {
+    importSearch: (provider, query) => invoke('external-documents:import-search', provider, query),
+    importList: (provider, connectionName, cachedOnly, mode) => invoke('external-documents:import-list', provider, connectionName, cachedOnly, mode),
+    importBatch: (input) => invoke('external-documents:import-batch', input),
+    importBatchStatus: (batchId) => invokeQuietly('external-documents:import-batch-status', batchId),
+    activeImportBatch: (provider, connectionName) => invokeQuietly('external-documents:active-import-batch', provider, connectionName),
+    cancelImportBatch: (batchId) => invoke('external-documents:cancel-import-batch', batchId),
+    importPreview: (provider, remoteDocumentId) => invoke('external-documents:import-preview', provider, remoteDocumentId),
+    importCommit: (input) => invoke('external-documents:import-commit', input),
+    importRun: (runId) => invokeQuietly('external-documents:import-run', runId),
+    cancelImportRun: (runId) => invoke('external-documents:cancel-import-run', runId),
+    importHistory: (documentId) => invokeQuietly('external-documents:import-history', documentId),
+    checkExternalUpdate: (documentId) => invoke('external-documents:check-external-update', documentId),
+    applyCandidate: (roomImportId) => invoke('external-documents:apply-candidate', roomImportId),
+    createExport: (input) => invoke('external-documents:create-export', input),
+    getExport: (exportId) => invokeQuietly('external-documents:get-export', exportId),
+    confirmExport: (exportId) => invoke('external-documents:confirm-export', exportId),
+    retryExport: (exportId) => invoke('external-documents:retry-export', exportId),
+    cancelExport: (exportId) => invoke('external-documents:cancel-export', exportId),
+    listExports: (documentId) => invokeQuietly('external-documents:list-exports', documentId),
+    importDiff: (roomImportId) => invoke('external-documents:import-diff', roomImportId),
+    importStructuredDiff: (roomImportId) => invoke('external-documents:import-structured-diff', roomImportId),
+    searchExportTargets: (provider, query) => invoke('external-documents:search-export-targets', provider, query),
   },
   sources: {
     list: () => invoke('sources:list'),
@@ -713,7 +815,6 @@ const api: NxcoreDesktopApi = {
       invoke('sources:disconnect', id, deleteLocalData),
   },
   obsidian: {
-    pickAndMount: () => invoke('obsidian:pick-and-mount'),
     discover: () => invoke('obsidian:discover'),
     pickCandidate: () => invoke('obsidian:pick-candidate'),
     importCandidate: (candidateId, target) => invoke('obsidian:import-candidate', candidateId, target),
@@ -743,83 +844,48 @@ const api: NxcoreDesktopApi = {
       return () => ipcRenderer.removeListener('obsidian:discovery-changed', handleChanged)
     },
   },
-  knowledge: {
-    listRooms: (origin) => invoke('knowledge:rooms:list', origin),
-    getRoomContext: (roomId) => invoke('knowledge:rooms:context', roomId),
-    upsertRoom: (input) => invoke('knowledge:rooms:upsert', input),
-    deleteRoom: (roomId) => invoke('knowledge:rooms:delete', roomId),
-    getRoomGraph: (visibility) => invoke('knowledge:room-graph:get', visibility),
-    getRoomRelations: (roomId, visibility) => invoke('knowledge:room-relations:list', roomId, visibility),
-    getRoomRelationEvidence: (relationId, offset, limit) =>
-      invoke('knowledge:room-relations:evidence', relationId, offset, limit),
-    createRoomRelation: (input) => invoke('knowledge:room-relations:create', input),
-    updateRoomRelation: (relationId, input) => invoke('knowledge:room-relations:update', relationId, input),
-    removeManualRoomRelation: (relationId) => invoke('knowledge:room-relations:remove-manual', relationId),
-    listWikiPages: (roomId) => invoke('knowledge:wiki:pages', roomId),
-    readWikiPage: (roomId, ref) => invoke('knowledge:wiki:page-read', roomId, ref),
-    listWikis: () => invoke('knowledge:wikis:list'),
-    getWikiGraph: (roomId) => invoke('knowledge:wiki:graph', roomId),
-  listEntities: (status: KnowledgeEntityStatus) => invoke('knowledge:entities:list', status),
-    getEntity: (entityId: string) => invoke('knowledge:entities:get', entityId),
-  promoteEntity: (entityId: string, options?: { forceNew?: boolean }) => invoke('knowledge:entities:promote', entityId, options),
-    promoteEntities: (entityIds: string[]) => invoke('knowledge:entities:promote-batch', entityIds),
-    suppressEntity: (entityId: string) => invoke('knowledge:entities:suppress', entityId),
-    suppressEntities: (entityIds: string[]) => invoke('knowledge:entities:suppress-batch', entityIds),
-    restoreSuppressedEntity: (entityId: string) => invoke('knowledge:entities:restore', entityId),
-    mergeEntity: (fromId: string, targetId: string) => invoke('knowledge:entities:merge', fromId, targetId),
-    listUnmatched: () => invoke('knowledge:unmatched:list'),
-    attachDoc: (sourceKind: string, sourceId: string, input: KnowledgeAttachInput) =>
-      invoke('knowledge:docs:attach', sourceKind, sourceId, input),
-    listRecentDecisions: (limit) => invoke('knowledge:decisions:list', limit),
-    routeStatus: (sourceIds) => invoke('knowledge:route:status', sourceIds),
-    proposeRooms: (input: { description: string; fileEntryIds: string[] }) =>
-      invoke('knowledge:rooms:propose', input),
-    revertDecision: (decisionId) => invoke('knowledge:route:revert', decisionId),
-    getPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:get'),
-    updatePreferenceContent: (content: string): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:user-content', content),
-    updatePreferenceSettings: (input: { learningEnabled?: boolean; injectionEnabled?: boolean }): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:settings', input),
-    refreshPreferences: (): Promise<import('../shared/knowledge').KnowledgePreferencesDto> =>
-      invoke('knowledge:preferences:refresh'),
-    listRoomFiles: (roomId: string) => invoke('knowledge:files:list', roomId),
-    readFileMarkdown: (fileId: string) => invoke('knowledge:files:markdown', fileId),
-    revealFile: (fileId: string) => invoke('knowledge:files:reveal', fileId),
-    openFile: (fileId: string) => invoke('knowledge:files:open', fileId),
-  },
   files: {
-    list: (limit?: number, offset?: number) => invoke('files:list', limit, offset),
-    listClipCaptures: (input) => invoke('files:clipper-captures:list', input),
-    setClipCaptureFavorite: (captureId, favorite) => invoke('files:clipper-captures:favorite', captureId, favorite),
-    getClipCaptureDetail: (captureId: string) => invoke('files:clipper-captures:detail', captureId),
+    list: (limit?: number, offset?: number, options?: { workspaceId?: string }) =>
+      invoke('files:list', limit, offset, options),
+    catalogEntry: (fileId: string) => invoke('files:catalog-entry', fileId),
     get: (fileId: string) => invoke('files:get', fileId),
     readMarkdown: (fileId: string, options?: { waitMs?: number; pollMs?: number }) =>
       invoke('files:read-markdown', fileId, options),
     readDataUrl: (fileId: string) => invokeQuietly('files:read-data-url', fileId),
-    getClipCapture: (fileId: string) => invoke('files:clipper-capture:get', fileId),
     rename: (fileId: string, displayName: string) => invoke('files:rename', fileId, displayName),
-    pinClusterTitle: (clusterId: string, sharedTitle: string) =>
-      invoke('files:pin-cluster-title', clusterId, sharedTitle),
     delete: (fileId: string) => invoke('files:delete', fileId),
     reveal: (fileId: string) => invoke('files:reveal', fileId),
-    openOriginal: (fileId: string, originalName?: string, contentHash?: string) =>
-      invoke('files:open-original', fileId, originalName, contentHash),
-    pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+    exportReveal: (fileId: string, originalName: string) =>
+      invoke('files:export-reveal', fileId, originalName),
+    openOriginal: (
+      fileId: string,
+      originalName?: string,
+      contentHash?: string,
+      options?: { editable?: boolean; roomId?: string; workspaceId?: string },
+    ) =>
+      invoke('files:open-original', fileId, originalName, contentHash, options),
+    pickAndImport: (options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:pick-and-import', options),
     /** 仅选择：返回文件/文件夹路径，不导入（创建 Room 弹窗暂存用）。 */
     pickPaths: () => invoke<string[]>('files:pick-paths'),
     /** 提交后的一次性导入：把暂存路径交给统一导入链路。 */
-    importPaths: (paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
+    importPaths: (paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) =>
       invoke('files:import-paths-once', paths, options),
-    importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string }) => {
+    importDropped: (files: File[], options?: { pipelines?: IngestPipelines; roomId?: string; workspaceId?: string }) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
       return invoke('files:import-paths-once', paths, options)
     },
-    importAgentAttachments: (files: File[]) => {
+    importArtifacts: (files: File[], roomId: string, workspaceId?: string) => {
       const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
-      return invoke('files:import-agent-attachments', paths)
+      return invoke('files:import-artifacts', paths, roomId, workspaceId)
     },
+    importAgentAttachments: (files: File[], workspaceId?: string) => {
+      const paths = files.map((file) => webUtils.getPathForFile(file)).filter(Boolean)
+      return invoke('files:import-agent-attachments', paths, typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined)
+    },
+    /** 「+ → 导入文件」：系统选择框直选文件并导入为对话附件（取消返回空数组）。 */
+    pickAgentAttachments: (workspaceId?: string) =>
+      invoke<AgentAttachmentReference[]>('files:pick-agent-attachments', typeof workspaceId === 'string' && workspaceId ? { workspaceId } : undefined),
     onImportProgress: (listener) => {
       const handleProgress = (_event: Electron.IpcRendererEvent, progress: Parameters<typeof listener>[0]) => listener(progress)
       ipcRenderer.on('files:import-progress', handleProgress)
@@ -833,20 +899,93 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('files:high-risk-reviews:changed', handleChanged)
       return () => ipcRenderer.removeListener('files:high-risk-reviews:changed', handleChanged)
     },
+    // 系统文件管理器（访达「打开方式」/ 资源管理器双击）打开文档：主进程导入后交回渲染层开预览。
+    onOpenFromOs: (listener: (document: OsOpenedDocument) => void) => {
+      const handleOpen = (_event: Electron.IpcRendererEvent, document: OsOpenedDocument) => listener(document)
+      ipcRenderer.on('files:open-from-os', handleOpen)
+      return () => ipcRenderer.removeListener('files:open-from-os', handleOpen)
+    },
+    takePendingOsOpen: () => invoke('files:take-pending-os-open'),
   },
-  ingest: {
-    listEvents: (query: {
-      limit?: number
-      offset?: number
-      sourceKind?: string
-      sourceId?: string
-    }) => invoke('ingest:events:list', query),
-    getFilterRules: () => invoke('ingest:filter-rules:get'),
-    updateFilterPreference: (content: string) =>
-      invoke('ingest:filter-rules:update-preference', content),
-    reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
-    getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
+  thesisFormat: {
+    listCards: (workspaceId: string): Promise<Array<{
+      id: string
+      sourceName: string
+      sourceFileEntryId: string | null
+      updatedAt: string
+      card: Record<string, unknown>
+    }>> => invoke('thesis-format:cards:list', workspaceId),
+    setFromLibrary: (workspaceId: string, fileEntryId: string) =>
+      invoke('thesis-format:parse:library', workspaceId, fileEntryId),
+    pickAndSet: (workspaceId: string, options?: { wordOnly?: boolean }): Promise<{ canceled: boolean; cardId: string; sourceName: string; factGaps?: string[] }> =>
+      invoke('thesis-format:parse:pick', workspaceId, options),
+    /** 工作台拖拽上传：直接把字节交给网关解析成格式卡（不落盘、不进文件库）。 */
+    parseUpload: (workspaceId: string, name: string, bytes: ArrayBuffer) =>
+      invoke('thesis-format:parse:upload', workspaceId, name, bytes),
+    /** 彻底删除模版：模版文件 + 格式卡（先删文件含级联清理，再删卡）。 */
+    deleteTemplate: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:template:delete', workspaceId, cardId),
+    reformat: (
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat', workspaceId, fileEntryId, cardId, options),
+    /** 任务化排版：立即返回 jobId，用 reformatStatus 轮询阶段进度。 */
+    reformatStart: (
+      workspaceId: string,
+      fileEntryId: string,
+      cardId?: string,
+      options?: {
+        keepLogo?: boolean
+        keepHeaderFooter?: boolean
+        headingMapping?: { chapter?: number; section?: number; subsection?: number }
+      },
+    ) => invoke('thesis-format:reformat:start', workspaceId, fileEntryId, cardId, options),
+    reformatStatus: (jobId: string) => invoke('thesis-format:reformat:status', jobId),
+    /** 导出 PDF（内置渲染引擎；老运行时回退 LibreOffice，两者都不可用才返回 { unavailable: true }）。 */
+    exportPdf: (workspaceId: string, fileEntryId: string) =>
+      invoke('thesis-format:export:pdf', fileEntryId),
+    removeCard: (workspaceId: string, cardId: string) =>
+      invoke('thesis-format:cards:remove', workspaceId, cardId),
+    onCardChanged: (listener: () => void) => {
+      const handler = () => listener()
+      ipcRenderer.on('thesis-format:card-changed', handler)
+      return () => ipcRenderer.removeListener('thesis-format:card-changed', handler)
+    },
   },
 }
 
 contextBridge.exposeInMainWorld('nxcore', api)
+
+// everoffice UI 迁移：office-proto 原型的 GenOffice 编辑器桥（window.desktop）。
+// 通道由 src/main/genoffice/bridge.ts 注册，独立于上面的 office:instance:* 体系。
+contextBridge.exposeInMainWorld('desktop', {
+  platform: process.platform,
+  versions: {
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+  },
+  // 渲染端诊断通道（与 nxcore.diagnostics 同走 app:diagnostic-log；
+  // 模块白名单见主进程 logRendererDiagnostic，native-editor-host 用于
+  // 原生编辑器宿主 activate/bounds 决策点诊断，2026-11-09）。
+  diagnostics: {
+    log: (input: { module: string; level: string; event: unknown }) =>
+      ipcRenderer.send('app:diagnostic-log', input),
+  },
+  office: {
+    open: (request: { fileId: string; title: string; spec: unknown }) =>
+      ipcRenderer.invoke('office:open', request) as Promise<{ ok: boolean; error?: string }>,
+    activate: (fileId: string | null) => ipcRenderer.invoke('office:activate', fileId) as Promise<boolean>,
+    close: (fileId: string) => ipcRenderer.invoke('office:close', fileId) as Promise<boolean>,
+    dirty: (fileId: string) => ipcRenderer.invoke('office:dirty', fileId) as Promise<boolean>,
+    sendBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.send('office:bounds', bounds),
+    pickMaterials: () =>
+      ipcRenderer.invoke('office:pick-materials') as Promise<Array<{ name: string; size: number }>>,
+  },
+})

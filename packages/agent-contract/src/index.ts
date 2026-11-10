@@ -1,5 +1,10 @@
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const MAIN_AGENT_ID = "main" as const;
+/**
+ * 工作区级文稿事件/订阅频道 id（P0-2）：roomId 为 null 的文稿（未归属任何 Room）
+ * 在 WS 订阅与事件总线上统一落到这个频道，避免为「无房文稿」伪造房间记录。
+ */
+export const WORKSPACE_DOCUMENT_CHANNEL = "__workspace__" as const;
 
 export type AgentSessionStatus = "idle" | "running" | "interrupted" | "closed";
 export type AgentRunStatus =
@@ -48,14 +53,272 @@ export type AgentEventType =
   | "approval.requested"
   | "approval.resolved"
   | "context.updated"
+  | "context.usage"
+  | "context.compaction"
   | "runtime.session.updated"
+  | "session.permission_mode.updated"
   | "run.interrupted"
   | "run.failed"
   | "run.cancelled"
   | "run.completed";
 
+/** 上下文占用分段估算（key 对应 pi 会话的构成；tokens 为 chars/4 级粗估，供占比展示）。 */
+export interface AgentContextUsageSegment {
+  key: "systemPrompt" | "tools" | "user" | "assistant" | "toolResults" | "other";
+  tokens: number;
+}
+
+/** 实时上下文用量快照（runtime 在模型回合结束、压缩结束后透出；对齐 pi getContextUsage）。 */
+export interface AgentContextUsage {
+  /** 估算的上下文 token 数；压缩刚结束、尚无新的模型用量时为 null。 */
+  tokens: number | null;
+  contextWindow: number;
+  /** 占上下文窗口百分比；tokens 未知时为 null。 */
+  percent: number | null;
+  /** 占用构成分段（runtime 能估算时携带；缺省=未知）。 */
+  segments?: AgentContextUsageSegment[];
+}
+
+/** 上下文压缩状态信号（runtime 透传 pi 的 compaction_start/compaction_end）。 */
+export interface AgentContextCompaction {
+  active: boolean;
+  reason: "manual" | "threshold" | "overflow";
+  /** 压缩失败/中止时的原因（仅 compaction_end 且出错时）。 */
+  error?: string;
+}
+
+/**
+ * 工作区：会话的组织容器。默认工作区（id='default'）永远存在且不可删除；
+ * path 为空间目录根（`<dataDir>/Workspace/<slug>` 或用户自选目录）。
+ */
+export interface AgentWorkspace {
+  id: string;
+  name: string;
+  /** 空间描述（概览页展示）；未填写为 null，落库前 trim，最长 2000 字符。 */
+  description: string | null;
+  /** 目标列表（概览页药丸）；无目标为空数组，最多 12 条、每条 trim 后 ≤ 200 字符。 */
+  goals: string[];
+  /** 项目空间目录根；未绑定为 null。 */
+  path: string | null;
+  /** 目录名（ASCII）；老数据/未初始化为 null。 */
+  slug?: string | null;
+  /** 目录归属模式：managed=应用托管根，external=用户自选目录，unbound=尚未绑定。 */
+  rootMode?: AgentWorkspaceRootMode;
+  /** 目录布局版本：0=未初始化（需 provision），1=当前布局。 */
+  layoutVersion?: number;
+  /** 目录被外部删除/移动的发现时间（ISO）；正常为 null。 */
+  rootMissingAt?: string | null;
+  kind: "default" | "custom";
+  createdAt: string;
+  updatedAt: string;
+  lastOpenedAt: string;
+}
+
+/**
+ * 项目空间目录归属模式。
+ * - `managed`：建在 `<dataDir>/Workspace/` 下，应用负责；
+ * - `external`：用户自选的目录，仍由应用写入 `.everoffice/space.json`；
+ * - `unbound`：尚未绑定目录（迁移前的老数据）。
+ */
+export type AgentWorkspaceRootMode = "managed" | "external" | "unbound";
+
+/**
+ * 项目空间内各角色目录的绝对路径（全部从 `.everoffice/space.json` 的 `layout` 解析）。
+ *
+ * v2 起 `library` 就是空间根本身（资料库根＝空间根），`.everoffice/` 收全部元数据，
+ * `.tmp/` 收 Agent 过程缓存。
+ */
+export interface AgentSpacePaths {
+  root: string;
+  /** 资料库根（v2 = 空间根）。 */
+  library: string;
+  /** 应用元数据目录（`.everoffice`）；v1 未迁移的空间等于空间根。 */
+  meta: string;
+  memory: string;
+  conversation: string;
+  trash: string;
+  /** 派生缓存的父目录（`.everoffice/cache`）。 */
+  cache: string;
+  tmp: string;
+  derived: string;
+  objects: string;
+}
+
+/** 空间目录健康快照。 */
+export interface AgentSpaceHealth {
+  root: string;
+  /** 目录是否真的在磁盘上。 */
+  exists: boolean;
+  /** 是否有可解析的标记（`.everoffice/space.json`；v1 为根上 `space.everoffice`）。 */
+  markerPresent: boolean;
+  /** 标记版本高于本应用（只读降级，不写不改）。 */
+  markerReadonly: boolean;
+  /** 期望存在但缺失的目录（相对空间根）。 */
+  missingDirectories: string[];
+}
+
+/** 空间目录完整快照（`/layout` 接口与目录卡片）。 */
+export interface AgentSpaceLayout {
+  spaceId: string;
+  rootMode: AgentWorkspaceRootMode;
+  layoutVersion: number;
+  paths: AgentSpacePaths;
+  health: AgentSpaceHealth;
+  markerPath: string | null;
+}
+
+/** 磁盘上发现的项目空间（`detect` / `discover` 的返回）。 */
+export interface AgentSpaceMarkerSummary {
+  root: string;
+  spaceId: string;
+  name: string;
+  slug: string;
+  layoutVersion: number;
+  readonly: boolean;
+}
+
+export interface AgentSpaceCandidate extends AgentSpaceMarkerSummary {
+  /** 是否已在数据库里注册（`discover` 按路径回填）。 */
+  registered: boolean;
+  workspaceId: string | null;
+}
+
+/** 新建空间时的默认落点预览（`<dataDir>/Workspace/<slug>`）。 */
+export interface AgentSpaceDefaultRoot {
+  root: string;
+  slug: string;
+  /** 同名目录已被占用（最终 slug 会自动加后缀）。 */
+  exists: boolean;
+}
+
+/**
+ * 「这个目录是不是项目空间」的判定结果。
+ * 只有 `space` 带身份信息；其余状态用于引导用户（不是空间 / 标记坏了 / 版本太新）。
+ */
+export type AgentSpaceDetectResult =
+  | {
+    status: "space";
+    root: string;
+    spaceId: string;
+    name: string;
+    slug: string;
+    layoutVersion: number;
+    readonly: boolean;
+  }
+  | { status: "missing" | "invalid" | "unsupported" };
+
+/** 资料库对账结果（盘上少了/回来了/多了）。 */
+export interface AgentSpaceReconcileReport {
+  spaceId: string;
+  /** 盘上扫到的文件数。 */
+  scanned: number;
+  /** 新入库的文件（相对 Library 的路径）。 */
+  added: string[];
+  /** 磁盘上找不到、被标成 missing 的。 */
+  missing: string[];
+  /** 之前 missing、这次回到盘上的。 */
+  restored: string[];
+  failed: Array<{ path: string; reason: string }>;
+}
+
+/** 空间缓存占用（tmp / derived / objects）。 */
+export interface AgentSpaceCacheStats {
+  spaceId: string;
+  /** 空间是否绑定了目录；未绑定时全部为 0。 */
+  bound: boolean;
+  tmpBytes: number;
+  derivedBytes: number;
+  objectsBytes: number;
+  totalBytes: number;
+  tmpFiles: number;
+  derivedFiles: number;
+  objectFiles: number;
+}
+
+/**
+ * `.tmp/` 里的一个过程缓存文件（只读视图，不入资料库索引）。
+ *
+ * `path` 相对 `.tmp/`，POSIX 分隔符；因为 `.tmp` 只装 Agent 的临时产物，
+ * 这里不做分类，界面按路径分组展示即可。
+ */
+export interface AgentScratchFile {
+  /** 相对 `<space>/.tmp/` 的路径，如 `thesis/<uuid>/preview.png`。 */
+  path: string;
+  size: number;
+  /** ISO 时间戳。 */
+  modifiedAt: string;
+}
+
+/** 空间 `.tmp/` 的只读清单（「临时文件」入口用，**不写库、不入索引**）。 */
+export interface AgentScratchListing {
+  spaceId: string;
+  /** 空间是否绑定了目录；未绑定时为空清单。 */
+  bound: boolean;
+  /** `.tmp` 根是否存在（从未产生过临时文件时为 false）。 */
+  present: boolean;
+  entries: AgentScratchFile[];
+  /** 扫描到的文件数。`truncated=true` 时是下界（扫描在超上限处停止），UI 展示成 `500+`。 */
+  fileCount: number;
+  /** 扫描到的字节数（同上：截断时是下界）。 */
+  totalBytes: number;
+  /** 达到条目上限、清单不完整。 */
+  truncated: boolean;
+}
+
+/** 缓存回收结果。 */
+export interface AgentSpaceCacheGcResult {
+  spaceId: string;
+  removedTmp: number;
+  removedDerived: number;
+  removedObjects: number;
+  purgedTrash: number;
+  freedBytes: number;
+}
+
+/** 存量懒回填的一页结果。 */
+export interface AgentSpaceBackfillReport {
+  workspaceId: string;
+  scanned: number;
+  materialized: number;
+}
+
+/** 一键修复（补目录/补标记）的结果。 */
+export interface AgentSpaceRepairReport {
+  spaceId: string;
+  /** 新建的目录（相对空间根）。 */
+  createdDirectories: string[];
+  createdMarker: boolean;
+  readonly: boolean;
+}
+
+export interface CreateAgentWorkspaceInput {
+  name: string;
+  path?: string | null;
+  /** 目录归属模式；缺省按 `path` 是否给出推断（有 path=external，无=managed）。 */
+  rootMode?: AgentWorkspaceRootMode;
+  /** 可选描述；空串/空白按 null 存。 */
+  description?: string | null;
+  /** 可选目标列表；省略等价于空数组。 */
+  goals?: string[];
+}
+
+export interface UpdateAgentWorkspaceInput {
+  name?: string;
+  path?: string | null;
+  /** 传 null 或空白串清空描述。 */
+  description?: string | null;
+  /** 传 [] 清空目标，传数组整体替换。 */
+  goals?: string[];
+  lastOpenedAt?: string;
+}
+
+/** 默认工作区 id（迁移与懒初始化共用；不可删除）。 */
+export const DEFAULT_AGENT_WORKSPACE_ID = "default" as const;
+
 export interface AgentSession {
   id: string;
+  /** 会话所属工作区；旧会话迁移后为 'default'。 */
+  workspaceId: string | null;
   /** Legacy metadata; user sessions are not Room-scoped. */
   roomId: string | null;
   /** Last/creation UI surface, never a session partition key. */
@@ -63,6 +326,15 @@ export interface AgentSession {
   runtimeId: string;
   /** Agent that receives unmentioned user turns in this visible conversation. */
   activeAgentId?: string;
+  /** 会话锁定的模型档位（由 activeAgentId 反推）；后端权威，渲染层只读。 */
+  modelPreference?: AgentModelPreference;
+  /** 会话锁定的本机 CLI Agent 渠道（activeAgentId 为本机 Agent 时由其反推）；后端权威。 */
+  channelAgentId?: string;
+  /**
+   * 会话级思考档位覆盖；null/缺省＝跟随模型配置里的 reasoning（runtime config）。
+   * 可随时修改（PUT thinking-level），从下一轮 run 起生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
   title: string | null;
   status: AgentSessionStatus;
   createdAt: string;
@@ -94,6 +366,27 @@ export interface AgentMessage {
   authorAgentId?: string | null;
   content: string;
   createdAt: string;
+  /**
+   * 文档批注卡片（Office「AI 修改」队列发出）：存在时用户气泡渲染成
+   * 「原文摘录 + 我的注释」卡片而不是纯文本。content 仍是合并文案（搜索/复制用）。
+   */
+  noteCards?: AgentNoteCard[];
+  /**
+   * 气泡正文（只影响气泡展示）：有批注卡片的消息气泡只显示输入框正文——
+   * 空串＝不渲染气泡（只剩浮在上方、与气泡分离的批注卡片）；缺省回退 content。
+   * content 仍存合并文案（标题/检索/重试语义不变）。
+   */
+  displayContent?: string;
+}
+
+/** 一条文档批注的展示结构（气泡内卡片，只读）。 */
+export interface AgentNoteCard {
+  /** 被批注的原文摘录（选区文本快照）。 */
+  excerpt: string;
+  /** 用户敲的批注原话。 */
+  note: string;
+  /** 来源文件标题（缺省不展示来源行）。 */
+  title?: string;
 }
 
 export interface AgentSessionParticipant {
@@ -224,9 +517,23 @@ export interface SubagentInvocation {
   result: SubagentInvocationResult | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** 续会话：本次 run 实际使用的 pi 会话 ref（deck 级共享上下文链式传递用）。 */
+  runtimeSessionRef?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+}
+
+/** 对话时间线用的调用树节点：附带 Agent 展示名（registry 缺失时回退 id）。 */
+export interface SubagentInvocationNode extends SubagentInvocation {
+  agentName: string;
+  /**
+   * 本次调用最近一次上下文用量快照（来自该调用 runtime 的 context.usage 事件）。
+   * 缺省 = runtime 未透出（如非 pi 运行时），调用方不渲染用量圆环。
+   */
+  contextUsage?: AgentContextUsage | null;
+  /** 本次调用是否处于上下文压缩中（context.compaction 事件最新信号）。 */
+  contextCompacting?: boolean;
 }
 
 export interface SubagentInvocationEvent {
@@ -238,10 +545,210 @@ export interface SubagentInvocationEvent {
   occurredAt: string;
 }
 
+// ── Agent 调试页（独立浏览器调试台的只读数据契约） ──
+// Gateway 侧在 runtime 边界记录所有 Agent 的 run 事件（内存环形缓冲），
+// 通过 /v1/agent-debug/* 暴露给本地调试页。
+// run 结束后会异步写入 dataDir/agent-debug 下的磁盘归档（只读回放，不参与产品链路），
+// 桌面应用重启后仍可按会话/时间找回历史记录；运行中的 run 只在内存缓冲里。
+
+/** 调试页里 Agent 的三类来源：内置、dispatch-only 子 Agent、本机 CLI Agent。 */
+export type AgentDebugAgentKind = "builtin" | "developer" | "local";
+
+export type AgentDebugAgentState = "idle" | "running" | "error";
+
+/**
+ * run 的数据来源：
+ * - `live`：当前 Gateway 进程内存缓冲（可为 running 或刚结束）；
+ * - `archive`：磁盘归档里的历史 run（终态，事件只读回放）。
+ */
+export type AgentDebugRunOrigin = "live" | "archive";
+
+export type AgentDebugRunStatus =
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted"
+  | "timed_out";
+
+export interface AgentDebugAgent {
+  id: string;
+  name: string;
+  description: string;
+  kind: AgentDebugAgentKind;
+  state: AgentDebugAgentState;
+  activeRunCount: number;
+  /** 最近一次 run 开始/完成时间；无历史为 null（调试页展示静默 Agent）。 */
+  lastRunAt: string | null;
+}
+
+export interface AgentDebugRun {
+  runId: string;
+  agentId: string;
+  agentName: string;
+  agentKind: AgentDebugAgentKind;
+  /** runtime.id，如 pi:main / pi:subagent:slides-planner / acp:codex；未知为 null。 */
+  runtimeId: string | null;
+  sessionId: string | null;
+  pageLabel: string | null;
+  /**
+   * 会话标题（主对话取 agent_sessions.title，便于在历史里按对话区分/找回）；
+   * 无法解析（子 Agent、会话已删除）为 null。由 Gateway 查询时补全，不落归档。
+   */
+  sessionTitle?: string | null;
+  /**
+   * 数据来源；缺省按 `live` 处理（旧版 Gateway）。`archive` 表示来自磁盘归档的历史 run。
+   */
+  origin?: AgentDebugRunOrigin;
+  /**
+   * 逐页任务（如 slides-layouter 的单页布局）的页序，**1 起**；非逐页 run 不返回。
+   * Gateway 从子 Agent dispatch input 的 0 起 `pageIndex` 换算，随 run 元数据落归档，
+   * 调试页据此显示「这个布局 agent 正在负责哪一页」。
+   */
+  slidePageIndex?: number;
+  /** 逐页任务的总页数；未知（旧 run / 非逐页）不返回。 */
+  slidePageCount?: number;
+  task: string;
+  status: AgentDebugRunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  /** 缓冲中保留的事件条数。 */
+  eventCount: number;
+  /** 环形缓冲淘汰掉的事件条数（事件过多时 >0）。 */
+  droppedEvents: number;
+  toolCallCount: number;
+  /** 累计思考（reasoning.delta）字符数。 */
+  reasoningChars: number;
+  /** 最近一次事件时间，调试页按活跃度排序。 */
+  lastEventAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface AgentDebugEvent {
+  /** 该 run 内严格递增的序号，从 1 开始。 */
+  seq: number;
+  type: AgentEventType;
+  occurredAt: string;
+  payload: unknown;
+  /** payload 超过单条上限被截断时，记录原始序列化字节数。 */
+  truncatedBytes?: number;
+}
+
+/** 调试归档概况（调试页用于展示"历史记录是否可用/保留多久"）。 */
+export interface AgentDebugArchiveInfo {
+  /** 归档是否启用（`NXCORE_AGENT_DEBUG_ARCHIVE=0` 可关闭）。 */
+  enabled: boolean;
+  /** 归档保留天数；超过即清理最旧 run。 */
+  retentionDays: number;
+  /** 当前归档里的 run 条数。 */
+  runCount: number;
+  /** 归档文件总字节数。 */
+  bytes: number;
+  /** 归档里最旧一条 run 的开始时间；空归档为 null。 */
+  oldestStartedAt: string | null;
+}
+
+export interface AgentDebugSnapshot {
+  generatedAt: string;
+  agents: AgentDebugAgent[];
+  /**
+   * 最近 run：运行中的 run 永远最前，其余按 startedAt 倒序。
+   * `archived=include`（默认）时混合当前进程 run 与磁盘归档历史 run，用 `origin` 区分；
+   * `exclude` 只返回当前进程 run，`only` 只返回归档历史。
+   */
+  runs: AgentDebugRun[];
+  /** 因 run 数超过缓冲上限被整体淘汰的历史 run 数（仅当前进程）。 */
+  droppedRuns: number;
+  /** 磁盘归档概况；归档关闭时为 `{ enabled: false, ... }`。 */
+  archive?: AgentDebugArchiveInfo;
+}
+
+export interface AgentDebugRunEvents {
+  run: AgentDebugRun;
+  /**
+   * 增量事件。除 seq > afterSeq 的事件外，可能额外带回一条 seq <= afterSeq 的
+   * 尾部可合并事件（相邻 reasoning.delta / message.delta 在服务端合并累计、seq
+   * 不变，不带回来客户端永远看不到后续 token）。客户端必须按 seq **upsert**
+   * （替换同 seq 事件），而不是只追加。
+   */
+  events: AgentDebugEvent[];
+  /** 当前缓冲内的最大 seq（客户端下次增量拉取用 afterSeq 对齐）。 */
+  latestSeq: number;
+}
+
 export interface CreateAgentSessionInput {
   pageLabel: string;
+  /** 会话所属工作区；缺省/非法时归入默认工作区。 */
+  workspaceId?: string | null;
   /** Legacy input accepted for compatibility; ignored for user sessions. */
   roomId?: string | null;
+  /**
+   * 会话档位（在创建时锁定，映射为 activeAgentId）。缺省 smart。
+   * 中途换档只影响之后新建的会话，不改已有会话。
+   */
+  modelPreference?: AgentModelPreference;
+  /**
+   * 会话渠道：锁定为某个本机 CLI Agent（如 codex:/usr/local/bin/codex），
+   * 整个会话由该 Agent 连续对话（ACP 持久会话）。设置后 modelPreference 被忽略。
+   */
+  channelAgentId?: string;
+  /**
+   * 会话思考档位（创建时写入；null/缺省＝跟随模型配置的 reasoning）。
+   * 与模型档位不同，它不锁定：会话内可随时 PUT 修改，从下一轮 run 生效。
+   */
+  thinkingLevel?: AgentThinkingLevel | null;
+}
+
+/** 会话模型档位：smart=强模型主会话+轻量模型委派；primary=纯强模型；lite=轻量模型直答。 */
+export type AgentModelPreference = "smart" | "primary" | "lite";
+
+/** 思考档位（pi thinkingLevel 七档）：off 关闭思考；null 表示跟随模型配置。 */
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+/** 七档全集（校验与 UI 展示共用；顺序＝由弱到强）。 */
+export const AGENT_THINKING_LEVELS: readonly AgentThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
+
+export function isAgentThinkingLevel(value: unknown): value is AgentThinkingLevel {
+  return typeof value === "string" && (AGENT_THINKING_LEVELS as readonly string[]).includes(value);
+}
+
+/** PUT /v1/agent/sessions/:id/thinking-level 的响应。 */
+export interface AgentThinkingLevelUpdate {
+  /** 当前覆盖值；null＝已清回「跟随模型配置」。 */
+  thinkingLevel: AgentThinkingLevel | null;
+  /** 是否已即时推到活跃 run 的 runtime（false＝仅落库，下一轮起生效）。 */
+  applied: boolean;
+}
+
+/** 档位 → 内置 agentId（写入 agent_sessions.activeAgentId）。 */
+export const MODEL_PREFERENCE_AGENT_IDS: Record<AgentModelPreference, string> = {
+  smart: MAIN_AGENT_ID,
+  primary: "main-direct",
+  lite: "main-lite",
+};
+
+/** 内置档位 agentId 集合（网关守卫与渲染层 badge 反推共用）。 */
+export const MODEL_TIER_AGENT_IDS: readonly string[] = Object.values(MODEL_PREFERENCE_AGENT_IDS);
+
+export function modelPreferenceFromAgentId(agentId: string | null | undefined): AgentModelPreference | undefined {
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.primary) return "primary";
+  if (agentId === MODEL_PREFERENCE_AGENT_IDS.lite) return "lite";
+  if (agentId === MAIN_AGENT_ID) return "smart";
+  return undefined;
+}
+
+/** 会话 activeAgentId 不是档位内置 Agent 时视为本机 CLI 渠道，返回渠道 agentId。 */
+export function channelAgentIdFromAgentId(agentId: string | null | undefined): string | undefined {
+  if (!agentId || MODEL_TIER_AGENT_IDS.includes(agentId)) return undefined;
+  return agentId;
 }
 
 export interface UpdateAgentSessionInput {
@@ -249,7 +756,7 @@ export interface UpdateAgentSessionInput {
 }
 
 export type AgentNavigationAction = "created" | "updated" | "opened" | "referenced";
-export type AgentNavigationObjectType = "room" | "document" | "source" | "memory" | "task" | "diary";
+export type AgentNavigationObjectType = "room" | "document" | "source" | "task" | "diary";
 
 export interface AgentNavigationTarget {
   pageId: string;
@@ -600,8 +1107,6 @@ export interface RoomMergeImpactCounts {
   documents: number;
   externalSources: number;
   wikiFiles: number;
-  localMemories: number;
-  attributedMemories: number;
   agentRuns: number;
   sessionLinks: number;
   entities: number;
@@ -617,7 +1122,6 @@ export interface RoomMergeSketch {
   status: string;
   materialsCount: number;
   filesCount: number;
-  memoriesCount: number;
   entitiesTop: string[];
 }
 
@@ -652,6 +1156,22 @@ export interface RoomMergeOperation {
 
 export interface StartAgentRunInput {
   prompt: string;
+  /**
+   * 用户可见文案（人话）：卡片按钮/产物库/AI 修改等确定性入口用 prompt 传技术指令，
+   * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
+   */
+  displayPrompt?: string;
+  /**
+   * 气泡正文（只影响气泡展示）：批注场景气泡只显示输入框正文——正文为空时传
+   * 空串，气泡不渲染（只有浮在上方、与气泡分离的批注卡片）；不传则回退
+   * displayPrompt。落库消息 content 仍用 displayPrompt（列表/检索语义不变）。
+   */
+  displayContent?: string;
+  /**
+   * 文档批注卡片（与 displayPrompt 同源的结构化展示）：存在时落库消息带
+   * noteCards，气泡渲染成卡片列表。runtime 不收本字段。
+   */
+  noteCards?: AgentNoteCard[];
   idempotencyKey: string;
   /** Stable local Agent installation id selected by an explicit composer mention. */
   targetAgentId?: string;
@@ -661,42 +1181,72 @@ export interface StartAgentRunInput {
   workspaceBindingToken?: string;
   /** Desktop Main-resolved target. Renderer input is discarded and replaced before Gateway dispatch. */
   localAgent?: LocalAgentInvocationTarget;
+  /** Desktop Main-resolved targets of the @ mentioned local Agents; Main stays the speaker and decides which to dispatch via local_agent_dispatch. */
+  referencedLocalAgents?: LocalAgentInvocationTarget[];
   attachments?: AgentAttachmentReference[];
   /** Completed run replaced by this regeneration request. */
   replaceRunId?: string;
   /** Current UI locale used for assistant-generated summaries and documents. */
   responseLanguage?: string;
-  /** Defaults to true. Temporary preview runs can defer capture until user confirmation. */
-  captureMemory?: boolean;
-  /** Defaults to true. Lightweight runs can skip automatic memory recall. */
-  recallMemory?: boolean;
-  /** Defaults to "global". Room focus mode: recall keeps only the core profile and the current Room's curated memories, skipping global atomic/scenario/conversation recall; memory_search is locked to the current Room. Requires context.selectedRoomId. */
-  memoryScope?: "room" | "global";
   /** Defaults to true. Lightweight runs can hide all runtime tools from the model. */
   toolsEnabled?: boolean;
   context?: {
     /** UI surface where this run was started; never part of session identity. */
     pageLabel?: string;
     selectedText?: string;
-    /** Current, non-deleted Rooms visible to the desktop when this run starts. */
-    rooms?: AgentRoomReference[];
-    /** Explicit UI-confirmed target for a global Agent session. */
-    selectedRoomId?: string | null;
+    /**
+     * Room 维度已从 Agent/工具链路移除（Phase 2i 之后文稿一律工作区级）：
+     * run 不再携带 Room 清单，也不再接受 UI 选定的 Room。
+     */
     activeDocument?: AgentActiveDocumentContext;
+    /**
+     * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
+     * 与 activeDocument（文档内核里的文稿）是两套对象：Office 文件是 file_entries，
+     * 没有 documentId/version，读取正文走 fileId。
+     */
+    activeFile?: AgentActiveFileContext;
+    /**
+     * 工作区当前打开的全部 Office 页签（含焦点项，active=true）。
+     * 让 Agent 知道“一共开着哪些文件”，而不只是用户眼前的这一份。
+     */
+    openFiles?: AgentOpenFileContext[];
+    /** 用户在输入区挂载的本地目录（本轮可直接读取）。 */
+    mountedDirectories?: AgentMountedDirectory[];
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
     externalConversationId?: string;
     /** One-turn history reference for Main. It never resumes or routes to the referenced Agent. */
     referencedConversationId?: string;
+    /** Local CLI Agents explicitly addressed via inline @ mentions; Main decides which to dispatch with local_agent_dispatch. */
+    referencedLocalAgentIds?: string[];
   };
 }
 
-export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude";
+export type MigrationProvider = "notion" | "openclaw" | "codex" | "claude" | "cherry" | "hermes";
 export type MigrationTransport = "oauth" | "zip" | "local-sqlite" | "local-jsonl" | "archive" | "directory";
 export type MigrationSourceStatus = "ready" | "importing" | "completed" | "error" | "unavailable" | "deleting";
 export type MigrationRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 export type MigrationRunPhase = "discovering" | "reading" | "normalizing" | "saving" | "memory" | "finalizing" | "completed";
+
+export type MigrationCapabilityState = "not_available" | "available" | "active" | "error" | "paused";
+
+export interface MigrationSourceCapabilities {
+  importState: MigrationCapabilityState;
+  syncState: MigrationCapabilityState;
+  onDemandState: MigrationCapabilityState;
+  writeBackState: MigrationCapabilityState;
+  nativeRestoreState: MigrationCapabilityState;
+  syncDetail: Record<string, unknown>;
+}
+
+export interface ThreadAttachmentRef {
+  sourceKey: string;
+  name: string;
+  mimeType?: string;
+  fileId?: string;
+  missing?: boolean;
+}
 
 export interface MigrationSource {
   id: string;
@@ -708,6 +1258,7 @@ export interface MigrationSource {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  capabilities?: MigrationSourceCapabilities;
 }
 
 export interface MigrationRun {
@@ -767,6 +1318,97 @@ export type LocalAgentProvider = "codex" | "claude" | "openclaw" | "opencode" | 
 export type LocalAgentStatus = "discovered" | "verified" | "history_available" | "unavailable";
 export type AgentInvocationMode = "explicit_switch" | "delegated_subagent";
 export type AgentWorkspacePermissionProfile = "inspect" | "workspace_write" | "full_access";
+/** 会话权限模式（provider 中立语义档）：ask_before_write=变更前必问，accept_edits=文件变更放行、bash 仍问，auto=沙盒内全自动，full_access=全自动。 */
+export type AgentPermissionMode = "ask_before_write" | "accept_edits" | "auto" | "full_access";
+
+export interface AgentPermissionModeState {
+  mode: AgentPermissionMode;
+  available: AgentPermissionMode[];
+  channelAgentId: string | null;
+}
+export type LocalAcpProvider = Extract<LocalAgentProvider, "codex" | "claude" | "openclaw">;
+
+export interface LocalAcpAdapterCommandInfo {
+  command: string;
+  args: string[];
+  /** 备选命令名（旧版 bin 名等），检测与 spawn 按序回退。 */
+  fallbacks?: string[];
+  /** 派发 target 携带的绝对路径 spawn 需要的附加 env（如 ELECTRON_RUN_AS_NODE）。 */
+  env?: Record<string, string>;
+  installCommand: string | null;
+}
+
+/**
+ * 桌面端解析出的适配器 spawn 覆盖：command 为绝对路径（用户 PATH 命中的可执行文件，
+ * 或私有安装场景下的运行时承载命令 + 入口 args）。gateway 直接按此 spawn，
+ * 不再依赖自身 PATH 解析 bare bin 名。
+ */
+export interface LocalAcpAdapterSpawn {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface LocalAgentAcpAdapterInfo {
+  command: string;
+  installed: boolean;
+  installCommand: string | null;
+}
+
+const LOCAL_AGENT_ACP_INSTALL_PACKAGES: Partial<Record<LocalAgentProvider, string>> = {
+  claude: "@zed-industries/claude-agent-acp",
+  codex: "@agentclientprotocol/codex-acp",
+};
+
+/** 适配器的 npm 包名；null 表示该 provider 无需安装适配器（openclaw 原生支持）。 */
+export function localAcpAdapterInstallPackage(provider: LocalAcpProvider): string | null {
+  return LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider] ?? null;
+}
+
+/**
+ * provider → ACP 适配器命令（gateway spawn 与桌面端安装检测共用）。
+ * openclaw 原生 `openclaw acp` 无需适配器（installCommand 为 null 表示无需安装）；
+ * claude 的包已从 claude-code-acp 改名 claude-agent-acp（bin 同步改名），旧 bin 名
+ * 作为 fallback 兼容已安装旧版的用户。优先级：`EVERROOM_ACP_COMMAND_<PROVIDER>`
+ * 整行覆盖 > target 携带的绝对路径 spawn > 默认 bare 名 + fallbacks。
+ */
+export function localAcpAdapterCommand(
+  provider: LocalAcpProvider,
+  executablePath: string,
+  env: Record<string, string | undefined> = {},
+  spawnOverride?: LocalAcpAdapterSpawn | null,
+): LocalAcpAdapterCommandInfo {
+  const override = env[`EVERROOM_ACP_COMMAND_${provider.toUpperCase()}`];
+  if (override?.trim()) {
+    const [command, ...args] = override.trim().split(/\s+/);
+    if (command) return { command, args, installCommand: null };
+  }
+  if (spawnOverride?.command?.trim()) {
+    return {
+      command: spawnOverride.command,
+      args: spawnOverride.args ?? [],
+      ...(spawnOverride.env ? { env: spawnOverride.env } : {}),
+      installCommand: null,
+    };
+  }
+  if (provider === "openclaw") {
+    return { command: executablePath || "openclaw", args: ["acp"], installCommand: null };
+  }
+  const pkg = LOCAL_AGENT_ACP_INSTALL_PACKAGES[provider];
+  if (provider === "claude") {
+    return {
+      command: "claude-agent-acp",
+      args: [],
+      fallbacks: ["claude-code-acp"],
+      installCommand: pkg ? `npm install -g ${pkg}` : null,
+    };
+  }
+  return {
+    command: "codex-acp",
+    args: [],
+    installCommand: pkg ? `npm install -g ${pkg}` : null,
+  };
+}
 
 export interface LocalAgentCard {
   name: string;
@@ -792,6 +1434,7 @@ export interface LocalAgentInstallation {
   historyPaths: string[];
   card: LocalAgentCard;
   lastSeenAt: string;
+  acpAdapter?: LocalAgentAcpAdapterInfo;
   error?: string;
 }
 
@@ -823,12 +1466,43 @@ export interface LocalAgentInvocationTarget {
   workingDirectory: string;
   permissionProfile: AgentWorkspacePermissionProfile;
   card: LocalAgentCard;
+  /** 桌面端解析的适配器绝对路径 spawn 覆盖（gateway 免 PATH 解析）；null/缺省走默认解析。 */
+  acpAdapter?: LocalAcpAdapterSpawn | null;
+}
+
+export type LocalAgentDelegationMaterialKind =
+  | "selection"
+  | "attachment"
+  | "active_document"
+  | "transcript"
+  | "note"
+  | "agent_output";
+
+export interface LocalAgentDelegationMaterial {
+  id: string;
+  kind: LocalAgentDelegationMaterialKind;
+  title: string;
+  text: string;
+  truncated?: boolean;
+  /** True when the material was produced by a prior Agent dispatch instead of user-supplied data. */
+  agentOutput: boolean;
+  /** Dispatch id of the upstream task that produced this material（kind 为 agent_output 时必填）. */
+  sourceDispatchId?: string;
 }
 
 export interface LocalAgentDelegationContext {
-  schemaVersion: 1;
+  schemaVersion: 2;
   targetAgentId: string;
+  /** Main 以协作者身份写给子 Agent 的结构化分工。 */
+  assignment: {
+    text: string;
+    sharedGoal?: string;
+    constraints: string[];
+  };
+  /** 展平的分工文本，供审计与旧读者使用。 */
   task: { text: string };
+  /** 本次分发快照携带的材料清单。 */
+  materials: LocalAgentDelegationMaterial[];
   conversation: {
     messages: Array<Pick<AgentMessage, "role" | "authorAgentId" | "content" | "createdAt">>;
     truncated: boolean;
@@ -842,8 +1516,7 @@ export interface LocalAgentDelegationContext {
   }>;
   resources: {
     workspaceRoot: string;
-    roomIds: string[];
-    activeDocument?: Pick<AgentActiveDocumentContext, "roomId" | "documentId" | "title" | "version">;
+    activeDocument?: Pick<AgentActiveDocumentContext, "documentId" | "title" | "version">;
   };
   grant: {
     workspaceAccess: "read-only" | "workspace-write" | "full-access";
@@ -871,7 +1544,8 @@ export interface AgentFileAttachment {
 export type PendingAgentIntentTargetCapability =
   | "document.create"
   | "document.edit"
-  | "document.continue";
+  | "document.continue"
+  | "task.clarify";
 
 export interface PendingAgentIntent {
   id: string;
@@ -887,11 +1561,14 @@ export interface PendingAgentIntent {
 }
 
 export interface SubmitPendingAgentIntentInput {
-  roomId: string;
   documentId?: string;
   idempotencyKey: string;
   /** Current UI locale to carry into the resumed Agent run. */
   responseLanguage?: string;
+  /** task.clarify：结构化澄清表单的作答（questionId → 单值或多选值）。 */
+  answers?: Record<string, string | string[]>;
+  /** task.clarify 可选自由补充说明，与 answers 一并注入续跑 prompt。 */
+  note?: string;
 }
 
 export interface TrustedMcpSession {
@@ -906,13 +1583,54 @@ export interface AgentDocumentCursorAnchor {
   affinity: "after";
 }
 
+/** 用户当前正在浏览的文稿（只按 documentId 寻址；文稿一律工作区级，无 Room 归属）。 */
 export interface AgentActiveDocumentContext {
-  roomId: string;
   documentId: string;
   title: string;
   version: number;
   defaultAnchor: "end";
   cursorAnchorCandidate?: AgentDocumentCursorAnchor;
+}
+
+/** 内嵌 Office 视图的文件形态（与桌面端 OfficePreviewKind 同构）。 */
+export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf" | "markdown";
+
+/** 用户当前正在浏览的 Office 文件（页签）：Agent 感知“这份文档”指谁的最小事实。 */
+export interface AgentActiveFileContext {
+  fileId: string;
+  title: string;
+  kind: AgentActiveFileKind;
+  /** 打开时是否可编辑（只读打开的文件不承诺能改，但可以读正文）。 */
+  editable?: boolean;
+}
+
+/** 工作区里打开的一个 Office 页签；active = 用户此刻正在看的那一个。 */
+export interface AgentOpenFileContext extends AgentActiveFileContext {
+  active: boolean;
+}
+
+/**
+ * 工作区文件库的规模（只报数量，不列条目）。
+ *
+ * 为什么不塞条目：资料库可能上千份，任何「最近 N 条」的快照都是抽样，会让 Agent
+ * 误以为看完了全库。条目一律由 Agent 自己用 library_browse（分页浏览）/
+ * file_search（关键词检索）去取，这条提示只负责告诉它「库里有东西、有多少」。
+ */
+export interface AgentLibraryInventory {
+  /** 资料库条目数（上传/本地目录/连接器/剪藏等）。 */
+  library: number;
+  /** 产物库条目数（Agent 生成/产物导入）。 */
+  artifacts: number;
+  /** 两者之和，与界面「全部文件」一致。 */
+  total: number;
+}
+
+/** 用户在输入区「+ → 挂载目录」里选择的本机目录。 */
+export interface AgentMountedDirectory {
+  /** 用户在系统选择框里显式授权的绝对路径。 */
+  path: string;
+  /** 展示名（目录名），UI 与运行提示共用。 */
+  name: string;
 }
 
 export interface TiptapJsonContent {
@@ -923,18 +1641,53 @@ export interface TiptapJsonContent {
   text?: string;
 }
 
+/** 单篇文稿移动结果：fromRoomId 为空表示从工作区级归入 Room。 */
+export interface MovedRoomDocument {
+  document: RoomDocument;
+  fromRoomId: string | null;
+}
+
+/** 批量移动结果：部分失败时 failed 带原因，成功项照常返回。 */
+export interface MoveRoomDocumentsResult {
+  moved: MovedRoomDocument[];
+  failed: Array<{ documentId: string; reason: string }>;
+}
+
 export interface RoomDocument {
   id: string;
-  roomId: string;
+  /** 文稿所属 Room；null = 未归属任何 Room 的工作区级文稿。 */
+  roomId: string | null;
   title: string;
   contentJson: TiptapJsonContent;
   contentSchemaVersion: number;
   version: number;
   status: "draft" | "active";
+  origin: "native" | "import";
   activeTransactionId: string | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RoomTaskFolder {
+  id: string;
+  roomId: string;
+  kind: "task";
+  title: string;
+  /** 任务元数据镜像：{ taskKind, stage, workplanDocId, goal? }。 */
+  data: Record<string, unknown>;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Room 任务夹投影：夹列表 + 文档/文件条目的归夹映射。 */
+export interface RoomFolderProjection {
+  folders: RoomTaskFolder[];
+  /** documentId → folderId。 */
+  documentFolders: Record<string, string>;
+  /** fileEntryId → folderId（sourceKind=file 的产物归夹）。 */
+  fileFolders: Record<string, string>;
 }
 
 export interface DocumentBlockSummary {
@@ -968,13 +1721,15 @@ export type DocumentBlockResolutionStatus =
   | "permission_denied";
 
 export interface DocumentBlockReferenceInput {
-  roomId: string;
+  /** 目标块所属作用域；null = 工作区文稿（旧数据里是 Room id）。 */
+  roomId?: string | null;
   documentId: string;
   blockId: string;
 }
 
 export interface ResolveDocumentBlockReferencesInput {
-  sourceRoomId: string;
+  /** 源文档作用域；null/省略 = 工作区文稿。 */
+  sourceRoomId?: string | null;
   references: DocumentBlockReferenceInput[];
 }
 
@@ -1132,7 +1887,8 @@ export interface DocumentOperationSummary {
   capabilityVersion: number;
   interactionMode: DocumentOperationInteractionMode;
   presenterKey: string;
-  roomId: string;
+  /** 工作区级操作为 null（P0-2d：文档域去 roomId）。 */
+  roomId: string | null;
   documentId: string | null;
   documentTitle: string;
   sessionId: string;
@@ -1181,7 +1937,7 @@ export interface DocumentOperationCommandInput {
   type: string;
   payload?: Record<string, unknown>;
   context?: {
-    roomId: string;
+    roomId: string | null;
     sessionId: string;
     runId: string;
   };
@@ -1193,10 +1949,13 @@ export interface DocumentOperationCommandResult {
   duplicate: boolean;
 }
 
+export type ExternalDocumentSourceKind = "obsidian-vault" | "local-directory";
+
 export interface ExternalDocumentProjectionBinding {
-  sourceKind: "obsidian-vault";
+  sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
+  /** 作用域 id；单工作区语义下恒为工作区频道，旧数据里是 Room id。 */
   roomId: string;
   documentId: string;
   relativePath: string;
@@ -1205,10 +1964,11 @@ export interface ExternalDocumentProjectionBinding {
 }
 
 export interface SyncExternalDocumentProjectionInput {
-  sourceKind: "obsidian-vault";
+  sourceKind: ExternalDocumentSourceKind;
   sourceId: string;
   resourceId: string;
-  roomId: string;
+  /** 省略/null = 工作区文稿作用域。 */
+  roomId?: string | null;
   relativePath: string;
   sourceHash: string;
   title: string;
@@ -1237,7 +1997,8 @@ export interface CompleteExternalDocumentPatchInput {
   preparationId: string;
   resultingSourceHash: string;
   context: {
-    roomId: string;
+    /** 工作区级操作为 null（P0-2d）。 */
+    roomId: string | null;
     sessionId: string;
     runId: string;
   };
@@ -1250,7 +2011,7 @@ export interface StartDocumentOperationInput {
    * invocationId 变体由网关归一化为 sessionId = runId = invocationId 后落库。
    */
   context: {
-    roomId: string;
+    roomId: string | null;
     documentId?: string;
     sessionId?: string;
     runId?: string;
@@ -1284,11 +2045,13 @@ export type DocumentEventType =
   | "document.changed"
   | "document.operation.changed"
   | "document.deleted"
+  | "document.moved"
   | "document.comments.changed";
 
 export interface DocumentEvent<T = unknown> {
   id: string;
-  roomId: string;
+  /** 事件所属 Room；null = 工作区级事件（WS 频道见 WORKSPACE_DOCUMENT_CHANNEL）。 */
+  roomId: string | null;
   documentId: string;
   operationId: string | null;
   type: DocumentEventType;
@@ -1302,11 +2065,25 @@ export interface DocumentEventFrame {
   event: DocumentEvent;
 }
 
+/**
+ * document.moved 的负载：事件发往源 Room（`roomId` = 源房），接收端据此从
+ * 源房清单摘除该文档；目标房另行收到 document.changed（携带移动后的文档）。
+ */
+export interface DocumentMovedPayload {
+  documentId: string;
+  fromRoomId: string;
+  toRoomId: string;
+  title: string;
+}
+
 export interface ImportRoomDocumentInput {
   id: string;
-  roomId: string;
+  /** null = 工作区级文稿（不写入任何 Room 归属）。 */
+  roomId: string | null;
   title: string;
   contentJson: TiptapJsonContent;
+  /** 省略时按外部导入（import）落库；EverOffice 内新建（含本地 Markdown 导入）传 native，产物库只列 native。 */
+  origin?: 'native' | 'import';
 }
 
 export interface SaveRoomDocumentInput {
@@ -1670,4 +2447,393 @@ export function isAgentSocketFrame(value: unknown): value is AgentSocketFrame {
     typeof event.type === "string" &&
     typeof event.occurredAt === "string"
   );
+}
+
+/* ───────────────── 工作空间「计划」：任务（todo） ───────────────── */
+
+/**
+ * 计划项状态（= 看板四列）。
+ *
+ * 与 `AgentSession.status` 无关：会话是执行载体，任务是待办本身。
+ * 拖拽不设"非法迁移"，任意状态可互转，每次都记事件（见 `PlanItemEvent`）。
+ */
+export type PlanStatus = "todo" | "doing" | "done" | "dropped";
+
+export const PLAN_STATUSES: readonly PlanStatus[] = ["todo", "doing", "done", "dropped"];
+
+/** 看板列顺序（渲染层与网关共用，避免两处各排一遍）。 */
+export const PLAN_STATUS_ORDER: Record<PlanStatus, number> = { todo: 0, doing: 1, done: 2, dropped: 3 };
+
+export type PlanPriority = "low" | "normal" | "high" | "urgent";
+
+export const PLAN_PRIORITIES: readonly PlanPriority[] = ["low", "normal", "high", "urgent"];
+
+/** 谁在做：未指派 / 用户自己做 / 某个 Agent。 */
+export type PlanOwnerKind = "unassigned" | "user" | "agent";
+
+/** 事件的操作者类型（`system` = 租约过期回收等后台动作）。 */
+export type PlanActorKind = "user" | "agent" | "system";
+
+export type PlanRefKind = "file" | "document" | "session" | "url";
+
+/**
+ * 材料引用。
+ *
+ * 只存引用不存正文：认领包里给 Agent 的是 `fileId` / `documentId`，
+ * 正文由它自己用 `file_read` / `document_read` 取（库可能上千份，抽样快照会误导）。
+ */
+export interface PlanRef {
+  kind: PlanRefKind;
+  id: string;
+  title: string;
+}
+
+export interface PlanChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
+
+/** 写入用的检查项（id 可缺省，由网关补）。 */
+export interface PlanChecklistInput {
+  id?: string;
+  text: string;
+  done: boolean;
+}
+
+export type PlanEventKind =
+  | "created"
+  | "updated"
+  | "moved"
+  | "claimed"
+  | "released"
+  | "assigned"
+  | "lease_expired"
+  | "lease_preempted"
+  | "completed"
+  | "reopened"
+  | "dropped"
+  | "restored";
+
+export interface PlanItem {
+  id: string;
+  workspaceId: string;
+  title: string;
+  /** 背景与要求（markdown）。 */
+  detail: string | null;
+  /** 验收标准；Agent 的完成判据。 */
+  acceptance: string | null;
+  /** 硬约束（口径/格式/禁止项）。 */
+  constraints: string[];
+  status: PlanStatus;
+  priority: PlanPriority;
+  ownerKind: PlanOwnerKind;
+  ownerAgentId: string | null;
+  /** 执行载体会话；`ownerKind=user` 时为 null。 */
+  assigneeSessionId: string | null;
+  lastRunId: string | null;
+  createdBy: "user" | "agent";
+  createdByAgentId: string | null;
+  dueAt: string | null;
+  /** 列内排序键（分数序，字串比较即顺序）。 */
+  rank: string;
+  tags: string[];
+  checklist: PlanChecklistItem[];
+  refs: PlanRef[];
+  /** 依赖的其它计划项（同空间）。 */
+  blockedBy: string[];
+  /** 完成结论（Agent 完成必填）。 */
+  resultSummary: string | null;
+  /** 取消 / 重开的原因。 */
+  closeReason: string | null;
+  /** 当前租约持有者（= 会话 id）；无租约为 null。 */
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  /** 乐观锁：所有写操作都带它。 */
+  version: number;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanItemEvent {
+  id: string;
+  itemId: string;
+  kind: PlanEventKind;
+  actorKind: PlanActorKind;
+  actorId: string | null;
+  fromStatus: PlanStatus | null;
+  toStatus: PlanStatus | null;
+  /** 一句话摘要（时间线直接显示，也是认领包 history 的来源）。 */
+  summary: string;
+  sessionId: string | null;
+  createdAt: string;
+}
+
+/**
+ * 工作空间概览「动态」的事件类型。
+ *
+ * 与 `everoffice` 原型 `workspace.ts:107` 的 7 类一一对应；`work-review`（等你审阅）
+ * 需要审批事件落库才能产生，当前不会出现。模型与分期见
+ * `docs/workspace-overview-activity-plan.zh-CN.md`。
+ */
+export type WorkspaceActivityKind =
+  | "work-created"
+  | "work-run"
+  | "work-review"
+  | "work-done"
+  | "output"
+  | "material"
+  | "plan";
+
+/**
+ * 一句话文案里的一段：纯文本，或**只带 id 的引用**。
+ *
+ * 引用永远不存展示名——工作/文件改名后历史动态自动跟随；名字由渲染层实时解析。
+ */
+export interface WorkspaceActivitySegment {
+  text?: string;
+  /** 工作会话（AgentSession.id）。 */
+  sessionId?: string;
+  /** 文件库条目（FileCatalogDto.id）。 */
+  fileId?: string;
+  /** 计划项（PlanItem.id）。 */
+  planItemId?: string;
+}
+
+/** 概览动态的一条事件（由 runs / 文件库 / 计划事件流派生，不是独立存储的实体）。 */
+export interface WorkspaceActivity {
+  id: string;
+  kind: WorkspaceActivityKind;
+  actor: PlanActorKind;
+  /** ISO 时间。 */
+  at: string;
+  segments: WorkspaceActivitySegment[];
+  /** 派生来源（排查用；渲染层不依赖）。 */
+  source: {
+    table:
+      | "agent_runs"
+      | "agent_sessions"
+      | "file_entries"
+      | "workspace_plan_item_events"
+      /** 审批卡的「等你确认」是活状态（未解决的 approval.requested），不是历史事件。 */
+      | "agent_events";
+    rowId: string;
+  };
+}
+
+/** 游标分页结果：`nextBefore*` 为 null 表示没有更早的事件了。 */
+export interface WorkspaceActivityPage {
+  items: WorkspaceActivity[];
+  nextBeforeAt: string | null;
+  nextBeforeId: string | null;
+}
+
+export interface WorkspaceActivityQuery {
+  limit?: number;
+  /** 游标：上一页最后一条的 (at, id)；两者缺一即从头开始。 */
+  beforeAt?: string;
+  beforeId?: string;
+}
+
+export interface CreatePlanItemInput {
+  workspaceId: string;
+  title: string;
+  detail?: string | null;
+  acceptance?: string | null;
+  constraints?: string[];
+  status?: PlanStatus;
+  priority?: PlanPriority;
+  dueAt?: string | null;
+  tags?: string[];
+  checklist?: PlanChecklistInput[];
+  refs?: PlanRef[];
+  blockedBy?: string[];
+  /** 缺省 = user（渲染层入口）；工具调用时传 agent。 */
+  createdBy?: "user" | "agent";
+  createdByAgentId?: string | null;
+}
+
+export interface UpdatePlanItemInput {
+  version: number;
+  title?: string;
+  detail?: string | null;
+  acceptance?: string | null;
+  constraints?: string[];
+  priority?: PlanPriority;
+  dueAt?: string | null;
+  tags?: string[];
+  checklist?: PlanChecklistInput[];
+  refs?: PlanRef[];
+  blockedBy?: string[];
+  /** 完成结论：改 status=done 时一并写。 */
+  resultSummary?: string | null;
+  closeReason?: string | null;
+  note?: string | null;
+  /** 负责人变更（拖到「进行中」时选「我来做」= user）。 */
+  ownerKind?: PlanOwnerKind;
+  ownerAgentId?: string | null;
+}
+
+export interface MovePlanItemInput {
+  version: number;
+  status: PlanStatus;
+  /** 目标位置前一张卡片（null = 列首）。 */
+  beforeId?: string | null;
+  /** 目标位置后一张卡片（null = 列尾）。 */
+  afterId?: string | null;
+  /** 取消 / 重开的原因。 */
+  reason?: string | null;
+  /** 同一次拖拽里顺带改负责人（拖到「进行中」并选「我来做」）。 */
+  ownerKind?: PlanOwnerKind;
+  ownerAgentId?: string | null;
+  /** 完成结论（Agent 拖/改成 done 时必填）。 */
+  resultSummary?: string | null;
+}
+
+/** 批量操作（多选卡片后的移动 / 取消）。 */
+export interface PlanBatchInput {
+  ids: string[];
+  action: "move" | "drop";
+  status?: PlanStatus;
+}
+
+export interface PlanBatchResult {
+  items: PlanItem[];
+  failed: Array<{ id: string; code: string }>;
+}
+
+/** 计划变更的实时推送载荷（网关 SSE → 桌面 → 看板，按 id upsert）。 */
+export interface PlanChangePayload {
+  workspaceId: string;
+  item: PlanItem;
+  event: PlanItemEvent;
+}
+
+export interface PlanItemListQuery {
+  workspaceId: string;
+  status?: PlanStatus;
+  /** unassigned / me（用户自己）/ agent（任意 Agent）。 */
+  owner?: "unassigned" | "me" | "agent";
+  q?: string;
+  limit?: number;
+}
+
+export interface PlanClaimInput {
+  note?: string | null;
+}
+
+export interface PlanReleaseInput {
+  reason: string;
+}
+
+export interface PlanAssignInput {
+  /** 指定 Agent（缺省 = 主 Agent）。 */
+  agentId?: string;
+}
+
+export interface PlanAssignResult {
+  item: PlanItem;
+  sessionId: string;
+  runId: string;
+}
+
+/** 认领包的一层：材料（只给引用 + 可读性提示）。 */
+export interface PlanClaimMaterial {
+  kind: PlanRefKind;
+  id: string;
+  title: string;
+  /** 给模型的一句话提示（怎么取、可能是什么）。 */
+  hint: string;
+}
+
+/**
+ * 认领包：Agent 认领（或预览）一条任务时拿到的全部必要上下文。
+ *
+ * 组装原则（改代码前先看 docs/workspace-plan-task-design.zh-CN.md §5）：
+ * 1. 意图层原文照搬，不做概括；
+ * 2. 材料层只给引用，正文自己取；
+ * 3. 历史层封顶 8 条，重点是"上次为什么没做完"；
+ * 4. 契约层说清产物落哪、完成要写回什么。
+ */
+export interface PlanClaimPackage {
+  item: {
+    id: string;
+    workspaceId: string;
+    title: string;
+    detail: string | null;
+    acceptance: string | null;
+    constraints: string[];
+    priority: PlanPriority;
+    dueAt: string | null;
+    tags: string[];
+    checklist: PlanChecklistItem[];
+    status: PlanStatus;
+  };
+  why: {
+    createdBy: "user" | "agent";
+    createdByLabel: string;
+    createdAt: string;
+    assignReason: string | null;
+  };
+  space: {
+    name: string;
+    root: string | null;
+    libraryPath: string | null;
+    artifactsPath: string | null;
+  };
+  materials: PlanClaimMaterial[];
+  history: Array<{ at: string; kind: PlanEventKind; actor: string; summary: string }>;
+  dependencies: Array<{ id: string; title: string; status: PlanStatus }>;
+  contract: {
+    mustUpdateStatus: boolean;
+    mustWriteResultSummary: boolean;
+    leaseTtlSec: number;
+    outputHint: string | null;
+  };
+}
+
+/** 认领包渲染成 prompt / 工具返回文本（网关与工具共用一份，避免文案分叉）。 */
+export function formatPlanClaimPackage(pkg: PlanClaimPackage): string {
+  const lines: string[] = [];
+  const { item } = pkg;
+  // 老网关 / 半成品载荷都当成空值处理：渲染端的预览不该因为字段缺失而炸掉。
+  const constraints = item.constraints ?? [];
+  const materials = pkg.materials ?? [];
+  const dependencies = pkg.dependencies ?? [];
+  const history = pkg.history ?? [];
+  lines.push("### 任务", item.title, "");
+  if (item.detail) lines.push("### 背景与要求", item.detail, "");
+  if (item.acceptance) lines.push("### 验收标准", item.acceptance, "");
+  if (constraints.length) {
+    lines.push("### 约束");
+    for (const constraint of constraints) lines.push(`- ${constraint}`);
+    lines.push("");
+  }
+  if (item.dueAt) lines.push(`### 截止\n${item.dueAt}`, "");
+  if (materials.length) {
+    lines.push("### 材料（自行读取）");
+    for (const material of materials) {
+      lines.push(`- [${material.kind}] ${material.title}（${material.kind}Id: ${material.id}）— ${material.hint}`);
+    }
+    lines.push("");
+  }
+  if (dependencies.length) {
+    lines.push("### 依赖");
+    for (const dep of dependencies) lines.push(`- ${dep.title}（${dep.status}）`);
+    lines.push("");
+  }
+  if (history.length) {
+    lines.push("### 历史");
+    for (const event of history) lines.push(`- ${event.at} ${event.kind}（${event.actor}）：${event.summary}`);
+    lines.push("");
+  }
+  lines.push("### 完成要求");
+  if (pkg.space?.root) lines.push(`- 产物写到 ${pkg.space.artifactsPath ?? pkg.space.root}`);
+  else lines.push("- 该空间还没绑定目录：产物入库（产物库），不要假设磁盘路径");
+  lines.push(
+    "- 完成后调用 plan_update，把 status 改为 done，并写 resultSummary（一句话说明交付了什么、有哪些已知缺口）",
+    "- 做不完就调用 plan_release 写清原因，不要静默放弃",
+  );
+  return lines.join("\n");
 }

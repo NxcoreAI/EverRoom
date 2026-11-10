@@ -36,7 +36,7 @@ export default defineConfig({
     },
     resolve: {
       alias: {
-        '@nxcore/desktop-connector-host': resolve(__dirname, '../../submodules/everroom-connectors/desktop-host/open-connector'),
+        '@nxcore/desktop-connector-host': resolve(__dirname, '../../submodules/everoffice-connectors/desktop-host/open-connector'),
       },
     },
     plugins: sentryPlugins(),
@@ -54,8 +54,18 @@ export default defineConfig({
     plugins: sentryPlugins(),
   },
   renderer: {
+    // 独立依赖缓存：避免与 vite.browser.config.mts 起的浏览器复现服务共用缓存互相改写，
+    // 否则运行中的应用依赖引用会过期，进 room 时触发重新打包+整页刷新（闪烁）。
+    cacheDir: 'node_modules/.vite-electron-renderer',
     build: {
       sourcemap: sourceMap,
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          // Agent 调试面板的独立窗口入口（主进程 openAgentDebugWindow 装载）
+          'agent-debug': resolve('src/renderer/debug.html'),
+        },
+      },
     },
     server: {
       headers: crossOriginIsolationHeaders,
@@ -68,6 +78,9 @@ export default defineConfig({
     resolve: {
       dedupe: ['react', 'react-dom'],
       alias: {
+        // everoffice UI 迁移：复制来的组件用 '@/shared/*' 引用主进程/渲染层共享类型，
+        // 解析到真实 shared 目录（与 tsconfig paths 对齐）。
+        '@/shared': resolve('src/shared'),
         '@': resolve('src/renderer/src'),
       },
     },

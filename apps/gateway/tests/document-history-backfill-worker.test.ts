@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import { documentYjsVersions, documents, jobs } from "../src/infrastructure/database/schema.js";
-import { DocumentHistoryBackfillWorker } from "../src/modules/ingest/document-history-backfill-worker.js";
+import { DocumentHistoryBackfillWorker } from "../src/modules/documents/index-backfill/history-worker.js";
 import { enqueueDocumentHistoryBackfill, DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "../src/modules/documents/integration-outbox.js";
 
 const temporaryDirectories: string[] = [];

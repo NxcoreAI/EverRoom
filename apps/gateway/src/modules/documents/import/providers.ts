@@ -8,6 +8,7 @@ import type {
   ExternalDocumentWarning,
 } from "@nxcore/agent-contract";
 import { ImportConnectorError, type ImportConnectorActionCall } from "./oo-runner.js";
+import { normalizeImportedMarkdown } from "../agent-markdown.js";
 
 /**
  * 飞书 / Notion 的 OpenConnector 读适配层。只使用 provider 已注册的 action
@@ -39,6 +40,14 @@ export interface ProviderListResult {
   warnings: ExternalDocumentWarning[];
 }
 
+/** 增量通道不可用（接口报错 / 时间过滤被服务端忽略）：调用方回退全量列举。 */
+export class DeltaUnsupportedError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "DeltaUnsupportedError";
+  }
+}
+
 export interface ExternalDocumentProviderAdapter {
   provider: ExternalDocumentProvider;
   readonly actionRefs: string[];
@@ -47,6 +56,8 @@ export interface ExternalDocumentProviderAdapter {
   readComments(remoteDocumentId: string, signal?: AbortSignal): Promise<ProviderCommentsResult>;
   /** 按连接全量列举可导入文档（连接器页批量导入入口）；imported 标记由 service 回填。 */
   listAllDocuments(signal?: AbortSignal): Promise<ProviderListResult>;
+  /** 增量列举：水位线（含重叠窗）之后新建/修改的文档；不可用时抛 DeltaUnsupportedError。 */
+  listModifiedSince(watermark: string, signal?: AbortSignal): Promise<ProviderListResult>;
 }
 
 /** 单个 OpenConnector action 的执行闭包（生产绑定运行时 HTTP，测试注入 fake）。 */
@@ -271,18 +282,21 @@ function feishuComments(value: unknown): ProviderCommentsResult {
 }
 
 // ── 按连接全量列举（连接器页批量导入）──────────────────────────────────────
-// 上限防御：列举走真实翻页/递归，异常大的工作区靠硬上限截断并以 truncated
-// 明示，绝不静默丢弃。上限值见常量；wiki 文档的 remoteDocumentId 必须用
-// obj_token（与 readDocument 的 get_document/fetch_document(documentId) 同链路）。
+// 列举走真实翻页/递归；数值是防死循环/防异常工作区的安全上限，正常规模的工作区
+// 不会触达（触达会以 truncated 明示，绝不静默丢弃）。日常新鲜度由增量通道
+// （listModifiedSince）维持，全量只在首次与每日对账时跑。wiki 文档的
+// remoteDocumentId 必须用 obj_token（与 readDocument 的 get_document/fetch_document
+// (documentId) 同链路）。
 
-const LIST_MAX_DOCUMENTS = 500;
+const LIST_MAX_DOCUMENTS = 100_000;
 const LIST_DRIVE_MAX_DEPTH = 5;
-const LIST_DRIVE_PAGES_PER_LEVEL = 5;
+const LIST_DRIVE_PAGES_PER_LEVEL = 50;
 const LIST_DRIVE_PAGE_SIZE = 200;
-const LIST_WIKI_MAX_SPACES = 10;
+const LIST_WIKI_MAX_SPACES = 1000;
 const LIST_WIKI_PAGE_SIZE = 50;
+const LIST_WIKI_MAX_SPACE_PAGES = 20;
 const LIST_NOTION_PAGE_SIZE = 100;
-const LIST_NOTION_MAX_PAGES = 10;
+const LIST_NOTION_MAX_PAGES = 1000;
 
 interface ListingState {
   byId: Map<string, ExternalDocumentListItem>;
@@ -399,7 +413,7 @@ async function feishuListBySearch(run: ImportActionFn, state: ListingState, sign
 async function feishuListWiki(run: ImportActionFn, state: ListingState, signal?: AbortSignal): Promise<void> {
   const spaces: Array<{ spaceId: string; name: string | null }> = [];
   let spacesPageToken: string | null = null;
-  for (let page = 0; page < 5; page += 1) {
+  for (let page = 0; page < LIST_WIKI_MAX_SPACE_PAGES; page += 1) {
     signal?.throwIfAborted();
     const result = objectValue(await run({
       service: "feishu",
@@ -417,7 +431,7 @@ async function feishuListWiki(run: ImportActionFn, state: ListingState, signal?:
     state.truncated = true;
     state.warnings.push({
       code: "list_truncated",
-      message: `知识库空间超过 ${String(LIST_WIKI_MAX_SPACES)} 个，仅列举前 ${String(LIST_WIKI_MAX_SPACES)} 个`,
+      message: `仅列举前 ${String(LIST_WIKI_MAX_SPACES)} 个知识库`,
     });
   }
   const visitNode = async (space: { spaceId: string; name: string | null }, parentNodeToken: string | null, depth: number): Promise<void> => {
@@ -514,10 +528,120 @@ async function notionListPages(run: ImportActionFn, state: ListingState, signal?
       state.truncated = true;
       state.warnings.push({
         code: "list_truncated",
-        message: `页面超过 ${String(LIST_NOTION_MAX_PAGES * LIST_NOTION_PAGE_SIZE)} 条，仅列举前 ${String(LIST_NOTION_MAX_PAGES * LIST_NOTION_PAGE_SIZE)} 条`,
+        message: `仅列举前 ${String(LIST_NOTION_MAX_PAGES * LIST_NOTION_PAGE_SIZE)} 条页面`,
       });
     }
   }
+}
+
+/** 增量列举翻页上限：单轮 delta 最多拉 25 页（500 条）；一轮拉不完的变动
+ * 由下一轮继续（水位线按已见条目推进），不会丢。 */
+const DELTA_SEARCH_MAX_PAGES = 25;
+
+/** 飞书增量：Search v2 时间范围过滤（doc_filter / wiki_filter 的
+ * from_update_time / to_update_time，毫秒）。键名按飞书开放平台文档；若服务端
+ * 忽略该键，带过滤的首页会混入大量水位线之前的旧文档——首页解析出的条目全部
+ * 早于水位线即判过滤失效，抛 DeltaUnsupportedError 回退全量。
+ * 注意：搜索结果的 wiki 文档 origin 记为 drive，由 service 合并时保留缓存里
+ * 的 wiki 归属。 */
+async function feishuListModifiedSince(
+  run: ImportActionFn,
+  watermarkMs: number,
+  signal?: AbortSignal,
+): Promise<ProviderListResult> {
+  const state: ListingState = { byId: new Map(), truncated: false, warnings: [], searchTokens: new Set() };
+  const to = Date.now() + 60_000;
+  let pageToken: string | null = null;
+  for (let page = 0; page < DELTA_SEARCH_MAX_PAGES; page += 1) {
+    signal?.throwIfAborted();
+    const result = objectValue(await run({
+      service: "feishu",
+      action: "search_documents",
+      input: {
+        query: "",
+        pageSize: 20,
+        docFilter: { from_update_time: watermarkMs, to_update_time: to },
+        wikiFilter: { from_update_time: watermarkMs, to_update_time: to },
+        ...(pageToken ? { pageToken } : {}),
+      },
+    }, signal).catch((error: unknown) => {
+      throw new DeltaUnsupportedError(`Search v2 时间过滤请求失败：${error instanceof Error ? error.message : String(error)}`);
+    }));
+    const records = Array.isArray(result.results) ? result.results.map(objectValue) : [];
+    if (records.length === 0) break;
+    const parsed = records
+      .map((record) => mapFeishuSearchItem(record))
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    if (page === 0 && parsed.length > 0) {
+      const fresh = parsed.filter((item) => item.updatedAt !== null && new Date(item.updatedAt).getTime() >= watermarkMs).length;
+      if (fresh === 0) {
+        throw new DeltaUnsupportedError("Search v2 忽略了时间过滤（首页全部早于水位线）");
+      }
+    }
+    for (const mapped of parsed) {
+      state.searchTokens.add(mapped.remoteDocumentId);
+      listingPush(state, {
+        provider: "feishu",
+        remoteDocumentId: mapped.remoteDocumentId,
+        title: mapped.title,
+        sourceUrl: mapped.sourceUrl,
+        updatedAt: mapped.updatedAt,
+        ownerName: mapped.ownerName,
+        origin: "drive",
+        wikiSpaceName: null,
+        imported: false,
+      });
+    }
+    pageToken = pageTokenOf(result);
+    if (result.hasMore !== true || !pageToken || state.truncated) break;
+  }
+  return { items: [...state.byId.values()], truncated: false, warnings: state.warnings };
+}
+
+/** Notion 增量：search 按 last_edited_time 降序翻页，整页都早于水位线即停
+ * （Notion search 无时间下界过滤，只能靠排序+早停）。 */
+async function notionListModifiedSince(
+  run: ImportActionFn,
+  watermarkMs: number,
+  signal?: AbortSignal,
+): Promise<ProviderListResult> {
+  const state: ListingState = { byId: new Map(), truncated: false, warnings: [], searchTokens: new Set() };
+  let cursor: string | null = null;
+  for (let page = 0; page < LIST_NOTION_MAX_PAGES; page += 1) {
+    signal?.throwIfAborted();
+    const result = objectValue(await run({
+      service: "notion",
+      action: "search",
+      input: {
+        query: "",
+        filter: { property: "object", value: "page" },
+        sort: { timestamp: "last_edited_time", direction: "descending" },
+        pageSize: LIST_NOTION_PAGE_SIZE,
+        ...(cursor ? { startCursor: cursor } : {}),
+      },
+    }, signal));
+    let pageOldest = Number.POSITIVE_INFINITY;
+    for (const record of collectRecords(result)) {
+      const mapped = mapNotionSearchItem(record);
+      if (!mapped) continue;
+      listingPush(state, {
+        provider: "notion",
+        remoteDocumentId: mapped.remoteDocumentId,
+        title: mapped.title,
+        sourceUrl: mapped.sourceUrl,
+        updatedAt: mapped.updatedAt,
+        ownerName: mapped.ownerName,
+        origin: "page",
+        wikiSpaceName: null,
+        imported: false,
+      });
+      if (mapped.updatedAt) pageOldest = Math.min(pageOldest, new Date(mapped.updatedAt).getTime());
+    }
+    cursor = firstText(result, ["next_cursor", "nextCursor"]);
+    if (result.has_more !== true || !cursor) break;
+    if (pageOldest === Number.POSITIVE_INFINITY || pageOldest < watermarkMs) break;
+  }
+  return { items: [...state.byId.values()], truncated: false, warnings: state.warnings };
 }
 
 export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocumentProviderAdapter {
@@ -585,8 +709,20 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
       action: "fetch_document",
       input: { documentId: remoteDocumentId, format: "markdown" },
     });
-    const bodyMarkdown = extractMarkdown(fetchResult);
+    // 飞书正文内嵌非标准标签（<callout>/<cite>/<title>），归一化成 markdown
+    // 语义，避免下游解析字面化、导入预览显示源码。
+    const bodyMarkdown = normalizeImportedMarkdown(extractMarkdown(fetchResult) ?? "");
     if (!bodyMarkdown) {
+      // fetch 成功但正文为空串（XML 探测同空）= 文档本体无内容块——与
+      // 响应形状异常分开报，空文档不是连接器故障，提示要能指导用户跳过。
+      const fetchedDoc = objectValue(objectValue(fetchResult).document);
+      const rawContent = typeof fetchedDoc.content === "string" ? fetchedDoc.content : null;
+      if (fetchedDoc && rawContent !== null && rawContent.trim() === "") {
+        throw new ImportConnectorError(
+          "content_empty",
+          `飞书文档内容为空（${remoteDocumentId}）：空文档或仅含无法转换的内容，无可导入内容`,
+        );
+      }
       throw new ImportConnectorError("connector_error", "feishu.fetch_document 未返回可识别的 Markdown 正文");
     }
     // fetch_document 的 {document:{url,title,revision_id}} 可补齐 get_document 没给的字段。
@@ -661,10 +797,13 @@ export function createFeishuImportAdapter(run: ImportActionFn): ExternalDocument
     if (state.truncated) {
       state.warnings.push({
         code: "list_truncated",
-        message: `文档超过 ${String(LIST_MAX_DOCUMENTS)} 篇，仅列举前 ${String(LIST_MAX_DOCUMENTS)} 篇`,
+        message: `仅列举前 ${String(LIST_MAX_DOCUMENTS)} 篇文档`,
       });
     }
     return { items: [...state.byId.values()], truncated: state.truncated, warnings: state.warnings };
+  },
+  async listModifiedSince(watermark, signal) {
+    return feishuListModifiedSince(run, new Date(watermark).getTime(), signal);
   },
   };
 }
@@ -841,6 +980,9 @@ export function createNotionImportAdapter(run: ImportActionFn): ExternalDocument
       });
     }
     return { items: [...state.byId.values()], truncated: state.truncated, warnings: state.warnings };
+  },
+  async listModifiedSince(watermark, signal) {
+    return notionListModifiedSince(run, new Date(watermark).getTime(), signal);
   },
   };
 }

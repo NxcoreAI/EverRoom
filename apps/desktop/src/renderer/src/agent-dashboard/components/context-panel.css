@@ -1,0 +1,284 @@
+/* 上下文与记忆（v2 · 浅色分层）：占用曲线 + 3 指标；构成 / 逐回合 / 压缩 / 口径默认收起。
+   颜色只取 tokens.css 令牌：曲线与构成共用 --ctx 单色阶（color-mix 派生），
+   越过 70% / 85% 参考水位时才切到 --warn / --err。无阴影、无渐变，圆角只用 --radius。 */
+
+/* ── 首屏：左图右指标 ─────────────────────────────────────────────────── */
+.cp-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 208px;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.cp-figure {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.cp-chart {
+  position: relative;
+  height: 116px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.cp-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cp-base {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-ref {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-ref-label {
+  position: absolute;
+  right: var(--sp-2);
+  transform: translateY(-50%);
+  padding-left: 3px;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  background: var(--surface-2);
+}
+
+.cp-line {
+  fill: none;
+  stroke: var(--ctx);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.cp-peak {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1.5px solid var(--ctx);
+  transform: translate(-50%, -50%);
+}
+
+.cp-peak[data-pressure='warn'] { border-color: var(--warn); }
+.cp-peak[data-pressure='crit'] { border-color: var(--err); }
+
+.cp-peak-label {
+  position: absolute;
+  transform: translate(-50%, -200%);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.cp-peak-label[data-below] { transform: translate(-50%, 90%); }
+.cp-peak-label[data-pressure='warn'] { color: var(--warn); }
+.cp-peak-label[data-pressure='crit'] { color: var(--err); }
+
+.cp-axis {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.cp-metrics {
+  display: grid;
+  gap: var(--sp-2);
+  padding-top: var(--sp-1);
+}
+
+/* ── 构成：一条堆叠条 + 图例，不做 6 行表格 ─────────────────────────────── */
+.cp-stack {
+  display: flex;
+  height: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: var(--sp-2);
+}
+
+.cp-stack > span {
+  height: 100%;
+  min-width: 2px;
+}
+
+.cp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cp-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+}
+
+.cp-chips b {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.cp-chip-tok {
+  color: var(--ink-3);
+}
+
+.cp-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+}
+
+/* 系统提示 → 其他：同一色相逐级收敛到浅底，不引入第二种颜色 */
+.cp-seg-systemPrompt { background: var(--ctx); }
+.cp-seg-tools { background: color-mix(in srgb, var(--ctx) 76%, var(--surface)); }
+.cp-seg-user { background: color-mix(in srgb, var(--ctx) 58%, var(--surface)); }
+.cp-seg-assistant { background: color-mix(in srgb, var(--ctx) 42%, var(--surface)); }
+.cp-seg-toolResults { background: color-mix(in srgb, var(--ctx) 28%, var(--surface)); }
+.cp-seg-other { background: color-mix(in srgb, var(--ctx) 16%, var(--surface)); }
+
+/* ── 逐回合明细 ────────────────────────────────────────────────────────── */
+.cp-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* 回放联动只作用于明细行，主曲线不弱化（否则整张图都在「变灰」） */
+.cp-rows li[data-future] {
+  opacity: 0.4;
+}
+
+.cp-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 50px 62px;
+  gap: var(--sp-3);
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.cp-row:hover { background: var(--surface-3); }
+.cp-row[data-selected] { background: var(--accent-soft); }
+
+.cp-row-id {
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.cp-track {
+  height: 7px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cp-bar {
+  display: block;
+  height: 100%;
+  background: var(--ctx);
+}
+
+.cp-bar[data-pressure='warn'] { background: var(--warn); }
+.cp-bar[data-pressure='crit'] { background: var(--err); }
+
+.cp-row-pct {
+  text-align: right;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+.cp-row-mem {
+  text-align: right;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.cp-row-mem[data-sign='write'] { color: var(--ok); }
+.cp-row-mem[data-sign='trim'] { color: var(--warn); }
+
+.cp-more {
+  margin-top: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+.cp-more:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* ── 压缩历史 ──────────────────────────────────────────────────────────── */
+.cp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-small);
+}
+
+.cp-table th {
+  padding: 2px var(--sp-2);
+  text-align: left;
+  font-weight: 400;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.cp-table td {
+  padding: 4px var(--sp-2);
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.cp-table tr:last-child td { border-bottom: 0; }
+.cp-table td[data-sign='write'] { color: var(--ok); }
+.cp-table td[data-sign='trim'] { color: var(--warn); }
+
+/* ── 口径 / 空态 ───────────────────────────────────────────────────────── */
+.cp-notes {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-small);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.cp-hint {
+  margin: 0;
+  padding: var(--sp-3) 0;
+  font-size: var(--fs-small);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+@media (max-width: 960px) {
+  .cp-main { grid-template-columns: minmax(0, 1fr); }
+  .cp-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}

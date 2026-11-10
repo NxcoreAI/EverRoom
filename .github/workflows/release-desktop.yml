@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_BASE64 || secrets.MAC_CERTS }}
       CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD || secrets.MAC_CERTS_PASSWORD }}
@@ -26,11 +26,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
-      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
-      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
       NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
-      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
-      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
       NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
       NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
       NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
@@ -41,8 +37,6 @@ jobs:
       NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
       NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
       NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
-      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
-      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
       - name: Check out tagged commit
@@ -51,6 +45,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
+
+      - name: Derive update channel from tag
+        shell: bash
+        run: |
+          # nightly tag 构建把渠道烙进 packaged-env（客户端据此查 nightly feed）；
+          # stable 不设该变量，运行时默认 stable。
+          if [[ "$GITHUB_REF_NAME" =~ -nightly\. ]]; then
+            echo "NXCORE_UPDATE_CHANNEL=nightly" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -127,19 +130,36 @@ jobs:
             echo "::warning::macOS signing certificate is not configured; producing an unsigned build."
             exit 0
           fi
-          test -n "$CSC_KEY_PASSWORD"
+          : "${CSC_KEY_PASSWORD:?secret MACOS_CERTIFICATE_PASSWORD is not set}"
+          # notarize 只要签名就必走，API Key 装配与 profile 无关，必须在 profile 提前退出之前。
+          : "${APPLE_API_KEY_BASE64:?secret APPLE_API_KEY_BASE64 is not set}"
+          : "${APPLE_API_KEY_ID:?secret APPLE_API_KEY_ID is not set}"
+          : "${APPLE_API_ISSUER:?secret APPLE_API_ISSUER is not set}"
+          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          # Apple API key 三重校验：BSD base64 对非法输入不报错（静默丢字符），
+          # 坏 secret 若不在此处拦截，会在 20 分钟构建后的 notarize 阶段才以
+          # "invalidPrivateKeyContents" 死掉（notarytool 本地解析 .p8 失败，
+          # 错误非 JSON，被 @electron/notarize 包装成 unexpected result）。
+          # 1) strict base64 roundtrip；2) PEM 结构；3) openssl pkey 可解析。
+          # 常见错误形态：secret 里存了 PEM 原文或双重 base64。
+          fail_fast() { echo "::error::$1" >&2; exit 1; }
+          base64 -i "$RUNNER_TEMP/AuthKey.p8" | tr -d '\n' > "$RUNNER_TEMP/rt.b64"
+          printf '%s' "$APPLE_API_KEY_BASE64" | tr -d '\n' > "$RUNNER_TEMP/given.b64"
+          cmp -s "$RUNNER_TEMP/rt.b64" "$RUNNER_TEMP/given.b64" ||
+            fail_fast "APPLE_API_KEY_BASE64 is not valid strict base64 (decode silently dropped characters). Store base64 of the .p8 file, not the PEM text or double-encoded base64."
+          grep -q '^-----BEGIN PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a PEM private key document."
+          grep -q '^-----END PRIVATE KEY-----' "$RUNNER_TEMP/AuthKey.p8" ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 has no PEM END line."
+          openssl pkey -in "$RUNNER_TEMP/AuthKey.p8" -noout 2>/dev/null ||
+            fail_fast "Decoded APPLE_API_KEY_BASE64 is not a parseable PKCS#8 private key (App Store Connect API keys are EC P-256 PKCS#8)."
+          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
           if [[ -z "$MACOS_PROVISIONING_PROFILE_BASE64" ]]; then
             echo "::warning::APNs provisioning profile is not configured; push entitlements will not be verified."
             exit 0
           fi
-          test -n "$APPLE_API_KEY_BASE64"
-          test -n "$APPLE_API_KEY_ID"
-          test -n "$APPLE_API_ISSUER"
           printf '%s' "$MACOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > apps/desktop/build/embedded.provisionprofile
-          printf '%s' "$APPLE_API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
-          echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
-          security cms -D -i apps/desktop/build/embedded.provisionprofile > "$RUNNER_TEMP/everroom-profile.plist"
-          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everroom$'
+          /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.application-identifier' "$RUNNER_TEMP/everroom-profile.plist" | grep -E '^.+\.ai\.nxcore\.everoffice$'
           /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.aps-environment' "$RUNNER_TEMP/everroom-profile.plist" | grep -Fx production
 
       - name: Build app and bundled runtimes
@@ -147,6 +167,9 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package macOS arm64
@@ -166,18 +189,23 @@ jobs:
             else
               # Without a profile, aps-environment is an unauthorized restricted
               # entitlement and AMFI kills the app at launch. Ship without push.
-              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist
+              # plist 里该键当前本就不存在（App Store 分发时才补回），Delete 需容忍缺席。
+              /usr/libexec/PlistBuddy -c 'Delete :com.apple.developer.aps-environment' apps/desktop/build/entitlements.mac.plist 2>/dev/null || true
             fi
           else
             export CSC_IDENTITY_AUTO_DISCOVERY=false
           fi
-          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never "${args[@]}"
+          # 与 windows job 一致：产物文件名用 tag 完整版本号（nightly 可区分）。
+          full_version="${GITHUB_REF_NAME#desktop-v}"
+          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never \
+            --config.mac.artifactName="\${productName}-${full_version}-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$full_version" "${args[@]}"
 
       - name: Audit package contents
         shell: bash
         run: |
-          app_path="$(find release -type d -name EverRoom.app -print -quit)"
-          test -n "$app_path" || { echo "EverRoom.app was not produced" >&2; exit 1; }
+          app_path="$(find release -type d -name EverOffice.app -print -quit)"
+          test -n "$app_path" || { echo "EverOffice.app was not produced" >&2; exit 1; }
           resources="$app_path/Contents/Resources"
           forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.map$'
 
@@ -189,37 +217,54 @@ jobs:
           unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
+          # 四件套运行时 + ACP 适配器必须在包内：缺失说明 prepare 脚本没跑或
+          # extraResources 源目录不存在（electron-builder 会静默跳过），装出去
+          # 导出/连接器/本机 Agent 直接废。
+          for dir in open-connector oo lark-cli ntn acp-adapters; do
+            test -d "$resources/$dir" || { echo "missing bundled runtime: $resources/$dir" >&2; exit 1; }
+          done
+          # 内置 ACP 适配器清单（claude/codex）必须落包：目录在而包不在说明
+          # prepare-acp-adapters.mjs 半途而废，开箱即用的兜底就没了。
+          for adapter_manifest in \
+            "$resources/acp-adapters/claude/node_modules/@zed-industries/claude-agent-acp/package.json" \
+            "$resources/acp-adapters/codex/node_modules/@agentclientprotocol/codex-acp/package.json"; do
+            test -f "$adapter_manifest" || { echo "missing bundled ACP adapter: $adapter_manifest" >&2; exit 1; }
+          done
+
           asar_path="$(cd "$resources" && pwd)/app.asar"
           pnpm --filter @nxcore/desktop exec asar list "$asar_path" > "$RUNNER_TEMP/asar-files.txt"
           if grep -Eiq "$forbidden" "$RUNNER_TEMP/asar-files.txt"; then
             grep -Ei "$forbidden" "$RUNNER_TEMP/asar-files.txt" >&2
             exit 1
           fi
-          unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" | grep -Eiv '[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]' || true)"
+          unexpected_typescript="$(grep -Ei '\.(ts|tsx|mts|cts)$' "$RUNNER_TEMP/asar-files.txt" || true)"
           test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
 
-          grep -Fq 'memory-tencentdb-v2/bin/memory-gateway.mjs' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq 'memory-tencentdb-v2/src/gateway/server.ts' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq 'knowledge-service/src/server.ts' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq '@node-rs/jieba-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
-          grep -Fq '@colbymchenry/codegraph-darwin-arm64' "$RUNNER_TEMP/asar-files.txt"
-          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild"
-          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
-          test -f "$resources/open-connector/src/server/index.ts"
-          test -f "$resources/open-connector/dist/web/index.html"
-          test -x "$resources/oo/darwin-arm64/oo"
+          # 全部 test 均带失败输出：静默退出会让日志看不出挂的是哪一项。
+          test -x "$resources/app.asar.unpacked/node_modules/@esbuild/darwin-arm64/bin/esbuild" \
+            || { echo "missing asar-unpacked @esbuild/darwin-arm64 (desktop optionalDependencies 未入包?)" >&2; exit 1; }
+          test -f "$resources/app.asar.unpacked/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing asar-unpacked better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
+          test -f "$resources/open-connector/src/server/index.ts" \
+            || { echo "missing open-connector TS entry" >&2; exit 1; }
+          test -f "$resources/open-connector/dist/web/index.html" \
+            || { echo "missing open-connector web dist" >&2; exit 1; }
+          test -x "$resources/oo/darwin-arm64/oo" \
+            || { echo "missing oo darwin-arm64 binary" >&2; exit 1; }
           "$resources/oo/darwin-arm64/oo" --version
 
       - name: Verify artifacts
         shell: bash
         run: |
-          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          app_path="$(find release -type d -name EverOffice.app -print -quit)"
           dmgs=(release/*.dmg)
           zips=(release/*.zip)
           test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
           test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
-          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64"
-          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node"
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverOffice")" = "arm64" \
+            || { echo "unexpected archs in EverOffice binary" >&2; exit 1; }
+          test -f "$app_path/Contents/Resources/gateway/node_modules/better-sqlite3/prebuilds/darwin-arm64.node" \
+            || { echo "missing gateway better-sqlite3 darwin-arm64 prebuild" >&2; exit 1; }
           hdiutil verify "${dmgs[0]}"
           unzip -t "${zips[0]}"
 
@@ -240,11 +285,7 @@ jobs:
     env:
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
-      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
-      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
       NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
-      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
-      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
       NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
       NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
       NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
@@ -255,8 +296,6 @@ jobs:
       NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
       NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
       NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
-      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
-      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
 
     steps:
       - name: Check out tagged commit
@@ -265,6 +304,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           submodules: recursive
+
+      - name: Derive update channel from tag
+        shell: bash
+        run: |
+          # nightly tag 构建把渠道烙进 packaged-env（客户端据此查 nightly feed）；
+          # stable 不设该变量，运行时默认 stable。
+          if [[ "$GITHUB_REF_NAME" =~ -nightly\. ]]; then
+            echo "NXCORE_UPDATE_CHANNEL=nightly" >> "$GITHUB_ENV"
+          fi
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -333,14 +381,24 @@ jobs:
           pnpm build
           pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
           pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
           pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
 
       - name: Package Windows x64
         shell: bash
         # npmRebuild=false: better-sqlite3 ships N-API prebuilds for every
         # platform, so no Electron-ABI rebuild is needed.
+        # artifactName 与包内版本均用 tag 完整版本号（nightly 含 nightly.日期.序号）：
+        # extraMetadata.version 让 app.getVersion() 返回完整版本，装上 nightly.N 后
+        # 与 feed 版本相等即判无更新；次日 N+1 正常判更新。正式版 tag 无后缀，行为不变。
         run: |
-          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false
+          full_version="${GITHUB_REF_NAME#desktop-v}"
+          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false \
+            --config.win.artifactName="\${productName}-${full_version}-windows-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$full_version"
+          echo "EVERROOM_FULL_VERSION=$full_version" >> "$GITHUB_ENV"
 
       - name: Audit package contents
         shell: bash
@@ -390,13 +448,14 @@ jobs:
           SIGNING_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_BASE64 || secrets.MAC_CERTS }}
           PUSH_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          version="$(node -p "require('./apps/desktop/package.json').version")"
+          # 资产名与打包侧 artifactName 一致：tag 完整版本号（nightly 含后缀）。
+          version="${GITHUB_REF_NAME#desktop-v}"
           expected=(
-            "release-assets/EverRoom-$version-arm64.dmg"
-            "release-assets/EverRoom-$version-arm64.zip"
-            "release-assets/EverRoom-$version-arm64.zip.blockmap"
-            "release-assets/EverRoom-$version-windows-x64.exe"
-            "release-assets/EverRoom-$version-windows-x64.exe.blockmap"
+            "release-assets/EverOffice-$version-arm64.dmg"
+            "release-assets/EverOffice-$version-arm64.zip"
+            "release-assets/EverOffice-$version-arm64.zip.blockmap"
+            "release-assets/EverOffice-$version-windows-x64.exe"
+            "release-assets/EverOffice-$version-windows-x64.exe.blockmap"
           )
           files=(release-assets/*)
           test "${#files[@]}" -eq "${#expected[@]}" || {
@@ -448,23 +507,24 @@ jobs:
           if [[ "$version" == *-nightly.* ]]; then channel=nightly; else channel=stable; fi
           echo "Distributing $version (channel=$channel)"
 
+          # 阿里云 2026-09-20 下架了 CDN 上的 1.7.19（404，GitHub 上该 tag 也无资产），
+          # 1.7.18 为最后可用版本；若再失效改用 GitHub aliyun/ossutil v1.7.18 release 资产。
           curl -fsSL -o "$RUNNER_TEMP/ossutil64" https://gosspublic.alicdn.com/ossutil/1.7.18/ossutil64
           chmod +x "$RUNNER_TEMP/ossutil64"
           ossutil() { "$RUNNER_TEMP/ossutil64" "$@" -e "$OSS_ENDPOINT" -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"; }
 
           ossutil cp release-assets/ "oss://$OSS_BUCKET/archive/$version/" -r -f
-          base_version="${version%%-*}"
-          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-windows-x64.exe" | base64 -w0)
-          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.zip" | base64 -w0)
-          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverRoom-$base_version-arm64.dmg" | base64 -w0)
-          size_exe=$(stat -c%s "release-assets/EverRoom-$base_version-windows-x64.exe")
-          size_zip=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.zip")
-          size_dmg=$(stat -c%s "release-assets/EverRoom-$base_version-arm64.dmg")
+          sha_exe=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-windows-x64.exe" | base64 -w0)
+          sha_zip=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-arm64.zip" | base64 -w0)
+          sha_dmg=$(openssl dgst -sha512 -binary "release-assets/EverOffice-$version-arm64.dmg" | base64 -w0)
+          size_exe=$(stat -c%s "release-assets/EverOffice-$version-windows-x64.exe")
+          size_zip=$(stat -c%s "release-assets/EverOffice-$version-arm64.zip")
+          size_dmg=$(stat -c%s "release-assets/EverOffice-$version-arm64.dmg")
 
           jq -n --arg v "$version" --arg c "$channel" --arg sha "$GITHUB_SHA" \
-            --arg exe "EverRoom-$base_version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
-            --arg zip "EverRoom-$base_version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
-            --arg dmg "EverRoom-$base_version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
+            --arg exe "EverOffice-$version-windows-x64.exe" --argjson size_exe "$size_exe" --arg sha_exe "$sha_exe" \
+            --arg zip "EverOffice-$version-arm64.zip" --argjson size_zip "$size_zip" --arg sha_zip "$sha_zip" \
+            --arg dmg "EverOffice-$version-arm64.dmg" --argjson size_dmg "$size_dmg" --arg sha_dmg "$sha_dmg" \
             '{version:$v,channel:$c,commitSha:$sha,files:[
               {platform:"windows",fileName:$exe,fileSize:$size_exe,sha512Base64:$sha_exe},
               {platform:"macos",fileName:$zip,fileSize:$size_zip,sha512Base64:$sha_zip},
@@ -493,7 +553,7 @@ jobs:
             # 结束符带前导空格则 bash 不认，heredoc 永不终止。
             cat > "$RUNNER_TEMP/latest.yml" <<YAML
           version: $version
-          path: $public_base/archive/$version/EverRoom-$base_version-windows-x64.exe
+          path: $public_base/archive/$version/EverOffice-$version-windows-x64.exe
           sha512: $sha_exe
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
           releaseName: '$version'
@@ -501,7 +561,7 @@ jobs:
             cat > "$RUNNER_TEMP/latest-mac.yml" <<YAML
           version: $version
           files:
-            - url: $public_base/archive/$version/EverRoom-$base_version-arm64.zip
+            - url: $public_base/archive/$version/EverOffice-$version-arm64.zip
               sha512: $sha_zip
           sha512: $sha_zip
           releaseDate: '$(date -u +%Y-%m-%dT%H:%M:%S.000Z)'
@@ -532,8 +592,8 @@ jobs:
         env:
           PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
+          # 完整版本号（nightly 含后缀）：产物下载 URL 与打包文件名一致。
           version="${GITHUB_REF_NAME#desktop-v}"
-          version="${version%%-*}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
           previous_tag="$(git describe --tags --match 'desktop-v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)"
@@ -551,8 +611,8 @@ jobs:
 
           repo_url="https://github.com/$GITHUB_REPOSITORY"
           if [[ "$PUBLISH_RESULT" == "success" ]]; then
-            buttons="$(jq -nc --arg dmg "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-arm64.dmg" \
-              --arg exe "$repo_url/releases/download/$GITHUB_REF_NAME/EverRoom-$version-windows-x64.exe" \
+            buttons="$(jq -nc --arg dmg "$repo_url/releases/download/$GITHUB_REF_NAME/EverOffice-$version-arm64.dmg" \
+              --arg exe "$repo_url/releases/download/$GITHUB_REF_NAME/EverOffice-$version-windows-x64.exe" \
               --arg rel "$repo_url/releases/tag/$GITHUB_REF_NAME" '[
                 {text:"⬇ macOS .dmg", url:$dmg, type:"default"},
                 {text:"⬇ Windows .exe", url:$exe, type:"default"},

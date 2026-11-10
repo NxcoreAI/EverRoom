@@ -3,6 +3,7 @@ import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { DocumentCapabilityRegistry } from "../capabilities/registry.js";
 import { DocumentServiceError } from "../errors.js";
+import { roomScopeId } from "../room-scope.js";
 import type { DocumentOperationService } from "./service.js";
 
 const IdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) });
@@ -13,15 +14,17 @@ const OperationStatus = Type.Union([
   Type.Literal("cancelled"), Type.Literal("expired"),
 ]);
 /** 溯源二选一：主 Agent 会话（sessionId+runId）或 dispatch 子 Agent 调用（invocationId，如划词改写）。 */
+const OperationScopeId = Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]));
 const OperationContext = Type.Union([
   Type.Object({
-    roomId: Type.String({ minLength: 1, maxLength: 128 }),
+    // 省略/null = 工作区级操作（P0-2d，两种溯源形态都允许）。
+    roomId: OperationScopeId,
     documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     sessionId: Type.String({ minLength: 1, maxLength: 128 }),
     runId: Type.String({ minLength: 1, maxLength: 128 }),
   }),
   Type.Object({
-    roomId: Type.String({ minLength: 1, maxLength: 128 }),
+    roomId: OperationScopeId,
     documentId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     invocationId: Type.String({ minLength: 1, maxLength: 128 }),
   }),
@@ -59,17 +62,19 @@ export function documentOperationRoutes(
       async (request, reply) => {
         try {
           const raw = request.body.context;
+          // 溯源归一化：省略的 roomId 保持 null（工作区级操作），不回填任何假 Room。
+          const rawRoomId = raw.roomId ?? null;
           // invocation 溯源归一化为 sessionId = runId = invocationId，operation 落库与回显保持单一形状。
           const context = "invocationId" in raw
             ? {
-              roomId: raw.roomId,
+              roomId: rawRoomId,
               ...(raw.documentId ? { documentId: raw.documentId } : {}),
               sessionId: raw.invocationId,
               runId: raw.invocationId,
               invocationId: raw.invocationId,
             }
             : {
-              roomId: raw.roomId,
+              roomId: rawRoomId,
               ...(raw.documentId ? { documentId: raw.documentId } : {}),
               sessionId: raw.sessionId,
               runId: raw.runId,
@@ -90,7 +95,8 @@ export function documentOperationRoutes(
             capabilityId: request.body.capabilityId,
             agentSessionId: context.sessionId,
             runId: context.runId,
-            roomId: context.roomId,
+            // 授权注入点沿用非空 scope 形状（create-server 既有契约）：工作区归一为频道 sentinel。
+            roomId: roomScopeId(context.roomId),
             ...("invocationId" in context ? { invocationId: context.invocationId } : {}),
           });
           return await capabilities.start({ ...request.body, context });
@@ -136,7 +142,8 @@ export function documentOperationRoutes(
         tags: ["documents", "operations"],
         params: IdParams,
         querystring: Type.Object({
-          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          // 工作区级操作没有归属 Room：缺省即按 null 比对（P0-2d）。
+          roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           sessionId: Type.String({ minLength: 1, maxLength: 128 }),
           runId: Type.String({ minLength: 1, maxLength: 128 }),
         }),
@@ -144,7 +151,7 @@ export function documentOperationRoutes(
       async (request, reply) => {
         const operation = operations.get(request.params.id);
         if (!operation) return reply.code(404).send({ error: "operation_not_found", message: "Document operation not found" });
-        if (operation.roomId !== request.query.roomId
+        if (operation.roomId !== (request.query.roomId ?? null)
           || operation.sessionId !== request.query.sessionId
           || operation.runId !== request.query.runId) {
           return reply.code(403).send({ error: "OPERATION_FORBIDDEN", message: "Operation belongs to another Agent run" });
@@ -165,7 +172,7 @@ export function documentOperationRoutes(
             type: Type.String({ minLength: 1, maxLength: 128 }),
             payload: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
             context: Type.Optional(Type.Object({
-              roomId: Type.String({ minLength: 1, maxLength: 128 }),
+              roomId: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
               sessionId: Type.String({ minLength: 1, maxLength: 128 }),
               runId: Type.String({ minLength: 1, maxLength: 128 }),
             })),

@@ -22,16 +22,12 @@ async function testConfig(): Promise<GatewayConfig> {
     logLevel: 'silent',
     authToken: 'test-token-0123456789',
     agentRuntime: 'fake',
-    memory: null,
     pi: null,
     cursorCompletionPi: null,
-    knowledge: null,
-    ingestFilter: { enabled: false, mode: "observe", confidenceThreshold: 0.7, batchSize: 5, batchDelayMs: 0, exemptSourceKinds: [], toolsEnabled: false, maxToolCalls: 8, rulesFile: "", rulesMaxBytes: 2048, insightEnabled: false, insightIntervalMs: 3_600_000 },
+    litePi: null,
     backgroundPi: null,
-    asrInputDir: join(dataDir, 'recordings'),
     webSearch: null,
     mcpConfigPath: join(dataDir, 'agent', 'mcp.json'),
-    asr: null,
   }
 }
 

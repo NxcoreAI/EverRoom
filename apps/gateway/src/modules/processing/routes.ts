@@ -1,31 +1,120 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import type { TranscriptionSummaryService } from "./service.js";
+import type { ConversationSuggestionService } from "./conversation-suggestion.js";
+import type { SessionTitleService } from "./session-title.js";
 
-export function processingRoutes(service: TranscriptionSummaryService): FastifyPluginAsyncTypebox {
+export function processingRoutes(
+  titleService: SessionTitleService,
+  suggestionService: ConversationSuggestionService,
+): FastifyPluginAsyncTypebox {
   return async (app) => {
     app.post(
-      "/v1/processing/transcription-summary",
+      "/v1/processing/session-title",
       {
-        bodyLimit: 2 * 1024 * 1024,
+        bodyLimit: 256 * 1024,
         schema: {
           tags: ["processing"],
           body: Type.Object({
-            jobId: Type.String({ minLength: 1, maxLength: 100 }),
-            sourceRecordId: Type.String({ minLength: 1, maxLength: 100 }),
-            transcript: Type.String({ minLength: 1, maxLength: 2_000_000 }),
+            sessionId: Type.String({ minLength: 1, maxLength: 100 }),
+            userText: Type.String({ minLength: 1, maxLength: 20_000 }),
+            assistantText: Type.String({ minLength: 0, maxLength: 20_000 }),
             language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
-            // 桌面端校验失败后的定向修复提示（第二次尝试携带）。
-            repairHint: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
           }),
+          response: {
+            200: Type.Object({ title: Type.String() }),
+            503: Type.Object({ error: Type.String(), message: Type.String() }),
+          },
         },
       },
       async (request, reply) => {
         try {
-          return await service.summarize(request.body);
+          return await titleService.generate(request.body);
         } catch (error) {
-          if (error instanceof Error && error.message === "summary_job_busy") {
-            return reply.code(409).send({ error: "job_busy", message: "Summary job is already running" });
+          if (error instanceof Error && error.message === "title_runtime_unavailable") {
+            return reply.code(503).send({ error: "title_runtime_unavailable", message: "Session title runtime is not configured" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/processing/conversation-suggestion",
+      {
+        bodyLimit: 256 * 1024,
+        schema: {
+          tags: ["processing"],
+          body: Type.Object({
+            sessionId: Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()]),
+            pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            roomTitle: Type.Union([Type.String({ minLength: 1, maxLength: 300 }), Type.Null()]),
+            messages: Type.Array(
+              Type.Object({
+                role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+                text: Type.String({ minLength: 1, maxLength: 20_000 }),
+              }),
+              { maxItems: 40 },
+            ),
+            // 空会话（messages 为空）时的开场问题信号，与 starter-prompts 同源。
+            recentSessions: Type.Optional(
+              Type.Array(
+                Type.Object({
+                  title: Type.Union([Type.String({ minLength: 1, maxLength: 300 }), Type.Null()]),
+                  updatedAt: Type.String({ minLength: 1, maxLength: 40 }),
+                }),
+                { maxItems: 20 },
+              ),
+            ),
+            language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
+          }),
+          response: {
+            200: Type.Object({ suggestion: Type.String() }),
+            503: Type.Object({ error: Type.String(), message: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await suggestionService.suggestComposerPrompt(request.body);
+        } catch (error) {
+          if (error instanceof Error && error.message === "suggestion_runtime_unavailable") {
+            return reply.code(503).send({ error: "suggestion_runtime_unavailable", message: "Conversation suggestion runtime is not configured" });
+          }
+          throw error;
+        }
+      },
+    );
+
+    app.post(
+      "/v1/processing/starter-prompts",
+      {
+        bodyLimit: 64 * 1024,
+        schema: {
+          tags: ["processing"],
+          body: Type.Object({
+            pageLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            roomTitle: Type.Union([Type.String({ minLength: 1, maxLength: 300 }), Type.Null()]),
+            recentSessions: Type.Array(
+              Type.Object({
+                title: Type.Union([Type.String({ minLength: 1, maxLength: 300 }), Type.Null()]),
+                updatedAt: Type.String({ minLength: 1, maxLength: 40 }),
+              }),
+              { maxItems: 20 },
+            ),
+            language: Type.Optional(Type.String({ minLength: 2, maxLength: 20 })),
+          }),
+          response: {
+            200: Type.Object({ prompts: Type.Array(Type.String()) }),
+            503: Type.Object({ error: Type.String(), message: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        try {
+          return await suggestionService.suggestStarterPrompts(request.body);
+        } catch (error) {
+          if (error instanceof Error && error.message === "suggestion_runtime_unavailable") {
+            return reply.code(503).send({ error: "suggestion_runtime_unavailable", message: "Conversation suggestion runtime is not configured" });
           }
           throw error;
         }

@@ -137,12 +137,30 @@ export interface KnowledgeWikiPageDto {
   description?: string
 }
 
-/** Room ↔ wiki 映射行（GET /v1/knowledge/wikis）。 */
+/** Wiki 页面清单 + 状态（网关接口已随知识库模块下线，此处仅保留类型形状）。 */
+export interface KnowledgeWikiPagesResultDto {
+  status: string
+  items: KnowledgeWikiPageDto[]
+  pageCount: number | null
+  /** KS ingest 成功后生成的内容摘要（概览卡要点）；身份卡/未生成为 null */
+  summary?: string | null
+  updatedAt?: string | null
+  /** 构建期待处理源文件数（uploaded/failed）；非构建期为 null */
+  pendingSources?: number | null
+  /** 源文件总数（构建期附带）；非构建期为 null */
+  totalSources?: number | null
+}
+
+/** Room ↔ wiki 映射行（网关接口已下线，此处仅保留类型形状）。 */
 export interface KnowledgeWikiDto {
   roomId: string
   knowledgeId: string
   status: string
   createdAt: string
+  /** 清单价值信号（KS getWiki 元数据；KS 不可达时 null） */
+  pageCount: number | null
+  summary: string | null
+  updatedAt: string | null
 }
 
 /** wiki 内链图谱（页面=节点、md 内链=边；无 wiki/失败为空图）。 */
@@ -177,6 +195,8 @@ export interface KnowledgeEntityDto {
   kind: string
   status: string
   roomId: string | null
+  /** 归属 Room 标题（网关已按 merged 链 canonical 化；挂载/推荐读侧展示归属用）。 */
+  roomTitle: string | null
   evidenceScore: number
   sourceCount: number
   eligibleSourceCount: number
@@ -281,6 +301,25 @@ export interface KnowledgeAttachInput {
   createEntity?: { name: string; kind: string }
 }
 
+/** 挂载结果：挂载即学习派生的规则（UI 提供撤销），无入口信号时缺省。 */
+export interface KnowledgeAttachResult {
+  entityId: string
+  learnedRule?: { id: string; matcher: Record<string, string>; replayed: number }
+}
+
+/** 归集规则（挂载即学习 origin="learned"；手动创建的为其他值）。 */
+export interface KnowledgeRuleDto {
+  id: string
+  matcher: Record<string, unknown>
+  targetRoomId: string
+  roomTitle: string | null
+  origin: string
+  enabled: boolean
+  hitCount: number
+  lastHitAt: string | null
+  createdAt: string
+}
+
 /** M3 知识整理偏好统计（确定性层，只读回溯三类信号的可复现快照）。 */
 export interface KnowledgePreferenceStatsDto {
   corrections: { reverts: number; manualLinks: number }
@@ -320,7 +359,13 @@ export interface KnowledgeFileDto {
   status: string
   decidedBy: string | null
   confidence: number | null
+  /** 目录来源（manual-upload/local-folder/connector/…）；agent-generated = Agent 生成产物。 */
+  sourceKind: string
   uploadedAt: string
+  /** 最新版本号（旧网关无此字段 → undefined；legacy 上传为 null）。 */
+  versionNo?: number | null
+  /** 最新版本时间（旧网关无此字段 → undefined；用时回落 uploadedAt）。 */
+  updatedAt?: string
 }
 
 /** 最近已落定（confirmed）决策：撤销入口用。 */
@@ -358,4 +403,182 @@ export interface KnowledgeRoomProposalDto {
   fileCount: number
   evidenceScore: number | null
   sourceCount: number | null
+}
+
+/* ============ 思路 · 知识涌现（网关接口已下线，此处仅保留类型形状） ============ */
+
+export type EmergenceMode = 'focus' | 'wander'
+
+/** 焦点级别（PRD 7.3 优先级链：显式选择>选区>章节>产物>对象>Room；一期实现前四档）。 */
+export type EmergenceFocusLevel = 'selection' | 'chapter' | 'document' | 'room'
+
+export type EmergenceFocusTrigger =
+  | 'selection-settle'
+  | 'chapter-stable'
+  | 'document-open'
+  | 'panel-open'
+  | 'board-switch'
+
+export interface EmergenceFocusChapter {
+  heading: string | null
+  /** 章节正文（当前标题到下一个同级/更高级标题之间），按需全量传递不截断。 */
+  bodyText: string
+}
+
+export interface EmergenceFocusInput {
+  /** 当前产物/文档 id（伴随区编辑态；独立面板缺省=Room 级焦点）。 */
+  documentId?: string | null
+  /** 选区文本（渲染层负责截断）。 */
+  selectionText?: string | null
+  blockId?: string | null
+  /** 当前所在板块（work/thoughts/artifacts/relations/wiki），信息性字段。 */
+  board?: string | null
+  /** 仲裁后的焦点级别。 */
+  level?: EmergenceFocusLevel | null
+  /** 本次焦点定案的触发方式。 */
+  trigger?: EmergenceFocusTrigger | null
+  /** 光标所在章节（含正文），选区存在时作为上下文一并传递。 */
+  chapter?: EmergenceFocusChapter | null
+}
+
+export interface EmergenceWanderInput {
+  /** 「沿此漫步」换起点：候选的 nodeRef；缺省=当前焦点。 */
+  startNodeRef?: string | null
+  /** 可复现随机种子；「再走一次」传新 seed。 */
+  seed?: number | null
+}
+
+export interface EmergenceRequest {
+  mode: EmergenceMode
+  focus: EmergenceFocusInput
+  wander?: EmergenceWanderInput | null
+  /** 卡片上限（聚焦默认 5，漫步默认 15）。 */
+  limit?: number | null
+  /** 客户端递增版本，响应原样带回；旧响应不得覆盖新焦点。 */
+  requestVersion: number
+}
+
+/** 卡片类型（PRD 7.6）。 */
+export type EmergenceCardKind =
+  | 'evidence' // 直接证据
+  | 'decision' // 历史决策
+  | 'viewpoint' // 相邻观点
+  | 'conflict' // 冲突反例
+  | 'actor' // 人物与项目
+  | 'case' // 相似案例
+  | 'question' // 待回答问题
+
+/** 统一对象层节点（PRD 8.2 CanonicalNode 的 DTO 投影）。 */
+export interface EmergenceNodeDto {
+  /** nodeRef 形如 entity:12 / fact:7 / doc:9 / block:9:3 / wiki:3 / room:4。 */
+  id: string
+  nodeType: 'room' | 'entity' | 'fact' | 'document' | 'block' | 'wikiPage' | 'wikiTopic'
+  label: string
+  sourceGraph: 'roomGraph' | 'entityFacts' | 'linkGraph' | 'wiki'
+  /** 来源 Room（跨 Room 结果标注用）。 */
+  roomRef: { id: string; title: string } | null
+  updatedAt: string | null
+}
+
+export interface EmergenceEdgeDto {
+  id: string
+  from: string
+  to: string
+  relationType: string
+  /** PRD 8.3 关系分级：原始=实线 / 组合=虚线 / 语义=点线。 */
+  edgeLevel: 'original' | 'composed' | 'semantic'
+  confidence: number | null
+}
+
+/** 起点到目标的完整可解释路径（漫步硬性要求）。 */
+export interface EmergencePathDto {
+  /** nodeRef 链，含起点与终点。 */
+  nodeRefs: string[]
+  /** 每跳的简短关系说明，长度 = nodeRefs.length - 1。 */
+  hops: string[]
+}
+
+export interface EmergenceCardDto {
+  id: string
+  kind: EmergenceCardKind
+  title: string
+  summary: string
+  sourceType: string
+  occurredAt: string | null
+  roomRef: { id: string; title: string } | null
+  /** 出现理由（聚焦=LLM 生成或降级路径说明；漫步=确定性路径说明）。 */
+  reason: string
+  quote: string | null
+  path: EmergencePathDto | null
+  confidence: number
+  /** 指向 ProjectionResult.nodes 的节点（卡片⇄脉络联动）。 */
+  nodeRef: string | null
+}
+
+export interface EmergenceProjectionResultDto {
+  cards: EmergenceCardDto[]
+  nodes: EmergenceNodeDto[]
+  edges: EmergenceEdgeDto[]
+  paths: EmergencePathDto[]
+  /** 本次投影的树根（章节级焦点=注入的章节节点），钻取起点以它为准。 */
+  focusRootRef: string | null
+  scoreComponents: Record<string, number> | null
+  requestVersion: number
+  /** LLM 任务理解不可用时按 PRD 7.4 降级（关键词+向量+图谱路径）。 */
+  degraded: boolean
+  degradedReason: string | null
+  generatedAt: string
+}
+
+/* ============ 写作路线导图（网关接口已下线，此处仅保留类型形状） ============ */
+
+export type RouteMindmapStatus = 'missing' | 'expanding' | 'active' | 'failed' | 'finalized'
+
+/** 路线节点（与 gateway route-mindmap-graph RouteNode 逐字段同形，双份维护）。 */
+export interface RouteNodeDto {
+  ref: string
+  label: string
+  note: string | null
+  children?: RouteNodeDto[]
+}
+
+export interface RouteGraphDto {
+  root: RouteNodeDto
+}
+
+export type RouteMindmapAction = 'start' | 'expand' | 'back' | 'skip' | 'finalize'
+
+/** 全图 + 已选路径 + 生成/拍板状态（契约镜像 gateway route-mindmap-service）。 */
+export interface RouteMindmapStatusDto {
+  roomId: string
+  documentId: string
+  title: string
+  description: string | null
+  status: RouteMindmapStatus
+  skipped: boolean
+  writing: boolean
+  error: string | null
+  /** expanding 时正在续生的节点；null=初始层生成中或非生成态。 */
+  expandingNodeRef: string | null
+  /** 全图（含未选分支），展示层按 selectionPath 过滤。 */
+  graph: RouteGraphDto | null
+  /** 当前已选路径（nodeRef 链，含根）。 */
+  selectionPath: string[] | null
+  finalizedAt: string | null
+  generatedAt: string | null
+  promptVersion: number | null
+  requestVersion: number
+}
+
+export interface RouteMindmapActionInput {
+  action: RouteMindmapAction
+  documentId: string
+  /** start 可选。 */
+  title?: string
+  description?: string | null
+  /** expand 必填。 */
+  nodeRef?: string
+  /** back 必填。 */
+  toDepth?: number
+  requestVersion: number
 }

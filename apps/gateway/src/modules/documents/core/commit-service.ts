@@ -5,15 +5,13 @@ import type { GatewayDatabase } from "../../../infrastructure/database/client.js
 import {
   documentVersions,
   documents,
-  roomDocumentLinks,
 } from "../../../infrastructure/database/schema.js";
 import type { NormalizedGatewayDocument } from "./content-engine.js";
 import { DocumentServiceError } from "../errors.js";
-import { enqueueDocumentIngest } from "../integration-outbox.js";
-import { enqueueWritingStyleExtract } from "../../writing-style/jobs.js";
 import { DocumentContentEngine } from "./content-engine.js";
 import { DocumentRepository } from "./repository.js";
 import { YjsHistoryService } from "./yjs-history-service.js";
+import { enqueueSearchIndex } from "../../search/jobs.js";
 
 export interface DocumentCommitHooks {
   afterCommit?: (
@@ -31,12 +29,18 @@ export interface DocumentCommitHooks {
 
 export interface CommitDocumentInput {
   documentId: string;
-  roomId: string;
+  /**
+   * Phase 2i：Room 维度已删，文稿一律工作区级，本字段不再参与落库或校验。
+   * 保留只因 service/route 层的 DTO 形状（ImportRoomDocumentInput 等）仍带
+   * roomId，调用方原样透传即可。
+   */
+  roomId: string | null;
   title: string;
   content: TiptapJsonContent;
   version: number;
   expectedVersion?: number;
   status?: "draft" | "active";
+  origin?: "native" | "import";
   activeTransactionId?: string | null;
   sourceTransactionId?: string;
   createdAt?: Date;
@@ -51,7 +55,8 @@ export type AtomicDocumentCommitInput = Pick<
 
 export interface AtomicDocumentCreateInput {
   documentId: string;
-  roomId: string;
+  /** null = 工作区级文稿。 */
+  roomId: string | null;
   title: string;
   content: TiptapJsonContent;
 }
@@ -96,7 +101,6 @@ export class DocumentCommitService {
     const normalized = this.engine.normalizeDocument(
       input.content,
       input.documentId,
-      input.roomId,
       input.version,
     );
     const now = input.createdAt ?? new Date();
@@ -106,12 +110,14 @@ export class DocumentCommitService {
       now,
       document: {
         id: input.documentId,
-        roomId: input.roomId,
+        // 工作区级文稿：合成 DTO 恒定 roomId=null（Room 维度已删）。
+        roomId: null,
         title: input.title,
         contentJson: normalized.content,
         contentSchemaVersion: normalized.schemaVersion,
         version: input.version,
         status: input.status ?? "active",
+        origin: input.origin ?? "native",
         activeTransactionId: input.activeTransactionId ?? null,
         deletedAt: null,
         createdAt: now.toISOString(),
@@ -132,15 +138,12 @@ export class DocumentCommitService {
         contentSchemaVersion: normalized.schemaVersion,
         version: input.version,
         status: input.status ?? "active",
+        origin: input.origin ?? "native",
         activeTransactionId: input.activeTransactionId ?? null,
         createdAt: now,
         updatedAt: now,
       }).run();
-    tx.insert(roomDocumentLinks).values({
-      roomId: input.roomId,
-      documentId: input.documentId,
-      linkedAt: now,
-    }).run();
+    enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
     if (input.writeVersion !== false && input.version > 0) {
       this.insertVersion(tx, input, normalized, now);
       this.yjsHistory.writeCommit(tx, {
@@ -152,18 +155,6 @@ export class DocumentCommitService {
         source: input.sourceTransactionId ?? null,
         now,
       });
-      enqueueDocumentIngest(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-        sourceTransactionId: input.sourceTransactionId ?? null,
-      }, now);
-      // 写作风格增量提炼（方案 §10：与 ingest 同事务入队，worker 去抖消费）。
-      enqueueWritingStyleExtract(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
@@ -186,14 +177,10 @@ export class DocumentCommitService {
     const normalized = this.engine.normalizeDocument(
       input.content,
       input.documentId,
-      input.roomId,
       input.version,
     );
     const previous = this.repository.get(input.documentId);
     if (!previous) throw new Error(`Document ${input.documentId} was not found`);
-    if (previous.roomId !== input.roomId) {
-      throw new DocumentServiceError("ROOM_MISMATCH", "Document belongs to another Room", 409);
-    }
     const expectedVersion = input.expectedVersion ?? previous.version;
     if (input.expectedVersion !== undefined && input.expectedVersion !== previous.version) {
       throw new DocumentServiceError("DOCUMENT_CONFLICT", "Document version has changed", 409, {
@@ -266,18 +253,6 @@ export class DocumentCommitService {
         source: input.sourceTransactionId ?? null,
         now,
       });
-      enqueueDocumentIngest(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-        sourceTransactionId: input.sourceTransactionId ?? null,
-      }, now);
-      // 写作风格增量提炼（方案 §10：与 ingest 同事务入队，worker 去抖消费）。
-      enqueueWritingStyleExtract(tx, {
-        documentId: input.documentId,
-        roomId: input.roomId,
-        version: input.version,
-      }, now);
     }
     this.repository.replaceProjection(tx, input.documentId, normalized);
     input.mutate?.(tx, normalized, now);
@@ -330,5 +305,6 @@ export class DocumentCommitService {
       ...(input.sourceTransactionId ? { sourceTransactionId: input.sourceTransactionId } : {}),
       createdAt: now,
     }).run();
+    enqueueSearchIndex(tx, { itemType: "document", refId: input.documentId, priority: "high" });
   }
 }

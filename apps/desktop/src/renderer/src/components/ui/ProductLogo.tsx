@@ -1,5 +1,5 @@
-import everroomAppIcon from '@/assets/everroom-app-icon.png'
-import everroomFullLogo from '@/assets/everroom-full.png'
+import everroomAppIcon from '@/assets/everoffice-app-icon.png'
+import everroomFullLogo from '@/assets/everoffice-full.png'
 
 export function ProductLogo({
   className,

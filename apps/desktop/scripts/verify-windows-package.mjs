@@ -8,11 +8,14 @@ import { listPackage } from '@electron/asar'
 
 const desktopRoot = resolve(import.meta.dirname, '..')
 const releaseRoot = resolve(process.env.EVERROOM_RELEASE_DIR ?? join(desktopRoot, '..', '..', 'release'))
-const version = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')).version
+const packageVersion = JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')).version
+// CI 里 artifactName 用 tag 完整版本号（nightly 带 nightly.日期.序号 后缀），
+// 由 workflow 注入；本地打包无此变量时回退 package.json 版本。
+const version = process.env.EVERROOM_FULL_VERSION ?? packageVersion
 const unpackedRoot = join(releaseRoot, 'win-unpacked')
-const appRoot = join(unpackedRoot, 'EverRoom.exe')
+const appRoot = join(unpackedRoot, 'EverOffice.exe')
 const resourcesRoot = join(unpackedRoot, 'resources')
-const installerPath = join(releaseRoot, `EverRoom-${version}-windows-x64.exe`)
+const installerPath = join(releaseRoot, `EverOffice-${version}-windows-x64.exe`)
 
 const failures = []
 const checked = []
@@ -46,7 +49,7 @@ if (existsSync(installerPath)) {
   const header = readFileSync(installerPath).subarray(0, 2).toString('latin1')
   if (header !== 'MZ') fail(`Installer is not a PE executable: ${relative(releaseRoot, installerPath)}`)
 }
-expectFile(appRoot, 'win-unpacked EverRoom.exe')
+expectFile(appRoot, 'win-unpacked EverOffice.exe')
 expectFile(join(resourcesRoot, 'packaged-env.json'), 'packaged-env.json')
 expectFile(join(resourcesRoot, 'app.asar'), 'app.asar')
 
@@ -66,7 +69,7 @@ if (existsSync(join(resourcesRoot, 'app.asar'))) {
   asarFiles = listPackage(join(resourcesRoot, 'app.asar')).map((path) => String(path).split('\\').join('/'))
   for (const path of asarFiles) {
     if (forbidden.test(path)) fail(`Forbidden file in app.asar: ${path}`)
-    if (typescript.test(path) && !/[\\/]node_modules[\\/]@tencentdb-agent-memory[\\/](memory-tencentdb-v2|knowledge-service)[\\/]src[\\/]/.test(path)) {
+    if (typescript.test(path)) {
       fail(`Unexpected TypeScript in app.asar: ${path}`)
     }
   }
@@ -75,24 +78,8 @@ if (existsSync(join(resourcesRoot, 'app.asar'))) {
 const asarHas = (fragment) => asarFiles.some((path) => path.includes(fragment))
 
 // --- Required runtime entries ----------------------------------------------
-// Desktop entry points and bundled memory runtimes (spawned from the asar).
+// Desktop entry point (spawned from the asar).
 if (!asarHas('out/main/index.js')) fail('app.asar is missing the main entry out/main/index.js')
-for (const fragment of [
-  'memory-tencentdb-v2/bin/memory-gateway.mjs',
-  'memory-tencentdb-v2/src/gateway/server.ts',
-  'knowledge-service/src/server.ts',
-]) {
-  if (!asarHas(fragment)) fail(`app.asar is missing ${fragment}`)
-}
-// Windows native packages for the memory stack (napi-rs resolves them at
-// runtime; smartUnpack lifts their .node files next to the asar).
-for (const fragment of [
-  '@node-rs/jieba-win32-x64-msvc',
-  '@colbymchenry/codegraph-win32-x64',
-  'sqlite-vec-windows-x64',
-]) {
-  if (!asarHas(fragment)) fail(`app.asar is missing native package ${fragment}`)
-}
 
 const unpackedNodeModules = join(resourcesRoot, 'app.asar.unpacked', 'node_modules')
 expectFile(join(unpackedNodeModules, 'better-sqlite3', 'prebuilds', 'win32-x64.node'), 'asar-unpacked better-sqlite3 win32-x64 prebuild')
@@ -100,9 +87,6 @@ expectFile(join(unpackedNodeModules, 'better-sqlite3', 'prebuilds', 'win32-x64.n
 const esbuildBin = [join(unpackedNodeModules, '@esbuild', 'win32-x64', 'esbuild.exe'), join(unpackedNodeModules, '@esbuild', 'win32-x64', 'bin', 'esbuild.exe')]
   .find((path) => existsSync(path))
 if (!esbuildBin) fail('asar-unpacked esbuild win32-x64 binary is missing')
-// sqlite-vec ships a SQLite loadable extension (.dll) on Windows, not a .node.
-const sqliteVecNative = filesUnder(join(unpackedNodeModules, 'sqlite-vec-windows-x64')).filter((path) => /\.(node|dll)$/i.test(path))
-if (sqliteVecNative.length === 0) fail('asar-unpacked sqlite-vec-windows-x64 has no native library (.node/.dll)')
 
 // Gateway service (extraResources).
 expectFile(join(resourcesRoot, 'gateway', 'serve.js'), 'gateway entry serve.js')
@@ -117,8 +101,16 @@ expectFile(join(resourcesRoot, 'open-connector', 'dist', 'web', 'index.html'), '
 const ooExe = join(resourcesRoot, 'oo', 'win32-x64', 'oo.exe')
 expectFile(ooExe, 'oo CLI win32-x64')
 expectFile(join(resourcesRoot, 'genoffice', 'native', 'xlsx-sidecar.exe'), 'genoffice xlsx-sidecar.exe')
-for (const app of ['docs', 'sheets', 'slides', 'pdf']) {
+for (const app of ['docs', 'sheets', 'slides', 'pdf', 'markdown']) {
   expectFile(join(resourcesRoot, 'genoffice', app, 'main', 'embed.js'), `genoffice ${app} embed entry`)
+}
+
+// Bundled ACP adapters (extraResources) for local agents (claude/codex).
+for (const [provider, pkg] of [
+  ['claude', '@zed-industries/claude-agent-acp'],
+  ['codex', '@agentclientprotocol/codex-acp'],
+]) {
+  expectFile(join(resourcesRoot, 'acp-adapters', provider, 'node_modules', pkg, 'package.json'), `acp adapter ${pkg}`)
 }
 
 // Run the packaged oo CLI once — the macOS audit does the same.

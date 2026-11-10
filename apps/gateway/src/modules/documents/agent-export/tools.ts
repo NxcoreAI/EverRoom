@@ -18,13 +18,13 @@ export function createDocumentExportPiTools(
     name: "document_export",
     label: "文档导出",
     description:
-      "把指定 Room 文档的固定版本一次性导出到飞书或 Notion（create 新建或 update 更新用户明确指定的远端文档）。"
+      "把指定工作区文档的固定版本一次性导出到飞书或 Notion（create 新建或 update 更新用户明确指定的远端文档）。"
       + "任务固定版本渲染，导出期间的后续编辑不影响本次 payload；不做双向同步，也不自动重试不确定的写入。",
     parameters: {
       type: "object",
       properties: {
-        roomId: { type: "string", description: "文档所属 Room ID" },
-        documentId: { type: "string", description: "要导出的 Room 文档 ID" },
+        roomId: { type: "string", description: "可选：旧版归属 id；省略即按工作区文档导出（推荐省略）" },
+        documentId: { type: "string", description: "要导出的文档 ID" },
         version: { type: "integer", description: "固定导出的版本号；缺省为当前版本" },
         provider: { type: "string", enum: ["feishu", "notion"], description: "目标平台" },
         mode: { type: "string", enum: ["create", "update", "export_file"], description: "create 新建文档；update 更新用户明确指定的已有文档；export_file 导出为飞书云空间 .md 文件（仅 feishu）" },
@@ -41,7 +41,7 @@ export function createDocumentExportPiTools(
           additionalProperties: false,
         },
       },
-      required: ["roomId", "documentId", "provider", "mode"],
+      required: ["documentId", "provider", "mode"],
       additionalProperties: false,
     } as unknown as Record<string, unknown>,
     promptGuidelines: [
@@ -69,18 +69,20 @@ export function createDocumentExportPiTools(
       if (mode === "update" && !params.target) missing.push("target");
       if (missing.length > 0) {
         // 参数缺失不硬报错：返回 needs_input，渲染层自动弹出导出面板补齐（§6.4）。
+        const roomId = typeof params.roomId === "string" && params.roomId.trim() ? params.roomId.trim() : "";
         const summary = {
           status: "needs_input",
           missing,
-          roomId: String(params.roomId),
+          ...(roomId ? { roomId } : {}),
           documentId: String(params.documentId),
           provider,
           mode: mode as CreateExportInput["mode"],
         };
         return { content: JSON.stringify(summary), details: summary };
       }
+      const roomId = typeof params.roomId === "string" && params.roomId.trim() ? params.roomId.trim() : null;
       const input: CreateExportInput = {
-        roomId: String(params.roomId),
+        roomId,
         documentId: String(params.documentId),
         version: typeof params.version === "number" ? params.version : undefined,
         provider,

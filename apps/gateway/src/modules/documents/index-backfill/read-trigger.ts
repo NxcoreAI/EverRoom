@@ -19,7 +19,7 @@ export class DocumentIndexBackfillReadTrigger {
     private readonly cooldownMs: number,
   ) {}
 
-  trigger(document: { id: string; roomId: string; version: number }): void {
+  trigger(document: { id: string; roomId: string | null; version: number }): void {
     const now = Date.now();
     const last = this.lastTriggerAt.get(document.id);
     if (last != null && now - last < Math.max(0, this.cooldownMs)) return;
@@ -27,7 +27,6 @@ export class DocumentIndexBackfillReadTrigger {
     try {
       enqueueDocumentIndexBackfill(this.db, {
         documentId: document.id,
-        roomId: document.roomId,
         version: document.version,
       }, new Date());
     } catch (error) {

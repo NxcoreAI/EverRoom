@@ -1,5 +1,6 @@
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentRoomReference,
   CreateContextRoomInput,
   CreateContextRoomResult,
@@ -16,9 +17,20 @@ import type {
 export interface DocumentExecutionContext {
   agentSessionId: string;
   runId: string;
-  roomId: string | null;
-  availableRooms?: AgentRoomReference[];
+  /** 会话所属工作区：Agent 生成产物（office_*）入库时带上，资料库/产物库按空间隔离。 */
+  workspaceId?: string | null;
   activeDocument?: AgentActiveDocumentContext;
+  /** 用户当前浏览的 Office 文件（file_entries）：编辑工具默认指向它。 */
+  activeFile?: AgentActiveFileContext;
+}
+
+/**
+ * PPT 逐页进度上报（只报不定）：set_page 成功落页即广播快照，不停等不决策。
+ * gateway 侧权威实现在 modules/subagents/slides-progress-tracker.ts，此处只声明
+ * 结构契约（capabilities 模块不反向依赖 subagents 模块）。
+ */
+export interface SlidesPageProgressReporter {
+  notify(runId: string | undefined, slideIndex: number): void;
 }
 
 export interface DocumentRoomRegistry {
@@ -76,7 +88,6 @@ export interface DocumentOperationPlan {
 export interface NormalizedStartDocumentOperationInput {
   capabilityId: string;
   context: {
-    roomId: string;
     documentId?: string;
     sessionId: string;
     runId: string;

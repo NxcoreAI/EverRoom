@@ -22,42 +22,27 @@
       "items": {
         "type": "object",
         "properties": {
-          "roomId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "roomId": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Optional legacy scope id; omitted = workspace document scope." },
           "documentId": { "type": "string", "minLength": 1, "maxLength": 128 },
           "blockId": { "type": "string", "minLength": 1, "maxLength": 128 },
           "label": { "type": "string", "maxLength": 200 },
           "textPreview": { "type": "string", "maxLength": 400 }
         },
-        "required": ["roomId", "documentId", "blockId"],
+        "required": ["documentId", "blockId"],
         "additionalProperties": false
       },
-      "description": "Source document blocks (from the caller's document_read) that back the draft; cite them as block index marks. For draft-edit this includes rewrite requests that only append index marks to existing paragraphs."
-    },
-    "memoryIndex": {
-      "type": "array",
-      "maxItems": 50,
-      "items": {
-        "type": "object",
-        "properties": {
-          "memoryId": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "contentPreview": { "type": "string", "maxLength": 200 },
-          "type": { "type": "string", "maxLength": 32 }
-        },
-        "required": ["memoryId", "contentPreview"],
-        "additionalProperties": false
-      },
-      "description": "Room memory items injected by the gateway; cite them as memory index marks when the draft restates them."
+      "description": "Source document blocks (from the caller's document_read) that back the draft; cite them as block index marks. roomId is optional (omitted = workspace scope). For draft-edit this includes rewrite requests that only append index marks to existing paragraphs."
     },
     "roomTitle": {
       "type": "string",
       "maxLength": 120,
-      "description": "Optional room title for context framing."
+      "description": "Optional legacy scope title for context framing."
     },
     "roomId": {
       "type": "string",
       "minLength": 1,
       "maxLength": 128,
-      "description": "Target room id injected by the gateway; binds selection-rewrite provenance to the room."
+      "description": "Optional legacy scope id injected by the gateway; omitted = workspace document scope."
     },
     "documentName": {
       "type": "string",

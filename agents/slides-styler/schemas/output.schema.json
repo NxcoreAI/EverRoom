@@ -1,0 +1,397 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": [
+        "direction",
+        "settle"
+      ],
+      "description": "Which task this submission answers."
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 12,
+            "description": "User-facing short name of this suitable design direction (e.g. 清晰数据); the three labels must differ."
+          },
+          "imagePrompt": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 1200,
+            "description": "direction: complete Chinese prompt for this candidate's overview image (structured layout spec with fake-text-bar rules)."
+          },
+          "composition": {
+            "type": "string",
+            "enum": [
+              "swiss",
+              "editorial",
+              "poster",
+              "immersive"
+            ],
+            "description": "Layout family suited to the content: swiss = aligned grid; editorial = asymmetric columns; poster = a dominant conclusion or metric; immersive = relevant large imagery, including bright imagery. Families may repeat across candidates. The prompt must express its declared family."
+          }
+        },
+        "required": [
+          "label",
+          "imagePrompt",
+          "composition"
+        ],
+        "additionalProperties": false
+      },
+      "description": "direction: exactly 3 suitable, meaningfully different directions using shared content and comparable information density. Preserve locked preferences; distinguish through unlocked palette use, whitespace, columns or visual emphasis. Light-dark base and composition may repeat."
+    },
+    "styleParams": {
+      "type": "object",
+      "properties": {
+        "palette": {
+          "type": "object",
+          "properties": {
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "surface": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "primary": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "accent": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "description": "Highlight color from the observed palette. May reuse primary or its hue; a contrasting hue is not required."
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "textMuted": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "onDarkText": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "chartSeries": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 6,
+              "items": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
+            }
+          },
+          "required": [
+            "background",
+            "surface",
+            "primary",
+            "accent",
+            "text",
+            "textMuted",
+            "onDarkText",
+            "chartSeries"
+          ],
+          "additionalProperties": false
+        },
+        "typography": {
+          "type": "object",
+          "properties": {
+            "fontHeading": {
+              "type": "string"
+            },
+            "fontBody": {
+              "type": "string"
+            },
+            "sizes": {
+              "type": "object",
+              "properties": {
+                "coverTitle": {
+                  "type": "number",
+                  "minimum": 40,
+                  "maximum": 110
+                },
+                "sectionTitle": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 60
+                },
+                "pageTitle": {
+                  "type": "number",
+                  "minimum": 20,
+                  "maximum": 40
+                },
+                "subtitle": {
+                  "type": "number",
+                  "minimum": 14,
+                  "maximum": 24
+                },
+                "body": {
+                  "type": "number",
+                  "minimum": 12,
+                  "maximum": 18
+                },
+                "caption": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 13
+                },
+                "kpi": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 90
+                },
+                "table": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 24
+                }
+              },
+              "required": [
+                "coverTitle",
+                "sectionTitle",
+                "pageTitle",
+                "subtitle",
+                "body",
+                "caption",
+                "kpi",
+                "table"
+              ],
+              "additionalProperties": false,
+              "description": "【已弃用】字号不再由风格卡决定：由场景（距离 × 密度）在代码里算，风格卡只提供字体与色相。保留字段仅为兼容历史数据，运行时忽略。"
+            },
+            "headingBold": {
+              "type": "boolean"
+            },
+            "typeScale": {
+              "type": "object",
+              "description": "【已弃用】同上，v2 字阶由场景派生，运行时忽略。",
+              "properties": {
+                "display": {
+                  "type": "number",
+                  "minimum": 40,
+                  "maximum": 110
+                },
+                "hero": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 96
+                },
+                "h1": {
+                  "type": "number",
+                  "minimum": 28,
+                  "maximum": 60
+                },
+                "h2": {
+                  "type": "number",
+                  "minimum": 20,
+                  "maximum": 48
+                },
+                "h3": {
+                  "type": "number",
+                  "minimum": 18,
+                  "maximum": 40
+                },
+                "lead": {
+                  "type": "number",
+                  "minimum": 14,
+                  "maximum": 28
+                },
+                "body": {
+                  "type": "number",
+                  "minimum": 12,
+                  "maximum": 24
+                },
+                "label": {
+                  "type": "number",
+                  "minimum": 10,
+                  "maximum": 18
+                },
+                "kicker": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 16
+                },
+                "caption": {
+                  "type": "number",
+                  "minimum": 9,
+                  "maximum": 16
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "fontHeading",
+            "fontBody",
+            "headingBold"
+          ],
+          "additionalProperties": false
+        },
+        "spacing": {
+          "type": "object",
+          "properties": {
+            "margin": {
+              "type": "number",
+              "minimum": 32,
+              "maximum": 96
+            },
+            "gutter": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 40
+            },
+            "cardPadding": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 32
+            },
+            "cornerRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 32
+            }
+          },
+          "required": [
+            "margin",
+            "gutter",
+            "cardPadding",
+            "cornerRadius"
+          ],
+          "additionalProperties": false
+        },
+        "decoration": {
+          "type": "object",
+          "properties": {
+            "cardStroke": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "cardStrokeWidthPt": {
+              "type": "number",
+              "minimum": 0.25,
+              "maximum": 3
+            },
+            "cardShadow": {
+              "type": "string",
+              "enum": [
+                "none",
+                "soft",
+                "medium",
+                "strong"
+              ]
+            },
+            "divider": {
+              "type": "string",
+              "enum": [
+                "line",
+                "none"
+              ]
+            },
+            "imageFit": {
+              "type": "string",
+              "enum": [
+                "cover",
+                "contain"
+              ]
+            }
+          },
+          "required": [
+            "cardStrokeWidthPt",
+            "cardShadow",
+            "divider",
+            "imageFit"
+          ],
+          "additionalProperties": false
+        },
+        "motif": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ghost-number",
+                "ghost-word",
+                "color-band",
+                "corner-accent",
+                "none"
+              ]
+            },
+            "spec": {
+              "type": "object",
+              "maxProperties": 6,
+              "additionalProperties": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "spec"
+          ],
+          "additionalProperties": false
+        },
+        "darkCover": {
+          "type": "boolean",
+          "description": "Separate cover/section treatment. Follow explicit requirements or reference; otherwise match the content-page light-dark base."
+        },
+        "composition": {
+          "type": "string",
+          "enum": [
+            "swiss",
+            "editorial",
+            "poster",
+            "immersive"
+          ],
+          "description": "Optional layout composition family; the gateway overwrites it with the user-picked candidate's family, so omit unless reviewing."
+        },
+        "effectLines": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          }
+        }
+      },
+      "required": [
+        "palette",
+        "typography",
+        "spacing",
+        "decoration",
+        "motif",
+        "darkCover",
+        "effectLines"
+      ],
+      "additionalProperties": false
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "Reviewer notes for the orchestrator (what roles were adjusted and why)."
+    }
+  },
+  "required": [
+    "task"
+  ],
+  "additionalProperties": false
+}

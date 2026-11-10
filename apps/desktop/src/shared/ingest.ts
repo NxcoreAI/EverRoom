@@ -1,10 +1,9 @@
 /** 统一理解引擎 / 文件中心的桌面端共享类型（unified-ingest-plan §8-§9，对齐 gateway DTO）。 */
 
-/** 三链路开关（Room / wiki / 记忆）。 */
+/** 双链路开关（Room / wiki）。 */
 export interface IngestPipelines {
   room: boolean
   wiki: boolean
-  memory: boolean
 }
 
 export interface FileDto {
@@ -28,7 +27,7 @@ export interface FileCatalogDto {
   originalName: string
   displayName: string | null
   sharedTitle: string
-  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload'
+  sourceKind: 'manual-upload' | 'local-folder' | 'connector' | 'web-clipper' | 'legacy-upload' | 'agent-generated' | 'artifact-imported'
   sourceLabel: string
   relativePath: string | null
   provider: string | null
@@ -40,7 +39,11 @@ export interface FileCatalogDto {
   processingState: 'processing' | 'ready' | 'failed' | 'missing'
   clusterId: string | null
   contentHash: string
+  /** 当前版本 id（@ 文件引用拼 context.attachments 用）。 */
+  currentVersionId: string | null
   parsed: boolean
+  /** 归属工作区 id（资料库/产物库按空间隔离；旧数据缺省为 'default'）。 */
+  workspaceId: string
   updatedAt: string
 }
 
@@ -81,7 +84,6 @@ export interface FileImportOutcome {
    */
   skippedReason: 'unsupported_format' | 'pending_review' | null
   pipelines: IngestPipelines | null
-  memoryResult: { documentId: string; chunkCount: number; deduplicated: boolean } | { error: string } | null
   routeJobId: string | null
   error: string | null
 }
@@ -89,7 +91,8 @@ export interface FileImportOutcome {
 /** 手动导入批次的桌面端实时进度。 */
 export interface FileImportProgressEvent {
   batchId: string
-  status: 'started' | 'file-started' | 'file-completed' | 'completed'
+  /** scanning = 目录展开阶段（尚无文件计数，界面应显示「正在扫描目录」而非 0/0）。 */
+  status: 'started' | 'scanning' | 'file-started' | 'file-completed' | 'completed'
   total: number
   completed: number
   filename: string | null
@@ -122,7 +125,6 @@ export interface IngestResultDto {
   parsedId: string
   pipelines: IngestPipelines
   routeJobId: string | null
-  memoryResult: FileImportOutcome['memoryResult']
   originChannel: string
 }
 
@@ -145,7 +147,6 @@ export interface IngestEventDto {
   contentHash: string
   parsedId: string
   pipelines: IngestPipelines
-  memoryResult: FileImportOutcome['memoryResult']
   routeJobId: string | null
   /** 过滤闸状态：pending 判定中 / passed 放行 / filtered 被拦（可恢复）/ bypassed 故障放行。 */
   filterStatus: 'pending' | 'passed' | 'filtered' | 'bypassed' | null

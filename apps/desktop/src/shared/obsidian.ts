@@ -2,7 +2,9 @@ export const OBSIDIAN_VAULT_ASSET_SCHEME = 'nxcore-vault-asset'
 
 export type ObsidianVaultResourceKind = 'note' | 'image' | 'pdf'
 
-export type ObsidianVaultMountMode = 'dedicated' | 'embedded' | 'memory'
+export type ObsidianVaultMountMode = 'dedicated' | 'embedded'
+
+export type ObsidianVaultSourceType = 'obsidian-vault' | 'local-directory'
 
 export interface ObsidianVaultCandidate {
   id: string
@@ -10,17 +12,17 @@ export interface ObsidianVaultCandidate {
   noteCount: number
   attachmentCount: number
   discoveredFrom: 'registry' | 'scan' | 'manual'
+  sourceType: ObsidianVaultSourceType
   lastOpenedAt: string | null
   mountedVaultId: string | null
   mountedRoomId: string | null
-  memoryEnabled: boolean
 }
 
 export interface ObsidianVaultBinding {
   id: string
   roomId: string
   mountMode: ObsidianVaultMountMode
-  memoryEnabled: boolean
+  sourceType: ObsidianVaultSourceType
   name: string
   attachmentFolderPath: string
   noteCount: number
@@ -69,20 +71,26 @@ export interface ObsidianVaultChangedEvent {
   vaultId: string
   roomId: string
   updatedAt: string
+  /** 本次扫描中内容或路径有变化的资源 id；缺省表示未知（全量处理）。 */
+  changedResourceIds?: string[]
 }
 
 export interface ObsidianDiscoveryChangedEvent {
   updatedAt: string
 }
 
+export type ObsidianImportTarget =
+  | { kind: 'new-room' }
+  | { kind: 'room'; roomId: string }
+
+export type ObsidianImportResult =
+  | { kind: 'new-room'; vault: ObsidianVaultBinding }
+  | { kind: 'room'; vault: ObsidianVaultBinding }
+
 export interface ObsidianVaultApi {
-  pickAndMount(): Promise<ObsidianVaultBinding | null>
   discover(): Promise<ObsidianVaultCandidate[]>
   pickCandidate(): Promise<ObsidianVaultCandidate | null>
-  importCandidate(candidateId: string, target: { kind: 'memory'; enableRegistryAutoImport?: boolean } | { kind: 'room'; roomId: string }): Promise<
-    | { kind: 'memory'; projectName: string; total: number; succeeded: number; failed: number }
-    | { kind: 'room'; vault: ObsidianVaultBinding }
-  >
+  importCandidate(candidateId: string, target: ObsidianImportTarget): Promise<ObsidianImportResult>
   list(): Promise<ObsidianVaultBinding[]>
   tree(vaultId: string): Promise<ObsidianVaultTree>
   readNote(vaultId: string, resourceId: string): Promise<VaultNoteSnapshot>

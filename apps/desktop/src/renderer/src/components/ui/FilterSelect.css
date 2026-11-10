@@ -1,0 +1,77 @@
+.filter-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 160px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.filter-select:hover,
+.filter-select[data-state='open'] {
+  color: inherit;
+  border-color: var(--border-subtle, rgba(0, 0, 0, 0.1));
+}
+
+.filter-select:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.filter-select-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.filter-select-chevron {
+  flex: none;
+  opacity: 0.7;
+}
+
+.filter-menu {
+  z-index: 1300;
+  min-width: 140px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--background-elevated, #fff);
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.filter-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+  outline: none;
+}
+
+.filter-menu-item[data-highlighted] {
+  background: var(--hover, rgba(0, 0, 0, 0.05));
+}
+
+.filter-menu-check {
+  flex: none;
+  display: inline-flex;
+  width: 14px;
+  color: var(--accent, #4a7dce);
+}
+
+.filter-menu-item-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

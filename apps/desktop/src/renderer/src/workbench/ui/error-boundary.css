@@ -1,0 +1,41 @@
+/* 局部错误边界：页面崩溃时的兜底卡片（占满内容区，不遮挡外壳）。 */
+
+.wb-errorboundary {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 24px;
+}
+.wb-errorboundary-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: min(560px, 100%);
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 28%, var(--ui-border));
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+}
+.wb-errorboundary-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+}
+.wb-errorboundary-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.wb-errorboundary-text strong { font-size: var(--ui-text-sm); font-weight: 650; }
+.wb-errorboundary-text p {
+  margin: 0;
+  color: var(--ui-text-2);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+  overflow-wrap: anywhere;
+}
+.wb-errorboundary-card > .ui-btn { flex: none; align-self: center; }

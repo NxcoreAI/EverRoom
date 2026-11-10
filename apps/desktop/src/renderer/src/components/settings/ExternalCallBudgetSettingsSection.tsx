@@ -197,7 +197,7 @@ export function ExternalCallBudgetSettingsSection() {
   return <section className="reality-settings-section external-calls-settings" aria-labelledby="external-calls-settings-title">
     <header>
       <span><ShieldAlert aria-hidden="true" /></span>
-      <div><h2 id="external-calls-settings-title">{t('surface:settings.externalCalls')}</h2><p>{t('surface:settings.externalCallsDescription')}</p></div>
+      <div><h2 id="external-calls-settings-title">{t('surface:settings.externalCalls')}</h2></div>
       <button className="cloud-account-refresh external-calls-refresh" type="button" title={t('surface:settings.refreshUsage')} aria-label={t('surface:settings.refreshUsage')} onClick={() => void Promise.all([loadBudgets(), loadAudits()])} disabled={budgetLoading || auditLoading}><RefreshCw aria-hidden="true" /></button>
     </header>
 
@@ -224,8 +224,8 @@ export function ExternalCallBudgetSettingsSection() {
         <div><span>{t('surface:settings.externalCallsProtectedServices')}</span><strong>{new Set(policies.map((policy) => policy.service)).size.toLocaleString(locale)}</strong></div>
       </div>
       <div className="external-calls-subsection">
-        <div className="external-calls-subheading"><div><strong>{t('surface:settings.externalCallsCurrentUsage')}</strong><small>{t('surface:settings.externalCallsCurrentUsageHint')}</small></div></div>
-        {budgetLoading ? <div className="external-calls-empty">{t('surface:settings.loading')}</div> : activeUsage.length === 0 ? <div className="external-calls-empty"><ShieldAlert aria-hidden="true" /><span><strong>{t('surface:settings.externalCallsNoPolicies')}</strong><small>{t('surface:settings.externalCallsNoPoliciesHint')}</small></span></div> : <div className="external-calls-progress-list">{activeUsage.map(({ policy, usage: item }) => {
+        <div className="external-calls-subheading"><div><strong>{t('surface:settings.externalCallsCurrentUsage')}</strong></div></div>
+        {budgetLoading ? <div className="external-calls-empty">{t('surface:settings.loading')}</div> : activeUsage.length === 0 ? <div className="external-calls-empty"><ShieldAlert aria-hidden="true" /><span><strong>{t('surface:settings.externalCallsNoPolicies')}</strong></span></div> : <div className="external-calls-progress-list">{activeUsage.map(({ policy, usage: item }) => {
           const used = (item?.consumedCalls ?? 0) + (item?.reservedCalls ?? 0)
           const percent = policy.limit === 0 ? 100 : Math.min(100, (used / policy.limit) * 100)
           return <div className="external-calls-progress-row" key={policy.id} data-state={item?.atLimit ? 'limit' : item?.nearLimit ? 'warning' : 'normal'}>
@@ -238,9 +238,8 @@ export function ExternalCallBudgetSettingsSection() {
     </div> : null}
 
     {view === 'policies' ? <div className="external-calls-policies" aria-busy={budgetLoading}>
-      <div className="external-calls-policy-note"><ShieldAlert aria-hidden="true" /><span><strong>{t('surface:settings.externalCallsDefaultOff')}</strong><small>{t('surface:settings.externalCallsDefaultOffHint')}</small></span></div>
       {SERVICES.map((service) => <div className="external-calls-service-band" key={service}>
-        <div className="external-calls-service-heading"><span className="external-calls-service-icon">{serviceIcon(service)}</span><div><strong>{serviceLabel(service)}</strong><small>{t(`surface:settings.externalCallsService${service === 'WEB_SEARCH' ? 'Search' : service === 'MCP' ? 'Mcp' : 'Connector'}Hint`)}</small></div></div>
+        <div className="external-calls-service-heading"><span className="external-calls-service-icon">{serviceIcon(service)}</span><div><strong>{serviceLabel(service)}</strong></div></div>
         {PERIODS.map((period) => {
           const slot = key(service, period)
           const draft = drafts[slot] ?? { enabled: false, limit: '', warning: '', enforcement: 'AUDIT_ONLY' as const }

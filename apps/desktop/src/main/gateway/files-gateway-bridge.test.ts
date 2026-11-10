@@ -79,6 +79,24 @@ describe('collectImportCandidates', () => {
     ])
   })
 
+  it('collects image files by default (heic included on darwin)', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-images-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'photo.png'), 'png')
+    await writeFile(join(directory, 'shot.bmp'), 'bmp')
+    await writeFile(join(directory, 'camera.heic'), 'heic')
+
+    const plan = await collectImportPlan([directory])
+    const filenames = plan.candidates.map((candidate) => candidate.filename)
+    expect(filenames).toContain('photo.png')
+    expect(filenames).toContain('shot.bmp')
+    if (process.platform === 'darwin') {
+      expect(filenames).toContain('camera.heic')
+    } else {
+      expect(plan.unsupported.map((candidate) => candidate.filename)).toContain('camera.heic')
+    }
+  })
+
   it('counts supported non-Office/PDF files as high risk', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-import-risk-'))
     temporaryDirectories.push(directory)
@@ -97,7 +115,7 @@ describe('collectImportCandidates', () => {
 })
 
 describe('FilesGatewayBridge.importPathsOnce', () => {
-  it('imports an Obsidian project with stable project provenance and memory-only pipelines', async () => {
+  it('imports an Obsidian project with stable project provenance and room-only pipelines', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'everroom-obsidian-memory-'))
     temporaryDirectories.push(directory)
     await mkdir(join(directory, 'Project'))
@@ -117,7 +135,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
         provider: 'Obsidian · Product Vault',
         connectionId: 'vault-project',
         relativePath: 'Project/brief.md',
-        pipelines: { room: false, wiki: false, memory: true },
+        pipelines: { room: false, wiki: false },
       })
       expect(metadata).not.toHaveProperty('roomId')
       return new Response(JSON.stringify({
@@ -133,7 +151,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       rootPath: directory,
       projectId: 'vault-project',
       projectName: 'Product Vault',
-      pipelines: { room: false, wiki: false, memory: true },
+      pipelines: { room: false, wiki: false },
       resourceIdsByRelativePath: { 'Project/brief.md': 'resource-brief' },
     })).resolves.toEqual([expect.objectContaining({ filename: 'Project/brief.md', error: null })])
   })
@@ -165,7 +183,7 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
       rootPath: directory,
       projectId: 'large-vault',
       projectName: 'Large Vault',
-      pipelines: { room: false, wiki: false, memory: true },
+      pipelines: { room: false, wiki: false },
     })
 
     expect(outcomes).toHaveLength(101)
@@ -348,29 +366,58 @@ describe('FilesGatewayBridge.readMarkdown', () => {
   })
 })
 
-describe('FilesGatewayBridge.createClipCapture', () => {
-  it('forwards the structured capture to the dedicated Clipper endpoint', async () => {
+describe('FilesGatewayBridge.importAgentAttachments', () => {
+  it('uploads chat image attachments through the single byte entry', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'pic.png'), 'png-bytes')
+    const calls: string[] = []
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      expect(String(input)).toBe('http://gateway.test/v1/clipper/captures')
-      expect(init?.method).toBe('POST')
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        captureId: 'capture-1', sourceUrl: 'https://example.com/article?utm_source=test',
-        canonicalUrl: 'https://example.com/article', title: 'An article', markdown: '# An article',
-        assets: [],
-      })
-      return new Response(JSON.stringify({
-        fileEntryId: 'file-1', fileVersionId: 'version-1', jobId: 'job-1',
-        contentHash: 'a'.repeat(64), blobDeduped: false, versionDeduped: false, pendingAssetIds: [], capture: {},
-      }), { headers: { 'Content-Type': 'application/json' } })
+      const url = String(input)
+      if (url === 'http://gateway.test/v1/files') {
+        calls.push('upload')
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        expect(body).toMatchObject({ filename: 'pic.png', assetKind: 'photo', originChannel: 'agent-composer' })
+        return new Response(JSON.stringify({ id: 'upl-1', bytes: 9, originalName: 'pic.png' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
     })
-    const supervisor = {
-      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
-    } as unknown as GatewaySupervisor
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
 
-    await expect(new FilesGatewayBridge(supervisor).createClipCapture({
-      markdown: '# An article', title: 'An article', url: 'https://example.com/article?utm_source=test',
-      canonicalUrl: 'https://example.com/article', capturedAt: '2026-08-24T12:00:00.000Z', captureId: 'capture-1',
-      extractionMode: 'article', extractorVersion: 'test-1', assets: [],
-    })).resolves.toMatchObject({ fileEntryId: 'file-1', fileVersionId: 'version-1' })
+    const attachments = await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'pic.png')])
+
+    expect(attachments).toEqual([expect.objectContaining({ fileId: 'upl-1', kind: 'image', mimeType: 'image/png' })])
+    expect(calls).toEqual(['upload'])
+  })
+
+  it('tags document attachments with the owning workspace so they land in that workspace library', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-agent-attach-ws-'))
+    temporaryDirectories.push(directory)
+    await writeFile(join(directory, 'doc.pdf'), 'pdf-bytes')
+    const uploadedMetadata: Array<Record<string, unknown>> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === 'http://gateway.test/v1/file-imports') {
+        const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as Record<string, unknown>
+        uploadedMetadata.push(metadata)
+        return new Response(JSON.stringify({
+          fileEntryId: 'file-1', fileVersionId: 'version-1',
+          versionDeduped: false, blobDeduped: false, contentHash: 'a'.repeat(64), jobId: 'job-1',
+        }), { headers: { 'Content-Type': 'application/json' } })
+      }
+      if (url.endsWith('/markdown')) {
+        return new Response(JSON.stringify({ markdown: '# parsed' }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected fetch: ${url}`)
+    })
+    const supervisor = { getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }) } as unknown as GatewaySupervisor
+
+    await new FilesGatewayBridge(supervisor).importAgentAttachments([join(directory, 'doc.pdf')], { workspaceId: 'ws-42' })
+
+    expect(uploadedMetadata).toEqual([expect.objectContaining({ workspaceId: 'ws-42' })])
   })
 })

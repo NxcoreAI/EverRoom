@@ -1,0 +1,214 @@
+/* 资源与成本（v2 · 浅色分层）：结论一句 + 累计成本曲线 + 4 指标；明细与口径默认收起。
+   颜色只取 tokens.css 的令牌（单色阶一律 color-mix 派生）；无阴影、无渐变，圆角只用 --radius。 */
+
+/* ── 首屏：左图右指标 ─────────────────────────────────────────────────── */
+.tc-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 224px;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+.tc-figure {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* 浅色纸底 + 细线：不描边、不填充（成本看的是斜率，面积会抢注意力） */
+.tc-chart {
+  position: relative;
+  height: 104px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.tc-chart svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tc-base {
+  stroke: var(--line-soft);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.tc-line {
+  fill: none;
+  stroke: var(--cost);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 每回合成本点：比线更淡，悬停才提亮 */
+.tc-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cost);
+  opacity: 0.45;
+  transform: translate(-50%, -50%);
+}
+
+.tc-dot:hover {
+  opacity: 1;
+}
+
+.tc-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.tc-axis-key {
+  color: var(--ink-3);
+}
+
+.tc-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3) var(--sp-2);
+  padding-top: var(--sp-1);
+}
+
+/* ── 明细：图例 + 逐回合行 ─────────────────────────────────────────────── */
+.tc-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+
+.tc-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-label);
+  color: var(--ink-3);
+}
+
+.tc-swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+}
+
+/* 模型读写 = accent 两阶，缓存读写 = 灰阶两阶（不引入第三种色相） */
+.tc-seg-input { background: var(--accent); }
+.tc-seg-output { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.tc-seg-read { background: var(--ink-3); }
+.tc-seg-write { background: var(--line-strong); }
+
+.tc-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tc-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 60px 68px;
+  gap: var(--sp-3);
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius);
+  text-align: left;
+}
+
+.tc-row:hover {
+  background: var(--surface-3);
+}
+
+.tc-row[data-selected] {
+  background: var(--accent-soft);
+}
+
+.tc-row-id {
+  font-size: var(--fs-label);
+  color: var(--accent);
+}
+
+.tc-track {
+  height: 8px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tc-fill {
+  display: flex;
+  min-width: 2px;
+  height: 100%;
+}
+
+.tc-seg {
+  height: 100%;
+  min-width: 1px;
+}
+
+.tc-row-total {
+  text-align: right;
+  font-size: var(--fs-small);
+  color: var(--ink-2);
+}
+
+.tc-row-cost {
+  text-align: right;
+  font-size: var(--fs-small);
+  color: var(--cost);
+}
+
+.tc-more {
+  margin-top: var(--sp-2);
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: var(--fs-label);
+  color: var(--ink-2);
+  background: var(--surface);
+}
+
+.tc-more:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+/* ── 口径说明 ──────────────────────────────────────────────────────────── */
+.tc-notes {
+  display: grid;
+  gap: var(--sp-1);
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-small);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+.tc-hint {
+  margin: 0;
+  padding: var(--sp-3) 0;
+  font-size: var(--fs-small);
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+@media (max-width: 960px) {
+  .tc-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tc-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

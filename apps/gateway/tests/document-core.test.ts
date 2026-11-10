@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
+import { WORKSPACE_DOCUMENT_CHANNEL } from "@nxcore/agent-contract";
 import { createDatabase } from "../src/infrastructure/database/client.js";
 import {
   documentYjsUpdates,
@@ -27,9 +28,7 @@ async function createCore() {
   const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
   disposables.push(() => sqlite.close());
   const repository = new DocumentRepository(db);
-  const engine = new DocumentContentEngine({
-    findDocumentRoom: (documentId) => repository.get(documentId)?.roomId ?? null,
-  });
+  const engine = new DocumentContentEngine();
   return { db, repository, engine, commits: new DocumentCommitService(db, repository, engine) };
 }
 
@@ -45,9 +44,9 @@ describe("document core", () => {
       type: "doc",
       content: [{ type: "image", attrs: { src: "data:image/png;base64,iVBORw0KGgo=" } }],
     };
-    expect(() => engine.normalizeDocument(embedded, "doc-1", "room-1"))
+    expect(() => engine.normalizeDocument(embedded, "doc-1"))
       .toThrowError(expect.objectContaining({ code: "EMBEDDED_IMAGE_NOT_ALLOWED", statusCode: 400 }));
-    expect(engine.normalizeStoredDocument(embedded, "doc-legacy", "room-1", 3).content)
+    expect(engine.normalizeStoredDocument(embedded, "doc-legacy", 3).content)
       .toMatchObject(embedded);
   });
 
@@ -59,10 +58,12 @@ describe("document core", () => {
         { type: "documentTitle", content: [{ type: "text", text: "污染标题" }] },
         { type: "paragraph", content: [{ type: "text", text: "片段正文" }] },
       ],
-    }, "doc-1", "room-1");
+    }, "doc-1");
 
     expect(fragment.content.content?.map((node) => node.type)).toEqual(["paragraph"]);
-    expect(fragment.blocks).toEqual([expect.objectContaining({ documentId: "doc-1", roomId: "room-1" })]);
+    expect(fragment.blocks).toEqual([
+      expect.objectContaining({ documentId: "doc-1", roomId: WORKSPACE_DOCUMENT_CHANNEL }),
+    ]);
   });
 
   it("routes stored content through schema migration and rejects newer schemas", () => {
@@ -70,7 +71,6 @@ describe("document core", () => {
     const migrated = engine.normalizeStoredDocument(
       { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "legacy" }] }] },
       "doc-legacy",
-      "room-1",
       1,
       4,
     );
@@ -80,7 +80,6 @@ describe("document core", () => {
     expect(() => engine.normalizeStoredDocument(
       { type: "doc", content: [] },
       "doc-future",
-      "room-1",
       999,
     )).toThrowError(expect.objectContaining({ code: "UNSUPPORTED_DOCUMENT_SCHEMA", statusCode: 409 }));
   });
@@ -577,7 +576,46 @@ describe("document core", () => {
     expect(result?.blocks).toHaveLength(1_001);
   });
 
-  it("registers committed versions in the document outbox but skips version-zero drafts", async () => {
+  it("creates workspace-level documents only (Phase 2i: no Room dimension)", async () => {
+    const { commits, repository } = await createCore();
+    const created = commits.create({
+      documentId: "doc-workspace",
+      roomId: null,
+      title: "工作区文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+
+    expect(created.roomId).toBeNull();
+    expect(repository.get("doc-workspace")?.roomId).toBeNull();
+    expect(repository.list().map((document) => document.id)).toEqual(["doc-workspace"]);
+  });
+
+  it("lists every document as workspace-level regardless of the roomId passed at create time", async () => {
+    const { commits, repository } = await createCore();
+    commits.create({
+      documentId: "doc-in-room",
+      roomId: "room-core",
+      title: "旧归属文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+    commits.create({
+      documentId: "doc-workspace-only",
+      roomId: null,
+      title: "工作区文稿",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "body" }] }] },
+      version: 1,
+    });
+
+    const workspaceWide = repository.list().map((document) => [document.id, document.roomId]);
+    expect(workspaceWide).toEqual([
+      ["doc-in-room", null],
+      ["doc-workspace-only", null],
+    ]);
+  });
+
+  it("commits versions without enqueueing understanding-engine outbox jobs", async () => {
     const { db, commits } = await createCore();
     commits.create({
       documentId: "doc-draft",
@@ -595,13 +633,12 @@ describe("document core", () => {
       version: 1,
     });
 
+    // Phase 2：文稿提交不再入队理解引擎/写作风格作业，版本链本身照常写入。
     const queued = db.select().from(jobs).all();
-    expect(queued).toHaveLength(1);
-    expect(queued[0]).toMatchObject({
-      type: "document.ingest",
-      status: "pending",
-      payload: expect.objectContaining({ documentId: "doc-committed", roomId: "room-core", version: 1 }),
-    });
+    expect(queued.filter((job) => job.type === "document.ingest")).toEqual([]);
+    expect(queued.filter((job) => job.type === "writing-style.extract")).toEqual([]);
+    // version-0 草稿不写版本行，只有已提交版本进版本链。
+    expect(db.select().from(documentVersions).all().map((row) => row.documentId)).toEqual(["doc-committed"]);
   });
 
   it("rolls back the document, version, projections, and outbox job together", async () => {

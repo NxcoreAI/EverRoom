@@ -1,0 +1,267 @@
+/* 旧桌面端全局样式的兼容层。
+ *
+ * everoffice 原型 UI 迁移删除了旧的 styles.css（3355 行全局样式），但登录 gate、
+ * 启动闪屏与设置页是从旧桌面端原样恢复的组件，它们依赖其中少量全局类名
+ * （.page / .page-header / .primary-button / .segmented-control / .spin ...）。
+ * 这里只保留这些组件真正用到的规则，避免把整套旧全局样式重新注入、影响新 UI。
+ *
+ * 规则作用域限定在三个旧视图根节点（:where() 零特异性，组件自身样式仍可覆盖）。
+ */
+
+/* ── 基础复位：旧全局样式依赖这些默认值，新原型外壳没有提供 ───────────── */
+
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) {
+  box-sizing: border-box;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  font-size: 13px;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+:where(.runtime-config-gate, .startup-splash, .op-settings-view),
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) * {
+  box-sizing: border-box;
+}
+
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) button {
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: 0;
+}
+
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) input,
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) textarea,
+:where(.runtime-config-gate, .startup-splash, .op-settings-view) select {
+  color: inherit;
+  font: inherit;
+  letter-spacing: 0;
+}
+
+/* ── 窗口拖拽区（gate 头部 / 设置页头部） ─────────────────────────────── */
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag,
+.no-drag * {
+  -webkit-app-region: no-drag;
+}
+
+/* ── 页面骨架（PageHeader / SettingsPage 使用） ───────────────────────── */
+
+.page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 28px 32px 48px;
+}
+
+.page-header {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  min-height: 52px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.page-header h1 {
+  margin: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-xl);
+  font-weight: 620;
+  letter-spacing: -0.02em;
+  line-height: var(--ui-leading-tight);
+}
+
+/* ── 按钮（设置页各 section 使用；.settings-page 内另有更高优先级的覆盖） ── */
+
+.primary-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-accent-fill);
+  color: var(--ui-accent-contrast);
+  cursor: pointer;
+  font-size: var(--ui-text-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+
+.primary-button:hover {
+  background: var(--ui-accent-fill-hover);
+}
+
+.primary-button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+.primary-button:disabled,
+.icon-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.primary-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.secondary-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  cursor: pointer;
+  font-size: var(--ui-text-sm);
+  font-weight: 550;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    border-color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+
+.secondary-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.secondary-button:hover {
+  border-color: var(--ui-border-strong);
+  background: var(--ui-hover);
+}
+
+.secondary-button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: 2px;
+}
+
+.secondary-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* ── 分段控件（设置页语言切换等） ─────────────────────────────────────── */
+
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-alt);
+}
+
+.segmented-control button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text-2);
+  cursor: pointer;
+  font-size: var(--ui-text-sm);
+  font-weight: 500;
+  transition:
+    background-color var(--ui-duration-fast) var(--ui-ease),
+    color var(--ui-duration-fast) var(--ui-ease),
+    box-shadow var(--ui-duration-fast) var(--ui-ease);
+}
+
+.segmented-control button:hover {
+  color: var(--ui-text);
+}
+
+.segmented-control button[data-active='true'] {
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-sm);
+  color: var(--ui-text);
+  font-weight: 600;
+}
+
+.segmented-control button:focus-visible {
+  outline: 2px solid var(--ui-accent-line);
+  outline-offset: -1px;
+}
+
+/* ── 品牌标（登录 gate 头部 / 启动闪屏） ─────────────────────────────── */
+
+.product-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.product-brand-logo {
+  display: block;
+  object-fit: contain;
+}
+
+.product-brand-logo-full {
+  width: 132px;
+  height: auto;
+  flex: 0 0 132px;
+}
+
+.product-brand-logo-icon {
+  display: none;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border-radius: 5px;
+}
+
+/* ── 加载指示器（旧组件统一用 .spin / .is-spinning） ──────────────────── */
+
+.spin {
+  animation: legacy-ui-spin 900ms linear infinite;
+}
+
+.is-spinning {
+  animation: legacy-ui-spin 900ms linear infinite;
+}
+
+@keyframes legacy-ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .is-spinning {
+    animation: none;
+  }
+}

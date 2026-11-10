@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 
 interface UpdateStatus {
   version: string
   channel: 'stable' | 'nightly'
   installId: string
   supported: boolean
+  lastError: string | null
 }
 type CheckResult = 'update-found' | 'no-update' | 'busy' | 'error'
 
@@ -21,14 +22,26 @@ export function UpdateSection() {
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<CheckResult | null>(null)
-  const [copied, setCopied] = useState(false)
+  const [progress, setProgress] = useState<{ percent: number; bytesPerSecond: number } | null>(null)
+  const [downloaded, setDownloaded] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<string | null>(null)
 
   useEffect(() => { void window.nxcore?.updater?.getStatus().then(setStatus).catch(() => setStatus(null)) }, [])
+  useEffect(() => {
+    const offProgress = window.nxcore?.updater?.onProgress(setProgress)
+    const offDownloaded = window.nxcore?.updater?.onDownloaded(info => { setDownloaded(info.version); setProgress(null) })
+    // 下载/校验/安装失败实时显示：此前错误被主进程吞掉，界面永远停在「正在下载」
+    const offError = window.nxcore?.updater?.onError(payload => { setUpdateError(payload.message); setProgress(null) })
+    return () => { offProgress?.(); offDownloaded?.(); offError?.() }
+  }, [])
 
   const check = async () => {
     if (checking) return
     setChecking(true)
     setResult('busy')
+    setProgress(null)
+    setDownloaded(null)
+    setUpdateError(null)
     try {
       // eslint-disable-next-line no-await-in-loop
       setResult(await (await window.nxcore?.updater?.checkNow()) ?? 'error')
@@ -39,12 +52,9 @@ export function UpdateSection() {
     }
   }
 
-  const copyInstallId = async () => {
-    if (!status) return
-    await navigator.clipboard.writeText(status.installId)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+  const progressText = progress
+    ? `正在下载 ${progress.percent.toFixed(0)}%（${(progress.bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s）`
+    : null
 
   return (
     <section id="settings-update" className="reality-settings-section settings-anchor-section" aria-labelledby="update-settings-title">
@@ -52,33 +62,28 @@ export function UpdateSection() {
         <span><RefreshCw aria-hidden="true" /></span>
         <div>
           <h2 id="update-settings-title">软件更新</h2>
-          <p>检查并安装 EverRoom 桌面端新版本</p>
         </div>
       </header>
       <div className="reality-setting-row">
         <div>
           <strong>当前版本 {status ? `v${status.version}` : '—'}</strong>
-          <small>
-            更新渠道 {status?.channel ?? '—'}
-            {status?.channel === 'nightly' ? '（每日构建，可能不稳定）' : ''}
-          </small>
-          {status?.installId && (
-            <small>
-              安装标识 {status.installId.slice(0, 13)}…
-              <button type="button" className="link-button" onClick={() => void copyInstallId()} aria-label="复制安装标识">
-                {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
-              </button>
-            </small>
-          )}
         </div>
         <button type="button" className="primary-button" onClick={() => void check()} disabled={checking || status?.supported === false}>
           <RefreshCw aria-hidden="true" className={checking ? 'spin' : undefined} />
           {checking ? '正在检查' : '检查更新'}
         </button>
       </div>
-      {result && (
+      {(progressText || downloaded || result) && (
         <div className="reality-setting-row">
-          <small>{status?.supported === false ? '开发模式不支持更新检查' : resultText[result]}</small>
+          <small>
+            {status?.supported === false
+              ? '开发模式不支持更新检查'
+              : updateError
+                ? `更新失败：${updateError}`
+                : downloaded
+                  ? `新版本 ${downloaded} 已下载完成，按弹窗提示重启生效`
+                  : progressText ?? resultText[result ?? 'error'] ?? status?.lastError ?? ''}
+          </small>
         </div>
       )}
     </section>

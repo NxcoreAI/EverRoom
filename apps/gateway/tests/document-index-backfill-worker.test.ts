@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import {
-  contextRooms,
-  documents as documentsTable,
-} from "../src/infrastructure/database/schema.js";
+import { documents as documentsTable } from "../src/infrastructure/database/schema.js";
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentService } from "../src/modules/documents/service.js";
 import { DocumentServiceError } from "../src/modules/documents/errors.js";
@@ -19,7 +16,7 @@ import {
 } from "../src/modules/documents/index-backfill/worker.js";
 import { DOCUMENT_INDEX_BACKFILL_JOB_TYPE, enqueueDocumentIndexBackfill } from "../src/modules/documents/index-backfill/jobs.js";
 import { jobs } from "../src/infrastructure/database/schema.js";
-import type { TiptapJsonContent } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL, type TiptapJsonContent } from "@nxcore/agent-contract";
 
 const SOURCE_PARAGRAPH = "PyTorch 是一种基于 Torch 的开源深度学习框架，由 Meta AI 维护，"
   + "支持动态计算图、自动求导机制与张量系统，采用 Python 优先的设计哲学，"
@@ -29,7 +26,6 @@ const REWRITTEN_PARAGRAPH = "该框架以动态图与自动微分见长（改写
   + "借助 autograd 完成梯度计算，张量运算与 Python 控制流无缝衔接，"
   + "这种 Define-by-Run 的设计让调试与模型迭代非常直观。";
 
-const MEMORY_CONTENT = "团队约定：深度学习相关文档统一使用 PyTorch 作为示例框架，示例代码必须可独立运行，禁止引用过时的 Torch 风格 API。";
 
 const temporaryDirectories: string[] = [];
 const closables: Array<() => void> = [];
@@ -58,8 +54,6 @@ function bodyWithMarks(paragraphs: string[], marks: Array<Record<string, unknown
 async function createHarness(options: {
   quietWindowMs?: number;
   rescanMs?: number;
-  listMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
-  listAllMemoryItems?: (roomId: string) => Array<{ id: string; content: string; type: string }>;
 } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), "nxcore-index-backfill-test-"));
   temporaryDirectories.push(dataDir);
@@ -67,11 +61,6 @@ async function createHarness(options: {
   closables.push(() => database.sqlite.close());
   const broker = new DocumentEventBroker();
   const documents = new DocumentService(database.db, broker);
-  database.db.insert(contextRooms).values({
-    id: "room-1",
-    title: "测试房间",
-    data: {},
-  }).run();
 
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   const worker = new DocumentIndexBackfillWorker(
@@ -85,8 +74,6 @@ async function createHarness(options: {
       pollIntervalMs: 60_000,
       retryBaseDelayMs: 0,
       ...(options.rescanMs === undefined ? {} : { rescanMs: options.rescanMs }),
-      ...(options.listMemoryItems ? { listMemoryItems: options.listMemoryItems } : {}),
-      ...(options.listAllMemoryItems ? { listAllMemoryItems: options.listAllMemoryItems } : {}),
     },
   );
   return { database, documents, worker, logger };
@@ -160,7 +147,8 @@ describe("document index backfill worker", () => {
     expect(marks).toHaveLength(1);
     expect(marks[0]).toMatchObject({
       kind: "document",
-      targetRoomId: "room-1",
+      // Phase 2i：文稿归属统一归一到工作区频道。
+      targetRoomId: WORKSPACE_DOCUMENT_CHANNEL,
       targetDocumentId: source.id,
       fallbackTitle: "文档 doc-source",
     });
@@ -279,7 +267,6 @@ describe("document index backfill worker", () => {
     // 读取触发重新入队：删除 running 行、插入同 id 的全新 pending 行。
     enqueueDocumentIndexBackfill(database.db, {
       documentId: target.id,
-      roomId: "room-1",
       version: documents.get(target.id)!.version,
     }, new Date());
 
@@ -326,7 +313,7 @@ describe("document index backfill worker", () => {
     let conflictsLeft = 1;
     const flaky: DocumentIndexBackfillDocuments = {
       get: (id) => documents.get(id),
-      list: (roomId) => documents.list(roomId),
+      list: () => documents.list(),
       listBlocks: (id) => documents.listBlocks(id),
       save: async (id, input) => {
         if (conflictsLeft > 0) {
@@ -348,78 +335,8 @@ describe("document index backfill worker", () => {
     expect(worker).toBeDefined();
   });
 
-  it("逐字复述记忆项的段落由确定性匹配挂记忆索引", async () => {
-    const { documents, worker, logger } = await createHarness({
-      listMemoryItems: (roomId) => roomId === "room-1"
-        ? [{ id: "room-1-memory-1", content: MEMORY_CONTENT, type: "事实" }]
-        : [],
-    });
-    // 无来源文档，仅记忆候选；目标段落整句复述记忆内容。
-    const target = await importDocument(documents, "doc-target", body([
-      `${MEMORY_CONTENT}本文所有示例遵循该约定。`,
-    ]));
 
-    await worker.drain();
-    const targetDocument = documents.get(target.id)!;
-    const marks = findMarkNodes(targetDocument.contentJson);
-    expect(marks).toHaveLength(1);
-    expect(marks[0]).toMatchObject({
-      kind: "memory",
-      targetRoomId: "room-1",
-      targetDocumentId: "",
-      targetBlockId: "",
-      targetMemoryId: "room-1-memory-1",
-      fallbackTitle: "事实",
-    });
-    expect(targetDocument.version).toBe(target.version + 1);
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ event: "document.index-backfill.applied", memoryMarks: 1 }),
-      expect.any(String),
-    );
-  });
 
-  it("记忆项未被逐字复述时由 LLM 兜底；白名单外的 mem: id 被丢弃", async () => {
-    const { database, documents } = await createHarness({
-      listMemoryItems: () => [{ id: "room-1-memory-1", content: MEMORY_CONTENT, type: "事实" }],
-    });
-    const target = await importDocument(documents, "doc-target", body([REWRITTEN_PARAGRAPH]));
-
-    // 判决落在白名单内的记忆 id → 挂记忆索引。
-    const judge = vi.fn(async () => [
-      { paragraphOrdinal: 0, sourceId: "mem:room-1-memory-1", confidence: 0.95 },
-      { paragraphOrdinal: 0, sourceId: "mem:forged-memory", confidence: 0.99 },
-    ]);
-    const llmLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-    const llmWorker = new DocumentIndexBackfillWorker(
-      database.db,
-      documents,
-      { available: true, judge } as unknown as IndexBackfillLlm,
-      llmLogger,
-      {
-        quietWindowMs: 0,
-        scanIntervalMs: 1_000,
-        pollIntervalMs: 60_000,
-        retryBaseDelayMs: 0,
-        listMemoryItems: () => [{ id: "room-1-memory-1", content: MEMORY_CONTENT, type: "事实" }],
-      },
-    );
-    await llmWorker.drain();
-    const marks = findMarkNodes(documents.get(target.id)!.contentJson);
-    expect(marks).toHaveLength(1);
-    expect(marks[0]).toMatchObject({ kind: "memory", targetMemoryId: "room-1-memory-1" });
-    // 判决输入里带上了记忆候选，llm 被调用且文档候选为空。
-    expect(judge).toHaveBeenCalledWith(expect.objectContaining({
-      documents: [],
-      memories: [expect.objectContaining({ memoryId: "room-1-memory-1" })],
-    }));
-  });
-
-  it("未注入 listMemoryItems 时保持纯文档行为", async () => {
-    const { documents, worker } = await createHarness();
-    const target = await importDocument(documents, "doc-target", body([MEMORY_CONTENT]));
-    await worker.drain();
-    expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(0);
-  });
 
   it("目标文档进废纸篓后标记被摘除；恢复后由补挂阶段自动补回", async () => {
     const { database, documents, worker } = await createHarness({ rescanMs: 0 });
@@ -468,51 +385,7 @@ describe("document index backfill worker", () => {
     expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(0);
   });
 
-  it("记忆项被删除后记忆索引被摘除", async () => {
-    const items = [{ id: "room-1-memory-1", content: MEMORY_CONTENT, type: "事实" }];
-    const { documents, worker } = await createHarness({ rescanMs: 0, listMemoryItems: () => items });
-    const target = await importDocument(documents, "doc-target", body([
-      `${MEMORY_CONTENT}本文所有示例遵循该约定。`,
-    ]));
-    await worker.drain();
-    expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(1);
 
-    items.length = 0;
-    await wait(1_100);
-    await worker.drain();
-    expect(findMarkNodes(documents.get(target.id)!.contentJson)).toHaveLength(0);
-  });
-
-  it("快照条目（禁用 shadow/legacy id）经 listAllMemoryItems 并集保住已挂标记，且不产生新标记", async () => {
-    const snapshotItems = [{ id: "room-1-memory-9", content: MEMORY_CONTENT, type: "事实" }];
-    const { documents, worker } = await createHarness({
-      rescanMs: 0,
-      // 归属清单为空（条目已禁用解绑/legacy），存在性走快照并集。
-      listMemoryItems: () => [],
-      listAllMemoryItems: () => snapshotItems,
-    });
-    const marked = await importDocument(documents, "doc-marked", bodyWithMarks(
-      [`${MEMORY_CONTENT}已挂标的复述段落。`],
-      [{
-        kind: "memory",
-        targetRoomId: "room-1",
-        targetDocumentId: "",
-        targetBlockId: "",
-        targetMemoryId: "room-1-memory-9",
-        fallbackTitle: "事实",
-        fallbackPreview: MEMORY_CONTENT.slice(0, 50),
-      }],
-    ));
-    const quotable = await importDocument(documents, "doc-quotable", body([
-      `${MEMORY_CONTENT}未挂标的复述段落。`,
-    ]));
-    await worker.drain();
-
-    // 复检存在性命中最照条目 → 已挂标记不摘。
-    expect(findMarkNodes(documents.get(marked.id)!.contentJson)).toHaveLength(1);
-    // 候选生成只用归属清单（空）→ 不为快照条目补挂新标记。
-    expect(findMarkNodes(documents.get(quotable.id)!.contentJson)).toHaveLength(0);
-  });
 
   it("段落漂移经 LLM 复验确认失联后摘除；复验入参携带当前来源文本", async () => {
     const { database, documents } = await createHarness({ rescanMs: 0 });

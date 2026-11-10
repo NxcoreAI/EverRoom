@@ -10,7 +10,7 @@ import {
 } from "../server/runtime-manifest.js";
 
 loadEnvironment();
-process.title = "EverRoom Cursor Completion";
+process.title = "EverOffice Cursor Completion";
 const config = loadConfig();
 const app = await createCursorCompletionServer(config);
 

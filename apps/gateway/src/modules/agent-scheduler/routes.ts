@@ -44,7 +44,6 @@ export function agentSchedulerRoutes(service: AgentSchedulerService): FastifyPlu
         try { return service.update(request.params.id, request.body); }
         catch (error) {
           if (error instanceof Error && error.message === "agent_schedule_not_found") return reply.code(404).send({ error: "not_found" });
-          if (error instanceof Error && error.message === "agent_schedule_builtin") return reply.code(409).send({ error: "builtin_schedule" });
           if (error instanceof Error && error.message === "agent_schedule_conflict") return reply.code(409).send({ error: "config_conflict" });
           throw error;
         }
@@ -54,7 +53,6 @@ export function agentSchedulerRoutes(service: AgentSchedulerService): FastifyPlu
       try { service.remove(request.params.id); return reply.code(204).send(); }
       catch (error) {
         if (error instanceof Error && error.message === "agent_schedule_not_found") return reply.code(404).send({ error: "not_found" });
-        if (error instanceof Error && error.message === "agent_schedule_builtin") return reply.code(409).send({ error: "builtin_schedule" });
         throw error;
       }
     });

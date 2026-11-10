@@ -4,6 +4,7 @@ import { app, ipcMain } from 'electron'
 import type { BrowserWindow, Rectangle, WebContentsView } from 'electron'
 import type { GenOfficePdfRuntime } from './office-runtime'
 import { OFFICE_WORKSPACE_BOUNDS_CHANNEL } from './office-view-manager'
+import { OfficeViewFirstFrameGate } from './office-view-first-frame'
 
 async function preparePdf(fileId: string, hash: string, name: string, storagePath: string): Promise<string> {
   if (!/^file-[a-z0-9-]+$/i.test(fileId) || !/^[a-f0-9]{64}$/i.test(hash)) throw new Error('PDF identity is invalid.')
@@ -25,32 +26,47 @@ export class PdfViewManager {
   private disposed = false
   private active = false
   private bounds: Rectangle | null = null
+  private readonly gate: OfficeViewFirstFrameGate
   private constructor(
     private readonly window: BrowserWindow,
+    private readonly pdf: GenOfficePdfRuntime,
     private readonly view: WebContentsView,
-  ) {}
+    private readonly editable: boolean,
+    /** 工作副本路径：编辑回填（editStates.filePath）按它读盘。 */
+    readonly documentPath: string,
+  ) {
+    this.gate = new OfficeViewFirstFrameGate(view, window)
+  }
 
   static async create(
     window: BrowserWindow,
     pdf: GenOfficePdfRuntime,
     file: { id: string; contentHash: string; originalName: string; storagePath: string },
+    options?: { editable?: boolean },
   ): Promise<PdfViewManager> {
     const path = await preparePdf(file.id, file.contentHash, file.originalName, file.storagePath)
+    const editable = options?.editable === true
     // createPdfView queues the path for the renderer's mount-time
-    // consumePending and loads it with readonly=1 (host-readonly preview).
-    const view = pdf.createPdfView(path, { readonly: true })
+    // consumePending and loads it with readonly=1 for host-readonly preview.
+    // Editable opens (选区标注工具卡) keep the full markup surface on.
+    const view = pdf.createPdfView(path, { readonly: !editable })
     view.setVisible(false)
     window.contentView.addChildView(view)
-    const manager = new PdfViewManager(window, view)
+    const manager = new PdfViewManager(window, pdf, view, editable, path)
     ipcMain.on(OFFICE_WORKSPACE_BOUNDS_CHANNEL, manager.handleBounds)
     return manager
+  }
+
+  /** pdf webContents id：wcId 反查（「注释」转发、批注锚点投递）按它键控。 */
+  get webContentsId(): number {
+    return this.view.webContents.id
   }
 
   setActive(active: boolean): void {
     if (this.disposed) return
     this.active = active
-    if (active && this.bounds) this.view.setBounds(this.bounds)
-    this.view.setVisible(active && Boolean(this.bounds?.width && this.bounds.height))
+    // 首次出帧闸门：空视图直接显示会让宿主占位界面透出来。
+    this.gate.setActive(active)
   }
 
   private readonly handleBounds = (event: Electron.IpcMainEvent, input: unknown): void => {
@@ -67,14 +83,20 @@ export class PdfViewManager {
       height: Math.max(0, Math.min(Math.round(value.height!), content.height - y)),
     }
     this.bounds = bounds
-    this.view.setBounds(bounds)
-    this.view.setVisible(this.active && bounds.width > 0 && bounds.height > 0)
+    this.gate.setBounds(bounds)
   }
 
-  readonly dispose = (): void => {
-    if (this.disposed) return
+  readonly dispose = async (): Promise<boolean> => {
+    if (this.disposed) return true
+    // 脏关闭守卫与其他三类视图一致：编辑打开的 PDF 有未保存标注时先问再关。
+    if (this.editable && !this.view.webContents.isDestroyed() && !this.window.isDestroyed()) {
+      const proceed = await this.pdf.requestPdfClose(this.view.webContents, this.window)
+      if (!proceed) return false
+    }
     this.disposed = true
+    this.gate.dispose()
     ipcMain.removeListener(OFFICE_WORKSPACE_BOUNDS_CHANNEL, this.handleBounds)
     if (!this.view.webContents.isDestroyed()) this.view.webContents.close({ waitForBeforeUnload: false })
+    return true
   }
 }

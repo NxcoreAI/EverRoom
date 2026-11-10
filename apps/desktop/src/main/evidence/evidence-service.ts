@@ -18,6 +18,8 @@ interface PendingJobRow {
   object_hash: string
   extension: string
   data_source_id: string
+  source_kind: string
+  relative_path: string
 }
 
 interface EvidenceDocumentRow {
@@ -83,6 +85,7 @@ export class EvidenceService {
   constructor(
     private readonly database: DatabaseSync,
     private readonly objectPath: (hash: string) => string,
+    private readonly resolveLocalPath: (dataSourceId: string, relativePath: string) => string,
     private readonly onUpdated: (dataSourceId: string) => void,
   ) {}
 
@@ -156,6 +159,12 @@ export class EvidenceService {
       UPDATE evidence_parse_jobs
       SET status = 'pending', error_message = '应用在解析完成前退出', started_at = NULL
       WHERE status = 'running'
+    `).run()
+    // 失败任务在重启后重试，让修复过的解析路径可以救回历史失败记录。
+    this.database.prepare(`
+      UPDATE evidence_parse_jobs
+      SET status = 'pending', error_message = NULL, started_at = NULL
+      WHERE status = 'failed' AND attempt_count < 5
     `).run()
     this.database.prepare(`
       INSERT OR IGNORE INTO evidence_parse_jobs (
@@ -327,10 +336,12 @@ export class EvidenceService {
     while (!this.stopping) {
       const job = this.database.prepare(`
         SELECT evidence_parse_jobs.source_version_id, source_versions.object_hash,
-          source_items.extension, source_items.data_source_id
+          source_items.extension, source_items.data_source_id,
+          data_sources.kind AS source_kind, source_items.relative_path
         FROM evidence_parse_jobs
         JOIN source_versions ON source_versions.id = evidence_parse_jobs.source_version_id
         JOIN source_items ON source_items.id = source_versions.source_item_id
+        JOIN data_sources ON data_sources.id = source_items.data_source_id
         WHERE evidence_parse_jobs.status = 'pending'
         ORDER BY evidence_parse_jobs.queued_at
         LIMIT 1
@@ -349,7 +360,11 @@ export class EvidenceService {
     `).run(new Date().toISOString(), job.source_version_id)
 
     try {
-      const buffer = await readFile(this.objectPath(job.object_hash))
+      // 本地文件夹来源不落对象库，直接读原文件；连接器来源读扫描时存的对象。
+      const contentPath = job.source_kind === 'local-folder'
+        ? this.resolveLocalPath(job.data_source_id, job.relative_path)
+        : this.objectPath(job.object_hash)
+      const buffer = await readFile(contentPath)
       const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^\uFEFF/, '')
       const blocks = MARKDOWN_EXTENSIONS.has(job.extension.toLowerCase())
         ? parseMarkdown(text)
@@ -362,7 +377,11 @@ export class EvidenceService {
       `).run(new Date().toISOString(), job.source_version_id)
       this.onUpdated(job.data_source_id)
     } catch (error) {
-      const message = error instanceof Error ? error.message : '文档解析失败'
+      const isMissingFile = typeof error === 'object' && error !== null && 'code' in error &&
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+      const message = isMissingFile
+        ? '源文件已不存在，请恢复文件后重新扫描数据源。'
+        : error instanceof Error ? error.message : '文档解析失败'
       this.database.prepare(`
         UPDATE evidence_parse_jobs
         SET status = 'failed', error_message = ?, parsed_at = ?

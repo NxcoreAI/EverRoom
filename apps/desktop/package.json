@@ -1,37 +1,44 @@
 {
   "name": "@nxcore/desktop",
-  "version": "0.1.7",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
+    "dev": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && node scripts/prepare-genoffice-runtime.mjs && node scripts/dev.mjs",
     "build": "node scripts/prepare-genoffice-runtime.mjs && electron-vite build",
+    "prepare:electron": "node scripts/prepare-electron.mjs",
     "prepare:genoffice": "node scripts/prepare-genoffice-runtime.mjs",
     "prepare:lark-cli": "node scripts/prepare-lark-cli.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "package:mac": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
-    "package:win": "node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
-    "prepare:ntn": "node scripts/prepare-ntn.mjs"
+    "package:mac": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && electron-builder --mac dmg zip --arm64",
+    "package:win": "node scripts/prepare-electron.mjs && node scripts/prepare-open-connector.mjs && node scripts/prepare-oo-cli.mjs && node scripts/prepare-lark-cli.mjs && node scripts/prepare-ntn.mjs && node scripts/prepare-acp-adapters.mjs && pnpm run build && node scripts/generate-packaged-env.mjs && electron-builder --win nsis --x64 --publish never --config.npmRebuild=false",
+    "prepare:ntn": "node scripts/prepare-ntn.mjs",
+    "prepare:acp-adapters": "node scripts/prepare-acp-adapters.mjs"
   },
   "dependencies": {
-    "@codemirror/commands": "^6.11.0",
+    "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.9",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
     "@nxcore/agent-contract": "workspace:*",
     "@nxcore/connector-contract": "workspace:*",
     "@nxcore/connectors-module": "workspace:*",
     "@nxcore/document-model": "workspace:*",
+    "@nxcore/migration-kit": "workspace:*",
     "@nxcore/reality-contract": "workspace:*",
+    "@radix-ui/react-avatar": "^1.3.1",
+    "@radix-ui/react-collapsible": "^1.2.1",
     "@radix-ui/react-context-menu": "^2.3.7",
     "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@radix-ui/react-popover": "^1.1.23",
+    "@radix-ui/react-scroll-area": "^1.4.0",
+    "@radix-ui/react-separator": "^1.2.0",
+    "@radix-ui/react-tabs": "^1.2.1",
+    "@radix-ui/react-tooltip": "^1.4.1",
     "@sentry/electron": "^7.16.0",
-    "@tencentdb-agent-memory/knowledge-service": "https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#91c967a&path:MemoryKnowledge",
-    "@tencentdb-agent-memory/memory-tencentdb-v2": "https://github.com/NxcoreAI/TencentDB-Agent-Memory.git#f65f83e&path:MemoryCore",
     "@tiptap/extension-document": "^3.30.1",
     "@tiptap/extension-drag-handle-react": "^3.30.1",
     "@tiptap/extension-image": "^3.30.1",
@@ -45,38 +52,41 @@
     "@tiptap/pm": "^3.30.1",
     "@tiptap/react": "^3.30.1",
     "@tiptap/starter-kit": "^3.30.1",
+    "@types/qrcode": "^1.5.6",
     "axios": "^1.19.0",
     "better-sqlite3": "^13.0.3",
-    "d3-force": "^3.0.0",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "docx": "^9.7.1",
-    "echarts": "^6.0.0",
     "electron-updater": "^6.8.9",
-    "gsap": "3.15.0",
     "i18next": "^26.3.6",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
-    "mermaid": "^11.12.0",
+    "npm": "^11.19.1",
     "ntn": "0.23.1",
-    "pixi-viewport": "5.0.2",
-    "pixi.js": "7.4.3",
-    "prosemirror-changeset": "^2.4.1",
+    "pptxgenjs": "^4.0.1",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^17.0.11",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^2.1.9",
     "remark-gfm": "^4.0.1",
     "tar-stream": "^3.2.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "zustand": "^5.0.16"
+  },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.28.1",
+    "@esbuild/win32-x64": "0.28.1"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
     "@larksuite/cli": "1.0.93",
     "@oomol-lab/oo-cli": "1.7.5",
-    "@oomol-lab/open-connector": "git+https://code.vyitec.com/nexcore/everroom-openconnector.git#bd4213af4c96af24f1f6fa4a66765cb425a8291f",
+    "@oomol-lab/open-connector": "git+https://github.com/NxcoreAI/open-connector.git#806663488c6e8df92755d473cd866a1d80f2222f",
     "@sentry/vite-plugin": "5.4.0",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/d3-force": "^3.0.10",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
@@ -93,11 +103,11 @@
     "vitest": "^4.1.10"
   },
   "build": {
-    "appId": "ai.nxcore.everroom",
-    "productName": "EverRoom",
+    "appId": "ai.nxcore.everoffice",
+    "productName": "EverOffice",
     "protocols": [
       {
-        "name": "EverRoom sign-in callback",
+        "name": "EverOffice sign-in callback",
         "schemes": [
           "everroom"
         ]
@@ -105,10 +115,7 @@
     ],
     "asar": true,
     "asarUnpack": [
-      "node_modules/@esbuild/**/*",
-      "node_modules/sqlite-vec-darwin-arm64/**/*",
-      "node_modules/sqlite-vec-darwin-x64/**/*",
-      "node_modules/sqlite-vec-windows-x64/**/*"
+      "node_modules/@esbuild/**/*"
     ],
     "directories": {
       "output": "../../release"
@@ -120,13 +127,24 @@
       "!**/{test,spec}.*",
       "!**/*.{test,spec}.*",
       "!**/*.{map,ts,tsx,mts,cts}",
-      "node_modules/@tencentdb-agent-memory/memory-tencentdb-v2/src/**/*",
-      "node_modules/@tencentdb-agent-memory/knowledge-service/src/**/*"
+      "!node_modules/npm/**"
     ],
     "extraResources": [
       {
         "from": "build/packaged-env.json",
         "to": "packaged-env.json"
+      },
+      {
+        "from": "node_modules/npm",
+        "to": "npm",
+        "filter": [
+          "**/*",
+          "!**/*.md",
+          "!docs/**",
+          "!man/**",
+          "!node_modules/.bin/**",
+          "!lib/commands/test.js"
+        ]
       },
       {
         "from": "../gateway/dist",
@@ -144,6 +162,14 @@
       {
         "from": "../gateway/dist/node_modules/@napi-rs",
         "to": "gateway/node_modules/@napi-rs",
+        "filter": [
+          "**/*",
+          "!**/*.d.ts"
+        ]
+      },
+      {
+        "from": "../gateway/dist/node_modules/@node-rs",
+        "to": "gateway/node_modules/@node-rs",
         "filter": [
           "**/*",
           "!**/*.d.ts"
@@ -194,6 +220,20 @@
           "!**/{test,spec}.*",
           "!**/*.{map,ts,tsx,mts,cts}"
         ]
+      },
+      {
+        "from": "build/acp-adapters",
+        "to": "acp-adapters",
+        "filter": [
+          "**/*",
+          "!**/*.md",
+          "!**/package-lock.json",
+          "!**/.env*",
+          "!**/{test,tests,__tests__}/**",
+          "!**/{test,spec}.*",
+          "!**/*.{map,ts,tsx,mts,cts}",
+          "!**/*.{test,spec}.*"
+        ]
       }
     ],
     "mac": {
@@ -208,10 +248,63 @@
       "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "EverRoom needs microphone access to record and transcribe your voice.",
-        "NSAudioCaptureUsageDescription": "EverRoom needs system audio access to record and transcribe audio playing on this Mac.",
-        "NSDocumentsFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app.",
-        "NSDesktopFolderUsageDescription": "EverRoom needs access to selected folders to recognize supported documents in the file app."
+        "NSMicrophoneUsageDescription": "EverOffice needs microphone access to record and transcribe your voice.",
+        "NSAudioCaptureUsageDescription": "EverOffice needs system audio access to record and transcribe audio playing on this Mac.",
+        "NSDocumentsFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
+        "NSDesktopFolderUsageDescription": "EverOffice needs access to selected folders to recognize supported documents in the file app.",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Word Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "docx",
+              "doc"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.wordprocessingml.document",
+              "com.microsoft.word.doc"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Excel Workbook",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "xlsx",
+              "xls"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.spreadsheetml.sheet",
+              "com.microsoft.excel.xls"
+            ]
+          },
+          {
+            "CFBundleTypeName": "PowerPoint Presentation",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "pptx",
+              "ppt"
+            ],
+            "LSItemContentTypes": [
+              "org.openxmlformats.presentationml.presentation",
+              "com.microsoft.powerpoint.ppt"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "markdown",
+              "md"
+            ],
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown"
+            ]
+          }
+        ]
       },
       "target": [
         "dmg",
@@ -226,20 +319,6 @@
             "package.json",
             "LICENSE",
             "prebuilds/darwin-arm64.node"
-          ]
-        },
-        {
-          "from": "build/ntn",
-          "to": "ntn",
-          "filter": [
-            "**/*"
-          ]
-        },
-        {
-          "from": "build/lark-cli",
-          "to": "lark-cli",
-          "filter": [
-            "**/*"
           ]
         }
       ]
@@ -265,15 +344,56 @@
             "LICENSE",
             "prebuilds/win32-x64.node"
           ]
+        }
+      ],
+      "fileAssociations": [
+        {
+          "ext": [
+            "docx",
+            "doc"
+          ],
+          "name": "Word Document",
+          "role": "Editor",
+          "rank": "Alternate"
         },
         {
-          "from": "build/lark-cli",
-          "to": "lark-cli",
-          "filter": [
-            "**/*"
-          ]
+          "ext": [
+            "xlsx",
+            "xls",
+            "xlsm"
+          ],
+          "name": "Excel Workbook",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "pptx",
+            "ppt"
+          ],
+          "name": "PowerPoint Presentation",
+          "role": "Editor",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "md",
+            "markdown"
+          ],
+          "name": "Markdown Document",
+          "role": "Editor",
+          "rank": "Alternate"
         }
       ]
-    }
+    },
+    "nsis": {
+      "include": "build/installer.nsh"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://everroom-hu.oss-cn-beijing.aliyuncs.com/stable/"
+      }
+    ]
   }
 }

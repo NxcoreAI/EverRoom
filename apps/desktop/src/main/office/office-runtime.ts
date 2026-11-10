@@ -5,6 +5,44 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { BrowserWindow, WebContents, WebContentsView } from 'electron'
 
+import type { OfficeAskQueueAction } from '../../shared/office'
+
+export interface GenOfficeAgentToolCall {
+  id: string
+  name: string
+  input: Record<string, unknown>
+}
+
+export interface GenOfficeAgentToolResult {
+  id: string
+  name: string
+  output: string
+  isError?: boolean
+  mutated?: boolean
+  summary?: string
+}
+
+export interface GenOfficeAgentDocDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }
+  /** 当前文字水印；null = 无 */
+  watermark?: string | null
+  /** 当前页面设置（orientation/paper/margins/columns/pageColor/sectionCount） */
+  pageSetup?: Record<string, unknown>
+  commandsGuide?: string
+  htmlRules?: string
+  /** 结构化操作词汇（apply_operations / word_agent_ops）：按域分组的 op 指南。 */
+  operationsGuide?: string
+  /** 文档现场状态：分节/页眉页脚/脚注尾注/书签/来源/保护/域/表格/修订/批注。 */
+  documentState?: Record<string, unknown>
+}
+
+export interface GenOfficeAgentWorkbookDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }[]
+  guides?: Record<string, string>
+}
+
 export interface GenOfficeDocsRuntime {
   configureDocsRuntime(config: {
     preloadPath: string
@@ -13,38 +51,535 @@ export interface GenOfficeDocsRuntime {
   }): void
   createDocsView(
     openPath?: string,
-    options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
+    options?: {
+      hostMode?: 'tab' | 'everroom'
+      readonly?: boolean
+    },
   ): WebContentsView
+  markDocsNewBlank(wcId: number): void
+  queueDocsAiContent(wcId: number, content: { title: string; html: string }): void
   registerDocsIpc(): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestDocsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  docsQueryDirty(contents: WebContents): Promise<boolean>
+  /**
+   * 文档就绪信号：渲染层在 doc/editor 装载完成后上报 filePath；true = 目标
+   * 工作副本已在编辑器里打开（身份一致），false = 超时/视图销毁/身份不符。
+   * 后台 Agent 会话必须等它才能安全 describe/apply（避免写进空白文档）。
+   */
+  waitForAgentReady(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 应用菜单接管闸门：仅当可见 docs 实例活跃时才允许 docs 菜单覆盖应用菜单。 */
+  setDocsMenuGate(gate: (() => boolean) | null): void
+  /**
+   * 干净画布（EverOffice）：隐藏/显示编辑器操作区（Ribbon/状态栏/标尺/导航）。
+   * hidden 省略 = 切换；渲染层自带恢复胶囊与 ⌘⇧F，隐藏后始终可恢复。
+   */
+  setDocsChromeHidden(contents: WebContents, hidden?: boolean): void
+  /** 批注队列快照下发到某个 docs 视图（空数组 = 清空文档内锚点）。 */
+  pushDocsAskQueue(wcId: number, items: Array<{
+    id: string
+    instruction: string
+    excerpt?: string
+    fromBlockIndex: number
+    toBlockIndex: number
+    kind: string
+  }>): void
+  /**
+   * 文档内批注面板的动作（全部发送 / 移除 / 改写一条）→ 宿主。
+   * update 分支由 docs 侧补充；宿主只透传（跨进程形状见 shared/office.ts）。
+   */
+  setDocsAskQueueActionHook(
+    hook:
+      | ((wcId: number, action: OfficeAskQueueAction) => void)
+      | null,
+  ): void
+  /**
+   * 选区「AI 修改」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引区间 + 类型 + 文本摘要），不带任何 id。
+   */
+  setDocsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            fromBlockIndex: number
+            toBlockIndex: number
+            kind: 'text' | 'image' | 'chart' | 'table'
+            excerpt?: string
+            blockType?: string
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
   setActiveDocsResolver(resolve: (() => WebContents | null) | null): void
+  setDocsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /**
+   * AI 页签论文排版面板：embed 宿主接管（wcId 反查文件；payload 不带 id）。
+   * Room 已删除：本仓库不再返回 no_room，联合类型保留兼容旧契约。
+   */
+  setDocsThesisPanelHook(
+    hook:
+      | ((
+          wcId: number,
+          action:
+            | { kind: 'list' }
+            | { kind: 'pick'; overwrite?: boolean }
+            | { kind: 'remove'; cardId: string }
+            /** 彻底删除模版（文件 + 格式卡）。 */
+            | { kind: 'delete-template'; cardId: string; keepCard?: boolean }
+            | { kind: 'reformat'; cardId?: string }
+            | {
+                kind: 'reformat-job'
+                cardId?: string
+                options?: {
+                  keepLogo?: boolean
+                  keepHeaderFooter?: boolean
+                  headingMapping?: { chapter?: number; section?: number; subsection?: number }
+                  aiFill?: boolean
+                }
+              }
+            | { kind: 'reformat-job-status'; jobId: string }
+            | { kind: 'preview-template'; cardId: string }
+        ) => Promise<
+          { ok: true; value: unknown } | { ok: false; reason: 'no_room' | 'error'; message?: string }
+        >)
+      | null,
+  ): void
   setDocsShellWindow(window: BrowserWindow | null): void
   teardownDocsRenderer(contents: WebContents): void
+  /** Agent 读取活文档：块列表上下文 + 工具词汇表 + 命令/HTML 指南（无会话返回 error）。 */
+  describeAgentDoc(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentDocDescription | { error: string }>
+  /** Agent 编辑活文档：渲染层执行 docs AI 工具调用，变更后静默保存（fileSaved hook 回填版本链）。 */
+  applyAgentDocTools(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 进程内 PDF 导出（genoffice embed 后加导出）：把该视图打开的 docx 按
+   * 渲染层完整导出编排（分页预览 → 分组 printToPDF → 合并）写成 PDF，
+   * 无对话框、无外部依赖。老运行时缺此导出时返回 undefined，调用方回退
+   * LibreOffice。宿主只授权一次写入目标路径。
+   */
+  exportDocsPdf?(
+    contents: WebContents,
+    outPath: string,
+  ): Promise<{ path: string } | { error: string }>
+  /** 论文装订：源 docx + 格式卡 + 装订规格 → 装订版 docx 字节（主进程纯函数）。 */
+  buildThesisDocx(
+    sourceBytes: Uint8Array,
+    formatCard: ThesisFormatCardPayload,
+    bindingSpec: ThesisBindingSpecPayload,
+  ): Promise<Uint8Array>
+  /**
+   * 论文装订（v3 模板骨架版）：以模版 docx 为底，只替换内容槽位。
+   * 封面/核心信息区/表格/教师评价表/目录按模版原位置原样保留。
+   *
+   * 签名必须与引擎一致：**一个对象**（`{ templateBytes, sourceBytes, card, spec }`）。
+   * 曾经这里写成 4 个位置参数，`requireRuntime(...) as GenOfficeDocsRuntime` 又拦不住，
+   * 引擎拿到的是个裸 Uint8Array、第一行就抛错 → 每次排版静默回落 v2，
+   * 「表格跑位」反复查不出原因就是这个签名漂移。
+   */
+  buildThesisDocxOnTemplate(input: {
+    templateBytes: Uint8Array
+    sourceBytes: Uint8Array
+    card: ThesisFormatCardPayload
+    spec: ThesisBindingSpecPayload
+  }): Promise<{ bytes: Uint8Array; diagnostics: ThesisTemplateDiagnostics }>
+  /** 源论文 docx → 块大纲（装订映射的区间事实源，索引与 buildThesisDocx 对齐）。 */
+  describeThesisBlocks(bytes: Uint8Array): Promise<ThesisOutlineBlock[]>
+}
+
+/**
+ * 模板骨架装订诊断：面板据此告诉用户「这次是按模板排的」还是「正文只能堆到文末」。
+ * slots=0 表示模板章节骨架没解析出来（模版用普通段落排标题、且卡片是旧版本解析的）。
+ */
+export interface ThesisTemplateDiagnostics {
+  slots: number
+  blocks: number
+  anchors: number
+  bodyStart: number
+  chapters: number
+  appendedOnly: boolean
+  /** true = 模版正文认出的章节锚点太少（如「只有目录」的模版），骨架排版降级为内容重建。 */
+  templateFirstDowngraded?: boolean
+}
+
+export interface ThesisOutlineBlock {
+  index: number
+  kind: 'heading' | 'paragraph' | 'table' | 'image' | 'list'
+  level?: number
+  text: string
+}
+
+/** 装订引擎侧格式卡载荷（与 genoffice docx-engine ThesisFormatCardInput 同构）。 */
+export interface ThesisFormatCardPayload {
+  /** v2 模板编号方案（cn-upper/decimal-tree/…）；缺省走 headings[].numbering 老语义。 */
+  numbering?: { scheme: string; levels?: Array<{ level: number; numFmt?: string; lvlText?: string; start?: number }> }
+  page: Record<string, number | string>
+  base: Record<string, unknown>
+  header: Record<string, unknown> & { images?: Array<Record<string, unknown>> }
+  footer: Record<string, unknown>
+  headings: Array<Record<string, unknown>>
+  abstract: Record<string, unknown>
+  toc: Record<string, unknown>
+  references: Record<string, unknown>
+  cover: Record<string, unknown>
+  fixedTexts: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface ThesisBindingSpecPayload {
+  title: string
+  coverFields: Record<string, string>
+  abstractZh: string
+  keywordsZh: string[]
+  abstractEn: string
+  keywordsEn: string[]
+  chapters: Array<{
+    level: number
+    headingText: string
+    blockStart: number
+    blockEnd: number
+    /** v3 模板骨架装订：该章节要落回的模版槽位 id（缺省时按槽位顺序对齐）。 */
+    slotId?: string
+  }>
+  references: string[]
+  appendixBlocks: { start: number; end: number } | null
+  acknowledgementParagraphs: string[]
+  achievements: string[]
+  /** v2 未归类内容区间：渲染为正文末尾独立小节并高亮标记（不丢内容）。 */
+  unmatchedBlocks?: Array<{ start: number; end: number; label?: string }>
 }
 export interface GenOfficeSheetsRuntime {
   configureSheetsRuntime(config: { preloadPath: string; rendererFile: string; sidecarPath: string }): void
-  createSheetsView(options?: { includeAiHandlers?: boolean; readonly?: boolean }): WebContentsView
+  /**
+   * tab 模式建视图。claimActive=false 时不得改写全局 active 指针（后台 Agent
+   * 隐藏会话不是用户的页签）；includeAiHandlers=false 关掉自带的 AI 聊天面板 IPC。
+   */
+  createSheetsView(options?: {
+    includeAiHandlers?: boolean
+    readonly?: boolean
+    claimActive?: boolean
+  }): WebContentsView
   queueWorkbookForView(contents: WebContents, path: string): void
   registerSheetsIpc(): void
+  /**
+   * 工作簿就绪信号：渲染层在目标工作副本装载完成后上报 filePath；true = 目标
+   * 工作副本已在编辑器里打开（身份一致），false = 超时/视图销毁/身份不符。
+   * 后台 Agent 会话必须等它才能安全 describe/apply（避免读写成空白工作簿）。
+   */
+  waitForAgentReady(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 拆除渲染端（清恢复副本/撤销写授权/让孤儿渲染器失效）；不弹对话框。 */
+  teardownSheetsRenderer(contents: WebContents): void
+  /** 脏关闭守卫：true = 可以关闭（Save 已执行/无改动）；Cancel = false。 */
+  requestSheetsClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSheetsWebContents(contents: WebContents | null): void
+  /** 未保存编辑条数（>0 = 脏）：Agent 写回工作副本前的闸门。 */
+  sheetsPendingEditCount(webContentsId: number): number
+  /**
+   * 选区「AI 修改」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带工作表 id（sheets 工具按 sheetId 定位）+ A1 区域 + 指令。
+   */
+  setSheetsAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            sheetId?: string
+            sheetName?: string
+            range?: string
+            /** 选区纯文本摘要（≤200 字），随消息一起给 Agent 交叉校验。 */
+            excerpt?: string
+            mode?: 'now' | 'queue'
+            /** 'workbook' = 极简条快捷能力（整簿作用，无选区锚点）。 */
+            scope?: 'workbook'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 sheets 视图（空数组 = 清空单元格区域锚点）。 */
+  pushSheetsAskQueue?(wcId: number, items: SheetsAskQueueItem[]): void
+  /** sheets 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSheetsAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
+  setSheetsFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
   setSheetsShellWindow(window: BrowserWindow | null): void
   stopSheetsSidecar(): void
+  /** Agent 读取活工作簿：工作簿上下文 + 工具词汇表 + 操作指南（无会话返回 error）。 */
+  describeAgentWorkbook(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentWorkbookDescription | { error: string }>
+  /** Agent 编辑活工作簿：渲染层执行 workbook AI 工具调用（含 propose_operations），变更后静默保存。 */
+  applyAgentWorkbookTools(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+}
+
+/** 宿主批注队列快照条目：各格式只有定位字段不同，id/instruction/excerpt 共用。 */
+export interface SheetsAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  sheetId?: string
+  sheetName?: string
+  range?: string
+}
+
+export interface SlidesAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  slideIndex?: number
+  /** 被批注元素的 durable id（滑页重排后按 id 反查）。 */
+  elementIds?: string[]
+}
+
+export interface PdfAskQueueItem {
+  id: string
+  instruction: string
+  excerpt?: string
+  /** 原始页序（0 起，旋转稳定）。 */
+  pageIndex?: number
+  /** PDF 坐标的选区 quads（格式同 PDF 原生 markup）。 */
+  quads?: number[][]
+}
+
+export interface GenOfficeAgentDeckResult {
+  bytes: Uint8Array
+  warnings: { page: number; messages: string[] }[]
+  imageFailures: { page: number; url: string }[]
+}
+
+/** everroom-material:// 素材引用回源器（桌面端注入，从本地素材库取字节）。 */
+export interface GenOfficeMaterialResolver {
+  resolveMaterial(url: string): Promise<{ bytes: Uint8Array; ext: string } | null>
+}
+
+export interface AgentSlidesDeckInfo {
+  outline: string
+  opVocabulary: string
+  /** 宿主补充：实例是否可编辑（只读打开也能读大纲，编辑需重新以可编辑方式打开）。 */
+  editable?: boolean
+}
+
+export interface AgentSlidesEditResult {
+  ok: boolean
+  /** 宿主级错误（无会话/无路径/非法请求）；per-op 失败走 failures。 */
+  error?: string
+  applied?: boolean
+  dryRun?: boolean
+  plan?: string[]
+  records?: Array<{ op: string; target?: string; created?: string[] }>
+  failures?: Array<{ index: number; error: string }>
+  /** 静默保存结果；saveError = 已改内存但未落盘（版本链未回填）。 */
+  saved?: boolean
+  saveError?: string
+  outline?: string
+  /** PageSpec 解析告警（逐页填充路径）：页面已渲染，但建议关注。 */
+  warnings?: Array<{ page: number; messages: string[] }>
 }
 
 export interface GenOfficeSlidesRuntime {
   configureSlidesRuntime(config: { preloadPath: string; rendererFilePath?: string }): void
-  createSlidesView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
+  createSlidesView(
+    openPath?: string | null,
+    options?: { readonly?: boolean },
+  ): WebContentsView
   registerSlidesIpc(): void
   requestSlidesClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   setActiveSlidesWebContents(contents: WebContents | null): void
+  setSlidesFileSavedHook(hook: (contents: WebContents, filePath: string) => void): void
+  /** 「AI 修改」浮层转发（embed 宿主接管；id 空间 = 大纲/编辑 op 的 durable id）。 */
+  setSlidesAgentAskHook(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            slideIndex: number
+            targets: Array<{
+              id: string
+              desc: { type: string; text?: string; rows?: number; cols?: number }
+            }>
+            /** 选区纯文本摘要（≤200 字）。 */
+            excerpt?: string
+            mode?: 'now' | 'queue'
+            /** 'page' = 极简条快捷能力（当前页作用，无元素目标）。 */
+            scope?: 'page'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 slides 视图（空数组 = 清空元素锚点）。 */
+  pushSlidesAskQueue?(wcId: number, items: SlidesAskQueueItem[]): void
+  /** slides 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setSlidesAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
   setSlidesShellWindow(window: BrowserWindow | null): void
   slidesIsDirty(webContentsId: number): boolean
+  /** Agent 幻灯片生成：页 spec JSON 数组 → 单文件 .pptx 字节（无渲染端参与）。 */
+  buildAgentDeckPptx(
+    pageSpecJsons: string[],
+    imageResolver?: GenOfficeMaterialResolver,
+  ): Promise<{ ok: true; deck: GenOfficeAgentDeckResult } | { ok: false; error: string }>
+  /** Agent 读取活会话：大纲 + op 词汇表（该视图无会话返回 null）。 */
+  describeAgentDeck(webContentsId: number): AgentSlidesDeckInfo | null
+  /** Agent 编辑活会话：事务应用 + 逐视图重绘广播 + 静默保存（fileSaved hook 回填版本链）。 */
+  applyAgentDeckOps(
+    webContentsId: number,
+    ops: unknown[],
+    opts?: { dryRun?: boolean; isolation?: 'atomic' | 'per_op' },
+  ): Promise<AgentSlidesEditResult>
+  /** Agent 逐页填充活会话：PageSpec 经与整册生成同一条 builder/merge 管线原地替换一页。 */
+  applyAgentDeckPage(
+    webContentsId: number,
+    req: { slideIndex: number; specJson: string },
+    imageResolver?: GenOfficeMaterialResolver,
+  ): Promise<AgentSlidesEditResult>
+  /** 视觉复检：活会话渲染层离屏栅格化一页为 1x PNG（base64，不带 data: 前缀）。 */
+  renderAgentDeckPagePng(
+    webContentsId: number,
+    slideIndex: number,
+  ): Promise<{ pngBase64: string } | { error: string }>
+}
+
+/** @genoffice/markdown embed 入口（feat/everroom-ai-tab 8d98310 起）。 */
+export interface GenOfficeMarkdownRuntime {
+  configureMarkdownRuntime(config: {
+    preloadPath: string
+    rendererUrl?: string
+    rendererFile?: string
+  }): void
+  /** 显式注册（createMarkdownView 内部也会兜底调用一次）。 */
+  registerMarkdownIpc(): void
+  createMarkdownView(
+    openPath?: string | null,
+    options?: { hostMode?: 'tab' | 'everroom'; readonly?: boolean },
+  ): WebContentsView
+  requestMarkdownClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
+  requestMarkdownSave(contents: WebContents, mode: 'save' | 'saveAs'): Promise<boolean>
+  markdownIsDirty(webContentsId: number): boolean
+  markdownFilePath(webContentsId: number): string | undefined
+  markdownFileRenamed(contents: WebContents, oldPath: string, newPath: string): void
+  sendMarkdownExportRequest(contents: WebContents, format: 'pdf' | 'docs' | 'docx'): void
+  sendMarkdownPrintRequest(contents: WebContents): void
+  /** 操作栏收起两态（docs/sheets 同款）：不传 hidden = 切换。 */
+  setMarkdownChromeHidden(contents: WebContents, hidden?: boolean): void
+  /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
+  setMarkdownFileSavedHook(hook: ((wc: WebContents, filePath: string) => void) | null): void
+  /** 就绪信号：渲染层装载完目标文件后上报；false = 超时/视图销毁/身份不符。 */
+  waitForMarkdownAgentReady?(
+    contents: WebContents,
+    expectedPath: string,
+    timeoutMs?: number,
+  ): Promise<boolean>
+  /**
+   * 选区「评论」浮层（EverRoom embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷只描述选区（顶层块索引 + 摘要 + 块内偏移，与评论侧车同一锚型）。
+   * 可选：老运行时缺这个导出时 wire 静默跳过，浮层保持关闭。
+   */
+  setMarkdownAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            blockIndex: number
+            excerpt?: string
+            offset?: number
+            /** 'queue' = 攒成批注一起发；缺省立即发送。 */
+            mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 markdown 视图（空数组 = 清空文档内锚点）。 */
+  pushMarkdownAskQueue?(
+    wcId: number,
+    items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      blockIndex: number
+      offset?: number
+    }>,
+  ): void
+  /** markdown 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setMarkdownAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
+  /** 视图销毁：清 IPC 状态映射 + 解除等待者。 */
+  teardownMarkdownRenderer(contents: WebContents): void
 }
 
 export interface GenOfficePdfRuntime {
   configurePdfRuntime(config: { preloadPath: string; rendererFile?: string }): void
-  createPdfView(openPath?: string | null, options?: { readonly?: boolean }): WebContentsView
+  createPdfView(
+    openPath?: string | null,
+    options?: { readonly?: boolean },
+  ): WebContentsView
   requestPdfClose(contents: WebContents, parent?: BrowserWindow | null): Promise<boolean>
   pdfIsDirty(webContentsId: number): boolean
+  /** 后加的 agent 面（genoffice cba38b8 起）：老运行时缺这些导出时返回 undefined，调用方降级。 */
+  describeAgentPdf?(
+    contents: WebContents,
+  ): Promise<GenOfficeAgentPdfDescription | { error: string }>
+  applyAgentPdfTools?(
+    contents: WebContents,
+    calls: GenOfficeAgentToolCall[],
+  ): Promise<{ results: GenOfficeAgentToolResult[] } | { error: string }>
+  /**
+   * 就绪信号：渲染层装载完目标工作副本后上报 filePath；true = 目标文件
+   * 已在视图里打开（身份一致），false = 超时/视图销毁/身份不符。
+   */
+  waitForAgentReady?(contents: WebContents, expectedPath: string, timeoutMs?: number): Promise<boolean>
+  /** 保存落盘 hook（渲染层静默保存含）：宿主版本回填链的触发点。 */
+  setPdfFileSavedHook?(hook: ((wc: WebContents, filePath: string) => void) | null): void
+  /**
+   * 选区「注释」浮层（EverOffice embed）：宿主接管——按 wcId 反查文件与工作空间，
+   * 载荷带原始页序 + PDF 坐标 quads + 选区摘要。
+   */
+  setPdfAgentAskHook?(
+    hook:
+      | ((
+          wcId: number,
+          op: {
+            instruction: string
+            pageIndex: number
+            quads: number[][]
+            excerpt?: string
+            mode?: 'now' | 'queue'
+            /** 'document' = 极简条快捷能力（全文作用，无选区锚点）。 */
+            scope?: 'document'
+          },
+        ) => Promise<{ ok: true } | { ok: false; error: string }>)
+      | null,
+  ): void
+  /** 批注队列快照下发到某个 pdf 视图（空数组 = 清空页面锚点）。 */
+  pushPdfAskQueue?(wcId: number, items: PdfAskQueueItem[]): void
+  /** pdf 内批注锚点动作（全部发送 / 移除一条 / 改写一条）→ 宿主。 */
+  setPdfAskQueueActionHook?(
+    hook: ((wcId: number, action: OfficeAskQueueAction) => void) | null,
+  ): void
+}
+
+/** pdf describe 结果：上下文 + embed 安全的工具词汇表。 */
+export interface GenOfficeAgentPdfDescription {
+  context: string
+  tools?: { name: string; description: string; inputSchema: Record<string, unknown> }[]
 }
 
 export interface PreparedGenOfficeRuntime {
@@ -52,13 +587,8 @@ export interface PreparedGenOfficeRuntime {
   sheets: GenOfficeSheetsRuntime
   slides: GenOfficeSlidesRuntime
   pdf: GenOfficePdfRuntime
+  markdown: GenOfficeMarkdownRuntime
   root: string
-}
-
-export function preparedGenOfficeFixture(root: string): string {
-  const fixture = join(root, 'fixtures', 'simple.docx')
-  if (!existsSync(fixture)) throw new Error(`GenOffice test fixture is unavailable: ${fixture}`)
-  return fixture
 }
 
 function runtimeRoot(): string {
@@ -81,6 +611,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const pdfMainEntry = join(root, 'pdf', 'main', 'embed.js')
   const pdfPreloadPath = join(root, 'pdf', 'preload', 'index.js')
   const pdfRendererFile = join(root, 'pdf', 'renderer', 'index.html')
+  const markdownMainEntry = join(root, 'markdown', 'main', 'embed.js')
+  const markdownPreloadPath = join(root, 'markdown', 'preload', 'index.js')
+  const markdownRendererFile = join(root, 'markdown', 'renderer', 'index.html')
   const sidecarPath = join(root, 'native', process.platform === 'win32' ? 'xlsx-sidecar.exe' : 'xlsx-sidecar')
   for (const path of [
     mainEntry,
@@ -95,6 +628,9 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
     pdfMainEntry,
     pdfPreloadPath,
     pdfRendererFile,
+    markdownMainEntry,
+    markdownPreloadPath,
+    markdownRendererFile,
     sidecarPath,
   ]) {
     if (!existsSync(path)) {
@@ -103,7 +639,7 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   }
 
   // The runtime is built independently and copied through extraResources, so
-  // it must stay outside EverRoom's electron-vite dependency graph.
+  // it must stay outside EverOffice's electron-vite dependency graph.
   const requireRuntime = createRequire(mainEntry)
   const docs = requireRuntime(mainEntry) as GenOfficeDocsRuntime
   docs.configureDocsRuntime({ preloadPath, rendererFile })
@@ -116,5 +652,11 @@ export function loadPreparedGenOfficeRuntime(): PreparedGenOfficeRuntime {
   const pdfRequire = createRequire(pdfMainEntry)
   const pdf = pdfRequire(pdfMainEntry) as GenOfficePdfRuntime
   pdf.configurePdfRuntime({ preloadPath: pdfPreloadPath, rendererFile: pdfRendererFile })
-  return { docs, sheets, slides, pdf, root }
+  const markdownRequire = createRequire(markdownMainEntry)
+  const markdown = markdownRequire(markdownMainEntry) as GenOfficeMarkdownRuntime
+  markdown.configureMarkdownRuntime({
+    preloadPath: markdownPreloadPath,
+    rendererFile: markdownRendererFile,
+  })
+  return { docs, sheets, slides, pdf, markdown, root }
 }

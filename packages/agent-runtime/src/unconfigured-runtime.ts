@@ -52,7 +52,11 @@ export class UnconfiguredAgentRuntime implements AgentRuntime {
     queue.end();
     return {
       runId,
-      runtimeSessionRef: runtimeSessionRef ?? this.id,
+      // 空串＝无引用（与 AcpAgentRuntime.start 一致）：返回 this.id 会被
+      // AgentService 当真实引用持久化，配置热替换成 Pi 后 assertOwnedSessionPath
+      // 拒绝该值，会话从此每轮 run.failed（"Pi session reference is outside
+      // the NxCore session directory"）。
+      runtimeSessionRef: runtimeSessionRef ?? "",
       events: queue,
     };
   }

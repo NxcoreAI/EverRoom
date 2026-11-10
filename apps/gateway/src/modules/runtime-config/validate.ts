@@ -7,6 +7,8 @@
  *   是有效的才放行"）。
  */
 
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
+
 export interface AiConfigFields {
   provider: string;
   model: string;
@@ -39,7 +41,7 @@ export function isPrimaryConfigured(config: Record<string, unknown>): boolean {
   return aiFieldsConfigured(primaryAiFields(config));
 }
 
-/** 四要素全部非空 = 该段已配置（primary/embedding/vlm 共用）。 */
+/** 四要素全部非空 = 该段已配置（primary/vlm 共用）。 */
 export function aiFieldsConfigured(fields: AiConfigFields): boolean {
   return AI_REQUIRED_FIELDS.every((field) => fields[field] !== "");
 }
@@ -61,36 +63,15 @@ function sectionAiFields(config: Record<string, unknown>, section: string): AiCo
   };
 }
 
-/** 从 runtime config 的 knowledge.embedding 段提取四要素（缺段/空串归一为 ""）。 */
-export function embeddingAiFields(config: Record<string, unknown>): AiConfigFields {
-  const knowledge = config.knowledge;
-  const embedding = knowledge && typeof knowledge === "object" && !Array.isArray(knowledge)
-    ? (knowledge as Record<string, unknown>).embedding
-    : undefined;
-  return embedding && typeof embedding === "object" && !Array.isArray(embedding)
-    ? sectionAiFields({ section: embedding }, "section")
-    : { provider: "", model: "", baseUrl: "", apiKey: "" };
-}
-
 /** 从 runtime config 的 vlm 段提取四要素（缺段/空串归一为 ""）。 */
 export function vlmAiFields(config: Record<string, unknown>): AiConfigFields {
   return sectionAiFields(config, "vlm");
-}
-
-/** embedding 已配置判定：四要素全部非空（未填/部分填都视为未配置，不参与测试）。 */
-export function isEmbeddingConfigured(fields: AiConfigFields): boolean {
-  return aiFieldsConfigured(fields);
 }
 
 export interface TestConnectionResult {
   valid: boolean;
   /** 失败时的可展示原因（HTTP 状态/网络错误/超时）。 */
   error?: string;
-}
-
-export interface EmbeddingTestResult extends TestConnectionResult {
-  /** 成功时返回的向量维度（MemoryCore TDAI_EMBEDDING_DIMENSIONS 注入用）。 */
-  dimensions?: number;
 }
 
 const TEST_TIMEOUT_MS = 15_000;
@@ -106,7 +87,7 @@ export async function testAiConnection(fields: AiConfigFields): Promise<TestConn
   }
   let response: Response;
   try {
-    response = await fetch(`${fields.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    response = await proxyFetch(`${fields.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -124,65 +105,6 @@ export async function testAiConnection(fields: AiConfigFields): Promise<TestConn
     return { valid: false, error: `runtime_config_test_unreachable: ${cause.slice(0, 200)}` };
   }
   if (response.ok) return { valid: true };
-  const detail = await response.text().catch(() => "");
-  let message = "";
-  try {
-    const parsed = JSON.parse(detail) as { error?: { message?: string }; message?: string };
-    message = parsed.error?.message ?? parsed.message ?? "";
-  } catch {
-    // 非 JSON 响应体，退回原文
-  }
-  return {
-    valid: false,
-    error: `runtime_config_test_http_${response.status}: ${(message || detail).slice(0, 200)}`,
-  };
-}
-
-/**
- * embedding 连通测试：POST {baseUrl}/embeddings，input="ping"。
- * 2xx 且 data[0].embedding 为非空数组才算有效，同时返回向量维度——
- * MemoryCore 的 TDAI_EMBEDDING_DIMENSIONS 是必填项，用真实响应推导
- * 比让用户手填维度可靠。错误串复用 primary 的 taxonomy，渲染层
- * configTestErrorMessage 无需新增映射。
- */
-export async function testEmbeddingConnection(
-  fields: AiConfigFields,
-  requestedDimensions?: number,
-): Promise<EmbeddingTestResult> {
-  if (!isEmbeddingConfigured(fields)) {
-    return { valid: false, error: "runtime_config_test_incomplete" };
-  }
-  let response: Response;
-  try {
-    response = await fetch(`${fields.baseUrl.replace(/\/+$/, "")}/embeddings`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${fields.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: fields.model,
-        input: "ping",
-        ...(requestedDimensions && requestedDimensions > 0
-          ? { dimensions: requestedDimensions }
-          : {}),
-      }),
-      signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? error.message : String(error);
-    return { valid: false, error: `runtime_config_test_unreachable: ${cause.slice(0, 200)}` };
-  }
-  if (response.ok) {
-    const payload = await response.json().catch(() => null) as {
-      data?: Array<{ embedding?: number[] }>;
-    } | null;
-    const vector = payload?.data?.[0]?.embedding;
-    if (!Array.isArray(vector) || vector.length === 0) {
-      return { valid: false, error: "runtime_config_test_invalid_response: missing data[0].embedding" };
-    }
-    return { valid: true, dimensions: vector.length };
-  }
   const detail = await response.text().catch(() => "");
   let message = "";
   try {

@@ -92,7 +92,7 @@ describe('SaasClient admission handling', () => {
     maxDevices: 10,
     admissionToken: 'admission-token',
     expiresAt: new Date(Date.now() + 300_000).toISOString(),
-    devices: [{ id: 'device-1', name: 'iPhone', platform: 'iOS', status: 'online', lastSeenAt: 'now' }],
+    devices: [{ id: 'device-1', name: 'iPhone', platform: 'iOS', lastSeenAt: 'now' }],
   }
 
   it('detects admission required outcomes', () => {

@@ -1,0 +1,470 @@
+/* 工作空间「计划」：任务看板 + 详情抽屉。
+ *
+ * 约定（与 tools.css 一致）：
+ * - 只用 --ui-* token，四套主题自动生效；
+ * - 不改 workspace.css：需要覆盖公共壳时用「页面作用域 + 双类」提高特异性；
+ * - 层次靠 1px hairline + 底色，浮层才用阴影；
+ * - 拖拽的状态色沿用 .wb-status-dot.is-<status>（workspace.css 已定义）。
+ */
+
+/* ───────────────── 工具条 ───────────────── */
+
+.wb-plan-page.wb-tools-page {
+  position: relative;
+  gap: 14px;
+}
+
+/* 页面级错误条（自 tools.css 并入：原文件随新建空间引导一起移除，
+ * 本页是它仅剩的使用方）。 */
+.wb-tool-error {
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--ui-danger) 30%, transparent);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-danger-soft);
+  color: var(--ui-danger);
+  font-size: var(--ui-text-xs);
+  line-height: var(--ui-leading-normal);
+}
+
+/* 计划卡片基础形态（同上并入）。 */
+.wb-plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.wb-plan-card-time {
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+  white-space: nowrap;
+}
+.wb-plan-board.wb-plan-board--tools { align-items: stretch; }
+.wb-plan-board--tools .wb-plan-col { min-width: 0; }
+
+.wb-plan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+}
+.wb-plan-toolbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.wb-plan-toolbar-title h2 {
+  margin: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-lg);
+  font-weight: 700;
+  letter-spacing: var(--ui-tracking-tight);
+}
+.wb-plan-toolbar-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  max-width: 280px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  color: var(--ui-text-3);
+}
+.wb-plan-toolbar-search .ui-input {
+  border: none;
+  background: transparent;
+  padding-left: 0;
+  height: 30px;
+}
+.wb-plan-toolbar-search .ui-input:focus-visible { box-shadow: none; }
+.wb-plan-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.wb-plan-compose-bar {
+  padding: 8px 10px;
+  border: 1px dashed var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-alt);
+}
+
+.wb-plan-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 4px;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-sm);
+}
+
+/* ───────────────── 看板 ───────────────── */
+
+.wb-plan-board--tasks {
+  align-items: stretch;
+  min-height: 320px;
+}
+.wb-plan-board--tasks .wb-plan-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  transition: background var(--ui-duration-fast) var(--ui-ease), outline-color var(--ui-duration-fast) var(--ui-ease);
+  outline: 1px dashed transparent;
+  outline-offset: -1px;
+}
+.wb-plan-board--tasks .wb-plan-col.is-drop-target {
+  background: var(--ui-accent-softer);
+  outline-color: var(--ui-accent-line);
+}
+.wb-plan-col-head .ui-icon-btn { margin-left: 2px; }
+.wb-plan-col-body {
+  flex: 1;
+  min-height: 80px;
+}
+.wb-plan-slot { position: relative; }
+
+.wb-plan-insert {
+  height: 2px;
+  margin: 4px 2px;
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-accent);
+}
+
+.wb-plan-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 60px;
+  padding: 14px 12px;
+  border: 1px dashed var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-3);
+  font-size: var(--ui-text-xs);
+  cursor: pointer;
+}
+.wb-plan-empty:hover {
+  border-color: var(--ui-accent-line);
+  color: var(--ui-text-2);
+}
+.wb-plan-empty-action { color: var(--ui-accent); font-size: var(--ui-text-2xs); }
+
+.wb-plan-compose .ui-input { width: 100%; }
+
+/* ───────────────── 卡片 ───────────────── */
+
+.wb-plan-task {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 11px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  cursor: grab;
+}
+.wb-plan-task:hover {
+  border-color: var(--ui-border-strong);
+  box-shadow: var(--ui-card-lift-sm);
+}
+.wb-plan-task:active { cursor: grabbing; }
+.wb-plan-task.is-dragging {
+  opacity: 0.5;
+  box-shadow: var(--ui-shadow-md);
+}
+.wb-plan-task.is-done .wb-plan-card-title,
+.wb-plan-task.is-dropped .wb-plan-card-title {
+  color: var(--ui-text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--ui-border-strong);
+}
+.wb-plan-task:focus-visible {
+  outline: var(--ui-focus-ring-width) solid var(--ui-focus-ring-color);
+  outline-offset: var(--ui-focus-ring-offset);
+}
+
+.wb-plan-task-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.wb-plan-task-head .wb-plan-card-title { flex: 1; min-width: 0; }
+
+/* 优先级：左上角一个色点，不抢标题。 */
+.wb-plan-priority {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--ui-text-3);
+  opacity: 0.55;
+}
+.wb-plan-priority.is-high { background: var(--ui-warning); opacity: 1; }
+.wb-plan-priority.is-urgent { background: var(--ui-danger); opacity: 1; }
+
+.wb-plan-task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-plan-task-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.wb-plan-task-chip.is-overdue { color: var(--ui-danger); }
+
+.wb-plan-task-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-warning);
+}
+
+.wb-plan-task-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--ui-border-subtle);
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-plan-task-session {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text-2);
+}
+
+/* ───────────────── 详情抽屉 ───────────────── */
+
+.wb-plan-detail-layer {
+  position: absolute;
+  inset: 0;
+  display: none;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--ui-overlay) 40%, transparent);
+  z-index: 6;
+}
+.wb-plan-detail-layer.is-open { display: flex; }
+
+.wb-plan-detail {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100%);
+  height: 100%;
+  border-left: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-lg);
+  animation: wb-plan-detail-in var(--ui-duration-fast) var(--ui-ease-out);
+}
+@keyframes wb-plan-detail-in {
+  from { transform: translateX(12px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+.wb-plan-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--ui-border-subtle);
+}
+.wb-plan-detail-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--ui-text-xs);
+  color: var(--ui-text-2);
+}
+.wb-plan-detail-status { font-weight: 650; }
+
+.wb-plan-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+.wb-plan-detail-title.ui-input {
+  height: auto;
+  padding: 4px 6px;
+  border-color: transparent;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-text-md);
+  font-weight: 650;
+}
+.wb-plan-detail-title.ui-input:hover { border-color: var(--ui-border); }
+.wb-plan-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.wb-plan-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border-subtle);
+}
+.wb-plan-detail-block-head {
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  color: var(--ui-text-2);
+}
+.wb-plan-detail-muted {
+  margin: 0;
+  font-size: var(--ui-text-2xs);
+  color: var(--ui-text-3);
+}
+.wb-plan-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-plan-refs,
+.wb-plan-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wb-plan-refs li,
+.wb-plan-checks li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--ui-text-xs);
+}
+.wb-plan-ref-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-plan-checks label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  cursor: pointer;
+}
+.wb-plan-checks span.is-done {
+  color: var(--ui-text-3);
+  text-decoration: line-through;
+}
+
+.wb-plan-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--ui-text-2xs);
+}
+.wb-plan-timeline li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.wb-plan-timeline-kind {
+  flex: none;
+  min-width: 62px;
+  color: var(--ui-accent-strong);
+  font-family: var(--ui-font-mono);
+  font-size: 10px;
+}
+.wb-plan-timeline-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--ui-text-2);
+}
+.wb-plan-timeline-time {
+  flex: none;
+  color: var(--ui-text-3);
+}
+
+.wb-plan-claim summary {
+  cursor: pointer;
+  font-size: var(--ui-text-2xs);
+  font-weight: 650;
+  color: var(--ui-text-2);
+}
+.wb-plan-claim pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-sunken);
+  color: var(--ui-text-2);
+  font-family: var(--ui-font-mono);
+  font-size: 11px;
+  line-height: var(--ui-leading-relaxed);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 960px) {
+  .wb-plan-board.wb-plan-board--tasks { flex-direction: column; }
+  .wb-plan-toolbar-search { max-width: none; }
+  .wb-plan-detail { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-plan-detail { animation: none; }
+  .wb-plan-task { transition: none; }
+  .wb-plan-card { transition: none; }
+}
+
+/* ───────────────── 多选与批量操作 ───────────────── */
+
+.wb-plan-select {
+  flex: none;
+  margin: 3px 2px 0 0;
+  accent-color: var(--ui-accent);
+  cursor: pointer;
+}
+.wb-plan-task.is-selected {
+  border-color: var(--ui-accent-line);
+  background: var(--ui-accent-softer);
+}
+
+.wb-plan-batch-bar {
+  position: sticky;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-full);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-md);
+  z-index: 5;
+}
+.wb-plan-batch-count {
+  font-size: var(--ui-text-xs);
+  font-weight: 650;
+  color: var(--ui-text-2);
+}

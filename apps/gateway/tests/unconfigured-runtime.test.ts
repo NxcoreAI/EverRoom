@@ -3,7 +3,6 @@ import { UnconfiguredAgentRuntime } from "@nxcore/agent-runtime";
 import { loadConfig, type PiRuntimeConfig } from "../src/config.js";
 import {
   createAgentRuntime,
-  createBackgroundAgentRuntime,
   createCursorCompletionRuntime,
   isPiRuntimeConfigured,
 } from "../src/modules/agent/runtime-factory.js";
@@ -34,7 +33,6 @@ describe("UnconfiguredAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     const events: string[] = [];
     for await (const event of run.events) events.push(event.type);
@@ -49,7 +47,6 @@ describe("UnconfiguredAgentRuntime", () => {
       runtimeSessionRef: null,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     const payloads: unknown[] = [];
     for await (const event of run.events) payloads.push(event.payload);
@@ -66,12 +63,23 @@ describe("UnconfiguredAgentRuntime", () => {
       lastEventSeq: 3,
       prompt: "ping",
       pageLabel: "test",
-      roomId: null,
     });
     expect(run.runtimeSessionRef).toBe("ref");
     const events: string[] = [];
     for await (const event of run.events) events.push(event.type);
     expect(events).toEqual(["run.started", "run.failed"]);
+  });
+
+  it("start() without a prior ref returns empty string, never the runtime id", async () => {
+    const runtime = new UnconfiguredAgentRuntime("main");
+    const run = await runtime.start({
+      runId: "run-3",
+      sessionId: "session-1",
+      runtimeSessionRef: null,
+      prompt: "ping",
+      pageLabel: "test",
+    });
+    expect(run.runtimeSessionRef).toBe("");
   });
 });
 
@@ -85,18 +93,6 @@ describe("runtime factory degraded gates", () => {
       NXCORE_AI_API_KEY: "",
     });
     const runtime = createAgentRuntime(config, undefined as never);
-    expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
-  });
-
-  it("returns UnconfiguredAgentRuntime when background pi fields are empty", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_AGENT_RUNTIME: "pi",
-      NXCORE_AI_PROVIDER: "",
-      NXCORE_AI_MODEL: "",
-      NXCORE_AI_BASE_URL: "",
-      NXCORE_AI_API_KEY: "",
-    });
-    const runtime = createBackgroundAgentRuntime(config);
     expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
   });
 
@@ -114,14 +110,6 @@ describe("runtime factory degraded gates", () => {
     });
     const runtime = createCursorCompletionRuntime(config);
     expect(runtime).toBeInstanceOf(UnconfiguredAgentRuntime);
-  });
-
-  it("fake mode still returns FakeAgentRuntime", () => {
-    const config = loadConfig(["--token", "0123456789abcdef"], {
-      NXCORE_AGENT_RUNTIME: "fake",
-    });
-    const runtime = createBackgroundAgentRuntime(config);
-    expect(runtime.id).toBe("fake");
   });
 
   it("isPiRuntimeConfigured requires all four fields", () => {

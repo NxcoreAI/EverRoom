@@ -1,1579 +1,301 @@
-import type { FastifyBaseLogger } from "fastify";
-import { randomUUID } from "node:crypto";
-import {
-  MemoryCoreClient,
-  MemoryCoreError,
-  type MemoryAtomicQuery,
-  type MemoryConversationQuery,
-  type MemoryPipelineStatus,
-  type MemoryRuntimeConfig,
-} from "@nxcore/agent-runtime-pi";
-import { eq, inArray } from "drizzle-orm";
-import { FilesService } from "../files/service.js";
-import type { GatewayDatabase } from "../../infrastructure/database/client.js";
-import {
-  agentSessions,
-  contextRooms,
-  gatewayMetadata,
-  roomMemoryAttributions,
-  roomMemorySuppressions,
-} from "../../infrastructure/database/schema.js";
-import { MemoryGatewayError } from "./errors.js";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { HippoSleepResult } from "hippo-memory";
+import { HippoMemoryAdapter, type MemoryCategory, type MemoryHit, type RecallInput, type RememberInput } from "./hippo-adapter.js";
+import { MemoryOutcomeTracker, type RunVerdict, type SettleResult } from "./outcomes.js";
 
-/** UI 浏览场景的超时：比 agent 注入流程（3s）宽松，但仍在交互可接受范围。 */
-const BROWSE_TIMEOUT_MS = 10_000;
-
-/** Room 记忆注入预算（listRoomMemories 的取数上限；注入段不受全局 recall charBudget 截断）。 */
-const ROOM_MEMORY_MAX_ITEMS = 20;
-const ROOM_MEMORY_ITEM_MAX_CHARS = 500;
-const ROOM_MEMORY_TOTAL_MAX_CHARS = 4_000;
-
-/** Room 绑定记忆快照：agent-runtime-pi 的 RoomMemorySnapshot 同形（注入与工具过滤的数据源）。 */
-export interface RoomMemorySnapshot {
-  memoryId: string;
-  type: string;
-  content: string;
-  updatedAt: string;
-}
-
-/** 绑定时随归属行落库的记忆快照（调用方列表项在手；缺省则行快照为空，注入时跳过）。 */
-export interface RoomMemorySnapshotInput {
-  content?: string | undefined;
-  type?: string | undefined;
-  memoryUpdatedAt?: string | undefined;
-}
-
-/** MemoryCore `/v3/conversation/add` 的真实请求约束。 */
-const CONVERSATION_IMPORT_MAX_MESSAGES = 100;
-const CONVERSATION_IMPORT_MAX_CONTENT_LENGTH = 8_192;
-
-interface HistoricalConversationMessage {
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string;
-  recordedAt?: string;
-}
-
-function splitConversationContent(content: string): string[] {
-  const chunks: string[] = [];
-  for (let offset = 0; offset < content.length;) {
-    let end = Math.min(offset + CONVERSATION_IMPORT_MAX_CONTENT_LENGTH, content.length);
-    // 不在 UTF-16 surrogate pair 中间切断；同时仍满足 MemoryCore 的 string.length 上限。
-    if (end < content.length && end > offset && /[\uD800-\uDBFF]/u.test(content[end - 1]!)) end -= 1;
-    chunks.push(content.slice(offset, end));
-    offset = end;
-  }
-  return chunks;
+export interface MemoryServiceOptions {
+  /** `.hippo` 库根目录，通常为 `<dataDir>/memory/hippo`（全局库）。 */
+  root: string;
+  /**
+   * 空间记忆库根（P2）：返回 `<space>/.everoffice/memory` 时，该工作区的记忆单独落盘；
+   * 返回 null/未注入 → 继续用全局库（兼容旧行为）。
+   */
+  spaceRootFor?: (workspaceId: string | null | undefined) => string | null;
+  /** 关闭时不建库、不注册工具、不占内存。 */
+  enabled: boolean;
+  /** 整理回合间隔（默认 6 小时）；0 表示不定时整理。 */
+  maintenanceIntervalMs?: number;
+  /** 启动后首次整理延迟（默认 5 分钟），错开启动高峰。 */
+  maintenanceInitialDelayMs?: number;
+  logger?: (level: "info" | "warn" | "error", event: string, fields?: Record<string, unknown>) => void;
 }
 
 /**
- * 历史会话导入规范化：限制单条长度，并为每个分块生成严格单调的 recorded_at。
- * timestamp 保留消息实际发生时间；recorded_at 只负责稳定恢复历史顺序。
+ * 记忆服务：hippo-memory 适配层的持有者与生命周期管理。
+ *
+ * 与上一版（MemoryCore v3 HTTP 服务）不同，这里没有独立进程与端口：
+ * 记忆库是 gateway 进程内的一层 SQLite（`node:sqlite`），
+ * 见 docs/hippo-memory-adoption-plan.zh-CN.md。
  */
-function normalizeHistoricalConversationMessages(
-  messages: HistoricalConversationMessage[],
-): HistoricalConversationMessage[] {
-  const normalized: HistoricalConversationMessage[] = [];
-  let previousRecordedAtMs = -1;
-  for (const message of messages) {
-    const candidateMs = Date.parse(message.recordedAt ?? message.timestamp);
-    if (!Number.isFinite(candidateMs)) throw new Error("invalid_conversation_message_timestamp");
-    for (const content of splitConversationContent(message.content)) {
-      const recordedAtMs = Math.max(candidateMs, previousRecordedAtMs + 1);
-      previousRecordedAtMs = recordedAtMs;
-      normalized.push({
-        role: message.role,
-        content,
-        timestamp: message.timestamp,
-        recordedAt: new Date(recordedAtMs).toISOString(),
-      });
-    }
-  }
-  return normalized;
-}
+const DEFAULT_MAINTENANCE_INTERVAL_MS = 6 * 60 * 60_000;
+const DEFAULT_MAINTENANCE_INITIAL_DELAY_MS = 5 * 60_000;
 
-/** 渲染层 DTO：L1 原子记忆。 */
-export interface MemoryAtomicDto {
-  id: string;
-  type: string;
-  content: string;
-  background: string | null;
-  createdAt: string;
-  updatedAt: string;
-  /** 用户指派的 Room 归属（room_memory_attributions）；null = 未绑定。 */
-  roomId: string | null;
-  /** 绑定 Room 的当前标题；roomId 非空而为 null ⇒ Room 已软删/消失（归属数据保留）。 */
-  roomTitle: string | null;
-}
-
-/** 渲染层 DTO：L0 对话消息。 */
-export interface MemoryConversationMessageDto {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: string | null;
-  sessionId: string | null;
-  /** 来源标记：null = 旧数据/未标注；'document' = md 导入的文档会话块。 */
-  sourceKind: string | null;
-}
-
-export interface DocumentCreationMemoryInput {
-  sessionId: string;
-  roomId: string;
-  documentId: string;
-  title: string;
-  markdown: string;
-}
-
-export interface SelectionRewriteMemoryInput {
-  roomId: string;
-  documentId: string;
-  documentTitle: string;
-  instruction: string;
-  originalText: string;
-  replacementText: string;
-}
-
-export interface RoomMemoryPromotionInput {
-  roomId: string;
-  itemId: string;
-  content: string;
-  type?: string;
-}
-
-export interface SourceDocumentMemoryInput {
-  sourceId: string;
-  sourceKind: string;
-  documentId: string;
-  title: string;
-  markdown: string;
-  uri?: string;
-  contentHash?: string;
-}
-
-export interface MemoryOnboardingInput {
-  requestId: string;
-  locale: "zh-CN" | "en-US";
-  workContext: string;
-  currentFocus: string;
-  collaborationPreference?: string;
-}
-
-export interface MemoryOnboardingResult {
-  sessionId: string;
-  capturedAt: string;
-  accepted: true;
-}
-
-interface MemoryOnboardingRecord extends MemoryOnboardingResult {
-  status: "pending" | "accepted";
-  profileUpdated: boolean;
-}
-
-const ONBOARDING_PROFILE_START = "<!-- everroom:onboarding-profile:start -->";
-const ONBOARDING_PROFILE_END = "<!-- everroom:onboarding-profile:end -->";
-const SCENE_NAVIGATION_HEADER = "---\n## 🗺️ Scene Navigation (Scene Index)";
-
-/** 渲染层 DTO：L2 场景目录项。 */
-export interface MemoryScenarioEntryDto {
-  path: string;
-  summary: string | null;
-  isDirectory: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface MemoryPipelineSessionDto {
-  sessionId: string;
-  title: string | null;
-  latestUserMessage: string | null;
-}
-
-/** 渲染层 DTO：单个提炼层的运行状态。 */
-export interface MemoryPipelineStageDto {
-  queued: number;
-  running: number;
-  queuedSessions: MemoryPipelineSessionDto[];
-  runningSessions: MemoryPipelineSessionDto[];
-  idle: boolean;
-}
-
-/** 渲染层 DTO：总览。 */
-export interface MemoryOverviewDto {
-  l1: { total: number; byType: { episodic: number; persona: number; instruction: number } } | null;
-  l0: { total: number } | null;
-  l2: { total: number } | null;
-  l3: { exists: boolean; updatedAt: string | null } | null;
-  pipeline: { l1: MemoryPipelineStageDto; l2: MemoryPipelineStageDto; l3: MemoryPipelineStageDto } | null;
-}
-
-function toStageDto(
-  stage: MemoryPipelineStatus["l1"],
-  sessions: Map<string, MemoryPipelineSessionDto>,
-): MemoryPipelineStageDto {
-  return {
-    queued: stage.queued,
-    running: stage.running,
-    queuedSessions: (stage.queued_sessions ?? []).map((sessionId) => sessions.get(sessionId) ?? {
-      sessionId,
-      title: null,
-      latestUserMessage: null,
-    }),
-    runningSessions: (stage.running_sessions ?? []).map((sessionId) => sessions.get(sessionId) ?? {
-      sessionId,
-      title: null,
-      latestUserMessage: null,
-    }),
-    idle: stage.idle,
-  };
-}
-
-export interface MemoryListOptions {
-  type?: MemoryAtomicQuery["type"] | undefined;
-  limit: number;
-  offset: number;
-  timeStart?: string | undefined;
-  timeEnd?: string | undefined;
-}
-
-export interface MemoryConversationListOptions {
-  sessionId?: string | undefined;
-  limit: number;
-  offset: number;
-  timeStart?: string | undefined;
-  timeEnd?: string | undefined;
-  /** 'conversation' = 仅对话（排除文档会话块）。 */
-  sourceKind?: "conversation" | "document" | undefined;
-}
-
-/** 渲染层 DTO：导入的文档登记行（MemoryCore documents 表视图）。 */
-export interface MemoryDocumentDto {
-  id: string;
-  title: string;
-  /** 调用方资产引用（= EverRoom 知识资产 file id，预览/落盘溯源用）。 */
-  callerRef: string;
-  version: number;
-  sessionId: string;
-  chunkCount: number;
-  derivedMemoryCount: number | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** 渲染层 DTO：文档分块（含正文与原文行区间，正向溯源预览）。 */
-export interface MemoryDocumentChunkDto {
-  chunkIndex: number;
-  messageId: string;
-  headingPath: string;
-  lineStart: number;
-  lineEnd: number;
-  content: string;
-  recordedAt: string | null;
-}
-
-/** 渲染层 DTO：文档派生的 L1 原子（反向溯源入口）。 */
-export interface MemoryDocumentMemoryDto {
-  id: string;
-  type: string;
-  content: string;
-  background: string | null;
-  sourceMessageIds: string[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** 渲染层 DTO：原子记忆溯源锚点。 */
-export interface MemoryProvenanceAnchorDto {
-  messageId: string;
-  role: string;
-  content: string;
-  recordedAt: string | null;
-  sessionId: string | null;
-  sourceKind: string;
-  headingPath?: string;
-  lineStart?: number;
-  lineEnd?: number;
-  chunkIndex?: number;
-}
-
-/** 渲染层 DTO：一站式溯源。 */
-export interface MemoryAtomicProvenanceDto {
-  memoryId: string;
-  type: string;
-  content: string;
-  kind: string;
-  room: { roomId: string | null; roomTitle: string | null };
-  session: { sessionId: string | null; sessionKey: string | null } | null;
-  document: {
-    documentId: string;
-    title: string;
-    callerRef: string;
-    version: number;
-    sessionId: string;
-  } | null;
-  anchorMessageIds: string[];
-  anchors: MemoryProvenanceAnchorDto[];
-}
-
-/** md 导入结果（资产化 + MemoryCore 登记双段）。 */
-export interface MemoryImportMarkdownResult {
-  fileId: string;
-  document: MemoryDocumentDto;
-  version: string;
-  sessionId: string;
-  chunkCount: number;
-  deduplicated: boolean;
-  replacedVersions: number;
-  acceptedChunks: number;
-}
-
-/** MemoryCore 直导结果（引擎扇出用，无资产段；importMarkdown 的下半段）。 */
-export interface MemoryImportDocumentResult {
-  document: MemoryDocumentDto;
-  version: string;
-  sessionId: string;
-  chunkCount: number;
-  deduplicated: boolean;
-  replacedVersions: number;
-  acceptedChunks: number;
-}
-
-/**
- * Room 归属的写入侧依赖（结构性满足：ContextRoomService；先例 agent/service.ts 的 AgentRoomRegistry）。
- * 读侧 enrichment 直接查 schema，不走此接口。
- */
-export interface MemoryRoomRegistry {
-  resolveRoomId(roomId: string): string | null;
-}
-
-/**
- * MemoryCore 的 gateway 侧门面：注入隔离三元组，把 snake_case 的 v3 响应
- * 映射为稳定的 camelCase DTO；未配置记忆时所有方法抛 memory_disabled。
- */
 export class MemoryService {
-  private client: MemoryCoreClient | null;
-  private config: MemoryRuntimeConfig | null;
-  /** md 导入的资产化通道（modules/files，U9 唯一字节入口）；未配置记忆时为 null。 */
-  private readonly files: FilesService | null;
-  private readonly db: GatewayDatabase | null;
-  private readonly roomRegistry: MemoryRoomRegistry | null;
-  private readonly onboardingRequests = new Map<string, Promise<MemoryOnboardingResult>>();
+  /** 全局记忆库。 */
+  private readonly adapter: HippoMemoryAdapter;
+  /** 已打开的记忆库（root → adapter）；键为绝对路径，含全局库。 */
+  private readonly adapters = new Map<string, HippoMemoryAdapter>();
+  private readonly spaceRootFor: ((workspaceId: string | null | undefined) => string | null) | null;
+  private readonly outcomes: MemoryOutcomeTracker;
+  private readonly enabled: boolean;
+  private readonly logger: NonNullable<MemoryServiceOptions["logger"]>;
+  private readonly root: string;
+  private readonly maintenanceIntervalMs: number;
+  private readonly maintenanceInitialDelayMs: number;
+  private started = false;
+  private maintenanceTimer: NodeJS.Timeout | null = null;
+  private maintenanceRunning = false;
+  private onRemembered: (() => void) | null = null;
 
-  constructor(
-    config: MemoryRuntimeConfig | null,
-    private readonly logger: FastifyBaseLogger,
-    /** md 导入的资产化落点：gateway 数据库（uploaded_files/parsed_contents）与对象库根。 */
-    assets: { db: GatewayDatabase; dataDir: string } | null,
-    roomRegistry: MemoryRoomRegistry | null = null,
-  ) {
-    this.config = config;
-    this.client = config ? new MemoryClientWithTimeout(config) : null;
-    this.files = assets ? new FilesService(assets.db, assets.dataDir) : null;
-    this.db = assets?.db ?? null;
-    this.roomRegistry = roomRegistry;
+  constructor(options: MemoryServiceOptions) {
+    this.enabled = options.enabled;
+    this.root = options.root;
+    this.logger = options.logger ?? (() => {});
+    this.maintenanceIntervalMs = options.maintenanceIntervalMs ?? DEFAULT_MAINTENANCE_INTERVAL_MS;
+    this.maintenanceInitialDelayMs = options.maintenanceInitialDelayMs ?? DEFAULT_MAINTENANCE_INITIAL_DELAY_MS;
+    this.spaceRootFor = options.spaceRootFor ?? null;
+    this.adapter = this.openAdapter(options.root);
+    this.adapters.set(options.root, this.adapter);
+    this.outcomes = new MemoryOutcomeTracker({
+      service: this,
+      ...(options.logger ? { logger: options.logger } : {}),
+    });
   }
 
-  get enabled(): boolean {
-    return this.client !== null;
+  /** 按 root 懒开库（幂等）；同一 root 复用同一个 adapter。 */
+  private openAdapter(root: string): HippoMemoryAdapter {
+    const existing = this.adapters.get(root);
+    if (existing) return existing;
+    const adapter = new HippoMemoryAdapter({
+      root,
+      actor: "gateway",
+      ...(this.logger ? { logger: this.logger } : {}),
+    });
+    if (this.started || root === this.root) adapter.open();
+    this.adapters.set(root, adapter);
+    return adapter;
   }
 
-  replaceConfig(config: MemoryRuntimeConfig | null): void {
-    this.config = config;
-    this.client = config ? new MemoryClientWithTimeout(config) : null;
+  /** 该工作区的记忆库：空间绑了目录就用 `<space>/.everoffice/memory`，否则全局库。 */
+  private adapterFor(workspaceId: string | null | undefined): HippoMemoryAdapter {
+    const root = this.spaceRootFor?.(workspaceId);
+    if (!root) return this.adapter;
+    const adapter = this.openAdapter(root);
+    adapter.open();
+    return adapter;
   }
 
-  /**
-   * Inject the local MemoryCore connection together with the active identity
-   * without persisting secrets in the runtime-config store.
-   */
-  injectConfig(config: MemoryRuntimeConfig | null): void {
-    this.replaceConfig(config);
+  /** 所有已打开的记忆库（按 id 操作时逐个试）。 */
+  private allAdapters(): HippoMemoryAdapter[] {
+    return [...this.adapters.values()];
   }
 
-  async overview(): Promise<MemoryOverviewDto> {
-    const client = this.require();
-    const [l1All, l1Episodic, l1Persona, l1Instruction, l0, l2, l3, pipeline] = await Promise.allSettled([
-      client.countAtomic(),
-      client.countAtomic("episodic"),
-      client.countAtomic("persona"),
-      client.countAtomic("instruction"),
-      client.countConversation(),
-      client.countScenario(),
-      client.readCoreFile(),
-      client.pipelineStatus(),
-    ]);
-    // 总览页允许单路失败：失败的层置 null，前端按"未知"渲染，而不是整页 502。
-    const counted = (result: PromiseSettledResult<number>) =>
-      result.status === "fulfilled" ? result.value : null;
-    const l1Total = counted(l1All);
-    const episodic = counted(l1Episodic);
-    const persona = counted(l1Persona);
-    const instruction = counted(l1Instruction);
-    if (l1Total === null && episodic === null && persona === null && instruction === null) {
-      // L1 全部探测失败说明 MemoryCore 整体不可用，总览不应假装"未知"。
-      this.mapFailure((l1All as PromiseRejectedResult).reason);
-    }
-    const pipelineSessions = pipeline.status === "fulfilled"
-      ? await this.loadPipelineSessions(pipeline.value)
-      : new Map<string, MemoryPipelineSessionDto>();
-
-    return {
-      l1: {
-        total: l1Total ?? (episodic ?? 0) + (persona ?? 0) + (instruction ?? 0),
-        byType: {
-          episodic: episodic ?? 0,
-          persona: persona ?? 0,
-          instruction: instruction ?? 0,
-        },
-      },
-      l0: l0.status === "fulfilled" ? { total: l0.value } : null,
-      l2: l2.status === "fulfilled" ? { total: l2.value } : null,
-      l3: l3.status === "fulfilled"
-        ? { exists: l3.value.content != null, updatedAt: l3.value.updated_at || null }
-        : null,
-      pipeline: pipeline.status === "fulfilled"
-        ? {
-            l1: toStageDto(pipeline.value.l1, pipelineSessions),
-            l2: toStageDto(pipeline.value.l2, pipelineSessions),
-            l3: toStageDto(pipeline.value.l3, pipelineSessions),
-          }
-        : null,
-    };
+  isEnabled(): boolean {
+    return this.enabled;
   }
 
-  /** Pipeline status only carries session IDs; resolve a small active subset for the desktop. */
-  private async loadPipelineSessions(status: MemoryPipelineStatus): Promise<Map<string, MemoryPipelineSessionDto>> {
-    const ids = [...new Set([
-      ...(status.l1.queued_sessions ?? []),
-      ...(status.l1.running_sessions ?? []),
-      ...(status.l2.queued_sessions ?? []),
-      ...(status.l2.running_sessions ?? []),
-      ...(status.l3.queued_sessions ?? []),
-      ...(status.l3.running_sessions ?? []),
-    ])].slice(0, 6);
-    const resolved = await Promise.all(ids.map(async (sessionId) => {
-      const row = this.db
-        ?.select({ title: agentSessions.title })
-        .from(agentSessions)
-        .where(eq(agentSessions.id, sessionId))
-        .get();
-      let latestUserMessage: string | null = null;
-      try {
-        const page = await this.call(() => this.require().queryConversation({ sessionId, limit: 20, offset: 0 }));
-        const latest = page.messages
-          .filter((message) => message.role === "user")
-          .slice()
-          .sort((left, right) => {
-            const leftTime = Date.parse(left.timestamp ?? left.recorded_at ?? "");
-            const rightTime = Date.parse(right.timestamp ?? right.recorded_at ?? "");
-            return leftTime - rightTime;
-          })
-          .at(-1);
-        latestUserMessage = latest?.content?.trim().slice(0, 180) || null;
-      } catch {
-        // A pipeline session can disappear between status and conversation read.
-      }
-      return [sessionId, {
-        sessionId,
-        title: row?.title?.trim() || null,
-        latestUserMessage,
-      }] as const;
-    }));
-    return new Map(resolved);
-  }
-
-  async listAtomic(options: MemoryListOptions): Promise<{ items: MemoryAtomicDto[]; total: number }> {
-    const client = this.require();
-    const page = await this.call(() => client.queryAtomic({
-      type: options.type,
-      limit: options.limit,
-      offset: options.offset,
-      timeStart: options.timeStart,
-      timeEnd: options.timeEnd,
-    }));
-    const items = await this.attachRoom(page.items.map((item) => ({
-      id: item.id,
-      type: item.type,
-      content: item.content,
-      background: item.background ?? null,
-      createdAt: item.created_at,
-      updatedAt: item.updated_at,
-    })));
-    return { items, total: page.total };
-  }
-
-  async searchAtomic(query: string, limit: number): Promise<{ items: (MemoryAtomicDto & { score: number })[] }> {
-    const client = this.require();
-    const items = await this.call(() => client.searchAtomic(query, limit));
-    return {
-      items: await this.attachRoom(items.map((item) => ({
-        id: item.id,
-        type: item.type,
-        content: item.content,
-        background: item.background ?? null,
-        createdAt: item.created_at,
-        updatedAt: item.updated_at,
-        score: item.score ?? 0,
-      }))),
-    };
-  }
-
-  async updateAtomic(
-    id: string,
-    content: string,
-    background?: string,
-  ): Promise<{ id: string; version: number; updatedAt: string }> {
-    const client = this.require();
-    const result = await this.call(() => client.updateAtomic(id, content, background));
-    // 编辑成功后顺带刷新归属行快照（行不存在则跳过；尽力而为，不阻断编辑）。
-    if (this.db) {
-      try {
-        this.db
-          .update(roomMemoryAttributions)
-          .set({ content, memoryUpdatedAt: result.updated_at })
-          .where(eq(roomMemoryAttributions.memoryId, id))
-          .run();
-      } catch (error) {
-        this.logger.warn({ err: error, memoryId: id }, "room memory snapshot refresh failed");
-      }
-    }
-    return { id: result.id, version: result.version, updatedAt: result.updated_at };
-  }
-
-  async deleteAtomic(ids: string[]): Promise<{ deletedCount: number }> {
-    const client = this.require();
-    const result = await this.call(() => client.deleteAtomic(ids));
-    // 记忆本体删除后清理 Room 归属行与压制行（防孤儿）；清理失败不阻断已成功的删除。
-    if (this.db && ids.length > 0) {
-      try {
-        this.db.delete(roomMemoryAttributions).where(inArray(roomMemoryAttributions.memoryId, ids)).run();
-        this.db.delete(roomMemorySuppressions).where(inArray(roomMemorySuppressions.memoryId, ids)).run();
-      } catch (error) {
-        this.logger.warn({ err: error }, "room memory attribution cleanup failed");
-      }
-    }
-    return { deletedCount: result.deleted_count };
-  }
-
-  /**
-   * 指派/清除单条 L1 记忆的 Room 归属（room_memory_attributions，sourceKind=user）。
-   * - roomId=null：删除归属行并写入永久压制（该记忆不再被 worker 自动绑回），幂等。
-   * - 非空：经 roomRegistry.resolveRoomId 解析合并链后落**终点** id（与 agent_runs.roomId 同策略）；
-   *   记忆不存在或 Room 不可解析（软删/不存在）均抛 404；snapshot 随行落库供注入取数。
-   */
-  async assignAtomicRoom(
-    memoryId: string,
-    roomId: string | null,
-    snapshot?: RoomMemorySnapshotInput,
-  ): Promise<{ memoryId: string; roomId: string | null }> {
-    const client = this.require();
-    if (roomId === null) {
-      if (this.db) {
-        const existing = this.db.select({ roomId: roomMemoryAttributions.roomId })
-          .from(roomMemoryAttributions)
-          .where(eq(roomMemoryAttributions.memoryId, memoryId))
-          .get();
-        this.db.delete(roomMemoryAttributions).where(eq(roomMemoryAttributions.memoryId, memoryId)).run();
-        if (existing) {
-          this.db.insert(roomMemorySuppressions)
-            .values({ memoryId, roomId: existing.roomId, createdAt: new Date() })
-            .onConflictDoNothing({ target: roomMemorySuppressions.memoryId })
-            .run();
-        }
-      }
-      return { memoryId, roomId: null };
-    }
-    if (!this.db || !this.roomRegistry) {
-      throw new MemoryGatewayError("memory_error", "gateway database is not available", 503);
-    }
+  /** 打开记忆库（幂等）。关闭记忆时为空操作。 */
+  start(): void {
+    if (!this.enabled || this.started) return;
     try {
-      await client.atomicProvenance(memoryId);
+      this.disableExtraction();
+      for (const adapter of this.allAdapters()) adapter.open();
+      this.adapter.open();
+      this.started = true;
+      this.logger("info", "memory.started", { stats: this.adapter.stats() });
+      this.scheduleMaintenance();
     } catch (error) {
-      // call() 会把 HTTP 错误统一映射为 502，存在性校验需要在映射前识别 404。
-      if (error instanceof MemoryCoreError) {
-        if (error.kind === "http" && error.status === 404) {
-          throw new MemoryGatewayError("memory_error", `atomic memory not found: ${memoryId}`, 404);
-        }
-        this.mapFailure(error);
-      }
-      throw error;
-    }
-    const resolved = this.roomRegistry.resolveRoomId(roomId);
-    if (!resolved) {
-      throw new MemoryGatewayError("memory_error", `context room not available: ${roomId}`, 404);
-    }
-    const now = new Date();
-    // 带快照则落库；换绑不带快照时保留既有快照列（不清空，注入取数不中断）。
-    const snapshotColumns = snapshot
-      ? {
-          content: snapshot.content ?? null,
-          memoryType: snapshot.type ?? null,
-          memoryUpdatedAt: snapshot.memoryUpdatedAt ?? null,
-        }
-      : null;
-    this.db
-      .insert(roomMemoryAttributions)
-      .values({
-        id: randomUUID(),
-        roomId: resolved,
-        memoryId,
-        sourceKind: "user",
-        sourceId: null,
-        confidence: "explicit",
-        ...(snapshotColumns ?? { content: null, memoryType: null, memoryUpdatedAt: null }),
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: roomMemoryAttributions.memoryId,
-        set: {
-          roomId: resolved,
-          sourceKind: "user",
-          sourceId: null,
-          confidence: "explicit",
-          ...(snapshotColumns ?? {}),
-          updatedAt: now,
-        },
-      })
-      .run();
-    return { memoryId, roomId: resolved };
-  }
-
-  /**
-   * Room 绑定记忆清单（注入数据源）：按 memoryUpdatedAt 倒序，跳过无快照行，
-   * 预算裁剪（20 条 / 单条 500 字 / 总量 4000 字）；Room 不可解析返回空。
-   */
-  async listRoomMemories(roomId: string): Promise<RoomMemorySnapshot[]> {
-    if (!this.db || !this.roomRegistry) return [];
-    const resolved = this.roomRegistry.resolveRoomId(roomId);
-    if (!resolved) return [];
-    const rows = this.db
-      .select({
-        memoryId: roomMemoryAttributions.memoryId,
-        type: roomMemoryAttributions.memoryType,
-        content: roomMemoryAttributions.content,
-        memoryUpdatedAt: roomMemoryAttributions.memoryUpdatedAt,
-      })
-      .from(roomMemoryAttributions)
-      .where(eq(roomMemoryAttributions.roomId, resolved))
-      .all()
-      .filter((row): row is { memoryId: string; type: string; content: string; memoryUpdatedAt: string } =>
-        Boolean(row.content))
-      .sort((a, b) => (a.memoryUpdatedAt < b.memoryUpdatedAt ? 1 : -1));
-    const items: RoomMemorySnapshot[] = [];
-    let total = 0;
-    for (const row of rows) {
-      if (items.length >= ROOM_MEMORY_MAX_ITEMS || total >= ROOM_MEMORY_TOTAL_MAX_CHARS) break;
-      const content = row.content.length > ROOM_MEMORY_ITEM_MAX_CHARS
-        ? `${row.content.slice(0, ROOM_MEMORY_ITEM_MAX_CHARS)}…`
-        : row.content;
-      items.push({
-        memoryId: row.memoryId,
-        type: row.type ?? "",
-        content,
-        updatedAt: row.memoryUpdatedAt,
+      // 记忆是增强能力：初始化失败不阻断 gateway 启动。
+      this.logger("error", "memory.start.failed", {
+        error: error instanceof Error ? error.message : String(error),
       });
-      total += content.length;
-    }
-    return items;
-  }
-
-  /**
-   * Room 归因记忆全量列表（无 prompt 预算）：doc-writer memoryIndex 注入、回溯
-   * worker、桌面记忆卡共用。同一查询但不做 20 条/4000 字裁剪，仅条数上限与单条
-   * 2000 字安全截断；返回 {id,content,type} 与原 contextRoomService.listMemoryItems
-   * 同形（同步契约），消费点可直接换源。
-   */
-  listRoomAttributedMemories(
-    roomId: string,
-    limit = 200,
-  ): Array<{ id: string; content: string; type: string }> {
-    if (!this.db || !this.roomRegistry) return [];
-    const resolved = this.roomRegistry.resolveRoomId(roomId);
-    if (!resolved) return [];
-    return this.db
-      .select({
-        memoryId: roomMemoryAttributions.memoryId,
-        type: roomMemoryAttributions.memoryType,
-        content: roomMemoryAttributions.content,
-        memoryUpdatedAt: roomMemoryAttributions.memoryUpdatedAt,
-      })
-      .from(roomMemoryAttributions)
-      .where(eq(roomMemoryAttributions.roomId, resolved))
-      .all()
-      .filter((row): row is { memoryId: string; type: string | null; content: string; memoryUpdatedAt: string } =>
-        Boolean(row.content))
-      .sort((a, b) => (a.memoryUpdatedAt < b.memoryUpdatedAt ? 1 : -1))
-      .slice(0, Math.max(1, limit))
-      .map((row) => ({
-        id: row.memoryId,
-        content: row.content.length > 2000 ? `${row.content.slice(0, 2000)}…` : row.content,
-        type: row.type ?? "",
-      }));
-  }
-
-  /**
-   * Room 绑定记忆检索（memory_search 的 room_id 过滤）：在 listRoomMemories 上做
-   * 本地词法过滤（query 切小写词元，AND 子串匹配）。绑定集是用户甄选的小集合，
-   * 无需向量检索；Room 不可解析或无匹配返回空。
-   */
-  async searchRoomMemories(roomId: string, query: string, limit: number): Promise<RoomMemorySnapshot[]> {
-    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (tokens.length === 0) return [];
-    const items = await this.listRoomMemories(roomId);
-    return items
-      .filter((item) => {
-        const haystack = item.content.toLowerCase();
-        return tokens.every((token) => haystack.includes(token));
-      })
-      .slice(0, limit);
-  }
-
-  /** 落合并链终点（与 assignAtomicRoom 同策略）；未装配 registry 返回 null。供推导 worker 使用。 */
-  resolveRoom(roomId: string): string | null {
-    return this.roomRegistry?.resolveRoomId(roomId) ?? null;
-  }
-
-  /**
-   * 推导 worker 的落库（confidence=derived）：sourceKind=conversation、sourceId=来源会话 id、
-   * 快照三列取列表项。onConflictDoNothing——与并发手动绑定竞态时 explicit 胜。
-   */
-  insertDerivedAttribution(
-    item: Pick<MemoryAtomicDto, "id" | "type" | "content" | "updatedAt">,
-    sessionId: string,
-    roomId: string,
-    sourceKind: "conversation" | "document" | "source" | "room_item" = "conversation",
-  ): void {
-    if (!this.db) return;
-    const now = new Date();
-    this.db
-      .insert(roomMemoryAttributions)
-      .values({
-        id: randomUUID(),
-        roomId,
-        memoryId: item.id,
-        sourceKind,
-        sourceId: sessionId,
-        confidence: "derived",
-        content: item.content,
-        memoryType: item.type,
-        memoryUpdatedAt: item.updatedAt,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoNothing({ target: roomMemoryAttributions.memoryId })
-      .run();
-  }
-
-  async listScenarios(pathPrefix?: string): Promise<{ entries: MemoryScenarioEntryDto[]; total: number }> {
-    const client = this.require();
-    const entries = await this.call(() => client.listScenarios());
-    const filtered = pathPrefix
-      ? entries.filter((entry) => entry.path.startsWith(pathPrefix))
-      : entries;
-    return {
-      entries: filtered.map((entry) => ({
-        path: entry.path,
-        summary: entry.summary ?? null,
-        isDirectory: entry.path.endsWith("/"),
-        createdAt: entry.created_at,
-        updatedAt: entry.updated_at,
-      })),
-      total: filtered.length,
-    };
-  }
-
-  async readScenario(path: string): Promise<{
-    path: string;
-    content: string | null;
-    version: number;
-    updatedAt: string;
-  }> {
-    const client = this.require();
-    const file = await this.call(() => client.readScenario(path));
-    return {
-      path: file.path,
-      content: file.content,
-      version: file.version,
-      updatedAt: file.updated_at,
-    };
-  }
-
-  async readCore(): Promise<{ content: string | null; version: number; updatedAt: string }> {
-    const client = this.require();
-    const file = await this.call(() => client.readCoreFile());
-    return { content: file.content, version: file.version, updatedAt: file.updated_at };
-  }
-
-  async writeCore(content: string): Promise<{ version: number; updatedAt: string }> {
-    const client = this.require();
-    const result = await this.call(() => client.writeCore(content));
-    return { version: result.version, updatedAt: result.updated_at };
-  }
-
-  async listConversations(
-    options: MemoryConversationListOptions,
-  ): Promise<{ messages: MemoryConversationMessageDto[]; total: number }> {
-    const client = this.require();
-    const page = await this.call(() => client.queryConversation({
-      sessionId: options.sessionId,
-      limit: options.limit,
-      offset: options.offset,
-      timeStart: options.timeStart,
-      timeEnd: options.timeEnd,
-      sourceKind: options.sourceKind,
-    }));
-    return {
-      messages: page.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp ?? null,
-        sessionId: message.session_id ?? null,
-        sourceKind: message.source_kind ?? null,
-      })),
-      total: page.total,
-    };
-  }
-
-  async importConversation(input: {
-    sessionId: string;
-    messages: HistoricalConversationMessage[];
-  }): Promise<{ sessionId: string; messagesImported: number }> {
-    return this.replaceConversationBatches(input);
-  }
-
-  async replaceConversationBatches(input: {
-    sessionId: string;
-    messages: HistoricalConversationMessage[];
-    batchSize?: number;
-  }): Promise<{ sessionId: string; messagesImported: number }> {
-    const client = this.require();
-    const messages = normalizeHistoricalConversationMessages(input.messages);
-    const batchSize = Math.min(
-      Math.max(input.batchSize ?? CONVERSATION_IMPORT_MAX_MESSAGES, 1),
-      CONVERSATION_IMPORT_MAX_MESSAGES,
-    );
-    await this.call(() => client.deleteConversation({ sessionIds: [input.sessionId] }));
-    for (let offset = 0; offset < messages.length; offset += batchSize) {
-      await this.call(() => client.addConversation(input.sessionId, messages.slice(offset, offset + batchSize)));
-    }
-    return { sessionId: input.sessionId, messagesImported: messages.length };
-  }
-
-  async searchConversations(
-    query: string,
-    limit: number,
-    sessionId?: string,
-  ): Promise<{ messages: (MemoryConversationMessageDto & { score: number })[] }> {
-    const client = this.require();
-    const messages = await this.call(() => client.searchConversation(query, limit, sessionId));
-    return {
-      messages: messages.map((message) => ({
-        id: message.id ?? "",
-        role: message.role === "assistant" ? "assistant" : "user",
-        content: message.content,
-        timestamp: message.timestamp ?? null,
-        sessionId: null,
-        sourceKind: message.source_kind ?? null,
-        score: message.score ?? 0,
-      })),
-    };
-  }
-
-  async deleteConversations(target: {
-    sessionIds?: string[] | undefined;
-    messageIds?: string[] | undefined;
-  }): Promise<{ deletedCount: number }> {
-    const client = this.require();
-    const result = await this.call(() => client.deleteConversation(target));
-    return { deletedCount: result.deleted_count };
-  }
-
-  // ───────────────────────── md 文档导入（资产化 + /v3/document/import） ─────────────────────────
-
-  /**
-   * md 一等来源导入（docs/memory-md-source-plan.md §6）：
-   * ① 资产化——file-storage 原语落对象库 + uploaded_files/parsed_contents
-   *   （与文件上传同一套确定性身份，但不触发 knowledge 的 wiki 路由）；
-   * ② 代理 MemoryCore /v3/document/import，caller_ref = file id。
-   * 原文字节只落资产层；MemoryCore 仅存 caller_ref 与内容指纹。
-   */
-  async importMarkdown(input: {
-    title: string;
-    markdown: string;
-    filename?: string | undefined;
-  }): Promise<MemoryImportMarkdownResult> {
-    const client = this.require();
-    const files = this.requireAssets();
-
-    const filename = input.filename?.trim() || `${input.title.trim()}.md`;
-    const buffer = Buffer.from(input.markdown, "utf8");
-
-    // 资产段经 modules/files（U9）：闸1 同名同内容 deduped 跳过；同名新内容
-    // 版本更新。此处与知识上传共用同一套确定性身份与对象库。
-    const uploaded = await files.upload({ filename, buffer });
-    if (!uploaded.deduped) {
-      const parsedId = files.ensureParsed(uploaded.contentHash, input.markdown);
-      files.touchParsed(uploaded.fileId, parsedId);
-    }
-    const fileId = uploaded.fileId;
-
-    const result = await this.call(() => client.importDocument({
-      title: input.title.trim(),
-      markdown: input.markdown,
-      callerRef: fileId,
-    }));
-    return {
-      fileId,
-      document: this.toDocumentDto(result.document),
-      version: result.version,
-      sessionId: result.session_id,
-      chunkCount: result.chunk_count,
-      deduplicated: result.deduplicated,
-      replacedVersions: result.replaced_versions,
-      acceptedChunks: result.accepted_chunks,
-    };
-  }
-
-  async listDocuments(
-    limit = 50,
-    offset = 0,
-  ): Promise<{ documents: MemoryDocumentDto[]; total: number }> {
-    const client = this.require();
-    const page = await this.call(() => client.listDocuments({ limit, offset }));
-    return {
-      documents: page.documents.map((item) => this.toDocumentDto(item)),
-      // MemoryCore 的 total = 本页条数（实测 /v3/document/list），不是全量——
-      // 分页 UI 据此判断"有没有下一页"会永远停在第一页。这里用探测法取真实
-      // 总数：请求 limit=200（gateway 路由上限）看是否截断，截断说明还有更多。
-      total: await this.trueDocumentTotal(client, limit, offset, page),
-    };
-  }
-
-  /** 真实文档总数（探测法）：本页不满 = 到底；满页则翻一页大 limit 探底。 */
-  private async trueDocumentTotal(
-    client: ReturnType<MemoryService["require"]>,
-    pageLimit: number,
-    pageOffset: number,
-    page: { documents: unknown[] },
-  ): Promise<number> {
-    const pageSize = page.documents.length;
-    if (pageSize < pageLimit) {
-      // 本页不满：offset + 本页条数即全量
-      return pageOffset + pageSize;
-    }
-    // 本页满：可能还有更多——大 limit 探底（200 是路由上限；超过 200 的
-    // 极端库再翻页补数，每页 200 一次往返）
-    let total = 0;
-    for (let probeOffset = 0; ; probeOffset += 200) {
-      const probe = await this.call(() => client.listDocuments({ limit: 200, offset: probeOffset }));
-      total += probe.documents.length;
-      if (probe.documents.length < 200) return total;
     }
   }
 
-  async getDocument(documentId: string): Promise<{
-    document: MemoryDocumentDto;
-    chunks: MemoryDocumentChunkDto[];
-    memories: MemoryDocumentMemoryDto[];
-  }> {
-    const client = this.require();
-    const detail = await this.call(() => client.getDocument(documentId));
-    return {
-      document: this.toDocumentDto(detail.document),
-      chunks: detail.chunks.map((chunk) => ({
-        chunkIndex: chunk.chunk_index,
-        messageId: chunk.message_id,
-        headingPath: chunk.heading_path,
-        lineStart: chunk.line_start,
-        lineEnd: chunk.line_end,
-        content: chunk.content,
-        recordedAt: chunk.recorded_at ?? null,
-      })),
-      memories: detail.memories.map((memory) => ({
-        id: memory.id,
-        type: memory.type,
-        content: memory.content,
-        background: memory.background ?? null,
-        sourceMessageIds: memory.source_message_ids ?? [],
-        createdAt: memory.created_at ?? "",
-        updatedAt: memory.updated_at ?? "",
-      })),
-    };
+  isStarted(): boolean {
+    return this.started;
   }
 
-  async deleteDocument(documentId: string): Promise<{ documentId: string; deleted: boolean }> {
-    const client = this.require();
-    const result = await this.call(() => client.deleteDocument(documentId));
-    return { documentId: result.document_id, deleted: true };
-  }
-
-  async atomicProvenance(memoryId: string): Promise<MemoryAtomicProvenanceDto> {
-    const client = this.require();
-    const provenance = await this.call(() => client.atomicProvenance(memoryId));
-    const [room] = await this.attachRoom([{ id: provenance.memory_id }]);
-    return this.mapProvenanceDto(provenance, room);
+  /** 停止定时整理（进程退出前调用）。 */
+  stop(): void {
+    if (this.maintenanceTimer) {
+      clearInterval(this.maintenanceTimer);
+      this.maintenanceTimer = null;
+    }
+    this.started = false;
   }
 
   /**
-   * 404-safe 溯源（推导 worker 用）：记忆不存在（MemoryCore http 404）返回 null 而非 502，
-   * 其余错误照常映射。直调 client 模式与 assignAtomicRoom 的存在性校验一致。
+   * 整理回合：衰减 / 去重 / 情景合并 / 冲突刷新。定时任务与手动触发共用。
+   * 并发调用会被丢弃（一次整理可能持续数秒）。
    */
-  async atomicProvenanceOrNull(memoryId: string): Promise<MemoryAtomicProvenanceDto | null> {
-    const client = this.require();
-    let provenance;
+  async maintain(options: { dryRun?: boolean } = {}): Promise<HippoSleepResult | null> {
+    if (!this.enabled || !this.started || this.maintenanceRunning) return null;
+    this.maintenanceRunning = true;
     try {
-      provenance = await client.atomicProvenance(memoryId);
+      const result = await this.adapter.maintain(options);
+      // 空间记忆库各自整理（失败只记日志，不影响全局整理结果）。
+      for (const adapter of this.allAdapters()) {
+        if (adapter === this.adapter) continue;
+        await adapter.maintain(options).catch(() => null);
+      }
+      // 合并会把经验（episodic）卷成 semantic：读取侧已按标签兜住类别，
+      // 这里把「漂移条数」打出来，方便确认规模是否在预期内。
+      const drift = this.adapter.categoryDrift();
+      this.logger("info", "memory.maintain.done", {
+        active: result.active,
+        removed: result.removed,
+        mergedEpisodic: result.mergedEpisodic,
+        newSemantic: result.newSemantic,
+        dryRun: result.dryRun,
+        lessonTaggedNotEpisodic: drift.lessonTaggedNotEpisodic,
+      });
+      return result;
     } catch (error) {
-      if (error instanceof MemoryCoreError) {
-        if (error.kind === "http" && error.status === 404) return null;
-        this.mapFailure(error);
-      }
-      throw error;
-    }
-    const [room] = await this.attachRoom([{ id: provenance.memory_id }]);
-    return this.mapProvenanceDto(provenance, room);
-  }
-
-  private mapProvenanceDto(
-    provenance: Awaited<ReturnType<MemoryCoreClient["atomicProvenance"]>>,
-    room: { roomId: string | null; roomTitle: string | null } | undefined,
-  ): MemoryAtomicProvenanceDto {
-    return {
-      memoryId: provenance.memory_id,
-      type: provenance.type,
-      content: provenance.content,
-      kind: provenance.kind,
-      room: { roomId: room?.roomId ?? null, roomTitle: room?.roomTitle ?? null },
-      session: provenance.session
-        ? {
-          sessionId: provenance.session.session_id ?? null,
-          sessionKey: provenance.session.session_key ?? null,
-        }
-        : null,
-      document: provenance.document
-        ? {
-          documentId: provenance.document.document_id,
-          title: provenance.document.title,
-          callerRef: provenance.document.caller_ref,
-          version: provenance.document.version,
-          sessionId: provenance.document.session_id,
-        }
-        : null,
-      anchorMessageIds: provenance.anchor_message_ids,
-      anchors: provenance.anchors.map((anchor) => ({
-        messageId: anchor.message_id,
-        role: anchor.role,
-        content: anchor.content,
-        recordedAt: anchor.recorded_at ?? null,
-        sessionId: anchor.session_id ?? null,
-        sourceKind: anchor.source_kind,
-        ...(anchor.heading_path !== undefined ? { headingPath: anchor.heading_path } : {}),
-        ...(anchor.line_start !== undefined ? { lineStart: anchor.line_start } : {}),
-        ...(anchor.line_end !== undefined ? { lineEnd: anchor.line_end } : {}),
-        ...(anchor.chunk_index !== undefined ? { chunkIndex: anchor.chunk_index } : {}),
-      })),
-    };
-  }
-
-  /**
-   * 记忆导入下半段（unified-ingest-plan §7）：不经资产化直调 MemoryCore
-   * ——理解引擎扇出用（原文归 files 模块管，引擎只传 callerRef + 内容）。
-   * markdown 由调用方（引擎）按 2MB 消费端上限截断后再传入。
-   */
-  async importToMemoryCore(input: {
-    title: string;
-    markdown: string;
-    callerRef: string;
-  }): Promise<MemoryImportDocumentResult> {
-    const client = this.require();
-    const result = await this.call(() => client.importDocument({
-      title: input.title.trim(),
-      markdown: input.markdown,
-      callerRef: input.callerRef,
-    }));
-    return {
-      document: this.toDocumentDto(result.document),
-      version: result.version,
-      sessionId: result.session_id,
-      chunkCount: result.chunk_count,
-      deduplicated: result.deduplicated,
-      replacedVersions: result.replaced_versions,
-      acceptedChunks: result.accepted_chunks,
-    };
-  }
-
-  /**
-   * 文件删除级联（modules/files 调用）：按 caller_ref 反查并删除 MemoryCore
-   * 文档（级联清 L0 会话/分块/派生 L1）。MemoryCore 未启用返回空列表。
-   */
-  async deleteDocumentsByCallerRef(callerRef: string): Promise<string[]> {
-    return this.deleteDocumentsByCallerRefs({ refs: [callerRef] });
-  }
-
-  /**
-   * 批量版（连接器删除级联用）：exact ref 集合 + 可选前缀一次分页扫描命中即删，
-   * 避免逐 ref 全量扫描的 O(N×M)。MemoryCore 未启用返回空列表。
-   */
-  async deleteDocumentsByCallerRefs(target: { refs: string[]; prefix?: string }): Promise<string[]> {
-    if (!this.client || !this.enabled) return [];
-    const client = this.client;
-    const refs = new Set(target.refs);
-    const matches = (callerRef: string) =>
-      refs.has(callerRef) || (target.prefix !== undefined && callerRef.startsWith(target.prefix));
-    const deleted: string[] = [];
-    // listDocuments 按身份键取最新版本：分页扫全量，caller_ref 命中即删
-    for (let offset = 0; ; offset += 100) {
-      const page = await this.call(() => client.listDocuments({ limit: 100, offset }));
-      for (const item of page.documents) {
-        if (!matches(item.caller_ref)) continue;
-        await this.call(() => client.deleteDocument(item.document_id));
-        deleted.push(item.document_id);
-      }
-      if (offset + 100 >= page.total) break;
-    }
-    return deleted;
-  }
-
-  /** 解析产物幂等入库（闸2）已移交 modules/files——资产原语不再本地实现。 */
-  private toDocumentDto(item: {
-    document_id: string;
-    title: string;
-    caller_ref: string;
-    version: number;
-    session_id: string;
-    chunk_count: number;
-    created_at: string;
-    updated_at: string;
-    derived_memory_count?: number;
-  }): MemoryDocumentDto {
-    return {
-      id: item.document_id,
-      title: item.title,
-      callerRef: item.caller_ref,
-      version: item.version,
-      sessionId: item.session_id,
-      chunkCount: item.chunk_count,
-      derivedMemoryCount: item.derived_memory_count ?? null,
-      createdAt: item.created_at,
-      updatedAt: item.updated_at,
-    };
-  }
-
-  /** 解析产物幂等入库（闸2）已移交 modules/files（U9）——资产原语不再本地实现。 */
-
-  private requireAssets(): FilesService {
-    if (!this.files) {
-      throw new MemoryGatewayError(
-        "memory_disabled",
-        "memory document assets are not available on this gateway",
-        503,
-      );
-    }
-    return this.files;
-  }
-
-  async captureDocumentCreation(input: DocumentCreationMemoryInput): Promise<boolean> {
-    const client = this.client;
-    if (!client) return false;
-    const timestamp = new Date().toISOString();
-    await this.call(() => client.addConversation(input.sessionId, [
-      {
-        role: "user",
-        content: `[document:create] 在 Context Room ${input.roomId} 中创建文档。`,
-        timestamp,
-      },
-      {
-        role: "assistant",
-        // 正文由统一 ingest 以文档来源导入；对话只保留操作事实，避免全文双写。
-        content: `[document:${input.documentId}] 已创建文档《${input.title}》。`,
-        timestamp,
-      },
-    ]));
-    return true;
-  }
-
-  async captureSelectionRewrite(input: SelectionRewriteMemoryInput): Promise<boolean> {
-    const client = this.client;
-    if (!client) return false;
-    const timestamp = new Date().toISOString();
-    await this.call(() => client.addConversation(`document:${input.documentId}`, [
-      {
-        role: "user",
-        content: [
-          `[document:rewrite] 文档《${input.documentTitle}》（Room ${input.roomId}）选区重写。`,
-          `改写要求：${input.instruction}`,
-          "原文：",
-          input.originalText,
-        ].join("\n"),
-        timestamp,
-      },
-      {
-        role: "assistant",
-        content: ["已接受并应用以下改写结果：", input.replacementText].join("\n"),
-        timestamp,
-      },
-    ]));
-    return true;
-  }
-
-  async captureSourceDocument(input: SourceDocumentMemoryInput): Promise<boolean> {
-    const client = this.client;
-    if (!client) return false;
-    const timestamp = new Date().toISOString();
-    const sessionId = `wiki:${input.sourceId}:${input.documentId}`.slice(0, 100);
-    const metadata = [
-      `[wiki:source=${input.sourceKind}]`,
-      `[wiki:document=${input.documentId}]`,
-      input.uri ? `[wiki:url=${input.uri}]` : '',
-      input.contentHash ? `[wiki:sha256=${input.contentHash}]` : '',
-    ].filter(Boolean).join(' ');
-    await this.call(() => client.addConversation(sessionId, [
-      { role: "user", content: `[wiki:sync] 请将以下 Markdown 文档作为可检索知识保存。\n${metadata}\n标题：${input.title}`, timestamp },
-      { role: "assistant", content: input.markdown, timestamp },
-    ]));
-    return true;
-  }
-
-  /**
-   * Room 记忆条目晋升捕获（待确认→已确认）：经合成会话交给 MemoryCore 蒸馏，
-   * room-derive-worker 的 `room-memory:` 链回填归属与条目 memoryId。
-   * 先捕获后落 promotionSessionId——捕获失败不落标记，用户重试不会重复蒸馏。
-   */
-  async captureRoomMemoryItem(input: RoomMemoryPromotionInput): Promise<boolean> {
-    const client = this.client;
-    if (!client) return false;
-    const sessionId = `room-memory:${input.roomId}:${input.itemId}`.slice(0, 100);
-    const timestamp = new Date().toISOString();
-    await this.call(() => client.addConversation(sessionId, [
-      {
-        role: "user",
-        content: `[room-memory:promote] 用户在 Context Room ${input.roomId} 的记忆面板确认了以下事实，请沉淀为原子记忆。`,
-        timestamp,
-      },
-      {
-        role: "assistant",
-        content: `已确认（类型：${input.type || "未分类"}）：${input.content}`,
-        timestamp,
-      },
-    ]));
-    return true;
-  }
-
-  /**
-   * 首次记忆引导不经过 Agent runtime，确保 Fake Agent 模式也能把回答交给
-   * MemoryCore。requestId 同时决定固定 session，并在 gateway_metadata 中持久判重。
-   */
-  async captureOnboarding(input: MemoryOnboardingInput): Promise<MemoryOnboardingResult> {
-    this.require();
-    if (!input.workContext.trim() || !input.currentFocus.trim()) {
-      throw new MemoryGatewayError(
-        "memory_error",
-        "workContext and currentFocus must contain non-whitespace text",
-        400,
-      );
-    }
-    const existing = this.readOnboardingRecord(input.requestId);
-    if (existing?.status === "accepted" && existing.profileUpdated) {
-      return this.toOnboardingResult(existing);
-    }
-
-    const running = this.onboardingRequests.get(input.requestId);
-    if (running) return running;
-
-    const operation = this.performOnboardingCapture(input, existing).finally(() => {
-      this.onboardingRequests.delete(input.requestId);
-    });
-    this.onboardingRequests.set(input.requestId, operation);
-    return operation;
-  }
-
-  private async performOnboardingCapture(
-    input: MemoryOnboardingInput,
-    existing: MemoryOnboardingRecord | null,
-  ): Promise<MemoryOnboardingResult> {
-    const client = this.require();
-    const sessionId = `onboarding:${input.requestId}`;
-    const capturedAt = existing?.capturedAt ?? new Date().toISOString();
-    const pending: MemoryOnboardingRecord = {
-      sessionId,
-      capturedAt,
-      accepted: true,
-      status: "pending",
-      profileUpdated: existing?.profileUpdated ?? false,
-    };
-    this.writeOnboardingRecord(input.requestId, pending);
-
-    // 旧版本已完成 L0 写入但尚未同步画像时，只补齐 L3，不重复追加对话。
-    if (existing?.status === "accepted") {
-      await this.updateOnboardingProfile(input, capturedAt);
-      const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
-      this.writeOnboardingRecord(input.requestId, accepted);
-      return this.toOnboardingResult(accepted);
-    }
-
-    // 上次可能已写入 MemoryCore、但尚未来得及把本地状态改成 accepted。
-    // 固定 session 下发现消息即可完成本地恢复，不再次追加同一轮对话。
-    if (existing?.status === "pending") {
-      const page = await this.call(() => client.queryConversation({
-        sessionId,
-        limit: 1,
-        offset: 0,
-      }));
-      if (page.total > 0 || page.messages.length > 0) {
-        await this.updateOnboardingProfile(input, capturedAt);
-        const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
-        this.writeOnboardingRecord(input.requestId, accepted);
-        return this.toOnboardingResult(accepted);
-      }
-    }
-
-    await this.call(() => client.addConversation(
-      sessionId,
-      this.onboardingMessages(input, capturedAt),
-    ));
-    await this.updateOnboardingProfile(input, capturedAt);
-
-    const accepted = { ...pending, status: "accepted" as const, profileUpdated: true };
-    this.writeOnboardingRecord(input.requestId, accepted);
-    return this.toOnboardingResult(accepted);
-  }
-
-  private async updateOnboardingProfile(
-    input: MemoryOnboardingInput,
-    capturedAt: string,
-  ): Promise<void> {
-    const client = this.require();
-    const current = await this.call(() => client.readCoreFile());
-    const block = this.onboardingProfileBlock(input, capturedAt);
-    const content = this.mergeOnboardingProfile(current.content ?? "", block);
-    await this.call(() => client.writeCore(content));
-  }
-
-  private onboardingProfileBlock(input: MemoryOnboardingInput, capturedAt: string): string {
-    const quote = (value: string) => value
-      .trim()
-      .replaceAll("<!--", "&lt;!--")
-      .replaceAll("-->", "--&gt;")
-      .split(/\r?\n/)
-      .map((line) => `> ${line}`)
-      .join("\n");
-    const preference = input.collaborationPreference?.trim();
-    if (input.locale === "en-US") {
-      return [
-        ONBOARDING_PROFILE_START,
-        "## Initial collaboration profile",
-        "### Main work",
-        quote(input.workContext),
-        "### Current focus",
-        quote(input.currentFocus),
-        ...(preference ? ["### Collaboration preference", quote(preference)] : []),
-        `_Captured during first setup at ${capturedAt}_`,
-        ONBOARDING_PROFILE_END,
-      ].join("\n\n");
-    }
-    return [
-      ONBOARDING_PROFILE_START,
-      "## 首次协作画像",
-      "### 主要工作",
-      quote(input.workContext),
-      "### 当前重点",
-      quote(input.currentFocus),
-      ...(preference ? ["### 协作偏好", quote(preference)] : []),
-      `_首次设置记录于 ${capturedAt}_`,
-      ONBOARDING_PROFILE_END,
-    ].join("\n\n");
-  }
-
-  private mergeOnboardingProfile(current: string, block: string): string {
-    const start = current.indexOf(ONBOARDING_PROFILE_START);
-    const end = start >= 0 ? current.indexOf(ONBOARDING_PROFILE_END, start) : -1;
-    if (start >= 0 && end >= 0) {
-      const after = end + ONBOARDING_PROFILE_END.length;
-      return `${current.slice(0, start).trimEnd()}\n\n${block}\n\n${current.slice(after).trimStart()}`.trim();
-    }
-    const navigationStart = current.indexOf(SCENE_NAVIGATION_HEADER);
-    if (navigationStart >= 0) {
-      return [
-        current.slice(0, navigationStart).trim(),
-        block,
-        current.slice(navigationStart).trim(),
-      ].filter(Boolean).join("\n\n");
-    }
-    return [current.trim(), block].filter(Boolean).join("\n\n");
-  }
-
-  private onboardingMessages(
-    input: MemoryOnboardingInput,
-    timestamp: string,
-  ): Array<{ role: "user" | "assistant"; content: string; timestamp: string }> {
-    const preference = input.collaborationPreference?.trim();
-    if (input.locale === "en-US") {
-      return [
-        {
-          role: "user",
-          content: [
-            "[everroom:onboarding] This is my first memory setup. Extract the information I directly provided below into durable atomic memories.",
-            `My main work: ${input.workContext.trim()}`,
-            `My current focus: ${input.currentFocus.trim()}`,
-            ...(preference ? [`How I want the Agent to collaborate with me: ${preference}`] : []),
-          ].join("\n"),
-          timestamp,
-        },
-        {
-          role: "assistant",
-          content: "[everroom:onboarding:accepted] I have read your answers and will retain your work context, current focus, and any collaboration preference as long-term working memory.",
-          timestamp,
-        },
-      ];
-    }
-    return [
-      {
-        role: "user",
-        content: [
-          "[everroom:onboarding] 这是我的首次记忆设置。请将以下由我直接提供的信息提炼为长期原子记忆。",
-          `我的主要工作：${input.workContext.trim()}`,
-          `我当前最想推进：${input.currentFocus.trim()}`,
-          ...(preference ? [`我希望 Agent 这样与我协作：${preference}`] : []),
-        ].join("\n"),
-        timestamp,
-      },
-      {
-        role: "assistant",
-        content: "[everroom:onboarding:accepted] 我已读取这些回答，并会将你的工作背景、当前重点和已填写的协作偏好作为长期协作记忆。",
-        timestamp,
-      },
-    ];
-  }
-
-  private onboardingMetadataKey(requestId: string): string {
-    return `memory.onboarding.v1:${requestId}`;
-  }
-
-  private readOnboardingRecord(requestId: string): MemoryOnboardingRecord | null {
-    if (!this.db) return null;
-    const row = this.db.select({ value: gatewayMetadata.value }).from(gatewayMetadata)
-      .where(eq(gatewayMetadata.key, this.onboardingMetadataKey(requestId))).get();
-    if (!row) return null;
-    try {
-      const value = JSON.parse(row.value) as Partial<MemoryOnboardingRecord>;
-      if ((value.status !== "pending" && value.status !== "accepted")
-        || typeof value.sessionId !== "string"
-        || typeof value.capturedAt !== "string") return null;
-      return {
-        status: value.status,
-        sessionId: value.sessionId,
-        capturedAt: value.capturedAt,
-        accepted: true,
-        profileUpdated: value.profileUpdated === true,
-      };
-    } catch {
+      this.logger("error", "memory.maintain.failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       return null;
+    } finally {
+      this.maintenanceRunning = false;
     }
   }
 
-  private writeOnboardingRecord(requestId: string, record: MemoryOnboardingRecord): void {
-    if (!this.db) return;
-    const updatedAt = new Date();
-    this.db.insert(gatewayMetadata).values({
-      key: this.onboardingMetadataKey(requestId),
-      value: JSON.stringify(record),
-      updatedAt,
-    }).onConflictDoUpdate({
-      target: gatewayMetadata.key,
-      set: { value: JSON.stringify(record), updatedAt },
-    }).run();
-  }
-
-  private toOnboardingResult(record: MemoryOnboardingRecord): MemoryOnboardingResult {
-    return {
-      sessionId: record.sessionId,
-      capturedAt: record.capturedAt,
-      accepted: true,
-    };
+  private scheduleMaintenance(): void {
+    if (this.maintenanceIntervalMs <= 0 || this.maintenanceTimer) return;
+    const initial = setTimeout(() => {
+      void this.maintain();
+      this.maintenanceTimer = setInterval(() => void this.maintain(), this.maintenanceIntervalMs);
+      this.maintenanceTimer.unref?.();
+    }, this.maintenanceInitialDelayMs);
+    initial.unref?.();
+    this.maintenanceTimer = initial;
   }
 
   /**
-   * 批量附加 Room 归属：查 room_memory_attributions + context_rooms，拼 roomId/roomTitle。
-   * Room 仅在 active 且未软删时给出标题（归属行保留，恢复 Room 即恢复展示）；
-   * 无 db（测试/降级装配）时统一返回 null/null，不影响记忆读取。
+   * 关掉 hippo 的 LLM 事实提取：库根 `config.json` 的 `extraction.enabled`
+   * 默认是 `'auto'`——一旦环境里有 ANTHROPIC_API_KEY 就会在整理时把记忆正文
+   * 发出去。产品侧固定为 false，保证整理全程本地。
+   * 已有配置只覆盖这一个键，其余保留。
    */
-  private async attachRoom<T extends { id: string }>(
-    items: T[],
-  ): Promise<Array<T & { roomId: string | null; roomTitle: string | null }>> {
-    if (!this.db || items.length === 0) {
-      return items.map((item) => ({ ...item, roomId: null, roomTitle: null }));
-    }
-    const memoryIds = items.map((item) => item.id);
-    const attributions = this.db
-      .select({ memoryId: roomMemoryAttributions.memoryId, roomId: roomMemoryAttributions.roomId })
-      .from(roomMemoryAttributions)
-      .where(inArray(roomMemoryAttributions.memoryId, memoryIds))
-      .all();
-    const roomIds = [...new Set(attributions.map((row) => row.roomId))];
-    const rooms = roomIds.length > 0
-      ? this.db
-        .select({ id: contextRooms.id, title: contextRooms.title, lifecycle: contextRooms.lifecycle, deletedAt: contextRooms.deletedAt })
-        .from(contextRooms)
-        .where(inArray(contextRooms.id, roomIds))
-        .all()
-      : [];
-    const roomById = new Map(rooms.map((room) => [room.id, room]));
-    const roomIdByMemory = new Map(attributions.map((row) => [row.memoryId, row.roomId]));
-    return items.map((item) => {
-      const roomId = roomIdByMemory.get(item.id) ?? null;
-      const room = roomId ? roomById.get(roomId) : undefined;
-      const available = room ? room.deletedAt === null && room.lifecycle === "active" : false;
-      return { ...item, roomId, roomTitle: available && room ? room.title : null };
-    });
-  }
-
-  private require(): MemoryCoreClient {
-    if (!this.client) {
-      throw new MemoryGatewayError(
-        "memory_disabled",
-        "MemoryCore is not enabled on this gateway (NXCORE_MEMORY_ENABLED)",
-        503,
-      );
-    }
-    return this.client;
-  }
-
-  private async call<T>(operation: () => Promise<T>): Promise<T> {
+  private disableExtraction(): void {
     try {
-      return await operation();
-    } catch (error) {
-      if (error instanceof MemoryGatewayError) throw error;
-      if (error instanceof MemoryCoreError) {
-        this.logger.warn({ err: error }, "memory core request failed");
-        if (error.kind === "unreachable") {
-          throw new MemoryGatewayError(
-            "memory_unreachable",
-            `MemoryCore is unreachable: ${error.message}`,
-            502,
-          );
+      mkdirSync(this.root, { recursive: true });
+      const path = join(this.root, "config.json");
+      let config: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          config = parsed as Record<string, unknown>;
         }
-        throw new MemoryGatewayError("memory_error", error.message, 502);
+      } catch {
+        // 文件不存在或不是合法 JSON：按空配置重写。
       }
-      throw error;
+      const extraction = config.extraction;
+      const current = extraction && typeof extraction === "object" && !Array.isArray(extraction)
+        ? extraction as Record<string, unknown>
+        : {};
+      if (current.enabled === false && Object.keys(config).length > 0) return;
+      config.extraction = { ...current, enabled: false };
+      writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    } catch (error) {
+      this.logger("warn", "memory.config.write.failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
-  private mapFailure(reason: unknown): never {
-    if (reason instanceof MemoryCoreError) {
-      if (reason.kind === "unreachable") {
-        throw new MemoryGatewayError("memory_unreachable", `MemoryCore is unreachable: ${reason.message}`, 502);
+  remember(input: RememberInput): string | null {
+    if (!this.enabled) return null;
+    const id = this.adapterFor(input.workspaceId).remember(input);
+    if (id) {
+      try {
+        this.onRemembered?.();
+      } catch {
+        /* 订阅方异常不影响写入结果 */
       }
-      throw new MemoryGatewayError("memory_error", reason.message, 502);
     }
-    throw reason instanceof Error ? reason : new Error(String(reason));
+    return id;
   }
-}
 
-/** 仅为注入浏览超时的构造包装。 */
-class MemoryClientWithTimeout extends MemoryCoreClient {
-  constructor(config: MemoryRuntimeConfig) {
-    super({ ...config, timeoutMs: BROWSE_TIMEOUT_MS });
+  /** 每次成功写入后回调（画像聚合的阈值触发用）。 */
+  setOnRemembered(listener: (() => void) | null): void {
+    this.onRemembered = listener;
+  }
+
+  recall(input: RecallInput): MemoryHit[] {
+    if (!this.enabled) return [];
+    return this.adapterFor(input.workspaceId).recall(input);
+  }
+
+  feedback(id: string, good: boolean): boolean {
+    if (!this.enabled) return false;
+    // id 不携带归属：逐个库试，命中即返回（条目只可能在一个库里）。
+    return this.allAdapters().some((adapter) => adapter.feedback(id, good));
+  }
+
+  /** 检索登记：记录「这次 run 读到了哪些条目」，等 run 结束再结算（不立即记分）。 */
+  recordRecall(runId: string, ids: readonly string[]): void {
+    if (!this.enabled) return;
+    this.outcomes.recordRecall(runId, ids);
+  }
+
+  /** run 结束结算：顺利跑完就记隐性确认，出过事就跳过（否定由 agent 显式标注）。 */
+  settleRun(runId: string, verdict: RunVerdict): SettleResult {
+    if (!this.enabled) return { checked: 0, confirmed: 0, promoted: 0 };
+    return this.outcomes.settle(runId, verdict);
+  }
+
+  /** 检索回流：agent 真的读到这些条目后调用，hippo 据此刷新衰减锚点与半衰期。 */
+  markUsed(ids: readonly string[]): number {
+    if (!this.enabled || ids.length === 0) return 0;
+    let total = 0;
+    for (const adapter of this.allAdapters()) total += adapter.markUsed(ids);
+    return total;
+  }
+
+  /**
+   * 隐性确认 + 自动转正：这些条目在一次**顺利跑完**的 run 里被检索用上过。
+   * 草稿（inferred）攒够次数会晋升为 verified，此后不再受 30 天老化影响。
+   */
+  confirmUsage(ids: readonly string[]): { confirmed: number; promoted: number } {
+    if (!this.enabled || ids.length === 0) return { confirmed: 0, promoted: 0 };
+    const total = { confirmed: 0, promoted: 0 };
+    for (const adapter of this.allAdapters()) {
+      const result = adapter.confirmUsage(ids);
+      total.confirmed += result.confirmed;
+      total.promoted += result.promoted;
+    }
+    return total;
+  }
+
+  forget(id: string, reason?: string): boolean {
+    if (!this.enabled) return false;
+    return this.allAdapters().some((adapter) => adapter.forget(id, reason));
+  }
+
+  list(options: { limit?: number; scope?: string; workspaceId?: string; category?: MemoryCategory } = {}): MemoryHit[] {
+    if (!this.enabled) return [];
+    // 指定工作区 → 只读该空间库；未指定（画像/全局列表）→ 合并所有库。
+    if (options.workspaceId) return this.adapterFor(options.workspaceId).list(options);
+    const merged = this.allAdapters().flatMap((adapter) => adapter.list(options));
+    return merged
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .slice(0, options.limit ?? merged.length);
+  }
+
+  stats(): { total: number; scopes: Record<string, number> } {
+    if (!this.enabled) return { total: 0, scopes: {} };
+    const scopes: Record<string, number> = {};
+    let total = 0;
+    for (const adapter of this.allAdapters()) {
+      const stats = adapter.stats();
+      total += stats.total;
+      for (const [scope, count] of Object.entries(stats.scopes)) {
+        scopes[scope] = (scopes[scope] ?? 0) + count;
+      }
+    }
+    return { total, scopes };
   }
 }

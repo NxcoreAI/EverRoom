@@ -1,0 +1,391 @@
+/**
+ * 量测器：编译产物 + 树 + 契约 → 结构化缺陷清单。
+ * 全部确定性检查（估算系数与引擎对齐），供 validate 工具回传布局代理自纠。
+ * shrinkToFit 为迭代环耗尽后的引擎兜底：文字叶子逐档降字号，到下限为止。
+ */
+
+import type { CompileResult } from "./compile.js";
+import { compileTree } from "./compile.js";
+import { variantSize } from "./compile.js";
+import type { LayoutContract, TextVariant } from "./layout-contract.js";
+import type { LayoutTree } from "./schema.js";
+import { contractFromStyleParams } from "./layout-contract.js";
+import { estimateLineHeight, estimateTextWidth } from "../text-metrics.js";
+import type { PageSpec } from "../elements.js";
+
+export type DefectType = "schema" | "overflow" | "min_size" | "font_floor" | "element_cap" | "image_ar" | "canvas" | "overlap" | "emoji" | "contrast";
+
+export interface LayoutDefect {
+  path: string;
+  type: DefectType;
+  detail: string;
+  hint: string;
+  /** 节点实际像素区域（引擎能给出时才返回；模型据此修 slot/weight，不必自己换算）。 */
+  frame?: { x: number; y: number; w: number; h: number };
+  /** 文本量测：内容所需高度（估算口径与引擎一致）。 */
+  requiredHeight?: number;
+  /** 文本量测：区域可用高度。 */
+  availableHeight?: number;
+  /** 文本量测：超出像素数（required - available，>0）。 */
+  overflowPx?: number;
+  /** 共同父容器路径（缺陷在 group 子节点时返回，用于定位兄弟节点间的空间争抢）。 */
+  parentPath?: string;
+}
+
+export interface MeasureInput {
+  /** 图片 url → 长宽比（宽/高）；取不到的 url 不进 Map。 */
+  imageArs?: Map<string, number>;
+}
+
+const OVERFLOW_TOLERANCE_PX = 2;
+const OVERLAP_TOLERANCE_PX = 6;
+/** overlay 子节点的最小尺寸下限（角标类小件，低于常规叶子下限）。 */
+const OVERLAY_MIN_W = 48;
+const OVERLAY_MIN_H = 32;
+
+/** group 子节点路径特征：hint 指向父 weights；页面级节点指向 slot 跨度。 */
+const inGroupChild = (path: string): boolean => path.includes("/children/");
+/**
+ * 与 genoffice 引擎同口径的 emoji 判定（引擎：apps/desktop/vendor/genoffice/apps/slides/src/main/page-spec.ts
+ * 的 emojiCodePoints）。引擎只拒 pictograph 区段（1F000–1FAFF）、VS16（FE0F），以及
+ * 2600–27BF 里被 VS16 强制的符号（由 FE0F 分支覆盖）；裸 ★/●/▲ 与箭头（2190–21FF）都是合法文本字形。
+ * 旧正则把 2190–21FF（「→」）也算成 emoji，而内容必留文本里的「→」要求逐字保留，
+ * 造成 validate 永远不收敛、落页被拒（2026-10-24 页 14/15 各空转 1800s 的根因）。
+ */
+const EMOJI_PATTERN = /[\u{1F000}-\u{1FAFF}\u{FE0F}]/u;
+
+interface InkBox {
+  label: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** overlay place 的有意压放文字：与图片相交合法。 */
+  overlay?: boolean;
+  /** 全部 run 是浅色字（inverse/inverseMuted 等压图可读口径）：与图片相交合法（图注、压图标签）。 */
+  lightInk?: boolean;
+}
+
+/** 相对亮度（0~1）；压图文字按浅色口径豁免——深色字压图不可读。 */
+function lumaOf(color: string): number {
+  const hex = color.replace("#", "");
+  const rgb = hex.length >= 6 ? hex.slice(0, 6) : hex.padEnd(6, "0");
+  const r = Number.parseInt(rgb.slice(0, 2), 16) / 255;
+  const g = Number.parseInt(rgb.slice(2, 4), 16) / 255;
+  const b = Number.parseInt(rgb.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** 引擎 estimateTextInk 同口径的墨迹框（引擎墨迹重叠闸门的镜像，超限即被拒页）。 */
+function inkBoxesOf(spec: PageSpec): InkBox[] {
+  const boxes: InkBox[] = [];
+  for (const el of spec.elements) {
+    if (el.type !== "text" && !(el.type === "shape" && el.paragraphs)) continue;
+    const paragraphs = el.type === "text" ? el.paragraphs : el.paragraphs!;
+    let contentH = 0;
+    let label = "";
+    let lightInk = paragraphs.length > 0;
+    for (const p of paragraphs) {
+      const size = Math.max(18, ...p.runs.map((r) => r.sizePt ?? 18));
+      let textW = 0;
+      for (const r of p.runs) {
+        label += r.text;
+        textW += estimateTextWidth(r.text, r.sizePt ?? 18);
+        if (!(r.color && lumaOf(r.color) >= 0.45)) lightInk = false;
+      }
+      contentH += Math.max(1, Math.ceil(textW / Math.max(1, el.w))) * estimateLineHeight(size, p.lineSpacingPct);
+    }
+    const anchor = el.valign ?? (el.type === "shape" ? "middle" : "top");
+    const y = anchor === "top" ? el.y : anchor === "bottom" ? el.y + el.h - contentH : el.y + (el.h - contentH) / 2;
+    boxes.push({
+      label: label.slice(0, 16), x: el.x, y, w: el.w, h: contentH,
+      ...((el as { overlay?: boolean }).overlay === true ? { overlay: true } : {}),
+      ...(lightInk ? { lightInk: true } : {}),
+    });
+  }
+  return boxes;
+}
+
+function boxesOverlap(a: InkBox, b: InkBox): boolean {
+  const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return ox > OVERLAP_TOLERANCE_PX && oy > OVERLAP_TOLERANCE_PX;
+}
+
+/**
+ * 组件展开产物的文本溢出量测（与 measureDefects 的文字估算同口径：折行 + 行高）。
+ * 候选预检复用：组件展开成功但文字量测超框时，候选不得标记 feasible。
+ * 返回首个溢出元素的描述；无溢出返回 null。
+ */
+export function componentTextOverflow(elements: PageSpec["elements"]): string | null {
+  for (const el of elements) {
+    if (el.type !== "text" && !(el.type === "shape" && el.paragraphs)) continue;
+    const paragraphs = el.type === "text" ? el.paragraphs : el.paragraphs!;
+    let contentH = 0;
+    let label = "";
+    for (const p of paragraphs) {
+      // 用实际字号（缺省 18）：装饰序号等小字号紧凑框不能按 18pt 下限虚估，
+      // 否则正常组件会被误判溢出。
+      const size = p.runs.reduce((max, r) => Math.max(max, r.sizePt ?? 18), 0) || 18;
+      let textW = 0;
+      for (const r of p.runs) {
+        if (!label) label = r.text;
+        textW += estimateTextWidth(r.text, r.sizePt ?? 18);
+      }
+      contentH += Math.max(1, Math.ceil(textW / Math.max(1, el.w))) * estimateLineHeight(size);
+    }
+    if (contentH > el.h + Math.max(OVERFLOW_TOLERANCE_PX, el.h * 0.25)) {
+      // ponytail: 相对容差 25%——装饰序号/年份等单行小件框高天然略小于行高，
+      // 真溢出（多行塞矮框）超出远大于此；需要更严时收紧这里。
+      return `文本量测溢出：「${label.slice(0, 12)}」需约 ${Math.round(contentH)}px 超出元素高 ${Math.round(el.h)}px`;
+    }
+  }
+  return null;
+}
+
+export function measureDefects(result: CompileResult, contract: LayoutContract, input: MeasureInput = {}): LayoutDefect[] {
+  const defects: LayoutDefect[] = [];
+  const push = (path: string, type: DefectType, detail: string, hint: string, extra?: Partial<LayoutDefect>) => {
+    defects.push({
+      path, type, detail, hint,
+      // 共同父容器：group 子节点缺陷附父路径，模型直接定位兄弟争抢的父区域。
+      ...(path.includes("/") ? { parentPath: path.slice(0, path.lastIndexOf("/")) } : {}),
+      ...extra,
+    });
+  };
+
+  for (const compileDefect of result.defects) {
+    // 组件溢出在编译期已按真实展开能力算出最小槽位；其余溢出仍给通用建议。
+    // 表格行高等编译期实测数字（requiredHeight/frame）一并透传，模型按数字修。
+    push(compileDefect.path, "overflow", compileDefect.detail, compileDefect.hint ?? "调整该区域的权重/比例，或精简内容", {
+      ...(compileDefect.frame !== undefined ? { frame: compileDefect.frame } : {}),
+      ...(compileDefect.requiredHeight !== undefined ? { requiredHeight: compileDefect.requiredHeight } : {}),
+      ...(compileDefect.availableHeight !== undefined ? { availableHeight: compileDefect.availableHeight } : {}),
+      ...(compileDefect.overflowPx !== undefined ? { overflowPx: compileDefect.overflowPx } : {}),
+    });
+  }
+
+  for (const placement of result.placements) {
+    const { frame } = placement;
+    // justify 打包的叶子框高=内容自然高（刻意贴合），只查宽度下限；
+    // overlay 子节点与 icon 是小件定位（角标/压图短句/图标），下限单独放宽；
+    // divider 是 1px 装饰线，天然窄条，豁免尺寸下限。
+    const small = placement.overlay === true || placement.flexible === true || placement.kind === "icon";
+    const isThin = placement.kind === "divider";
+    const minW = isThin ? 0 : small ? OVERLAY_MIN_W : contract.minLeaf.w;
+    // 文字叶子按内容定高（一行 kicker 约 31px，低于 32 的下限但完全正常）：
+    // 高度不足由上面的 neededHeight 溢出检查兜，不再走几何下限。
+    const contentSizedText = placement.kind === "text" && placement.flexible === true;
+    const minHeight = placement.packed || isThin || contentSizedText ? 0 : small ? OVERLAY_MIN_H : contract.minLeaf.h;
+    if (frame.w < minW || frame.h < minHeight) {
+      push(
+        placement.path,
+        "min_size",
+        `区域过小（${Math.round(frame.w)}×${Math.round(frame.h)}px，下限 ${minW}×${minHeight}px）`,
+        inGroupChild(placement.path)
+          ? "加大该子节点在父 group 的 weight（row 分宽、column 分高），或减少兄弟节点"
+          : "扩大该节点的 slot 列/行跨度，或精简该区域内容",
+        { frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) } },
+      );
+      continue;
+    }
+    if (placement.kind === "text" && placement.neededHeight !== undefined) {
+      if (placement.neededHeight > frame.h + OVERFLOW_TOLERANCE_PX) {
+        // 缺口 ≤15% 时给出确定性收口路径：fit:"shrink" 恰好覆盖 15%，缩字不删字。
+        const shrinkable = placement.neededHeight <= frame.h * 1.15;
+        push(
+          placement.path,
+          "overflow",
+          `文字估算 ${Math.round(placement.neededHeight)}px 超出区域 ${Math.round(frame.h)}px（${placement.label ?? placement.variant ?? "text"} ${placement.sizePt}pt）`,
+          [
+            inGroupChild(placement.path)
+              ? "调整父 group 的 weights 或扩大父区域（先查宽度是否够），或精简文字、拆成多个文字叶子"
+              : "扩大该节点 slot 的列/行跨度（先查宽度是否够），或精简文字、拆成多个文字叶子",
+            ...(shrinkable ? ["缺口 ≤15%：扩区不可行时给该 text 加 fit:\"shrink\"（最多缩 15%、守场景字号下限）即可收口"] : []),
+          ].join("；"),
+          {
+            frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) },
+            requiredHeight: Math.round(placement.neededHeight),
+            availableHeight: Math.round(frame.h),
+            overflowPx: Math.round(placement.neededHeight - frame.h),
+          },
+        );
+      }
+    }
+    if (placement.kind === "image" && placement.url && input.imageArs) {
+      const ar = input.imageArs.get(placement.url);
+      if (ar !== undefined && ar > 0) {
+        const frameAr = frame.w / frame.h;
+        const deviation = Math.abs(frameAr / ar - 1);
+        if (placement.contain === true) {
+          if (deviation > contract.imageArTolerance) {
+            push(
+              placement.path,
+              "image_ar",
+              `contain 模式下框长宽比 ${frameAr.toFixed(2)} 与图 ${ar.toFixed(2)} 偏差 ${Math.round(deviation * 100)}%（空带过宽）`,
+              "调整区域比例贴近图片长宽比，或改用 cover 裁切填满",
+            );
+          }
+        } else if (deviation > 0.4) {
+          // cover 不报错（裁切是合法设计），但偏差过大时给 warning 级缺陷：
+          // 16:9 素材压进 3:1 条带会把主体裁掉，需要换槽位或改 focus。
+          push(
+            placement.path,
+            "image_ar",
+            `cover 框长宽比 ${frameAr.toFixed(2)} 与图 ${ar.toFixed(2)} 偏差 ${Math.round(deviation * 100)}%，主体可能被裁掉`,
+            "调整该图区域比例贴近素材，或给 image 加 focus 指定主体位置",
+          );
+        }
+      }
+    }
+  }
+
+  // 引擎硬闸镜像①：emoji 直接拒页（任何元素的任何文本都不允许）。
+  if (EMOJI_PATTERN.test(JSON.stringify(result.spec.elements))) {
+    push("root", "emoji", "页面文本含 emoji（引擎直接拒页）", "删除 emoji；装饰用 path，图标留给后续 icon 叶子");
+  }
+
+  // 背景图未压纱罩且存在非深色调文字：图上直排文字对比度无保障。
+  if (result.bg && !result.bg.scrim) {
+    const onDark = contract.theme.colors.onDarkText;
+    const offender = result.spec.elements.find(
+      (el) =>
+        (el.type === "text" || (el.type === "shape" && el.paragraphs)) &&
+        el.paragraphs!.some((p) => p.runs.some((r) => r.color !== undefined && r.color !== onDark)),
+    );
+    if (offender) {
+      push(
+        "root.bg",
+        "contrast",
+        "背景图未压纱罩（bg.scrim: none）且存在非 inverse 文字——图上直排文字对比度无保障",
+        "去掉 bg.scrim 让引擎自动压深纱罩，或把压图文字全部改 tone: inverse",
+      );
+    }
+  }
+
+  // 引擎硬闸镜像②：有字元素墨迹两两相交（6px 容差）直接拒页。
+  // 图片框（placement 口径，天然排除页级背景图）参与检查——文字/组件压图若非
+  // 有意压放（overlay place）且非浅色压图口径（inverse/inverseMuted/图注），同样重叠。
+  const inkBoxes = inkBoxesOf(result.spec);
+  const imageBoxes: InkBox[] = result.placements
+    .filter((p) => p.kind === "image")
+    .map((p) => ({ label: `图片 ${p.path.split(" ").pop() ?? ""}`.trim(), x: p.frame.x, y: p.frame.y, w: p.frame.w, h: p.frame.h }));
+  const overlapBoxes = [...inkBoxes, ...imageBoxes];
+  for (let i = 0; i < overlapBoxes.length; i++) {
+    for (let j = i + 1; j < overlapBoxes.length; j++) {
+      const a = overlapBoxes[i]!;
+      const b = overlapBoxes[j]!;
+      if (!boxesOverlap(a, b)) continue;
+      const aInk = inkBoxes.includes(a);
+      const bInk = inkBoxes.includes(b);
+      if (aInk !== bInk) {
+        // 文字 vs 图片：overlay place 的有意压放、浅色压图口径（inverse/图注）合法，其余报。
+        const ink = aInk ? a : b;
+        if (ink.overlay === true || ink.lightInk === true) continue;
+        push(
+          "root",
+          "overlap",
+          `「${ink.label}」压在图片上且为深色文字——图上文字不可读`,
+          "错开该文字与图片的槽位；确属有意压图时把文字放进 overlay 分组或改用 inverse 色并压纱罩",
+        );
+        continue;
+      }
+      push(
+        "root",
+        "overlap",
+        `「${a.label}」与「${b.label}」重叠（引擎会整页拒绝）`,
+        "加大该区域的权重/比例，或精简其中一方的内容——通常是区域太小装不下内容",
+      );
+    }
+  }
+
+  if (result.stats.elements > contract.caps.elements) {
+    push("root", "element_cap", `元素总数 ${result.stats.elements} 超过上限 ${contract.caps.elements}`, "减少叶子数量或降低嵌套密度");
+  }
+  if (result.stats.images > contract.caps.images) {
+    push("root", "element_cap", `图片数 ${result.stats.images} 超过上限 ${contract.caps.images}`, "减少图片叶子");
+  }
+  if (result.stats.paths > contract.caps.paths) {
+    push("root", "element_cap", `路径数 ${result.stats.paths} 超过上限 ${contract.caps.paths}`, "减少路径叶子");
+  }
+
+  for (const element of result.spec.elements) {
+    if (
+      element.x < 0 || element.y < 0 ||
+      element.x + element.w > contract.canvas.w + 1 ||
+      element.y + element.h > contract.canvas.h + 1
+    ) {
+      push("root", "canvas", `元素越出画布（x=${Math.round(element.x)} y=${Math.round(element.y)} w=${Math.round(element.w)} h=${Math.round(element.h)}）`, "检查嵌套 pad 与缝隙总和");
+      break;
+    }
+  }
+
+  return defects;
+}
+
+export interface ShrinkResult {
+  result: CompileResult;
+  defects: LayoutDefect[];
+  /** 降档是否生效过（生效即标记 degraded，供 VLM 终检重点看）。 */
+  degraded: boolean;
+  overrides: Map<string, number>;
+}
+
+/**
+ * 迭代环耗尽后的兜底：对溢出的文字叶子逐档降字号（-1pt）重编，
+ * 到契约字号下限为止。卡片/表格类溢出不在此兜底（保持内容不丢，交 VLM 终检）。
+ */
+export function shrinkToFit(tree: LayoutTree, contract: LayoutContract, input: MeasureInput = {}, maxIterations = 12): ShrinkResult {
+  // v2 字号只由 type token 决定，不做逐档降字号；溢出直接报缺陷，交给 layouter 重排。
+  if (tree.version === 2 && tree.v2) {
+    const result = compileTree(tree, contract);
+    return { result, defects: measureDefects(result, contract, input), degraded: false, overrides: new Map() };
+  }
+  const overrides = new Map<string, number>();
+  let degraded = false;
+  let current = compileTree(tree, contract, overrides);
+  let defects = measureDefects(current, contract, input);
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const overflowTexts = defects.filter(
+      (defect) => defect.type === "overflow" && defect.path !== "root.title",
+    );
+    if (overflowTexts.length === 0) break;
+
+    let reduced = false;
+    for (const defect of overflowTexts) {
+      const placement = current.placements.find((p) => p.path === defect.path && p.kind === "text");
+      if (!placement || placement.variant === undefined || placement.sizePt === undefined) continue;
+      const floor = contract.fontFloors[placement.variant as TextVariant];
+      const nextSize = placement.sizePt - 1;
+      if (nextSize < floor) {
+        if (!defects.some((d) => d.path === defect.path && d.type === "font_floor")) {
+          defects.push({
+            path: defect.path,
+            type: "font_floor",
+            detail: `${placement.variant} 已降到下限 ${floor}pt 仍溢出`,
+            hint: "内容超出单页容量——精简文字或拆两页",
+          });
+        }
+        continue;
+      }
+      overrides.set(defect.path, nextSize);
+      reduced = true;
+      degraded = true;
+    }
+    if (!reduced) break;
+
+    current = compileTree(tree, contract, overrides);
+    defects = measureDefects(current, contract, input);
+  }
+
+  return { result: current, defects, degraded, overrides };
+}
+
+/** 便捷入口：树 + styleParams → 编译 + 量测（validate 工具与测试共用）。 */
+export function compileAndMeasure(tree: LayoutTree, styleParams: unknown, input: MeasureInput = {}): { result: CompileResult; defects: LayoutDefect[] } {
+  const contract = contractFromStyleParams(styleParams as never);
+  const result = compileTree(tree, contract);
+  const defects = measureDefects(result, contract, input);
+  return { result, defects };
+}

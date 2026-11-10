@@ -1,0 +1,910 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string",
+      "enum": [
+        "layout"
+      ]
+    },
+    "deckToken": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 80,
+      "description": "Deck contract token; pass verbatim to slides_layout_validate."
+    },
+    "pageIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 31
+    },
+    "totalPages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "cover",
+        "toc",
+        "section",
+        "content",
+        "data",
+        "table",
+        "flow",
+        "quote",
+        "closing"
+      ]
+    },
+    "density": {
+      "type": "string",
+      "enum": [
+        "sparse",
+        "standard",
+        "dense"
+      ]
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "desc": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "aspectRatio": {
+            "type": "number",
+            "description": "Width/height when known; keep the image leaf frame ratio close."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 8
+    },
+    "styleBrief": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Natural-language deck style tendency (e.g. strong grid, restrained whitespace)."
+    },
+    "layoutVersion": {
+      "type": "integer",
+      "enum": [
+        2
+      ],
+      "description": "Always 2: the page you return is a v2 page (version/composition/slot nodes). There is no other layout format."
+    },
+    "styleTokens": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "主题的权威快照。语义样式及文档允许的显式样式字段均服从其口径；省略组件 style 时继承 componentDefaults。"
+    },
+    "revisionFeedback": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "本轮修正或自审反馈；在内容契约内处理，不改变必留内容。"
+    },
+    "componentCandidates": {
+      "type": "array",
+      "maxItems": 4,
+      "description": "按本页 relations/metrics/引用预检过的组件候选。存在 feasible=true 的语义匹配候选时，默认采用它承载主内容；确不适用时在 designIntent 说明候选名称、具体原因与替代表达。候选绑定真实 block，预检不截断任何内容。",
+      "items": {
+        "type": "object",
+        "required": ["name", "relation", "blockRefs", "feasible"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "relation": { "type": "string", "description": "触发候选的关系类型；metrics 表示指标组，quote 表示引用，navigates 表示导航" },
+          "blockRefs": { "type": "array", "items": { "type": "string" }, "maxItems": 8 },
+          "feasible": { "type": "boolean" },
+          "validatedSlot": {
+            "type": "object",
+            "required": ["w", "h"],
+            "additionalProperties": false,
+            "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } },
+            "description": "已验证槽位尺寸（px）：当前内容与参数曾在此尺寸通过归一、展开、内容覆盖与文本量测预检；不是最小值，也不承诺更大尺寸可用。"
+          },
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            },
+            "description": "与 validatedSlot 对应的合法栅格槽位（已预留标题与页脚区）。"
+          },
+          "validatedGrid": {
+            "type": "object",
+            "required": ["cols", "rows", "gutter", "rowGutter", "margin"],
+            "additionalProperties": false,
+            "properties": {
+              "cols": { "type": "integer" },
+              "rows": { "type": "integer" },
+              "gutter": { "type": "integer" },
+              "rowGutter": { "type": "integer" },
+              "margin": { "type": "integer" }
+            },
+            "description": "预检使用的网格配置：改变内容集合、网格或组件样式后，原预检结果不再作为通过依据。"
+          },
+          "template": {
+            "type": "object",
+            "description": "已通过预检的组件参数（不含 type/name/slot），可直接用于组件节点承载 blockRefs 的内容。"
+          },
+          "note": { "type": "string", "description": "不可行时的分类原因：参数超限 / 内容无法完整映射 / 空间不足。" }
+        }
+      }
+    },
+    "currentTree": {
+      "type": "object",
+      "description": "视觉自审的修改基线；附件为此 v2 页面的真实渲染图。"
+    },
+    "blockNeeds": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "各内容块的引擎实测区域需求：text 按 3/6/12 列宽（12×8 网格、body 字号档）给出内容高度；table 给总行数、估算高度与建议槽位；chart 给建议槽位。按这些数字分配区域，不做自己的字数估算；有 validatedSlot 候选的内容组以候选为准。",
+      "items": {
+        "type": "object",
+        "required": ["blockId", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "blockId": { "type": "string" },
+          "kind": { "type": "string", "enum": ["text", "table", "chart"] },
+          "heightsByWidth": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["cols", "px"],
+              "additionalProperties": false,
+              "properties": { "cols": { "type": "integer" }, "px": { "type": "integer" } }
+            }
+          },
+          "rows": { "type": "integer" },
+          "estimatedPx": { "type": "integer" },
+          "suggestedSlot": {
+            "type": "object",
+            "required": ["col", "row"],
+            "additionalProperties": false,
+            "properties": {
+              "col": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 },
+              "row": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+            }
+          }
+        }
+      }
+    },
+    "previousDesignIntent": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "首轮提交的设计目标。自审时以渲染图核对其达成情况；修改后说明目标保留、调整与待确认项。"
+    },
+    "content": {
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "sourceRefs",
+        "role",
+        "message",
+        "blocks",
+        "relations",
+        "focusRefs",
+        "constraints",
+        "notes",
+        "omissions"
+      ],
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "maxLength": 128,
+          "type": "string"
+        },
+        "sourceRefs": {
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "role": {
+          "anyOf": [
+            {
+              "const": "cover",
+              "type": "string"
+            },
+            {
+              "const": "toc",
+              "type": "string"
+            },
+            {
+              "const": "section",
+              "type": "string"
+            },
+            {
+              "const": "content",
+              "type": "string"
+            },
+            {
+              "const": "data",
+              "type": "string"
+            },
+            {
+              "const": "table",
+              "type": "string"
+            },
+            {
+              "const": "flow",
+              "type": "string"
+            },
+            {
+              "const": "quote",
+              "type": "string"
+            },
+            {
+              "const": "closing",
+              "type": "string"
+            }
+          ]
+        },
+        "message": {
+          "minLength": 1,
+          "maxLength": 8000,
+          "type": "string"
+        },
+        "blocks": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "text"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "text",
+                    "type": "string"
+                  },
+                  "text": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "label",
+                  "value"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "metric",
+                    "type": "string"
+                  },
+                  "label": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  },
+                  "value": {
+                    "anyOf": [
+                      {
+                        "maxLength": 2000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  },
+                  "unit": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "text"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "quotation",
+                    "type": "string"
+                  },
+                  "text": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  },
+                  "attribution": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "headers",
+                  "rows"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "table",
+                    "type": "string"
+                  },
+                  "headers": {
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ]
+                    }
+                  },
+                  "rows": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 32,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "maxLength": 2000,
+                            "type": "string"
+                          },
+                          {
+                            "type": "number"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "labels",
+                  "series"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "chart",
+                    "type": "string"
+                  },
+                  "labels": {
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 8000,
+                      "type": "string"
+                    }
+                  },
+                  "series": {
+                    "minItems": 1,
+                    "maxItems": 12,
+                    "type": "array",
+                    "items": {
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "values"
+                      ],
+                      "properties": {
+                        "name": {
+                          "minLength": 1,
+                          "maxLength": 8000,
+                          "type": "string"
+                        },
+                        "values": {
+                          "minItems": 1,
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "unit": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "id",
+                  "sourceRefs",
+                  "priority",
+                  "mustShow",
+                  "type",
+                  "assetRef",
+                  "alt",
+                  "fit"
+                ],
+                "properties": {
+                  "id": {
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "type": "string"
+                  },
+                  "sourceRefs": {
+                    "minItems": 1,
+                    "maxItems": 128,
+                    "uniqueItems": true,
+                    "type": "array",
+                    "items": {
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "type": "string"
+                    }
+                  },
+                  "priority": {
+                    "anyOf": [
+                      {
+                        "const": "primary",
+                        "type": "string"
+                      },
+                      {
+                        "const": "supporting",
+                        "type": "string"
+                      },
+                      {
+                        "const": "detail",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mustShow": {
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "const": "image",
+                    "type": "string"
+                  },
+                  "assetRef": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  },
+                  "alt": {
+                    "minLength": 1,
+                    "maxLength": 8000,
+                    "type": "string"
+                  },
+                  "fit": {
+                    "anyOf": [
+                      {
+                        "const": "contain",
+                        "type": "string"
+                      },
+                      {
+                        "const": "cover",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "relations": {
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "type",
+              "refs",
+              "basis"
+            ],
+            "properties": {
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "supports",
+                    "type": "string"
+                  },
+                  {
+                    "const": "compares",
+                    "type": "string"
+                  },
+                  {
+                    "const": "precedes",
+                    "type": "string"
+                  },
+                  {
+                    "const": "causes",
+                    "type": "string"
+                  },
+                  {
+                    "const": "contains",
+                    "type": "string"
+                  },
+                  {
+                    "const": "parallel",
+                    "type": "string"
+                  },
+                  {
+                    "const": "navigates",
+                    "type": "string"
+                  }
+                ]
+              },
+              "refs": {
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "type": "array",
+                "items": {
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "type": "string"
+                }
+              },
+              "basis": {
+                "minLength": 1,
+                "maxLength": 8000,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "focusRefs": {
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "type": "array",
+          "items": {
+            "minLength": 1,
+            "maxLength": 128,
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "verbatimRefs"
+          ],
+          "properties": {
+            "verbatimRefs": {
+              "maxItems": 128,
+              "type": "array",
+              "items": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              }
+            }
+          }
+        },
+        "notes": {
+          "maxLength": 16000,
+          "type": "string"
+        },
+        "omissions": {
+          "maxItems": 128,
+          "type": "array",
+          "items": {
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "sourceRef",
+              "reason",
+              "disposition"
+            ],
+            "properties": {
+              "sourceRef": {
+                "minLength": 1,
+                "maxLength": 128,
+                "type": "string"
+              },
+              "reason": {
+                "minLength": 1,
+                "maxLength": 8000,
+                "type": "string"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "const": "notes",
+                    "type": "string"
+                  },
+                  {
+                    "const": "omitted",
+                    "type": "string"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "deckOutline": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "全册页清单概要（仅本对话首个任务携带）：各页页序、标题、角色与密度，用于把握整册节奏与前后页差异。后续任务不再重复携带；前面页的设计已在本对话上下文里。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pageIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "density": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pageIndex",
+          "title"
+        ]
+      }
+    }
+  },
+  "required": [
+    "task",
+    "deckToken",
+    "pageIndex",
+    "totalPages",
+    "content",
+    "role",
+    "density"
+  ],
+  "additionalProperties": false
+}

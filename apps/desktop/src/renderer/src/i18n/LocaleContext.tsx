@@ -36,15 +36,17 @@ function storedLocalePreference(): LocalePreference | null {
 
 function detectLocale(): AppLocale {
   const preference = storedLocalePreference()
-  const systemLocale = window.nxcore?.locale.system ?? window.navigator.language
+  const systemLocale = window.nxcore?.locale?.system ?? window.navigator.language
   return resolveLocale(preference === 'system' ? null : preference, systemLocale)
 }
 
 export function interpolate(message: string, values?: Record<string, string | number>): string {
   if (!values) return message
-  return message.replace(/\{(\w+)\}/g, (match, key: string) => (
-    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
-  ))
+  // 兼容 i18next 的 {{key}} 与普通单花括号 {key} 两种占位。
+  return message.replace(/\{\{(\w+)\}\}|\{(\w+)\}/g, (match, braced1, braced2) => {
+    const key = braced1 ?? braced2
+    return Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+  })
 }
 
 export function translate(locale: AppLocale, message: string, values?: Record<string, string | number>): string {
@@ -77,7 +79,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void i18n.changeLanguage(locale)
     document.documentElement.lang = locale
-    window.nxcore?.locale.set(locale)
+    window.nxcore?.locale?.set(locale)
   }, [locale])
 
   useEffect(() => {
@@ -86,8 +88,8 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
       return
     }
     let cancelled = false
-    setLocaleState(resolveLocale(null, window.nxcore?.locale.system ?? window.navigator.language))
-    void window.nxcore?.locale.getSystem().then((systemLocale) => {
+    setLocaleState(resolveLocale(null, window.nxcore?.locale?.system ?? window.navigator.language))
+    void window.nxcore?.locale?.getSystem().then((systemLocale) => {
       if (cancelled || storedLocalePreference() !== 'system') return
       const detected = resolveLocale(null, systemLocale)
       setLocaleState(detected)

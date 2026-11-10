@@ -15,9 +15,9 @@
 
 主 Agent 既做对话决策又直接生成文档正文：新建/修改/续写的 markdown 由主 Agent LLM 逐 token 产出，再经 `context_room_write_*` / `context_room_patch_*` 落库。上下文杂糅的具体路径有四：
 
-1. `context_room_document_read` 返回**全文 markdown** 进 tool result（`capabilities/query-plugin.ts:109-158`），edit/continue 是强前置；
+1. `document_read` 返回**全文 markdown** 进 tool result（`capabilities/query-plugin.ts:109-158`），edit/continue 是强前置；
 2. 内容生成本身——`write_append` / `patch_hunk` 的 markdown 是模型输出 token，天然占据上下文；
-3. 冲突/失败重试路径再读全文（`DOCUMENT_CONFLICT` 等 nextAction 均指向 `context_room_document_read`）；
+3. 冲突/失败重试路径再读全文（`DOCUMENT_CONFLICT` 等 nextAction 均指向 `document_read`）；
 4. `compactHistoricalToolState`（agent-runtime-pi/src/index.ts:311-351）只压缩跨 run 历史，**同一 run 内**全文仍在上下文。
 
 加上写作风格段（700 字画像文本进 user prompt）与多轮草稿推理，长文写作时主 agent 上下文被内容生产彻底占据，对话决策质量与成本双输。
@@ -215,7 +215,7 @@ selectedText?/contextBefore?/contextAfter?/blockType?  # rewrite 对话内路径
 
 ### 5.3 代发读凭证（V1 关键配套，防杂糅的核心机制）
 
-**问题**：patch_begin 的 read-authority 要求"本 run 内读取过该版本"（`reads.requireLatest`，review-plugins.ts:338-341），失败 nextAction 指向 `context_room_document_read`——若主 agent 不读全文就 dispatch 子 agent 改稿，patch_begin 会被 `DOCUMENT_READ_REQUIRED` 挡回，主 agent 被迫读全文，防杂糅目标落空。
+**问题**：patch_begin 的 read-authority 要求"本 run 内读取过该版本"（`reads.requireLatest`，review-plugins.ts:338-341），失败 nextAction 指向 `document_read`——若主 agent 不读全文就 dispatch 子 agent 改稿，patch_begin 会被 `DOCUMENT_READ_REQUIRED` 挡回，主 agent 被迫读全文，防杂糅目标落空。
 
 **解法**：document_draft 在 dispatch 返回且版本复核通过后，以主 run 上下文代发 receipt：
 

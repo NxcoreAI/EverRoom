@@ -14,10 +14,20 @@ async function writeFakeLarkCli(): Promise<{ path: string; stateFile: () => Prom
   const script = `#!/bin/bash
 STATE_FILE="$(dirname "$0")/state"
 case " $* " in
-  *" --version "*) echo "lark-cli version test"; exit 0;;
+  *" --version "*) echo "lark-cli version 1.0.93"; exit 0;;
 esac
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  if [ "$(cat "$STATE_FILE")" = "app-ready" ]; then
+  STATE="$(cat "$STATE_FILE")"
+  if [ "$STATE" = "not-configured" ]; then
+    # 真实 lark-cli 未初始化时以非零退出并输出错误信封（隔离配置首次使用的状态）。
+    echo '{"ok":false,"error":{"type":"config","subtype":"not_configured","message":"not configured","hint":"run lark-cli config init --new"}}' >&2
+    exit 1
+  fi
+  if [ "$STATE" = "broken" ]; then
+    echo '{"ok":false,"error":{"type":"internal","message":"keychain access blocked"}}' >&2
+    exit 2
+  fi
+  if [ "$STATE" = "app-ready" ]; then
     echo '{"ok":true,"appId":"cli_x","identities":{"user":{"available":true,"tokenStatus":"valid","userName":"测试用户"}}}'
   else
     echo '{"ok":true,"appId":"","identities":{"user":{"available":false}}}'
@@ -42,6 +52,11 @@ if [ "$1" = "config" ]; then
   echo "打开 https://feishu.cn/app-setup 完成应用创建"
   sleep 0.2
   echo app-ready > "$STATE_FILE"
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "logout" ]; then
+  echo no-app > "$STATE_FILE"
+  echo '{"ok":true,"data":{"loggedOut":true}}'
   exit 0
 fi
 echo '{"ok":false,"error":{"type":"cli","message":"unsupported"}}' >&2
@@ -154,6 +169,44 @@ describe('agent auth controller', () => {
     expect(status.feishu.userAuthorized).toBe(true)
   })
 
+  it('treats an unconfigured app as a normal state instead of an error', async () => {
+    const { path, stateFile } = await writeFakeLarkCli()
+    await writeFile(await stateFile(), 'not-configured', 'utf8')
+    const controller = createController(path)
+    const status = await controller.status()
+    // 未初始化 → 可用的 CLI + 未配置应用（连接器页显示「未连接」），不展示原始 JSON 错误。
+    expect(status.feishu.cliState).toBe('ready')
+    expect(status.feishu.appConfigured).toBe(false)
+    expect(status.feishu.userAuthorized).toBe(false)
+    expect(status.feishu.message).toBeNull()
+    // 自动阶段选择仍走应用初始化。
+    const challenge = await controller.start({ provider: 'feishu' })
+    expect(challenge.phase).toBe('app_setup')
+    controller.cancel(challenge.id)
+  })
+
+  it('surfaces a short CLI failure message instead of the raw JSON envelope', async () => {
+    const { path, stateFile } = await writeFakeLarkCli()
+    await writeFile(await stateFile(), 'broken', 'utf8')
+    const controller = createController(path)
+    const status = await controller.status()
+    expect(status.feishu.cliState).toBe('error')
+    expect(status.feishu.message).toBe('keychain access blocked')
+    expect(status.feishu.message).not.toContain('{')
+  })
+
+  it('reports the resolved cli source and semantic version', async () => {
+    const { path } = await writeFakeLarkCli()
+    const controller = new AgentAuthController(
+      new LarkAuthRunner(path, { source: 'bundled' }),
+    )
+    controllers.push(controller)
+    const status = await controller.status()
+    expect(status.feishu.cliState).toBe('ready')
+    expect(status.feishu.cliSource).toBe('bundled')
+    expect(status.feishu.cliVersion).toBe('1.0.93')
+  })
+
   it('cancel stops the pending challenge', async () => {
     const { path } = await writeFakeLarkCli()
     const controller = createController(path)
@@ -161,6 +214,55 @@ describe('agent auth controller', () => {
     const after = controller.cancel(challenge.id)
     expect(after).toBeNull()
     const status = await controller.status()
+    expect(status.activeChallenge).toBeNull()
+  })
+
+  it('omitted phase auto-selects by environment: app_setup when unconfigured', async () => {
+    const { path } = await writeFakeLarkCli()
+    const controller = createController(path)
+    const challenge = await controller.start({ provider: 'feishu' })
+    expect(challenge.phase).toBe('app_setup')
+    controller.cancel(challenge.id)
+  })
+
+  it('omitted phase auto-selects by environment: user_auth when app configured', async () => {
+    const { path } = await writeFakeLarkCli()
+    await import('node:fs/promises').then((fs) => fs.writeFile(join(path, '..', 'state'), 'app-ready', 'utf8'))
+    const controller = createController(path)
+    const challenge = await controller.start({ provider: 'feishu' })
+    expect(challenge.phase).toBe('user_auth')
+    controller.cancel(challenge.id)
+  })
+
+  it('auto-opens browser when verification URL first appears, once per phase', async () => {
+    const { path } = await writeFakeLarkCli()
+    const openedUrls: string[] = []
+    const controller = new AgentAuthController(
+      new LarkAuthRunner(path),
+      { onVerificationUrl: (url) => { openedUrls.push(url) } },
+    )
+    controllers.push(controller)
+    await controller.start({ provider: 'feishu', phase: 'app_setup' })
+    // app_setup 引导链接 + user_auth 授权页各开一次；后续更新不重复。
+    for (let attempt = 0; attempt < 60 && openedUrls.length < 2; attempt += 1) await delay(100)
+    expect(openedUrls).toContain('https://feishu.cn/app-setup')
+    expect(openedUrls.filter((url) => url === 'https://feishu.cn/verify?code=abc').length).toBe(1)
+    const status = await controller.status()
+    expect(status.feishu.userAuthorized).toBe(true)
+  })
+
+  it('disconnect logs out and removes the authorized challenge card', async () => {
+    const { path } = await writeFakeLarkCli()
+    const controller = createController(path)
+    await controller.start({ provider: 'feishu', phase: 'app_setup' })
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const status = await controller.status()
+      if (status.feishu.userAuthorized === true) break
+      await delay(100)
+    }
+    expect((await controller.status()).feishu.userAuthorized).toBe(true)
+    const status = await controller.disconnect('feishu')
+    expect(status.feishu.userAuthorized).not.toBe(true)
     expect(status.activeChallenge).toBeNull()
   })
 

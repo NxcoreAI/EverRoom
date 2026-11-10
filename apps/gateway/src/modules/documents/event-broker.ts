@@ -1,4 +1,4 @@
-import type { DocumentEvent, DocumentEventFrame } from "@nxcore/agent-contract";
+import { WORKSPACE_DOCUMENT_CHANNEL, type DocumentEvent, type DocumentEventFrame } from "@nxcore/agent-contract";
 
 export interface DocumentEventSocket {
   readyState: number;
@@ -6,16 +6,18 @@ export interface DocumentEventSocket {
 }
 
 export class DocumentEventBroker {
+  /** 键为 Room id；工作区级事件统一落在 WORKSPACE_DOCUMENT_CHANNEL 频道。 */
   private readonly subscribers = new Map<string, Set<DocumentEventSocket>>();
   private readonly listeners = new Set<(event: DocumentEvent) => void>();
 
-  subscribe(roomId: string, socket: DocumentEventSocket): () => void {
-    const sockets = this.subscribers.get(roomId) ?? new Set<DocumentEventSocket>();
+  subscribe(roomId: string | null, socket: DocumentEventSocket): () => void {
+    const channel = roomId ?? WORKSPACE_DOCUMENT_CHANNEL;
+    const sockets = this.subscribers.get(channel) ?? new Set<DocumentEventSocket>();
     sockets.add(socket);
-    this.subscribers.set(roomId, sockets);
+    this.subscribers.set(channel, sockets);
     return () => {
       sockets.delete(socket);
-      if (sockets.size === 0) this.subscribers.delete(roomId);
+      if (sockets.size === 0) this.subscribers.delete(channel);
     };
   }
 
@@ -37,7 +39,7 @@ export class DocumentEventBroker {
     }
     const frame: DocumentEventFrame = { type: "document.event", protocol: 1, event };
     const payload = JSON.stringify(frame);
-    for (const socket of this.subscribers.get(event.roomId) ?? []) {
+    for (const socket of this.subscribers.get(event.roomId ?? WORKSPACE_DOCUMENT_CHANNEL) ?? []) {
       if (socket.readyState === 1) socket.send(payload);
     }
   }

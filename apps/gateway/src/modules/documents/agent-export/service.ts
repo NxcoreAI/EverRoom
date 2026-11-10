@@ -15,6 +15,7 @@ import type { GatewayDatabase } from "../../../infrastructure/database/client.js
 import { agentDocumentExports } from "../../../infrastructure/database/schema.js";
 import { agentDocumentMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
+import { roomScopeId } from "../room-scope.js";
 import { readArtifact, storeArtifact } from "../import/artifact-store.js";
 import {
   LarkCliError,
@@ -48,7 +49,8 @@ export class ExportServiceError extends Error {
 }
 
 export interface CreateExportInput {
-  roomId: string;
+  /** 省略/null = 工作区文稿（落库列 agent_document_exports.room_id 是 NOT NULL，写 scope sentinel）。 */
+  roomId?: string | null | undefined;
   documentId: string;
   version?: number | undefined;
   provider: ExternalDocumentProvider;
@@ -204,6 +206,9 @@ export class AgentDocumentExportService {
   private readonly assetBridgeUrl: string | null;
   private readonly notionCli: NtnCliConfig | null;
 
+  /** 飞书连接器开关（连接器页「关闭」）：node 侧墓碑判定，缺省视为开启。 */
+  private readonly isFeishuDisabled: (() => boolean) | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
@@ -213,11 +218,14 @@ export class AgentDocumentExportService {
       logger?: { info: (obj: object, msg: string) => void; warn: (obj: object, msg: string) => void };
       assetBridgeUrl?: string | null;
       notionCli?: NtnCliConfig | null;
+      /** 飞书连接器开关（连接器页「关闭」）：关闭后 lark-cli 导出被拦截。 */
+      isFeishuDisabled?: () => boolean;
     },
   ) {
     this.logger = options?.logger ?? null;
     this.assetBridgeUrl = options?.assetBridgeUrl ?? null;
     this.notionCli = options?.notionCli ?? null;
+    this.isFeishuDisabled = options?.isFeishuDisabled ?? null;
   }
 
   /** 创建导出任务并执行前置检查；create 模式在授权就绪时直接完成写入。 */
@@ -286,9 +294,6 @@ export class AgentDocumentExportService {
     }
     const document = this.documents.get(input.documentId);
     if (!document) throw new ExportServiceError("NOT_FOUND", "文档不存在", 404);
-    if (document.roomId !== input.roomId) {
-      throw new ExportServiceError("ROOM_MISMATCH", "文档属于其他 Room", 409);
-    }
     const version = input.version ?? document.version;
     const snapshot = this.documents.getVersionSnapshot(input.documentId, version);
     if (!snapshot) {
@@ -318,7 +323,8 @@ export class AgentDocumentExportService {
     this.db.insert(agentDocumentExports).values({
       id: runId,
       requestId: randomUUID(),
-      roomId: input.roomId,
+      // 历史列 NOT NULL：工作区导出统一落 scope sentinel，不伪造 Room 记录。
+      roomId: roomScopeId(input.roomId ?? null),
       documentId: input.documentId,
       version,
       provider: input.provider,
@@ -400,6 +406,12 @@ export class AgentDocumentExportService {
     const run = this.loadRun(runId);
     const target = run.targetJson ?? {};
     if (run.provider === "feishu") {
+      if (this.isFeishuDisabled?.()) {
+        return this.transition(runId, "failed", {
+          errorCode: "FEISHU_CONNECTOR_DISABLED",
+          errorMessage: "飞书连接已在连接器页关闭，请先开启后再导出",
+        });
+      }
       if (!this.lark) {
         return this.transition(runId, "environment_not_ready", {
           errorCode: "ENVIRONMENT_NOT_READY",

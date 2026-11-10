@@ -28,7 +28,8 @@ export interface RealityTranscriptSegment {
   text: string;
   beginTime: number;
   endTime: number;
-  speakerId: number | null;
+  speakerId: number | string | null;
+  speakerName?: string | null;
   version: number;
   isFinal: boolean;
   manuallyEdited: boolean;
@@ -141,7 +142,8 @@ export interface ImportRealityEventInput {
     text: string;
     beginTime: number;
     endTime: number;
-    speakerId: number | null;
+    speakerId: number | string | null;
+    speakerName?: string | null;
   }>;
   insights?: RealityInsights;
   resultVersion: number;
@@ -160,7 +162,8 @@ export interface ApplyRealityAsrInput {
       text: string;
       beginTime: number;
       endTime: number;
-      speakerId: number | null;
+      speakerId: number | string | null;
+      speakerName?: string | null;
     }>;
   } | null;
   error?: string | null;

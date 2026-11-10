@@ -3,13 +3,24 @@ import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
 import type { RuntimeConfigManager } from "../../runtime-config.js";
-import { AiRelaySessionStore } from "./session.js";
+import { proxyFetch } from "../../infrastructure/network/proxy-fetch.js";
+import { AiRelaySessionStore, relaySlotSignature } from "./session.js";
 
 const SessionBody = Type.Object({
   baseUrl: Type.String({ minLength: 1 }),
   token: Type.String({ minLength: 1 }),
   expiresAt: Type.String({ minLength: 1 }),
   proxyOrigin: Type.String({ minLength: 1 }),
+  models: Type.Optional(Type.Object({
+    primary: Type.Optional(Type.String({ minLength: 1 })),
+    background: Type.Optional(Type.String({ minLength: 1 })),
+    lite: Type.Optional(Type.String({ minLength: 1 })),
+    cursorCompletion: Type.Optional(Type.String({ minLength: 1 })),
+    vlm: Type.Optional(Type.String({ minLength: 1 })),
+    // 生图模型随套餐下发；允许空串=未配置（image-gen 据此禁用生图）。
+    image: Type.Optional(Type.String()),
+    webSearch: Type.Optional(Type.String({ minLength: 1 })),
+  })),
 });
 
 function assertHttpUrl(value: string): void {
@@ -39,6 +50,14 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 /**
+ * 代理请求体上限：多模态请求（base64 图片）远超 Fastify 默认的 1 MiB。
+ * 默认值下 `read` 工具读几张图就会让整条 LLM 请求被网关自己以 413
+ * "Request body is too large" 拒掉（run 以 `413 "request_error"` 失败）。
+ * 与文件上传量级对齐；上游中转站自身的大小限制仍会原样透传。
+ */
+const AI_RELAY_BODY_LIMIT = 32 * 1024 * 1024;
+
+/**
  * new-api 中转链路的 gateway 侧端点：
  * - 会话端点（仅桌面主进程调用）：接收 SaaS 签发的短期令牌，进程内存持有；
  *   变更后 refresh() 重发 runtime config onChange，让槽位重写即时生效。
@@ -59,8 +78,16 @@ export function aiRelayRoutes(options: {
           error: { message: `ai_relay_invalid_${invalid}`, type: "ai_relay_invalid_request", code: "ai_relay_invalid_request" },
         });
       }
-      sessions.set({ ...request.body });
-      runtimeConfigManager.refresh();
+      const next = { ...request.body };
+      const previous = sessions.current();
+      sessions.set(next);
+      // 只有槽位重写相关字段（baseUrl→前缀 / proxyOrigin / models）变化才重发
+      // runtime config：换 token/续期跳过——令牌由 /ai-relay 代理逐请求注入，
+      // 槽位配置不受影响；无条件 refresh 会触发 agent 运行时热重载，abort
+      // 进行中的 agent run（如 PPT 编排/落页）。
+      if (!previous || relaySlotSignature(previous) !== relaySlotSignature(next)) {
+        runtimeConfigManager.refresh();
+      }
       return { ok: true, active: sessions.active() };
     });
 
@@ -70,7 +97,7 @@ export function aiRelayRoutes(options: {
       return { ok: true };
     });
 
-    app.all("/ai-relay/*", async (request, reply) => {
+    app.all("/ai-relay/*", { bodyLimit: AI_RELAY_BODY_LIMIT }, async (request, reply) => {
       const session = sessions.current();
       if (!session) {
         return reply.code(503).send({
@@ -104,7 +131,7 @@ export function aiRelayRoutes(options: {
         if (!reply.raw.writableEnded) controller.abort(new Error("client aborted"));
       });
       try {
-        const upstream = await fetch(target, {
+        const upstream = await proxyFetch(target, {
           method,
           headers,
           ...(hasBody ? { body: JSON.stringify(request.body ?? null) } : {}),

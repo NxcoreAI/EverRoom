@@ -1,6 +1,6 @@
 import {
   AlertCircle,
-  Brain,
+  Bot,
   CalendarDays,
   Check,
   ChevronRight,
@@ -8,44 +8,48 @@ import {
   FileJson,
   FileText,
   Image as ImageIcon,
+  Lightbulb,
+  ListTodo,
   LoaderCircle,
   Mail,
   Play,
   Plug,
+  Presentation,
   Search,
   Square,
   Terminal,
   Wrench,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocale, type Translate } from '@/i18n/LocaleContext'
 
+import { ReasoningBlock } from './ReasoningBlock'
+import { noOpCommandSummary } from './noopToolCall'
 import {
   agentToolCommand,
+  agentToolKind,
   agentToolLabel,
   agentToolResultSummary,
   agentToolStageText,
   agentToolSubject,
+  buildTimelineRows,
+  dispatchedInvocationId,
   type AgentRunActivity,
+  type AgentSubagentStep,
+  type AgentToolKind,
   type DisplayAgentToolCall,
+  type TimelineRow,
 } from './agentRunActivity'
+import { ContextUsageRing } from './contextUsageRing'
+import { LocalAgentDispatchCard } from './LocalAgentDispatchCard'
+import { useRunSubagentInvocations } from './useRunSubagentInvocations'
+import { useSubagentInvocationTools } from './useSubagentInvocationTools'
 
-type ToolKind = 'search' | 'memory' | 'file' | 'email' | 'calendar' | 'image' | 'command' | 'schema' | 'connector' | 'action' | 'other'
+type ToolKind = AgentToolKind
 
+/** 图标分类与 agentToolLabel 共用同一张显式工具名映射表；未知工具返回 other。 */
 export function toolKind(name: string): ToolKind {
-  const normalized = name.toLowerCase()
-  if (normalized === 'connector_search') return 'search'
-  if (normalized === 'connector_schema') return 'schema'
-  if (normalized === 'connector_apps') return 'connector'
-  if (normalized === 'connector_run') return 'action'
-  if (/photo|image/.test(normalized)) return 'image'
-  if (/calendar|scheduler/.test(normalized)) return 'calendar'
-  if (/memory/.test(normalized)) return 'memory'
-  if (/email|mail/.test(normalized)) return 'email'
-  if (/search|web|fetch|browser/.test(normalized)) return 'search'
-  if (/read|write|edit|patch|glob|grep|file|document/.test(normalized)) return 'file'
-  if (/bash|command|terminal|shell/.test(normalized)) return 'command'
-  return 'other'
+  return agentToolKind(name)
 }
 
 function detailText(value: unknown): string | undefined {
@@ -56,6 +60,18 @@ function detailText(value: unknown): string | undefined {
   } catch {
     return String(value)
   }
+}
+
+const detailTextCache = new WeakMap<object, string | undefined>()
+
+/** 大结果 JSON.stringify(2 空格缩进) 开销不小，时间线每秒随 duration 计时器整表
+ * 重渲染，按对象身份缓存；终态工具的 args/result 不再变化，缓存长期有效。 */
+function detailTextCached(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return detailText(value)
+  if (detailTextCache.has(value)) return detailTextCache.get(value)
+  const computed = detailText(value)
+  detailTextCache.set(value, computed)
+  return computed
 }
 
 function durationMs(startedAt: string, completedAt: string | undefined, now: number): number {
@@ -78,16 +94,20 @@ function formatDuration(duration: number, t: Translate): string {
 function ToolIcon({ kind }: { kind: ToolKind }) {
   const Icon = {
     action: Play,
+    agent: Bot,
+    analysis: Lightbulb,
     calendar: CalendarDays,
     command: Terminal,
     connector: Plug,
+    document: FileText,
     email: Mail,
     file: FileText,
     image: ImageIcon,
-    memory: Brain,
     other: Wrench,
     schema: FileJson,
     search: Search,
+    slides: Presentation,
+    task: ListTodo,
   }[kind]
   return <Icon aria-hidden="true" />
 }
@@ -119,26 +139,8 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查看操作要求': 'surface:agentExecutionTimeline.operationRequirementsViewed',
     '查找可用操作': 'surface:agentExecutionTimeline.searchAvailableOperations',
     '已查找可用操作': 'surface:agentExecutionTimeline.availableOperationsFound',
-    '准备创建选项': 'surface:agentExecutionTimeline.prepareCreationOptions',
-    '已准备创建选项': 'surface:agentExecutionTimeline.creationOptionsPrepared',
-    '获取文档列表': 'surface:agentExecutionTimeline.getDocumentList',
-    '已获取文档列表': 'surface:agentExecutionTimeline.documentListRetrieved',
-    '读取文档': 'surface:agentExecutionTimeline.readDocument',
-    '已读取文档': 'surface:agentExecutionTimeline.documentRead',
     '获取 Room 列表': 'surface:agentExecutionTimeline.getRoomList',
     '已获取 Room 列表': 'surface:agentExecutionTimeline.roomListRetrieved',
-    '准备文档修改': 'surface:agentExecutionTimeline.prepareDocumentChanges',
-    '已准备文档修改': 'surface:agentExecutionTimeline.documentChangesPrepared',
-    '提交文档修改': 'surface:agentExecutionTimeline.commitDocumentChanges',
-    '已提交文档修改': 'surface:agentExecutionTimeline.documentChangesCommitted',
-    '生成文档修改': 'surface:agentExecutionTimeline.generateDocumentChanges',
-    '已生成文档修改': 'surface:agentExecutionTimeline.documentChangesGenerated',
-    '写入文档内容': 'surface:agentExecutionTimeline.writeDocumentContent',
-    '已写入文档内容': 'surface:agentExecutionTimeline.documentContentWritten',
-    '开始创建文档': 'surface:agentExecutionTimeline.startDocumentCreation',
-    '已开始创建文档': 'surface:agentExecutionTimeline.documentCreationStarted',
-    '提交新文档': 'surface:agentExecutionTimeline.commitNewDocument',
-    '已提交新文档': 'surface:agentExecutionTimeline.newDocumentCommitted',
     '选择所需工具': 'surface:agentExecutionTimeline.selectRequiredTool',
     '已选择所需工具': 'surface:agentExecutionTimeline.requiredToolSelected',
     '查看图像': 'surface:agentExecutionTimeline.viewImage',
@@ -149,8 +151,6 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查询日历': 'surface:agentExecutionTimeline.calendarQueried',
     '处理定时任务': 'surface:agentExecutionTimeline.handleScheduledTask',
     '已处理定时任务': 'surface:agentExecutionTimeline.scheduledTaskHandled',
-    '查询个人记忆': 'surface:agentExecutionTimeline.queryMemory',
-    '已查询个人记忆': 'surface:agentExecutionTimeline.memoryQueried',
     '同步邮件': 'surface:agentExecutionTimeline.syncEmail',
     '已同步邮件': 'surface:agentExecutionTimeline.emailSynced',
     '查询邮件': 'surface:agentExecutionTimeline.queryEmail',
@@ -161,6 +161,12 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
     '已查询日记': 'surface:agentExecutionTimeline.diaryQueried',
     '搜索网页': 'surface:agentExecutionTimeline.searchWeb',
     '已搜索网页': 'surface:agentExecutionTimeline.webSearched',
+    '搜索知识库': 'surface:agentExecutionTimeline.searchWiki',
+    '已搜索知识库': 'surface:agentExecutionTimeline.wikiSearched',
+    '读取知识库页面': 'surface:agentExecutionTimeline.readWikiPage',
+    '已读取知识库页面': 'surface:agentExecutionTimeline.wikiPageRead',
+    '检索历史对话': 'surface:agentExecutionTimeline.searchConversations',
+    '已检索历史对话': 'surface:agentExecutionTimeline.conversationsSearched',
     '读取文件': 'surface:agentExecutionTimeline.readFile',
     '已读取文件': 'surface:agentExecutionTimeline.fileRead',
     '修改文件': 'surface:agentExecutionTimeline.modifyFile',
@@ -172,27 +178,6 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   }
   const exactKey = exactKeys[value]
   if (exactKey) return t(exactKey)
-  const documentRead = /^《(.+)》当前有 (\d+) 个可编辑内容块，基于版本 (\d+) 处理。$/.exec(value)
-  if (documentRead) {
-    return t('surface:agentExecutionTimeline.titleHasCountEditableBlocksAndWillBe', {
-      title: documentRead[1]!, count: documentRead[2]!, version: documentRead[3]!,
-    })
-  }
-  const changeScope = /^修改范围已确定：(.+?)[。！!？?]?$/.exec(value)
-  if (changeScope) return t('surface:agentExecutionTimeline.changeScopeConfirmedSummary', { summary: changeScope[1]! })
-  const itemChange = /^第 (\d+) 项为(新增内容|替换内容|删除内容|文档修改)(?:，建议内容 (\d+) 字)?。$/.exec(value)
-  if (itemChange) {
-    const actionKeys: Record<string, string> = {
-      新增内容: 'surface:agentExecutionTimeline.insertContent',
-      替换内容: 'surface:agentExecutionTimeline.replaceContent',
-      删除内容: 'surface:agentExecutionTimeline.deleteContent',
-      文档修改: 'surface:agentExecutionTimeline.documentChange',
-    }
-    const action = t(actionKeys[itemChange[2]!] ?? 'surface:agentExecutionTimeline.documentChange')
-    return itemChange[3]
-      ? t('surface:agentExecutionTimeline.itemSequenceIsActionWithCountCharactersOf', { sequence: itemChange[1]!, action, count: itemChange[3]! })
-      : t('surface:agentExecutionTimeline.itemSequenceIsAction', { sequence: itemChange[1]!, action })
-  }
   if (value === '工具调用失败' || value === '工具调用失败。') return t('surface:agentExecutionTimeline.failed')
   if (value === '操作已停止。' || value === '操作已停止') return t('surface:agentExecutionTimeline.stopped')
   const resultCount = /^获得 (\d+) 条结果$/.exec(value)
@@ -209,23 +194,193 @@ export function localizeAgentActivityText(value: string | undefined, t: Translat
   return value
 }
 
-export function AgentExecutionTimeline({
+/** 活跃时间线每秒随 duration 计时器、每次父级渲染帧都会整表重渲染；结果字符串
+ * 可能是大 JSON（agentToolResultSummary 每次要 JSON.parse），按工具对象+语言缓存。 */
+const toolSummaryCache = new WeakMap<object, { locale: string; value: string | undefined }>()
+
+function toolSummaryText(tool: DisplayAgentToolCall, locale: string, t: Translate): string | undefined {
+  const cached = toolSummaryCache.get(tool)
+  if (cached && cached.locale === locale) return cached.value
+  const value = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
+  toolSummaryCache.set(tool, { locale, value })
+  return value
+}
+
+/** 单个工具行（收起态一行摘要，展开看参数/结果）。顶层与子代理嵌套列表复用。 */
+function ToolRow({ tool, now, sessionId }: { tool: DisplayAgentToolCall; now: number; sessionId?: string | null }) {
+  const { t, locale } = useLocale()
+  const summaryText = toolSummaryText(tool, locale, t)
+  const subject = agentToolSubject(tool)
+  const preview = subject ?? summaryText ?? tool.error
+  const duration = durationMs(tool.startedAt, tool.completedAt, now)
+  const command = agentToolCommand(tool)
+  const args = Object.keys(tool.args).length ? detailTextCached(tool.args) : undefined
+  const result = detailTextCached(tool.result ?? tool.partialResult)
+  const label = agentToolLabel(tool, tool.status === 'completed', t)
+  return (
+    <details className="agent-tool-row" data-status={tool.status}>
+      <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
+        <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
+        <span className="agent-tool-command-text">
+          <strong>{label}</strong>
+          {preview ? <span>{preview}</span> : null}
+        </span>
+        <span className="agent-tool-status" title={statusLabel(tool.status, t)}>
+          <StatusIcon status={tool.status} />
+        </span>
+        <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+      </summary>
+      <div className="agent-tool-details">
+        <div>
+          <div className="agent-tool-meta">
+            <code>{tool.name}</code>
+            <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
+          </div>
+          {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
+          {tool.name.toLowerCase() === 'local_agent_dispatch' ? (
+            <LocalAgentDispatchCard tool={tool} sessionId={sessionId} />
+          ) : (
+            <>
+              {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
+              {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
+              {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
+              {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
+            </>
+          )}
+        </div>
+      </div>
+    </details>
+  )
+}
+
+/**
+ * 子代理行：展开后内嵌它自己的工具流（运行中自动展开、转终态自动收起；
+ * 用户手动开合后不再自动管）。它再派发的子代理不嵌在这里——调用树统一
+ * 在外层时间线平铺成「A → B」链式行，面板内只把自己的调度工具行去重掉。
+ */
+function SubagentRow({ sub, now, sessionId }: {
+  sub: AgentSubagentStep
+  now: number
+  sessionId?: string | null
+}) {
+  const { t } = useLocale()
+  const taskPreview = sub.task.trim().slice(0, 120) || undefined
+  const duration = sub.startedAt ? durationMs(sub.startedAt, sub.completedAt ?? undefined, now) : null
+  const running = sub.status === 'running' || sub.status === 'pending'
+  const [open, setOpen] = useState(running)
+  const userToggledRef = useRef(false)
+  const runningRef = useRef(running)
+
+  useEffect(() => {
+    if (runningRef.current === running) return
+    runningRef.current = running
+    if (!userToggledRef.current) setOpen(running)
+  }, [running])
+
+  const tools = useSubagentInvocationTools(sub.id, running, open)
+  // 拉子调用列表只为去重：调度类工具行对应的调用已在外层平铺展示。
+  const childInvocations = useRunSubagentInvocations(sub.id, running)
+  const childIds = useMemo(() => new Set(childInvocations.map((child) => child.id)), [childInvocations])
+  const ownTools = tools.filter((tool) => {
+    const invocationId = dispatchedInvocationId(tool)
+    return !invocationId || !childIds.has(invocationId)
+  })
+  // 子代理自己的上下文圆环：数字收在 title 里，与对话区 composer 同一套文案。
+  const contextTitle = sub.contextCompacting
+    ? t('surface:agentComposer.contextCompacting')
+    : sub.contextUsage?.contextWindow
+      ? t('surface:agentComposer.contextUsageTitle', {
+        used: sub.contextUsage.tokens === null ? '—' : sub.contextUsage.tokens.toLocaleString(),
+        total: sub.contextUsage.contextWindow.toLocaleString(),
+        percent: sub.contextUsage.percent === null ? '—' : Math.round(sub.contextUsage.percent),
+      })
+      : undefined
+
+  return (
+    <div className="agent-tool-step" data-status={sub.status}>
+      <details
+        className="agent-tool-row"
+        data-status={sub.status}
+        data-kind="subagent"
+        open={open}
+        onToggle={(event) => {
+          const next = (event.currentTarget as HTMLDetailsElement).open
+          setOpen(next)
+          userToggledRef.current = true
+        }}
+      >
+        <summary className="agent-tool-command" title={taskPreview ? `${sub.label} ${taskPreview}` : sub.label}>
+          <span className="agent-tool-rail" aria-hidden="true"><Bot aria-hidden="true" /></span>
+          <span className="agent-tool-command-text">
+            <strong>{sub.label}</strong>
+            <ContextUsageRing
+              usage={sub.contextUsage}
+              compacting={sub.contextCompacting}
+              title={contextTitle}
+              inline
+            />
+            {running
+              ? taskPreview ? <span>{taskPreview}</span> : null
+              : duration !== null ? <span>{formatDuration(duration, t)}</span> : null}
+          </span>
+          <span className="agent-tool-status" title={statusLabel(sub.status, t)}>
+            <StatusIcon status={sub.status} />
+          </span>
+          <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+        </summary>
+        <div className="agent-tool-details">
+          <div>
+            <div className="agent-tool-meta">
+              <span>{statusLabel(sub.status, t)}{duration !== null ? ` · ${formatDuration(duration, t)}` : ''}</span>
+            </div>
+            {sub.errorMessage ? <p className="agent-tool-error">{sub.errorMessage}</p> : null}
+            {sub.task.trim() ? <><small>{t('surface:agentExecutionTimeline.subagentTask')}</small><pre>{sub.task}</pre></> : null}
+            {open && ownTools.length ? (
+              <div className="agent-subagent-tools">
+                {ownTools.map((tool) => (
+                  <ToolRow key={tool.id} tool={tool} now={now} sessionId={sessionId} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </details>
+    </div>
+  )
+}
+
+/**
+ * 时间线随对话区每个流式渲染帧都会被父级重渲染；memo 按属性拦截——历史 run 的
+ * activity/timing 引用稳定，只有活跃 run 真正重算。props 全为值/稳定引用。
+ */
+export const AgentExecutionTimeline = memo(function AgentExecutionTimeline({
   activity,
   runStartedAt,
   runCompletedAt,
   continuing = false,
   continuationLabel = 'surface:agentExecutionTimeline.continuing',
+  sessionId,
+  failedRunIds,
 }: {
   activity: AgentRunActivity
   runStartedAt?: string
   runCompletedAt?: string
   continuing?: boolean
   continuationLabel?: string
+  sessionId?: string | null
+  /** 网关判定为 run.failed 的 runId 集合：权威的失败口径（不传则退回"最后一步是否报错"）。 */
+  failedRunIds?: ReadonlySet<string> | undefined
 }) {
   const { t } = useLocale()
   const tools = activity.steps.map((step) => step.tool)
   const running = tools.some((tool) => tool.status === 'pending' || tool.status === 'running')
   const active = continuing || !runCompletedAt
+  const runId = tools[0]?.runId
+  const subagentInvocations = useRunSubagentInvocations(runId, active)
+  const rows = useMemo<TimelineRow[]>(
+    () => buildTimelineRows(activity.steps, subagentInvocations, runId ?? ''),
+    [activity.steps, runId, subagentInvocations],
+  )
   const summaryStarted = !continuing && Boolean(activity.pendingAnswer || activity.finalAnswer)
   const [expanded, setExpanded] = useState(active && !summaryStarted)
   const [now, setNow] = useState(Date.now())
@@ -272,7 +427,13 @@ export function AgentExecutionTimeline({
 
   if (!activity.hasTools) return null
 
-  const failed = tools.some((tool) => tool.status === 'error')
+  // 失败口径以 run 的终态为准：run.failed 才算处理失败。中途的失败重试（工具参数
+  // 校验、工作表名猜错后改对…）后续步骤已经补齐，不能把整轮标成失败——那会和
+  // run 的 completed 状态、以及助手的最终结论自相矛盾。没有 run 终态信息时退回
+  // "最后一步是否报错"的近似判断。失败明细仍留在展开后的时间线里。
+  const failed = failedRunIds
+    ? runId !== undefined && failedRunIds.has(runId)
+    : tools.length > 0 && tools[tools.length - 1]!.status === 'error'
   const stopped = tools.some((tool) => tool.status === 'stopped')
   const summary = continuing && !running
     ? t(continuationLabel)
@@ -309,54 +470,68 @@ export function AgentExecutionTimeline({
       >
         <div>
           <div className="agent-tool-list">
-            {activity.steps.map((step) => {
-              const tool = step.tool
-              const summaryText = localizeAgentActivityText(agentToolResultSummary(tool.result ?? tool.partialResult, t), t)
-              const subject = agentToolSubject(tool)
-              const preview = subject ?? summaryText ?? tool.error
-              const duration = durationMs(tool.startedAt, tool.completedAt, now)
-              const command = agentToolCommand(tool)
-              const args = Object.keys(tool.args).length ? detailText(tool.args) : undefined
-              const result = detailText(tool.result ?? tool.partialResult)
-              const label = agentToolLabel(tool, tool.status === 'completed', t)
-              const beforeText = localizeAgentActivityText(step.beforeText, t)
-              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(tool, t), t)
-              return (
-                <div key={step.id} className="agent-tool-step" data-status={tool.status}>
-                  {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
-                  <details className="agent-tool-row" data-status={tool.status}>
-                    <summary className="agent-tool-command" title={preview ? `${label} ${preview}` : label}>
-                      <span className="agent-tool-rail" aria-hidden="true"><ToolIcon kind={toolKind(tool.name)} /></span>
-                      <span className="agent-tool-command-text">
-                        <strong>{label}</strong>
-                        {preview ? <span>{preview}</span> : null}
-                      </span>
-                      <span className="agent-tool-status" title={statusLabel(tool.status, t)}>
-                        <StatusIcon status={tool.status} />
-                      </span>
-                      <ChevronRight className="agent-tool-chevron" aria-hidden="true" />
+            {rows.map((row) => {
+              if (row.kind === 'subagent') {
+                return <SubagentRow key={row.key} sub={row.subagent} now={now} sessionId={sessionId} />
+              }
+              if (row.kind === 'repeat') {
+                // 同一工具连续调用多次（典型：一格一次地改 Excel）折叠成一行，
+                // 展开能看到每次的对象，不用被同一行刷屏。
+                const first = row.steps[0]!.tool
+                const label = agentToolLabel(first, true, t)
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.repeatCalls', { count: row.count, name: label })}
                     </summary>
-                    <div className="agent-tool-details">
-                      <div>
-                        <div className="agent-tool-meta">
-                          <code>{tool.name}</code>
-                          <span>{statusLabel(tool.status, t)} · {formatDuration(duration, t)}</span>
-                        </div>
-                        {tool.error ? <p className="agent-tool-error">{localizeAgentActivityText(tool.error, t)}</p> : null}
-                        {command ? <><small>{t('surface:agentExecutionTimeline.command')}</small><pre>{command}</pre></> : null}
-                        {!command && args ? <><small>{t('surface:agentExecutionTimeline.arguments')}</small><pre>{args}</pre></> : null}
-                        {result ? <><small>{t('surface:agentExecutionTimeline.result')}</small><pre>{result}</pre></> : null}
-                        {!command && !args && !result && !tool.error ? <p>{t('surface:agentExecutionTimeline.noAdditionalDetails')}</p> : null}
-                      </div>
-                    </div>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}>
+                          <code>{agentToolSubject(step.tool) ?? step.tool.name}</code>
+                        </li>
+                      ))}
+                    </ul>
                   </details>
-                  {stageText ? <p className="agent-tool-stage" data-status={tool.status}>{stageText}</p> : null}
+                )
+              }
+              if (row.kind === 'noop') {
+                // 空转折叠行：默认一行摘要，展开才看每次打点的命令（原生 details，无需状态）。
+                return (
+                  <details key={row.key} className="agent-tool-step agent-noop-group" data-status="completed">
+                    <summary className="agent-noop-summary">
+                      {t('surface:agentExecutionTimeline.noopFolded', { count: row.count })}
+                    </summary>
+                    <ul className="agent-noop-list">
+                      {row.steps.map((step) => (
+                        <li key={step.id}><code>{noOpCommandSummary(step.tool.args)}</code></li>
+                      ))}
+                    </ul>
+                  </details>
+                )
+              }
+              const step = row.step
+              const beforeText = localizeAgentActivityText(step.beforeText, t)
+              const stageText = localizeAgentActivityText(step.afterText || agentToolStageText(step.tool, t), t)
+              return (
+                <div key={step.id} className="agent-tool-step" data-status={step.tool.status}>
+                  {beforeText ? <p className="agent-activity-commentary">{beforeText}</p> : null}
+                  <ReasoningBlock
+                    variant="segment"
+                    content={step.reasoningBefore}
+                  />
+                  <ToolRow tool={step.tool} now={now} sessionId={sessionId} />
+                  {stageText ? <p className="agent-tool-stage" data-status={step.tool.status}>{stageText}</p> : null}
                 </div>
               )
             })}
           </div>
         </div>
       </div>
+      {/* 正在流动的未封段思考：放在折叠区域外——用户收起时间线也不打断阅读；
+          shimmer 行实时滚动，下一个工具出现即被封段、收进上方某个 step 的静态折叠段。 */}
+      {active && activity.liveReasoning ? (
+        <ReasoningBlock variant="live" active content={activity.liveReasoning} />
+      ) : null}
     </section>
   )
-}
+})

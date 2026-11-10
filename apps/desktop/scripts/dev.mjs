@@ -1,11 +1,17 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// 打包态的文档类型关联由 electron-builder 从 mac.extendInfo 写进 Info.plist；开发态
+// 直接读同一份清单，让缓存里的 branded Electron 也能在访达「打开方式」里出现
+// （避免两处清单漂移）。
+const documentTypes = JSON.parse(
+  readFileSync(join(desktopRoot, 'package.json'), 'utf8'),
+).build?.mac?.extendInfo?.CFBundleDocumentTypes ?? []
 const workspaceEnvPath = resolve(desktopRoot, '../../.env')
 if (existsSync(workspaceEnvPath)) process.loadEnvFile(workspaceEnvPath)
 const electronExecutable = require('electron').trim()
@@ -43,6 +49,37 @@ The Electron app bundle or its code signature is damaged. Reinstall workspace de
   process.exit(1)
 }
 
+// TCC（屏幕录制/麦克风等）只对签名校验通过的应用生效。pnpm 安装的 Electron
+// dist 可能整包缺 _CodeSignature（曾实锤 electron@40.10.6），克隆出的带牌应用
+// 会带着「签名指示有资源但资源缺失」的坏签名运行——表现为用户在系统设置授权
+// 后应用内仍然报未授权。因此缓存命中与重签结果都必须做签名校验。
+function signatureHealthy(appBundle) {
+  const result = spawnSync('/usr/bin/codesign', ['--verify', appBundle], { encoding: 'utf8' })
+  return result.status === 0
+}
+
+// pnpm 解压 Electron dist 包时会把 framework 的符号链接拍平成真实拷贝：
+// Versions/Current 与顶层二进制/Resources 全是实目录/实文件。codesign 对这种
+// 结构判「bundle format is ambiguous」拒绝签名，_CodeSignature 永远生成不了。
+// 这里恢复规范结构：Versions/Current -> A，顶层条目 -> Versions/Current/<name>。
+function repairFrameworkLayouts(frameworksDir) {
+  if (!existsSync(frameworksDir)) return
+  for (const name of readdirSync(frameworksDir)) {
+    if (!name.endsWith('.framework')) continue
+    const frameworkPath = join(frameworksDir, name)
+    const versionsA = join(frameworkPath, 'Versions/A')
+    if (!existsSync(versionsA)) continue
+    const currentPath = join(frameworkPath, 'Versions/Current')
+    rmSync(currentPath, { recursive: true, force: true })
+    symlinkSync('A', currentPath)
+    for (const entry of readdirSync(versionsA)) {
+      const topLevel = join(frameworkPath, entry)
+      rmSync(topLevel, { recursive: true, force: true })
+      symlinkSync(join('Versions/Current', entry), topLevel)
+    }
+  }
+}
+
 // 从钥匙串自动发现 Apple Development 证书（用于 dev 推送签名），找不到返回空串。
 function findDevelopmentIdentity() {
   const listed = spawnSync('/usr/bin/security', ['find-identity', '-v', '-p', 'codesigning'], { encoding: 'utf8' })
@@ -60,15 +97,50 @@ function findNewestProfile(directory) {
   return newest ? join(directory, newest) : null
 }
 
+/**
+ * 访达「打开方式」/ 双击文档：把 package.json 的 mac.extendInfo.CFBundleDocumentTypes
+ * 写进开发态 Info.plist。LSHandlerRank=Alternate 表示不抢系统默认打开方式，只出现在
+ * 右键「打开方式」里；用户可自行设为默认。数组/字符串两种值按 PlistBuddy 语法展开。
+ */
+function applyDocumentTypes(plistPath, types) {
+  spawnSync('/usr/libexec/PlistBuddy', ['-c', 'Delete :CFBundleDocumentTypes', plistPath], { stdio: 'ignore' })
+  if (types.length === 0) return
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleDocumentTypes array', plistPath])
+  types.forEach((type, index) => {
+    const base = `:CFBundleDocumentTypes:${index}`
+    run('/usr/libexec/PlistBuddy', ['-c', `Add ${base} dict`, plistPath])
+    for (const [key, value] of Object.entries(type)) {
+      if (Array.isArray(value)) {
+        run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key} array`, plistPath])
+        value.forEach((item, itemIndex) => {
+          run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key}:${itemIndex} string ${item}`, plistPath])
+        })
+      } else {
+        run('/usr/libexec/PlistBuddy', ['-c', `Add ${base}:${key} string ${value}`, plistPath])
+      }
+    }
+  })
+}
+
+/** 让 LaunchServices 立刻认识开发态 app 的文档类型（否则要等系统下次扫描）。 */
+function registerWithLaunchServices(appBundle) {
+  const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+  if (!existsSync(lsregister)) return
+  const result = spawnSync(lsregister, ['-f', appBundle], { stdio: 'ignore' })
+  if (result.status !== 0) {
+    console.warn('[desktop] LaunchServices registration failed; Finder may not list EverOffice under Open With until the next launch.')
+  }
+}
+
 function prepareMacElectron() {
   const sourceApp = resolve(dirname(electronExecutable), '../..')
   const sourcePlist = join(sourceApp, 'Contents/Info.plist')
   const iconPath = join(desktopRoot, 'build/icon.icns')
   const cacheDirectory = join(desktopRoot, 'node_modules/.cache/everroom-electron')
-  const brandedApp = join(cacheDirectory, 'EverRoom.app')
+  const brandedApp = join(cacheDirectory, 'EverOffice.app')
   const markerPath = join(cacheDirectory, 'build.json')
   const marker = JSON.stringify({
-    brandingVersion: 6,
+    brandingVersion: 10,
     electronExecutable,
     electronPlistModifiedAt: statSync(sourcePlist).mtimeMs,
     iconModifiedAt: statSync(iconPath).mtimeMs,
@@ -76,8 +148,10 @@ function prepareMacElectron() {
 
   if (existsSync(markerPath) && readFileSync(markerPath, 'utf8') === marker) {
     const cachedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
-    if (!electronHealthCheck(cachedExecutable)) return cachedExecutable
-    console.warn('[desktop] cached branded Electron is not runnable; rebuilding it.')
+    if (!electronHealthCheck(cachedExecutable)) {
+      if (signatureHealthy(brandedApp)) return cachedExecutable
+      console.warn('[desktop] cached branded Electron has an invalid code signature; rebuilding it (TCC permissions cannot bind to a broken signature).')
+    }
     rmSync(brandedApp, { recursive: true, force: true })
     rmSync(markerPath, { force: true })
   }
@@ -91,20 +165,22 @@ function prepareMacElectron() {
   if (clone.status !== 0) cpSync(sourceApp, brandedApp, { recursive: true })
 
   const plistPath = join(brandedApp, 'Contents/Info.plist')
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName EverRoom', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverRoom', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier ai.nxcore.everroom', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName EverOffice', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleName EverOffice', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIdentifier ai.nxcore.everoffice', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleIconFile icon.icns', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverRoom needs microphone access to record and transcribe your voice.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverRoom needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDocumentsFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
-  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDesktopFolderUsageDescription string EverRoom needs access to selected folders to recognize supported documents in the file app.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSMicrophoneUsageDescription EverOffice needs microphone access to record and transcribe your voice.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Set :NSAudioCaptureUsageDescription EverOffice needs system audio access to record and transcribe audio playing on this Mac.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDocumentsFolderUsageDescription string EverOffice needs access to selected folders to recognize supported documents in the file app.', plistPath])
+  run('/usr/libexec/PlistBuddy', ['-c', 'Add :NSDesktopFolderUsageDescription string EverOffice needs access to selected folders to recognize supported documents in the file app.', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0 dict', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLName string com.nxcore.everroom.auth', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes array', plistPath])
   run('/usr/libexec/PlistBuddy', ['-c', 'Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string everroom', plistPath])
+  applyDocumentTypes(plistPath, documentTypes)
   copyFileSync(iconPath, join(brandedApp, 'Contents/Resources/icon.icns'))
+  repairFrameworkLayouts(join(brandedApp, 'Contents/Frameworks'))
   // 开发推送验证需要真实 Team 签名 + aps-environment entitlement（ad-hoc 签名无法注册 APNs）。
   // 未配置开发者证书时回退 ad-hoc，推送不可用但应用可跑。
   const devEntitlements = join(cacheDirectory, 'dev-entitlements.plist')
@@ -113,7 +189,7 @@ function prepareMacElectron() {
 <plist version="1.0">
 <dict>
   <key>com.apple.application-identifier</key>
-  <string>SS33VDS3A4.ai.nxcore.everroom</string>
+  <string>SS33VDS3A4.ai.nxcore.everoffice</string>
   <key>com.apple.developer.aps-environment</key>
   <string>development</string>
   <key>com.apple.developer.team-identifier</key>
@@ -179,9 +255,17 @@ function prepareMacElectron() {
     console.warn('[desktop] no Apple Development signing identity found; falling back to ad-hoc signing. APNs push registration will be unavailable in this dev session.')
     signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp], { stdio: 'inherit' })
   }
-  if (signing.status !== 0) {
-    console.warn(`[desktop] dev Electron signing failed (exit ${signing.status}): ${signing.stderr ?? 'no stderr'}`)
-    console.warn('[desktop] keeping branded app with its current (possibly ad-hoc) signature and continuing.')
+  if (signing.status !== 0 || !signatureHealthy(brandedApp)) {
+    console.warn(`[desktop] dev Electron signing failed (exit ${signing.status}): ${signing.stderr ?? 'no stderr'}; retrying with ad-hoc signing.`)
+    signing = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', brandedApp], { stdio: 'inherit' })
+  }
+  if (signing.status !== 0 || !signatureHealthy(brandedApp)) {
+    console.error(`
+[desktop] branded Electron signature is invalid after signing.
+  Screen recording / microphone permissions cannot be granted to this app until fixed.
+  Try: rm -rf "${cacheDirectory}" && pnpm dev
+`)
+    process.exit(1)
   }
   const brandedExecutable = join(brandedApp, 'Contents/MacOS/Electron')
   const brandedFailure = electronHealthCheck(brandedExecutable)
@@ -191,6 +275,7 @@ function prepareMacElectron() {
     const plain = spawnSync('/usr/bin/codesign', ['--force', '--deep', '--sign', devIdentity || '-', brandedApp], { stdio: 'inherit' })
     if (plain.status === 0 && !electronHealthCheck(brandedExecutable)) {
       writeFileSync(markerPath, marker)
+      registerWithLaunchServices(brandedApp)
       console.log(`[desktop] branded dev Electron ready (no push entitlement): ${brandedApp}`)
       return brandedExecutable
     }
@@ -199,13 +284,14 @@ function prepareMacElectron() {
     return electronExecutable
   }
   writeFileSync(markerPath, marker)
+  registerWithLaunchServices(brandedApp)
   console.log(`[desktop] branded dev Electron ready: ${brandedApp}`)
 
   const devAppPath = brandedApp
   console.log(`
 [desktop] macOS 开发环境「录屏与系统音频」授权指引:
   1. 打开 系统设置 → 隐私与安全性 → 录屏与系统音频 (Screen & System Audio Recording)
-  2. 点击 "+" 号,前往并选择下方这个 app(注意是缓存里的 EverRoom.app,不是 release 安装包):
+  2. 点击 "+" 号,前往并选择下方这个 app(注意是缓存里的 EverOffice.app,不是 release 安装包):
      ${devAppPath}
   3. 添加后按提示退出并重新启动开发版应用 (pnpm dev),权限即生效
   说明: 开发环境下真正发起系统音频捕获的是这个带 branding 的 Electron.app,

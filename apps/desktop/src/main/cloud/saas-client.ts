@@ -8,6 +8,9 @@ import { basename, extname, isAbsolute, join, relative, resolve } from 'node:pat
 
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import type { App } from 'electron'
+import WebSocket from 'ws'
+
+import { OIDC_LOGIN_CANCELLED_MESSAGE } from '../../shared/sources'
 
 import type {
   AiGatewayStatus,
@@ -31,7 +34,7 @@ import type {
 } from '../../shared/notifications'
 import type { CredentialStore } from '../security/credential-store'
 import { createLoggedHttpClient } from '../network/http-client'
-import everroomFullLogo from '../../renderer/src/assets/everroom-full.png'
+import everroomFullLogo from '../../renderer/src/assets/everoffice-full.png'
 
 const REFRESH_TOKEN_KEY = 'everroom:saas:refresh-token'
 const DEVICE_KEY_KEY = 'everroom:saas:device-key'
@@ -70,6 +73,14 @@ const http = createLoggedHttpClient('saas', { timeout: REQUEST_TIMEOUT_MS })
 
 export const OIDC_CALLBACK_URL = 'everroom://auth/callback'
 
+/** handleOidcCallback 的处理结果，语义见方法注释。 */
+export type OidcCallbackOutcome =
+  | 'unrelated'
+  | 'accepted'
+  | 'rejected'
+  | 'stale'
+  | 'no-login-in-progress'
+
 /**
  * RFC 8252 本地回环回调:浏览器授权后直接 HTTP 302 到 127.0.0.1,不依赖自定义协议跳转。
  * Chrome 会静默拦截无用户手势的自定义协议跳转(OAuth 重定向链内没有手势),
@@ -80,6 +91,7 @@ const OIDC_LOOPBACK_PORT = Number.parseInt(env('NXCORE_LOGTO_LOOPBACK_PORT', '53
 const OIDC_LOOPBACK_HOST = '127.0.0.1'
 const OIDC_LOOPBACK_PATH = '/auth/callback'
 const OIDC_LOOPBACK_REDIRECT_URI = `http://${OIDC_LOOPBACK_HOST}:${OIDC_LOOPBACK_PORT}${OIDC_LOOPBACK_PATH}`
+const OIDC_LOOPBACK_PROBE_TIMEOUT_MS = 5_000
 
 interface LoginResult {
   accessToken: string
@@ -125,13 +137,13 @@ export function isAdmissionRequired(outcome: LoginOutcome | null | undefined): o
     && (outcome as AdmissionRequired).admissionRequired === true
 }
 
-interface CloudJob {
+export interface CloudJob {
   id: string
   status: string
   provider: string
   fileName: string
   transcript?: string | null
-  segments?: Array<{ text: string; beginTime: number; endTime: number; speakerId: number | null }>
+  segments?: Array<{ text: string; beginTime: number; endTime: number; speakerId: number | string | null; speakerName?: string | null }>
   insights?: AsrResult['insights']
   errorCode?: string | null
   errorMessage?: string | null
@@ -155,6 +167,22 @@ interface CloudSubscription {
   entitlements?: { asrSecondsPerPeriod?: number }
 }
 
+/** 套餐档位（`GET /app/plans`），升级弹窗动态渲染权益列表。 */
+export interface PlanTier {
+  id: string
+  code: string
+  name: string
+  priceCents: number
+  currency: string
+  entitlements: {
+    asrSecondsPerPeriod?: number
+    maxDevices?: number
+    syncRetentionDays?: number
+    llmCreditsPerPeriod?: number
+    [key: string]: unknown
+  }
+}
+
 export interface KeyringDevicePackage {
   algorithm: 'X25519-HKDF-SHA256-AES-256-GCM'
   ephemeralPublicKey: string
@@ -171,14 +199,18 @@ export interface AgentStreamCredentials {
   deviceId: string
 }
 
-export interface SaasRuntimeConfig {
-  schemaVersion: number
-  configVersion: number
-  source: 'global' | 'plan' | 'tenant' | 'user'
-  planCode: string
-  planName: string
-  updatedAt: string
-  config: Record<string, unknown>
+/** SaaS 套餐场景模型配置（管理端套餐面板逐场景配置，随中转令牌下发）。 */
+export interface AiPlanModels {
+  primary: string
+  background: string
+  lite: string
+  cursorCompletion: string
+  vlm: string
+  /** 生图（中转 /v1/images/generations）；空串=套餐未启用生图。 */
+  image?: string
+  webSearch: string
+  embedding: string
+  embeddingDimensions: number
 }
 
 /** SaaS 签发的 new-api 中转短期令牌（`POST /app/ai-gateway/tokens`）。 */
@@ -187,7 +219,36 @@ export interface AiGatewayToken {
   expiresAt: string
   /** 中转站推理根地址（无 /v1）。 */
   baseUrl: string
+  /** 套餐场景模型；套餐未配置时为 null（客户端沿用内置默认模型）。 */
+  models?: AiPlanModels | null
 }
+
+/** 充值档位（`GET /app/billing/packs`）。 */
+export interface CreditPack {
+  id: string
+  code: string
+  name: string
+  amountCents: number
+  /** 微信支付人民币价(分,如 3500=¥35);未配置人民币价的档位无此字段。 */
+  amountCnyCents?: number
+  grantQuota: number
+  active: boolean
+  /** credits = 积分包;pro_month = Pro 月卡(不发积分,开通 30 天订阅)。 */
+  productKind?: 'credits' | 'pro_month'
+}
+
+/** 充值支付渠道:paypal 走 approval 页;wechatpay 返回 code_url(weixin://)弹窗内扫码。 */
+export type TopupChannel = 'paypal' | 'wechatpay'
+
+/** 充值下单结果（`POST /app/billing/topup`）。 */
+export interface TopupOrder {
+  orderId: string
+  /** PayPal approval 页(系统浏览器打开);mock 模式为 mock:// 协议;微信为 weixin:// code_url。 */
+  approvalUrl: string
+  provider: 'paypal' | 'mock' | 'wechatpay'
+}
+
+export type TopupStatus = 'pending' | 'completed' | 'failed' | 'expired'
 
 
 /**
@@ -330,6 +391,8 @@ interface LogtoTokenResponse {
 }
 
 interface PendingOidcLogin {
+  /** 发起本次登录时的 oidcLoginEpoch：用于判断响应回来时是否已被更新的登录/登出接管。 */
+  epoch: number
   state: string
   nonce: string
   codeVerifier: string
@@ -359,7 +422,7 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EverRoom · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
+  <title>EverOffice · ${failed ? 'Sign-in incomplete' : 'Signed in'}</title>
   <style>
     :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
@@ -376,14 +439,14 @@ function loopbackCallbackPage(request: IncomingMessage, response: ServerResponse
 <body>
   <main>
     <div class="brand">
-      <img src="${everroomFullLogo}" alt="EverRoom">
+      <img src="${everroomFullLogo}" alt="EverOffice">
     </div>
     <div class="status" aria-hidden="true">${failed ? '!' : '&#10003;'}</div>
     <h1>${failed ? 'Sign-in incomplete' : 'You are signed in'}</h1>
-    <p>${failed ? 'Return to EverRoom and try signing in again.' : 'Your account is connected. You can continue in EverRoom.'}</p>
+    <p>${failed ? 'Return to EverOffice and try signing in again.' : 'Your account is connected. You can continue in EverOffice.'}</p>
     ${failed
-      ? '<div class="hint">Return to EverRoom to try again</div>'
-      : '<div class="hint">Redirecting to the EverRoom website in <span id="redirect-countdown">5</span> seconds</div>'}
+      ? '<div class="hint">Return to EverOffice to try again</div>'
+      : '<div class="hint">Redirecting to the EverOffice website in <span id="redirect-countdown">5</span> seconds</div>'}
   </main>
   ${failed ? '' : `<script>
     (() => {
@@ -428,7 +491,7 @@ function startLoopbackCallbackServer(waiter: LoopbackCallbackWaiter): Promise<Se
 }
 
 export class SaasRequestError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly errorCode?: string) {
     super(message)
     this.name = 'SaasRequestError'
   }
@@ -438,10 +501,23 @@ export function isSaasRateLimitError(error: unknown): error is SaasRequestError 
   return error instanceof SaasRequestError && error.status === 429
 }
 
-function saasErrorMessage(response: AxiosResponse): string {
-  if (response.status === 429) return '请求过于频繁，请稍后重试。'
-  const body = response.data as { detail?: string; message?: string } | null
-  return body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`
+/** 服务端已判定重试无意义的错误：402 周期额度不足、409 设备与会话不一致（换端登录/多版本共用凭证会触发）。 */
+export function isSaasPermanentError(error: unknown): error is SaasRequestError {
+  if (!(error instanceof SaasRequestError)) return false
+  if (error.status === 402) return true
+  return error.status === 409 && error.errorCode === 'ASR_DEVICE_MISMATCH'
+}
+
+/** 已知永久错误给出用户能看懂的说法；其余沿用服务端 detail。错误码在 problem+json 的 title 字段。 */
+function saasErrorDetail(response: AxiosResponse): { message: string; errorCode?: string } {
+  const body = response.data as { detail?: string; message?: string; title?: string } | null
+  const errorCode = typeof body?.title === 'string' ? body.title : undefined
+  if (response.status === 429) return { message: '请求过于频繁，请稍后重试。', errorCode }
+  const friendly = errorCode === 'ASR_QUOTA_INSUFFICIENT' ? '本期转写额度已用完，可升级套餐或等待额度重置。'
+    : errorCode === 'ASR_DEVICE_MISMATCH' ? '当前登录的设备与会话不一致，请退出登录后重新登录。'
+      : errorCode === 'ASR_PENDING_UPLOAD_LIMIT' ? '待上传的转写任务过多，请先处理或取消。'
+        : undefined
+  return { message: friendly ?? body?.detail ?? body?.message ?? `SaaS 请求失败（${response.status}）`, errorCode }
 }
 
 function env(name: string, fallback: string): string {
@@ -468,14 +544,32 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
   }
 }
 
-/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent 字段，避免 strict 校验整包 422。 */
+/** SaaS 心跳里的会话投影：本地 contract 的超集字段不在服务端 schema 里。 */
+type SaasCompatibleSession = Omit<AgentSession, 'workspaceId'>
+  & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>
+
+/** 心跳上行投影：剥掉 SaaS schema 尚不认识的多 Agent / 工作区 / 批注卡片字段，避免 strict 校验整包 422。 */
 function saasCompatibleSession(
   session: AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'>,
-): AgentSession & Pick<AgentSessionSnapshot, 'messages' | 'activeRun' | 'lastEventSeq'> {
-  const { activeAgentId: _activeAgentId, ...rest } = session
+): SaasCompatibleSession {
+  const {
+    activeAgentId: _activeAgentId,
+    channelAgentId: _channelAgentId,
+    workspaceId: _workspaceId,
+    ...rest
+  } = session
   return {
     ...rest,
-    messages: session.messages.map(({ authorAgentId: _authorAgentId, ...message }) => message),
+    // noteCards / displayContent 是本地展示扩展（agent-contract）：批注卡片与
+    // assistant 答复分级（[[details]] 拆分的默认展示层）。服务端消息 schema
+    // 拒收未知属性（422: "property noteCards should not exist"），上行剥离；
+    // content 始终是完整答复，云端会话回看不受影响。
+    messages: session.messages.map(({
+      authorAgentId: _authorAgentId,
+      noteCards: _noteCards,
+      displayContent: _displayContent,
+      ...message
+    }) => message),
   }
 }
 
@@ -489,7 +583,17 @@ export class SaasClient {
   private subscriptionRetryAfter = 0
   private subscriptionPromise: Promise<void> | null = null
   private initializePromise: Promise<void> | null = null
+  /** 未登录态日志去重：轮询每 5s 重跑 restoreSession，无 token 时只打一次。 */
+  private noSessionLogged = false
+  /** 启动恢复因网络失败（token 保留）时置 'network'，成功/真失效即清除。 */
+  private authBlockedReason: 'network' | null = null
+  /** 单飞 refresh：并发 401（agent/status 心跳、session/lease、订阅同时命中
+   *  过期）必须共享同一次换token请求——否则同一 refresh token 被并发重放，
+   *  服务端轮换复用检测会把整个会话族吊销（表现为重启后必须重新登录）。 */
+  private refreshInFlight: Promise<void> | null = null
   private pendingOidcLogin: PendingOidcLogin | null = null
+  /** 每次发起新的 OIDC 登录或登出时 +1：在途的旧登录响应据此知道自己已被接管。 */
+  private oidcLoginEpoch = 0
   private loopbackRedirectSupported: boolean | null = null
   private loopbackServer: Server | null = null
 
@@ -501,7 +605,6 @@ export class SaasClient {
   readonly baseUrl: string
   readonly logtoIssuer: string
   readonly logtoAppId: string
-  private readonly connectorIds: Record<CloudOidcProvider, string>
 
   constructor(
     private readonly credentials: CredentialStore,
@@ -509,19 +612,19 @@ export class SaasClient {
     private readonly recordingsDirectory: string,
     private readonly openExternal: (url: string) => Promise<void>,
   ) {
-    // 开发默认与手机 App 的 dev 默认（http://192.168.1.99:4100）保持同一 origin，
-    // 保证扫码登录的环境校验在两端默认配置下直接通过。
-    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'http://192.168.1.99:4100/api/v1'))
+    // 打包默认指向生产 SaaS API；dev 由 .env 的 NXCORE_SAAS_API_URL 覆盖连内网，
+    // 手机 App 扫码登录的环境校验只在 dev 内网场景关心 origin 一致性。
+    this.baseUrl = normalizeSaasApiUrl(env('NXCORE_SAAS_API_URL', 'https://api.everoffice.vyitec.com/api/v1'))
     this.logtoIssuer = env('NXCORE_LOGTO_ISSUER', 'https://auth.nxcore.ai/oidc').replace(/\/+$/, '')
     this.logtoAppId = env('NXCORE_LOGTO_APP_ID', 'typreqzzbz3anel9aq1z8')
-    this.connectorIds = {
-      google: env('NXCORE_LOGTO_GOOGLE_CONNECTOR_ID', 'ylj6cyoz9kqpgpqgh3st8'),
-      apple: env('NXCORE_LOGTO_APPLE_CONNECTOR_ID', 'aei6v6kjlpauhod1r7f82'),
-    }
   }
 
   initialize(): Promise<void> {
-    this.initializePromise ??= this.restoreSession()
+    // 恢复未成功（网络失败、token 仍在）时不冻结本次进程：清掉 memo，
+    // 后续 status() 会再试——否则一次启动超时 = 整个会话被判未登录。
+    this.initializePromise ??= this.restoreSession().then(() => {
+      if (!this.account) this.initializePromise = null
+    })
     return this.initializePromise
   }
 
@@ -668,14 +771,9 @@ export class SaasClient {
     return pending
   }
 
-  async getRuntimeConfig(): Promise<SaasRuntimeConfig> {
-    await this.initialize()
-    return this.request<SaasRuntimeConfig>('/app/runtime-config')
-  }
-
   /**
    * 换取 oo 用户会话（SaaS 侧幂等：已登记直接返回，否则代发并登记）。
-   * 未登录时抛错；oo token 与 EverRoom 会话生命周期解耦（持久稳定），无需缓存。
+   * 未登录时抛错；oo token 与 EverOffice 会话生命周期解耦（持久稳定），无需缓存。
    */
   async connectorOoSession(): Promise<ConnectorOoSession> {
     await this.initialize()
@@ -772,13 +870,48 @@ export class SaasClient {
     ) {
       throw new Error('SaaS 返回了无效的中转令牌。')
     }
-    return { token: issued.token, expiresAt: issued.expiresAt, baseUrl: issued.baseUrl.trim().replace(/\/+$/, '') }
+    return {
+      token: issued.token,
+      expiresAt: issued.expiresAt,
+      baseUrl: issued.baseUrl.trim().replace(/\/+$/, ''),
+      models: issued.models && typeof issued.models === 'object' ? issued.models : null,
+    }
   }
 
   /** 中转额度状态（未配置/无订阅记录时 data 可能为 null）。 */
   async aiGatewayStatus(): Promise<AiGatewayStatus | null> {
     await this.initialize()
     return this.request<AiGatewayStatus | null>('/app/ai-gateway/status')
+  }
+
+  /** 充值档位列表。 */
+  async creditPacks(): Promise<CreditPack[]> {
+    await this.initialize()
+    return this.request<CreditPack[]>('/app/billing/packs')
+  }
+
+  /** 充值下单:channel 省略=paypal(现状);wechatpay 返回 weixin:// code_url 由渲染端扫码。 */
+  async createTopup(packCode: string, channel?: TopupChannel): Promise<TopupOrder> {
+    await this.initialize()
+    return this.request<TopupOrder>('/app/billing/topup', { method: 'POST', data: { packCode, ...(channel ? { channel } : {}) } })
+  }
+
+  /** 充值订单状态轮询(pending 时服务端主动核对支付渠道)。 */
+  async topupStatus(orderId: string): Promise<{ status: TopupStatus; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: TopupStatus; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/status`)
+  }
+
+  /** Mock 模式联调:模拟买家批准。真 paypal 模式服务端 409。 */
+  async topupMockApprove(orderId: string): Promise<{ status: 'completed'; amountCents: number }> {
+    await this.initialize()
+    return this.request<{ status: 'completed'; amountCents: number }>(`/app/billing/topup/${encodeURIComponent(orderId)}/mock-approve`, { method: 'POST' })
+  }
+
+  /** 套餐档位列表(升级弹窗渲染)。 */
+  async planTiers(): Promise<PlanTier[]> {
+    await this.initialize()
+    return this.request<PlanTier[]>('/app/plans')
   }
 
   async updateNotificationPreferences(input: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
@@ -854,9 +987,15 @@ export class SaasClient {
     return this.publicRequest('/app/auth/invitation-code/validate', { method: 'POST', data: { invitationCode } })
   }
 
+  /** 已登录账户直接兑换：free 升 Pro；已是 Pro 返回 rejected='pro_plan_active'（码未消耗）。 */
+  async redeemInvitationCode(invitationCode: string): Promise<{ applied: boolean; rejected?: 'pro_plan_active' }> {
+    return this.request('/app/subscription/redeem-invitation', { method: 'POST', data: { invitationCode } })
+  }
+
   async loginWithOidc(provider: CloudOidcProvider, invitationCode?: string): Promise<CloudAccountStatus> {
     await this.initialize()
     this.cancelOidcLogin('新的登录请求已开始。')
+    this.oidcLoginEpoch += 1
 
     const state = randomBase64Url()
     const nonce = randomBase64Url()
@@ -873,7 +1012,10 @@ export class SaasClient {
     authorizationUrl.searchParams.set('state', state)
     authorizationUrl.searchParams.set('nonce', nonce)
     authorizationUrl.searchParams.set('prompt', 'login')
-    authorizationUrl.searchParams.set('direct_sign_in', `social:${this.connectorIds[provider]}`)
+    // direct_sign_in 必须传 provider target（social:apple / social:google）才直达
+    // Provider 登录页；传 connector ID 会被 Logto 落回通用登录页（2026-09-15 对
+    // auth.nxcore.ai 实测）。
+    authorizationUrl.searchParams.set('direct_sign_in', `social:${provider}`)
 
     const result = new Promise<CloudAccountStatus>((resolveLogin, rejectLogin) => {
       const timeout = setTimeout(() => {
@@ -883,6 +1025,7 @@ export class SaasClient {
         rejectLogin(new Error('浏览器登录等待超时，请重试。'))
       }, OIDC_LOGIN_TIMEOUT_MS)
       this.pendingOidcLogin = {
+        epoch: this.oidcLoginEpoch,
         state,
         nonce,
         codeVerifier,
@@ -914,8 +1057,10 @@ export class SaasClient {
   }
 
   /**
-   * Logto 后台注册了固定端口回环 redirect_uri 才走 HTTP 回调(每次登录探测一次并缓存),
+   * Logto 后台注册了固定端口回环 redirect_uri 才走 HTTP 回调(IdP 明确应答后缓存),
    * 否则回退到 everroom:// 自定义协议,保证未配置时登录流程不被破坏。
+   * 网络故障(代理/VPN 断连)只影响当次:本轮回退 everroom:// 但不缓存,
+   * 下次登录重新探测——避免一次网络抖动把回环回调永久禁用。
    */
   private async resolveOidcRedirectUri(): Promise<string> {
     if (this.loopbackRedirectSupported !== null) {
@@ -933,12 +1078,17 @@ export class SaasClient {
           state: 'probe',
           nonce: 'probe',
         },
+        // 探测只决定回调方式，不该让点登录到跳浏览器的体感等待超过 5s
+        // （默认 15s 在代理环境下是「点了没反应」的主要来源）。
+        timeout: OIDC_LOOPBACK_PROBE_TIMEOUT_MS,
         validateStatus: () => true,
         maxRedirects: 0,
       })
       this.loopbackRedirectSupported = probe.status !== 400
     } catch {
-      this.loopbackRedirectSupported = false
+      // 超时/断网 ≠ 未注册：本轮仍用回环，避免落到会被浏览器静默拦截的
+      // everroom:// 回调；不写缓存，下次登录重新探测。
+      return OIDC_LOOPBACK_REDIRECT_URI
     }
     return this.loopbackRedirectSupported ? OIDC_LOOPBACK_REDIRECT_URI : OIDC_CALLBACK_URL
   }
@@ -962,25 +1112,38 @@ export class SaasClient {
     server.closeIdleConnections()
   }
 
-  handleOidcCallback(rawUrl: string): boolean {
+  /**
+   * 登录回调的处理结果：
+   * - unrelated：不是登录回调地址；
+   * - accepted：授权码已接收，正在换取会话；
+   * - rejected：回调携带错误/缺授权码，当前登录已以报错收场；
+   * - stale：来自旧一轮登录（或旧浏览器页签）的迟到回调，当前登录不受影响；
+   * - no-login-in-progress：授权已完成但主进程没有对应的登录（超时/应用重启过），
+   *   授权码无处可用——调用方应明确告知用户重新发起登录，而不是静默丢弃。
+   */
+  handleOidcCallback(rawUrl: string): OidcCallbackOutcome {
     let callback: URL
     try {
       callback = new URL(rawUrl)
     } catch {
-      return false
+      return 'unrelated'
     }
     const isLoopback = callback.protocol === 'http:' && callback.hostname === OIDC_LOOPBACK_HOST
     if (
       !isLoopback && (
         callback.protocol !== 'everroom:' || callback.hostname !== 'auth' || callback.pathname !== '/callback'
       )
-    ) return false
+    ) return 'unrelated'
 
     const pending = this.pendingOidcLogin
-    if (!pending) return true
+    if (!pending) {
+      console.warn('[oidc] 收到登录回调，但当前没有正在进行的登录（可能已超时或应用重启过）。')
+      return 'no-login-in-progress'
+    }
     if (callback.searchParams.get('state') !== pending.state) {
-      this.rejectOidcLogin(pending, new Error('登录状态校验失败，请重新登录。'))
-      return true
+      // 迟到的旧回调不能打断当前登录：仅忽略，当前登录继续等待。
+      console.warn('[oidc] 登录回调 state 与当前登录不匹配，已忽略。')
+      return 'stale'
     }
 
     const oidcError = callback.searchParams.get('error')
@@ -992,21 +1155,21 @@ export class SaasClient {
         pending,
         new Error(rejectedScope ? `${message}（被拒绝的 scope: ${rejectedScope}）` : message),
       )
-      return true
+      return 'rejected'
     }
 
     const code = callback.searchParams.get('code')
     if (!code) {
       this.rejectOidcLogin(pending, new Error('Logto 登录回调缺少授权码。'))
-      return true
+      return 'rejected'
     }
 
     this.stopLoopbackServer()
     void this.completeOidcLogin(code, pending)
-    return true
+    return 'accepted'
   }
 
-  cancelOidcLogin(message = '登录已取消。'): void {
+  cancelOidcLogin(message = OIDC_LOGIN_CANCELLED_MESSAGE): void {
     const pending = this.pendingOidcLogin
     if (pending) this.rejectOidcLogin(pending, new Error(message))
   }
@@ -1015,6 +1178,7 @@ export class SaasClient {
     await this.initialize()
     this.cancelOidcLogin()
     this.stopLoopbackServer()
+    this.oidcLoginEpoch += 1
     await this.cancelPendingQrLogin()
     this.pendingAdmission = null
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
@@ -1076,6 +1240,68 @@ export class SaasClient {
     return this.normalizeJob(job)
   }
 
+  /** 录制中分段上传：只建单不上传，返回 awaiting_upload 状态的任务。 */
+  async createAsrJobShell(input: {
+    recordingId: string
+    fileName: string
+    mimeType: string
+    fileSize: number
+    contentHash: string
+    estimatedDurationMs: number
+    languageHints?: string[]
+    diarizationEnabled: boolean
+    idempotencyKey: string
+  }): Promise<CloudJob> {
+    this.requireLogin()
+    return this.request<CloudJob>('/app/asr-jobs', {
+      method: 'POST',
+      data: {
+        deviceId: this.account!.device.id,
+        recordingId: input.recordingId,
+        originPlatform: 'desktop',
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        fileSize: input.fileSize,
+        contentHash: input.contentHash,
+        estimatedDurationMs: input.estimatedDurationMs,
+        idempotencyKey: input.idempotencyKey,
+        languageHints: input.languageHints ?? [],
+        diarizationEnabled: input.diarizationEnabled,
+      },
+    })
+  }
+
+  async authorizeAsrSegmentUpload(
+    jobId: string,
+    index: number,
+    input: { fileSize: number; contentHash: string; durationMs?: number },
+  ): Promise<UploadAuthorization> {
+    return this.request<UploadAuthorization>(
+      `/app/asr-jobs/${jobId}/segments/${index}/upload-authorization`,
+      { method: 'POST', data: input },
+    )
+  }
+
+  /** 按预签名直传段文件（复用单文件上传同一通道，签名过期由调用方重新授权）。 */
+  async putAsrUpload(filePath: string, authorization: UploadAuthorization): Promise<void> {
+    await this.upload(filePath, authorization)
+  }
+
+  async completeAsrJobSegments(
+    jobId: string,
+    segments: Array<{ index: number; objectKey: string; sha256: string; bytes: number; durationMs: number }>,
+  ): Promise<AsrJob> {
+    const job = await this.request<CloudJob>(`/app/asr-jobs/${jobId}/upload-complete`, {
+      method: 'POST',
+      data: { segments },
+    })
+    return this.normalizeJob(job)
+  }
+
+  async cancelAsrJob(jobId: string): Promise<void> {
+    await this.request(`/app/asr-jobs/${jobId}/cancel`, { method: 'POST' })
+  }
+
   async getAsrJob(prefixedId: string): Promise<AsrJob> {
     const id = this.cloudId(prefixedId)
     const job = await this.request<CloudJob>(`/app/asr-jobs/${id}`)
@@ -1092,6 +1318,65 @@ export class SaasClient {
       job.insights = result.insights
     }
     return this.normalizeJob(job)
+  }
+
+  /**
+   * 任务推送通道：服务端在任务完成/失败时立刻推过来；订阅即回当前状态快照，
+   * 断线自动重连并重放订阅，错过的终态由快照补齐，是分段转写结果的唯一获取通道。
+   */
+  createAsrJobChannel(onJob: (job: CloudJob) => void): { subscribe(jobIds: string[]): void; close(): void } {
+    this.requireLogin()
+    const url = `${this.baseUrl.replace(/^http/, 'ws').replace(/\/+$/, '')}/app/asr-jobs/ws`
+    let ids: string[] = []
+    let closed = false
+    let socket: WebSocket | null = null
+    let retryTimer: NodeJS.Timeout | null = null
+    const scheduleReconnect = () => {
+      if (closed || retryTimer) return
+      retryTimer = setTimeout(() => { retryTimer = null; connect() }, 4_000)
+      retryTimer.unref()
+    }
+    const connect = () => {
+      if (closed) return
+      const token = this.accessToken
+      if (!token) { scheduleReconnect(); return }
+      const ws = new WebSocket(url, { headers: { Authorization: `Bearer ${token}` } })
+      socket = ws
+      ws.on('open', () => { if (ids.length) ws.send(JSON.stringify({ type: 'subscribe', ids })) })
+      ws.on('message', (data) => {
+        try {
+          const frame = JSON.parse(String(data)) as { type?: string; jobs?: CloudJob[]; job?: CloudJob }
+          if (frame.type === 'snapshot' && Array.isArray(frame.jobs)) for (const job of frame.jobs) onJob(job)
+          else if (frame.type === 'job' && frame.job) onJob(frame.job)
+        } catch { /* 坏帧忽略，等轮询兜底 */ }
+      })
+      ws.on('error', () => undefined)
+      ws.on('close', () => { if (socket === ws) socket = null; scheduleReconnect() })
+    }
+    connect()
+    return {
+      subscribe(jobIds: string[]) {
+        ids = [...new Set(jobIds)]
+        if (ids.length && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'subscribe', ids }))
+      },
+      close() {
+        closed = true
+        if (retryTimer) clearTimeout(retryTimer)
+        if (socket) {
+          socket.removeAllListeners('close')
+          socket.close()
+          socket = null
+        }
+      },
+    }
+  }
+
+  /** 改名在 SaaS 侧同步 asr_results 快照；随后调 getAsrJob 即可拿到新 speakerName。 */
+  async renameAsrSpeaker(prefixedId: string, speakerId: string, name: string | null): Promise<void> {
+    await this.request(`/app/asr-jobs/${this.cloudId(prefixedId)}/speakers/${encodeURIComponent(speakerId)}`, {
+      method: 'PUT',
+      data: { name },
+    })
   }
 
   async registerKeyAgreement(publicKey: string): Promise<void> {
@@ -1289,15 +1574,53 @@ export class SaasClient {
 
   private async restoreSession(): Promise<void> {
     const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
-    if (!refreshToken) return
-    try {
-      await this.refresh(refreshToken)
-      await this.loadSubscription()
-    } catch (error) {
-      if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
-        await this.credentials.delete(REFRESH_TOKEN_KEY)
-      } else {
-        console.warn('Unable to restore EverRoom SaaS session; keeping the refresh token for retry.')
+    if (!refreshToken) {
+      if (!this.noSessionLogged) {
+        this.noSessionLogged = true
+        console.info('[saas-auth] no stored session (fresh install or signed out)')
+      }
+      return
+    }
+    this.authBlockedReason = null
+    // 启动恢复带重试：Ctrl+C 重启时 VPN/TUN 常常还没热身，一次超时就把已存
+    // token 的用户判成未登录（要重新登录）——实测 token 一直在，缺的是重试。
+    // 401/403（token 真失效）与 409（设备额度挑战）不重试，立即定性。
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await this.refreshExclusive(refreshToken)
+        await this.loadSubscription()
+        console.info(`[saas-auth] session restored (user=${this.account?.user?.id ?? '?'}, attempts=${String(attempt)})`)
+        this.noSessionLogged = false
+        return
+      } catch (error) {
+        if (error instanceof SaasRequestError) {
+          if (error.status === 401 || error.status === 403) {
+            // 多实例/热重启竞态：另一进程可能刚轮换过 token 并落盘。删token前
+            // 强制重读磁盘（getSecureText 平时只读 initialize 的内存快照，看
+            // 不到外部进程的写入），若已变化用新值再试一轮，而不是直接判死。
+            await this.credentials.reload()
+            const latestToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
+            if (latestToken && latestToken !== refreshToken) {
+              return this.restoreSession()
+            }
+            console.error(
+              'SaaS refresh rejected (401/403); signing out locally. '
+              + 'If this repeats across restarts, the token family was likely revoked by a rotation race (killed mid-refresh / concurrent instance).',
+              { status: error.status },
+            )
+            await this.credentials.delete(REFRESH_TOKEN_KEY)
+            return
+          }
+          if (error.status === 409) return
+        }
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000))
+          continue
+        }
+        // 网络（或服务端 5xx）耗尽重试：凭据仍在，标记「网络受阻」而非未登录。
+        this.authBlockedReason = 'network'
+        console.warn('Unable to restore EverOffice SaaS session; keeping the refresh token for retry.')
       }
     }
   }
@@ -1326,7 +1649,12 @@ export class SaasClient {
         headers: { Authorization: `Bearer ${token.id_token}` },
         data: { ...(await this.deviceDetails()), ...(pending.invitationCode ? { invitationCode: pending.invitationCode } : {}) },
       })
-      if (this.pendingOidcLogin !== pending) return
+      // 服务端在这次 POST 里已按"一设备一会话"吊销旧会话并签发新会话——
+      // 不论客户端这边发生过什么，旧 token 都已作废。若这里因为等待超时已
+      // 清掉 pendingOidcLogin 就把新会话丢弃，客户端会抱着被吊销的旧 token
+      // 死循环 401（2026-09-23 线上事故）。因此超时后到达的响应照常采纳；
+      // 只有被更新的登录/登出接管（epoch 变化）时才放弃，由新流程收尾。
+      if (pending.epoch !== this.oidcLoginEpoch) return
       let status: CloudAccountStatus
       if (isAdmissionRequired(data)) {
         // 设备额度已满：不建立会话，保留挑战给设备准入 UI 处理。
@@ -1384,6 +1712,8 @@ export class SaasClient {
     return {
       authenticated: Boolean(this.accessToken && this.account),
       apiBaseUrl: this.baseUrl,
+      // 凭据在但网络验证失败：明确告知「网络问题」而非「未登录」。
+      ...(!this.accessToken && this.authBlockedReason ? { authBlocked: this.authBlockedReason } : {}),
       ...(this.account ? { user: this.account.user, device: this.account.device } : {}),
       ...(this.subscription ? { subscription: this.subscription } : {}),
       ...(this.account?.registration ? { registration: this.account.registration } : {}),
@@ -1405,17 +1735,49 @@ export class SaasClient {
   }
 
   private async refresh(refreshToken: string): Promise<void> {
-    const data = await this.publicRequest<LoginOutcome>('/app/auth/refresh', {
-      method: 'POST',
-      data: { refreshToken },
-    })
+    let data: LoginOutcome
+    try {
+      data = await this.publicRequest<LoginOutcome>('/app/auth/refresh', {
+        method: 'POST',
+        data: { refreshToken },
+      })
+    } catch (error) {
+      // 刷新令牌已被服务端拒绝（会话被别处登录轮换或吊销）：再留着它只会让
+      // 心跳、租约续期等后台循环每 15~30 秒空转一轮 401（线上曾持续刷屏两分
+      // 多钟）。清空本地会话，后续请求在 requireLogin 直接失败且不发网络，
+      // 直到用户重新登录。
+      if (error instanceof SaasRequestError && (error.status === 401 || error.status === 403)) {
+        await this.clearSession()
+      }
+      throw error
+    }
     if (isAdmissionRequired(data)) {
       // 额度被其他设备占满：保留挑战并判定会话失效，由上层进入设备准入 UI。
       this.pendingAdmission = data
       throw new SaasRequestError('设备额度已被其他在线设备占满。', 409)
     }
     this.pendingAdmission = null
+    this.authBlockedReason = null
     await this.acceptSession(data)
+  }
+
+  /** 清空本地会话（不通知服务端——会话在服务端已经无效，登出接口同样会拒绝）。 */
+  private async clearSession(): Promise<void> {
+    this.accessToken = null
+    this.account = null
+    this.subscription = null
+    this.subscriptionLoadedAt = 0
+    this.subscriptionRetryAfter = 0
+    this.subscriptionPromise = null
+    await this.credentials.delete(REFRESH_TOKEN_KEY)
+  }
+
+  /** 并发安全的 refresh 入口：在途时后来者共享同一个 Promise。 */
+  private refreshExclusive(refreshToken: string): Promise<void> {
+    this.refreshInFlight ??= this.refresh(refreshToken).finally(() => {
+      this.refreshInFlight = null
+    })
+    return this.refreshInFlight
   }
 
   private async acceptSession(data: LoginResult): Promise<void> {
@@ -1483,7 +1845,7 @@ export class SaasClient {
   }> {
     return {
       deviceKey: await this.deviceKey(),
-      deviceName: hostname() || 'EverRoom Desktop',
+      deviceName: hostname() || 'EverOffice Desktop',
       platform: process.platform === 'win32' ? 'Windows' : 'macOS',
       appVersion: this.electronApp.getVersion(),
     }
@@ -1515,7 +1877,7 @@ export class SaasClient {
     if (response.status === 401) {
       const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
-      await this.refresh(refreshToken)
+      await this.refreshExclusive(refreshToken)
       response = await this.send(path, config, this.accessToken!)
     }
     return this.unwrap<T>(response)
@@ -1527,12 +1889,13 @@ export class SaasClient {
     if (response.status === 401) {
       const refreshToken = await this.credentials.getSecureText(REFRESH_TOKEN_KEY)
       if (!refreshToken) throw new Error('登录已过期，请重新登录。')
-      await this.refresh(refreshToken)
+      await this.refreshExclusive(refreshToken)
       response = await this.send(path, config, this.accessToken!)
     }
     const body = response.data as { data?: T; meta?: { nextCursor?: number } } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(saasErrorMessage(response), response.status)
+      const detail = saasErrorDetail(response)
+      throw new SaasRequestError(detail.message, response.status, detail.errorCode)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('SaaS 返回了无效响应。')
     return { data: body.data as T, meta: body.meta }
@@ -1558,7 +1921,8 @@ export class SaasClient {
   private unwrap<T>(response: AxiosResponse): T {
     const body = response.data as { data?: T } | null
     if (response.status >= 400) {
-      throw new SaasRequestError(saasErrorMessage(response), response.status)
+      const detail = saasErrorDetail(response)
+      throw new SaasRequestError(detail.message, response.status, detail.errorCode)
     }
     if (!body || typeof body !== 'object' || !('data' in body)) {
       throw new Error('SaaS 返回了无效响应。')
@@ -1568,7 +1932,7 @@ export class SaasClient {
 
   private requireLogin(): void {
     if (!this.accessToken || !this.account) {
-      throw new Error('请先登录 EverRoom，或切换为本地自有配置。')
+      throw new Error('请先登录 EverOffice，或切换为本地自有配置。')
     }
   }
 

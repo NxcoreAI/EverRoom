@@ -141,13 +141,24 @@ function installGlobalConsole(): void {
     const actualLevel: LogLevel = level === 'log' ? 'info' : level
     const [first, ...rest] = args
     const event = typeof first === 'string' ? first : 'console event'
-    const details = rest.length === 0 ? undefined : rest.length === 1 ? rest[0] : rest
+    // Error 直接 JSON 序列化只剩 {}；name/message/stack 拆开存，远端排障才有细节。
+    const serializeConsoleArg = (value: unknown): unknown =>
+      value instanceof Error
+        ? { name: value.name, message: value.message, stack: value.stack?.split('\n').slice(0, 10).join('\n') }
+        : value
+    const details = rest.length === 0 ? undefined
+      : rest.length === 1 ? serializeConsoleArg(rest[0])
+      : rest.map(serializeConsoleArg)
     const now = new Date()
     const payload = details === undefined ? { event } : { event, details }
     const threshold = desktopLogThreshold('console')
     if (threshold === 'off' || LEVEL_ORDER[actualLevel] < LEVEL_ORDER[threshold]) return
     writeToOriginalConsole(actualLevel, formatConsoleLine(now, 'console', actualLevel, payload))
     appendLogFile(now, 'console', actualLevel, payload)
+    // console 捕获面覆盖网关监督等未走 desktop-logger 的调用方，warn+ 同样上远端。
+    if (actualLevel === 'warn' || actualLevel === 'error') {
+      captureSentryLog('console', actualLevel, payload)
+    }
   }
   console.log = (...args) => writeGlobal('log', args)
   console.info = (...args) => writeGlobal('info', args)
@@ -227,7 +238,11 @@ function writeDesktopLog(
   const threshold = desktopLogThreshold(module)
   if (threshold === 'off' || LEVEL_ORDER[level] < LEVEL_ORDER[threshold]) return
   writeToOriginalConsole(level, formatConsoleLine(now, module, level, event))
-  if (captureRemote) captureSentryLog(module, level, event)
+  // 本地为主的日志（logLocalDesktop）在 warn+ 也上远端，Pro 用户排障才有
+  // 转写/agent/网关等核心链路的现场；captureSentryLog 内部还有模块与级别门控。
+  if (captureRemote || LEVEL_ORDER[level] >= LEVEL_ORDER.warn) {
+    captureSentryLog(module, level, event)
+  }
   appendLogFile(now, module, level, event, filePrefix)
 }
 

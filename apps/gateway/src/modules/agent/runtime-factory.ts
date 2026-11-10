@@ -3,47 +3,46 @@ import { FakeAgentRuntime } from "@nxcore/agent-runtime/testing";
 import {
   PiAgentRuntime,
   type PiAgentRuntimeTool,
-  type RoomMemorySearch,
-  type RoomMemorySnapshot,
 } from "@nxcore/agent-runtime-pi";
 import { UnconfiguredAgentRuntime, type AgentRuntime } from "@nxcore/agent-runtime";
-import { bundledAgentDefinitionsDir, type GatewayConfig } from "../../config.js";
+import { bundledAgentDefinitionsDir, type GatewayConfig, type PiRuntimeConfig } from "../../config.js";
 import type { DocumentMcpHost } from "../documents/mcp-host.js";
-import { createDocumentPiToolsWithRoomBindings } from "../documents/pi-tools.js";
-import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-connector-tools.js";
-import type { FormatMappingService } from "../connectors/format-mapping-service.js";
-import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
-import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
+import { createDocumentPiTools } from "../documents/pi-tools.js";
+
 import { createWebSearchPiTools } from "./web-search-tools.js";
+import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
+import { createWorkspaceFilesPiTools, type WorkspaceFileCatalog } from "./workspace-files-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
 import type { ExternalCallBudgetService } from "../external-calls/service.js";
+import { createMemoryPiTools, MEMORY_PROMPT_GUIDELINES } from "../memory/pi-tools.js";
+import type { MemoryService } from "../memory/service.js";
+import { PASSTHROUGH_SKILL_GATE, type SkillGate } from "../skills/gate.js";
 
 export interface AgentRuntimeIntegrationOptions {
   tools?: readonly PiAgentRuntimeTool[];
   agentResolver?: AgentResolver;
   externalCalls?: ExternalCallBudgetService;
-  /** 会话级 Room wiki 解析（plan §6.1 resolveKnowledge），knowledge 模块注入。 */
-  resolveKnowledgeWikiIds?: (input: {
-    runId: string;
-    sessionId: string;
-    runtimeSessionRef: string | null;
-    prompt: string;
-    pageLabel: string;
-    roomId: string | null;
-  }) => Promise<string[]>;
-  /** 限定 Room 记忆注入：run 绑定 Room 时取该 Room 的甄选记忆快照（memory 模块注入）。 */
-  resolveRoomMemories?: (input: {
-    runId: string;
-    sessionId: string;
-    runtimeSessionRef: string | null;
-    prompt: string;
-    pageLabel: string;
-    roomId: string | null;
-  }) => Promise<RoomMemorySnapshot[]>;
-  /** memory_search 的 room_id 过滤（Room 绑定记忆快照内检索）。 */
-  roomMemorySearch?: RoomMemorySearch;
+  /** 工作区文件目录（晚绑定 getter）：filesService 在 runtime 装配之后才创建。 */
+  workspaceFiles?: () => WorkspaceFileCatalog | null;
+  /** 连接器 MCP 中转地址（loopback）；只在用户档 runtime 注入。 */
+  connectorMcp?: { url: string };
+  /** 长期记忆服务；提供时给用户档 agent 注入 memory_search / memory_remember。 */
+  memory?: MemoryService;
+  /**
+   * 技能闸门（「技能」页的启停）。装配 runtime 时剔除被停用的 Skill：
+   * runtime 只在新建时读一次 skillPrompts，所以开关生效依赖 reload（见 skills 路由）。
+   */
+  skills?: SkillGate;
+  /**
+   * 本轮 run 的项目根解析器（项目空间目录化 P2，见
+   * docs/project-space-layout-plan.zh-CN.md §8.5）：按 `input.workspaceId` 返回
+   * 该空间绑定的目录，作为 pi 会话的 cwd / bash 沙箱根 / AGENTS.md 来源。
+   * 返回 null＝该空间没绑目录，沿用 agent 默认工作目录（旧行为不变）。
+   */
+  projectRoot?: (input: { workspaceId?: string | null }) => string | null | Promise<string | null>;
 }
 
 function agentDirectories(config: GatewayConfig, agentId: string) {
@@ -94,119 +93,151 @@ function withAgentDirectories(
   };
 }
 
+
+/**
+ * 把连接器 MCP 中转合并进 pi 的 mcpServers。
+ * URL/token 都是进程内动态值，不写 .mcp.json；会话变更不需要重建 runtime。
+ */
+function withConnectorMcp(
+  pi: NonNullable<GatewayConfig["pi"]>,
+  connectorMcp: { url: string } | undefined,
+): NonNullable<GatewayConfig["pi"]> {
+  if (!connectorMcp) return pi;
+  return {
+    ...pi,
+    mcp: {
+      ...pi.mcp,
+      mcpServers: {
+        ...(pi.mcp?.mcpServers ?? {}),
+        "everroom-connectors": {
+          type: "http",
+          name: "everroom-connectors",
+          url: connectorMcp.url,
+          headers: [],
+        },
+      },
+    },
+  };
+}
+
 export function createAgentRuntime(
   config: GatewayConfig,
   mcpHost: DocumentMcpHost,
-  knowledge?: AgentRuntimeIntegrationOptions,
+  integrations?: AgentRuntimeIntegrationOptions,
 ): AgentRuntime {
-  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  return createUserFacingRuntime(config, mcpHost, integrations, BUILTIN_AGENT_IDS.primary, config.pi, true)
+    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
+}
+
+/**
+ * 用户档不暴露 document_list（文稿库清单）：文件查找一律走 workspace_files_list，
+ * 不再把「读导入文件」的请求绕去文稿库空转；改稿目标由 activeDocument 上下文
+ * 或直接问用户确定。子代理（doc-writer / slides 系）各自的 documentTools
+ * 不经此过滤，仍保留 document_list。
+ */
+const USER_FACING_EXCLUDED_DOCUMENT_TOOLS = ["document_list"] as const;
+
+/**
+ * 用户档 runtime 统一装配（main / main-direct / main-lite 共用）：
+ * 同一 primary 人设 bundle、同套工具（文档/连接器/联网搜索/外部 MCP），
+ * 差异仅在 pi 配置与 lite 委派工具。返回 null＝该 pi 未配置（调用方
+ * 决定占位或跳过注册）。
+ */
+function createUserFacingRuntime(
+  config: GatewayConfig,
+  mcpHost: DocumentMcpHost,
+  integrations: AgentRuntimeIntegrationOptions | undefined,
+  agentId: string,
+  pi: GatewayConfig["pi"],
+  liteDelegate: boolean,
+): AgentRuntime | null {
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  // 降级启动：AI 未配置时返回占位 runtime（run 立即 runtime_config_not_ready），
-  // 等 runtime config 保存后 AgentResolver.reload 换成真实 Pi runtime。
-  if (!config.pi || !isPiRuntimeConfigured(config.pi)) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primary);
-  const routedRoomByRun = new Map<string, string>();
+  if (!pi || !isPiRuntimeConfigured(pi)) return null;
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
+  const directories = agentDirectories(config, agentId);
+  // 三个用户档共用 primary bundle，技能集合也共用：关掉「文档导出」对三档同时生效。
+  const skillPrompts = (integrations?.skills ?? PASSTHROUGH_SKILL_GATE).builtinSkillPrompts(bundle);
   return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.primary, config.pi),
+    ...withConnectorMcp(withAgentDirectories(config, agentId, pi), integrations?.connectorMcp),
+    // 用户档护栏：单轮工具预算 + 同一调用重复上限，超限即停并如实反馈。
+    // 主 agent 的工具结果不再无限大：一次无参 Excel 读取曾回 82KB（其中指南 69KB），
+    // 三份重复快照直接把上下文顶到 80%、末轮输出额度被思考吃光。60k 字符足够放下
+    // 一份正常文档读取，超出部分按 JSON 感知截断并提示改读具体范围。
+    maxToolResultChars: 60_000,
+    // 主 agent 也要有刹车：实测一个 PPT 任务调了 185 次工具（其中 170 次是同一条
+    // 命令）跑满 7 分钟，期间文件一次没改。120 次足够覆盖正常的长任务。
+    maxToolCallsPerRun: 120,
+    // 不挂 pi 原生文件工具（read/edit/write/grep/find/ls 均无沙箱、read 还能把任意
+    // 路径图片直接塞进视觉上下文——2026-11-05 实测模型反复 read /tmp 图片烧掉 42%
+    // 窗口后触发重复熔断）。文件访问一律走 workspace/file 工具面；工作目录内的
+    // 探索用下面的沙箱 bash。
+    builtinTools: [],
+    // bash 仅在白名单根目录内沙箱执行（历史事故：无沙箱 bash 直读应用数据库「找图」）。
     bashSandbox: {
-      allowedRoots: [agentDirectories(config, BUILTIN_AGENT_IDS.primary).workingDirectory],
+      // 基础根（agent 默认工作目录）；绑了目录的项目空间由 runtime 按本轮
+      // 的空间根并进来（见 agent-runtime-pi 的 createBashSandboxExtension）。
+      allowedRoots: [directories.workingDirectory],
       timeoutMs: 30_000,
     },
     runtimeRole: "user-facing",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
+    skillsEnabled: Object.keys(skillPrompts).length > 0,
+    skillPrompts,
     systemPrompt: bundle.systemPrompt,
   }, {
     tools: [
-      ...(knowledge?.tools ?? []),
-      ...createDocumentPiToolsWithRoomBindings(mcpHost, routedRoomByRun),
-      ...(config.cliConnector ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls) : []),
-      ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
+      ...(integrations?.tools ?? []),
+      // 工作区文件（含用户上传图片）的一等入口：只读清单 + 可引用句柄。
+      ...(integrations?.workspaceFiles
+        ? createWorkspaceFilesPiTools(integrations.workspaceFiles)
         : []),
+      // PPT 生成走主 Agent 直生：pptx skill（系统提示词内联）设计 + slides_create
+      // 整册 pptxgenjs 脚本（桌面 vm 沙箱执行）；slides 三件套不再从用户档剔除。
+      // document_list（文稿库清单）仍剔除，见 USER_FACING_EXCLUDED_DOCUMENT_TOOLS。
+      ...createDocumentPiTools(mcpHost)
+        .filter((tool) => !(USER_FACING_EXCLUDED_DOCUMENT_TOOLS as readonly string[]).includes(tool.name)),
+      ...(config.webSearch && integrations?.agentResolver
+        ? createWebSearchPiTools(integrations.agentResolver, integrations.externalCalls)
+        : []),
+      // Smart 档专属：轻量模型可用时才暴露委派工具（primary/lite 档不挂）。
+      ...(liteDelegate && integrations?.agentResolver && isPiRuntimeConfigured(config.litePi)
+        ? createLiteDelegatePiTools(integrations.agentResolver)
+        : []),
+      // 长期记忆：默认开启，服务已启动即注入（无环境变量开关）。
+      ...(integrations?.memory?.isEnabled() ? createMemoryPiTools(integrations.memory) : []),
     ],
-    promptGuidelines: mcpHost.capabilities.promptGuidelines(),
-    ...(knowledge?.resolveKnowledgeWikiIds
-      ? { resolveKnowledgeWikiIds: knowledge.resolveKnowledgeWikiIds }
-      : {}),
-    ...(knowledge?.resolveRoomMemories
-      ? { resolveRoomMemories: knowledge.resolveRoomMemories }
-      : {}),
-    ...(knowledge?.roomMemorySearch
-      ? { roomMemorySearch: knowledge.roomMemorySearch }
-      : {}),
+    // 记忆工具的行为指引必须走 integration 级：工具级 guideline 在本运行时不生效
+    // （自定义 system prompt 分支不渲染 pi 的 Guidelines 段）。
+    promptGuidelines: [
+      ...mcpHost.capabilities.promptGuidelines(),
+      ...(integrations?.memory?.isEnabled() ? MEMORY_PROMPT_GUIDELINES : []),
+    ],
     onRunFinished: async (input, outcome) => {
-      routedRoomByRun.delete(input.runId);
       await mcpHost.finishAgentRun(input.sessionId, outcome, input.runId);
     },
-    ...(knowledge?.externalCalls
+    // 项目空间根（P2）：空间绑了目录的会话，cwd/沙箱根/AGENTS.md 跟着空间走。
+    ...(integrations?.projectRoot ? { resolveProjectRoot: integrations.projectRoot } : {}),
+    ...(integrations?.externalCalls
       ? {
-          executeMcpCall: (input, tool, invoke) => knowledge.externalCalls!.execute("MCP", tool, {
-            source: "agent",
-            runId: input.runId,
-            correlationId: input.sessionId,
-          }, async (markDispatched) => {
-            markDispatched();
-            return invoke();
-          }),
+          executeMcpCall: (input, tool, invoke) => {
+            // 连接器 MCP 计入 CONNECTOR 预算（与普通外部 MCP 分开配额/审计）。
+            const service = tool.startsWith("everroom-connectors.") ? "CONNECTOR" : "MCP";
+            return integrations.externalCalls!.execute(service, tool, {
+              source: "agent",
+              runId: input.runId,
+              correlationId: input.sessionId,
+            }, async (markDispatched) => {
+              markDispatched();
+              return invoke();
+            });
+          },
         }
       : {}),
   });
 }
 
-export function createBackgroundAgentRuntime(config: GatewayConfig): AgentRuntime {
-  const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
-  if (config.agentRuntime === "fake") return new FakeAgentRuntime();
-  if (!isPiRuntimeConfigured(config.backgroundPi)) {
-    return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.transcriptionSummary);
-  }
-  const { memory: _memory, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.transcriptionSummary, pi),
-    // 后台总结是机器对机器 JSON 提取：不继承 primary 的 reasoning——
-    // 推理既白烧输出预算（长转写 JSON 更易 maxTokens 截断），且部分代理
-    // （litellm anthropic 协议）直接拒绝 reasoning_effort 参数。
-    reasoning: "off",
-    runtimeRole: "internal",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
-    systemPrompt: bundle.systemPrompt,
-  });
-}
-
-/**
- * ingest 过滤器专用 Runtime（ingest-filter-agent-plan §4.2）：
- * 独立目录（ingest-filter 子目录），memory + knowledge 集成但**只读工具**——
- * memory_search / wiki_search / wiki_read，无任何写路径，无 bash，无内置工具。
- *
- * 记忆隔离（§4.1）由装配与 run 侧共同保证：这里不给 mcp、不给写工具；
- * filter-agent.ts 的 run 显式传 captureMemory/recallMemory 双 false。
- * 与 background runtime（显式剥 memory）不同：过滤器需要只读记忆检索。
- */
-export function createIngestFilterAgentRuntime(
-  config: GatewayConfig,
-  resolveWikiIds?: (input: { roomId: string | null }) => Promise<string[]>,
-): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const bundle = builtin(BUILTIN_AGENT_IDS.ingestFilter);
-  const { mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    includeBashTool: false,
-    builtinTools: [],
-    maxToolCallsPerRun: config.ingestFilter.maxToolCalls,
-    runtimeRole: "internal",
-    // 过滤器输出是给程序 JSON.parse 的：必须挂机器对机器的 bundle 人设，
-    // 否则落到默认聊天人设（"最终答复要总结"），模型会在数组前后加说明文字
-    skillsEnabled: false,
-    systemPrompt: bundle.systemPrompt,
-    sessionsDir: join(pi.sessionsDir, "ingest-filter"),
-    workingDirectory: join(pi.workingDirectory, "ingest-filter"),
-    agentDirectory: join(pi.agentDirectory, "ingest-filter"),
-  }, resolveWikiIds ? { resolveKnowledgeWikiIds: resolveWikiIds } : {});
-}
-
-/** 写作风格定性层的隔离内部 runtime（无工具、无记忆/knowledge，ingest-filter 同款）。 */
-export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime | null {
+/** 文稿版本摘要的隔离内部 runtime（无工具、单次调用）。
+ *  原为写作风格定性层 runtime；风格提炼退役后由版本摘要接手（Phase 2d）。 */
+export function createVersionSummaryRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
   const { mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
@@ -215,9 +246,9 @@ export function createWritingStyleRuntime(config: GatewayConfig): AgentRuntime |
     builtinTools: [],
     maxToolCallsPerRun: 1,
     runtimeRole: "internal",
-    sessionsDir: join(pi.sessionsDir, "writing-style"),
-    workingDirectory: join(pi.workingDirectory, "writing-style"),
-    agentDirectory: join(pi.agentDirectory, "writing-style"),
+    sessionsDir: join(pi.sessionsDir, "version-summary"),
+    workingDirectory: join(pi.workingDirectory, "version-summary"),
+    agentDirectory: join(pi.agentDirectory, "version-summary"),
   });
 }
 
@@ -237,8 +268,85 @@ export function createIndexBackfillRuntime(config: GatewayConfig): AgentRuntime 
   });
 }
 
-/** 批量导入归房分类器：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
-export function createImportClassifierRuntime(config: GatewayConfig): AgentRuntime | null {
+/**
+ * 记忆提炼 / 画像聚合用的内部 runtime：无工具、单次调用、独立会话目录。
+ *
+ * 档位选择（全部来自 runtime config 槽位，SaaS 激活时这些槽位已被
+ * `rewriteSlotsForRelay` 改写到 /ai-relay 出口）：优先 lite（最省），
+ * 其次 background，最后 primary。三者都未配置时返回 null，调用方静默跳过。
+ */
+export function createMemoryInternalRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake") return null;
+  const candidates = [config.litePi, config.backgroundPi, config.pi]
+    .filter((candidate): candidate is PiRuntimeConfig => isPiRuntimeConfigured(candidate));
+  if (candidates.length === 0) return null;
+  // SaaS 激活时槽位 baseUrl 会被 rewriteSlotsForRelay 改写到 /ai-relay 出口；
+  // 只要存在这类槽位就只用它们，避免记忆任务落到用户自配的本地模型上。
+  const relayRouted = candidates.filter((candidate) => isRelayRouted(candidate));
+  const slot = (relayRouted.length > 0 ? relayRouted : candidates)[0]!;
+  const { mcp: _mcp, ...pi } = slot;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    sessionsDir: join(pi.sessionsDir, "memory"),
+    workingDirectory: join(pi.workingDirectory, "memory"),
+    agentDirectory: join(pi.agentDirectory, "memory"),
+  });
+}
+
+/** 记忆档位签名：选中槽位的连接四要素 + 模型。档位被热更新时签名变化，runtime 必须重建。 */
+function memorySlotSignature(config: GatewayConfig): string | null {
+  if (config.agentRuntime === "fake") return null;
+  const candidates = [config.litePi, config.backgroundPi, config.pi]
+    .filter((candidate): candidate is PiRuntimeConfig => isPiRuntimeConfigured(candidate));
+  if (candidates.length === 0) return null;
+  const relayRouted = candidates.filter((candidate) => isRelayRouted(candidate));
+  const slot = (relayRouted.length > 0 ? relayRouted : candidates)[0]!;
+  return [slot.provider, slot.model, slot.baseUrl, slot.api, slot.apiKey].join("\u0000");
+}
+
+/**
+ * 记忆用运行时的**惰性解析器**（记忆提炼 / 画像聚合共用）。
+ *
+ * 为什么不能启动时定型一次：桌面端要先过运行时配置 gate，模型档位是后来通过
+ * runtime config 事件 patch 进同一个 config 对象的（`applyRuntimeConfig` 原地修改）。
+ * 启动那一刻档位往往是空的，一旦把 null 定型下来，提炼与画像聚合就永久失效
+ * （日志表现为 `memory.profile.failed: "no model slot configured for memory"`，
+ * 用户侧表现为「智能体页永远没有用户画像」）。
+ *
+ * 所以每次调用都重新判档位：档位未就绪 → 返回 null 让调用方跳过；档位就绪或
+ * **签名变化**（换模型、换端点、SaaS 令牌轮换）→ 重建实例，不拿旧连接打下去。
+ */
+export function createMemoryRuntimeResolver(config: GatewayConfig): () => AgentRuntime | null {
+  let runtime: AgentRuntime | null = null;
+  let signature: string | null = null;
+  return () => {
+    // 每次调用都重新比对档位签名，不只解决「启动时为空」：
+    // SaaS 令牌轮换、用户改模型、中转出口切换都会改签名，握着旧连接只会
+    // 一直打到已失效的端点上（表现为长期 upstream error）。
+    const next = memorySlotSignature(config);
+    if (next === null) return null;
+    if (runtime === null || next !== signature) {
+      const previous = runtime;
+      runtime = createMemoryInternalRuntime(config);
+      signature = runtime ? next : null;
+      // 旧实例换连接前释放（内部 runtime 无并发 run，失败也不影响新实例）。
+      if (previous && previous !== runtime) void previous.dispose().catch(() => undefined);
+    }
+    return runtime;
+  };
+}
+
+/** 槽位是否走 SaaS 中转出口（relay 重写后的特征路径）。 */
+function isRelayRouted(slot: { baseUrl: string }): boolean {
+  return slot.baseUrl.includes("/ai-relay");
+}
+
+/** 会话标题生成：index-backfill 同款隔离内部 runtime（无工具、单次调用）。 */
+export function createSessionTitleRuntime(config: GatewayConfig): AgentRuntime | null {
   if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
   const { mcp: _mcp, ...pi } = config.backgroundPi!;
   return new PiAgentRuntime({
@@ -247,9 +355,11 @@ export function createImportClassifierRuntime(config: GatewayConfig): AgentRunti
     builtinTools: [],
     maxToolCallsPerRun: 1,
     runtimeRole: "internal",
-    sessionsDir: join(pi.sessionsDir, "import-classifier"),
-    workingDirectory: join(pi.workingDirectory, "import-classifier"),
-    agentDirectory: join(pi.agentDirectory, "import-classifier"),
+    // 标题是单行机器输出：与 background runtime 同理不继承 primary reasoning。
+    reasoning: "off",
+    sessionsDir: join(pi.sessionsDir, "session-title"),
+    workingDirectory: join(pi.workingDirectory, "session-title"),
+    agentDirectory: join(pi.agentDirectory, "session-title"),
   });
 }
 
@@ -269,88 +379,52 @@ export function createDocumentOverviewRuntime(config: GatewayConfig): AgentRunti
   });
 }
 
-/** 日记使用隔离的 Pi Runtime，只暴露来源清单读取工具。 */
-export function createDiaryAgentRuntime(
-  config: GatewayConfig,
-  generator: DiaryAgentGenerator,
-): AgentRuntime | null {
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
-  const { memory: _memory, knowledge: _knowledge, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...pi,
-    runtimeId: `pi:${BUILTIN_AGENT_IDS.diary}`,
-    maxTokens: config.diaryMaxTokens ?? Math.max(pi.maxTokens, 16_384),
-    includeBashTool: false,
-    maxToolCallsPerRun: 128,
-    runtimeRole: "internal",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
-    systemPrompt: bundle.systemPrompt,
-    sessionsDir: join(pi.sessionsDir, "diary"),
-    workingDirectory: join(pi.workingDirectory, "diary"),
-    agentDirectory: join(pi.agentDirectory, "diary"),
-  }, { tools: generator.tools() });
-}
-
-export function registerDiaryAgent(
-  resolver: AgentResolver,
-  config: GatewayConfig,
-  generator: DiaryAgentGenerator,
-): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.diary);
-  resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.diary,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createDiaryAgentRuntime(config, generator)
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.diary));
-}
-
-export function createCursorCompletionRuntime(config: GatewayConfig): AgentRuntime {
+export function createCursorCompletionRuntime(config: GatewayConfig, skills?: SkillGate): AgentRuntime {
   const bundle = builtin(BUILTIN_AGENT_IDS.cursorCompletion);
   if (config.agentRuntime === "fake") return new FakeAgentRuntime();
   if (!isPiRuntimeConfigured(config.cursorCompletionPi)) {
     return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.cursorCompletion);
   }
+  const skillPrompts = (skills ?? PASSTHROUGH_SKILL_GATE).builtinSkillPrompts(bundle);
   return new PiAgentRuntime({
     ...withAgentDirectories(config, BUILTIN_AGENT_IDS.cursorCompletion, config.cursorCompletionPi!),
     runtimeRole: "internal",
-    skillsEnabled: true,
-    skillPrompts: bundle.skillPrompts,
+    skillsEnabled: Object.keys(skillPrompts).length > 0,
+    skillPrompts,
     systemPrompt: bundle.systemPrompt,
   });
 }
 
-export function createAgentResolver(config: GatewayConfig): AgentResolver {
-  const resolver = new AgentResolver();
+/**
+ * 对话侧建议（输入框空态补全 + 新对话推荐提问）的隔离内部 runtime：
+ * 无工具/记忆，单次调用。档位优先 cursorCompletionPi（qwen-flash 低延迟档），
+ * 未配置时回退 background——两者都是机器对机器短输出，reasoning 一律关闭。
+ */
+export function createConversationSuggestionRuntime(config: GatewayConfig): AgentRuntime | null {
+  if (config.agentRuntime === "fake") return null;
+  const tier = isPiRuntimeConfigured(config.cursorCompletionPi)
+    ? config.cursorCompletionPi!
+    : config.backgroundPi;
+  if (!isPiRuntimeConfigured(tier)) return null;
+  const { mcp: _mcp, ...pi } = tier!;
+  return new PiAgentRuntime({
+    ...pi,
+    includeBashTool: false,
+    builtinTools: [],
+    maxToolCallsPerRun: 1,
+    runtimeRole: "internal",
+    reasoning: "off",
+    sessionsDir: join(pi.sessionsDir, "conversation-suggestion"),
+    workingDirectory: join(pi.workingDirectory, "conversation-suggestion"),
+    agentDirectory: join(pi.agentDirectory, "conversation-suggestion"),
+  });
+}
+
+export function createAgentResolver(config: GatewayConfig, agentDebugStore?: AgentDebugTraceStore): AgentResolver {
+  const resolver = new AgentResolver(agentDebugStore);
   // 工厂闭包读「活」config（applyRuntimeConfig 原地 patch 的同一对象），
   // 而不是捕获启动时快照——AgentResolver.reload 重跑工厂时才能拿到
-  // runtime config 热应用后的 knowledge.llm / webSearch。
-  const knowledgeLlm = config.knowledge?.llm;
-  if (knowledgeLlm) {
-    const id = BUILTIN_AGENT_IDS.knowledge;
-    const bundle = builtin(id);
-    const directories = agentDirectories(config, id);
-    resolver.register(definition(config, {
-      id,
-      name: bundle.name,
-      description: bundle.description,
-    }), () => {
-      const llm = config.knowledge?.llm;
-      if (!llm) return new UnconfiguredAgentRuntime(id);
-      return new OpenAiCompletionAgentRuntime({
-      runtimeId: id,
-      ...llm,
-      systemPrompt: bundle.systemPrompt,
-      skillPrompts: bundle.skillPrompts,
-      temperature: 0.1,
-      maxTokens: 4_096,
-      timeoutMs: 60_000,
-      ...directories,
-    });
-    });
-  }
+  // runtime config 热应用后的 webSearch。
   if (config.webSearch) {
     const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
     const directories = agentDirectories(config, BUILTIN_AGENT_IDS.webSearch);
@@ -419,59 +493,67 @@ export function registerPrimaryAgent(
   ));
 }
 
-export function createConnectorMapperAgentRuntime(
-  config: GatewayConfig,
-  formatMappingService: FormatMappingService,
-): AgentRuntime | null {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
-  if (config.agentRuntime === "fake" || !isPiRuntimeConfigured(config.backgroundPi)) return null;
-  const { memory: _memory, mcp: _mcp, ...pi } = config.backgroundPi!;
-  return new PiAgentRuntime({
-    ...withAgentDirectories(config, BUILTIN_AGENT_IDS.connectorMapper, {
-      ...pi,
-      includeBashTool: false,
-      builtinTools: [],
-      maxToolCallsPerRun: 32,
-      runtimeRole: "internal",
-      skillsEnabled: true,
-      skillPrompts: bundle.skillPrompts,
-    }),
-    systemPrompt: bundle.systemPrompt,
-  }, {
-    tools: [formatMappingService.createSubmitTool()],
-  });
-}
-
-export function registerConnectorMapperAgent(
+/**
+ * 会话档位的两个衍生 runtime：
+ * - main-direct（primary 档）：与 main 同装配，仅无 lite 委派工具；
+ * - main-lite（lite 档）：litePi 配置齐全才注册（未配置＝lite 档隐藏）。
+ * 人设复用 primary bundle（同人格，不同引擎）。
+ */
+export function registerModelTierAgents(
   resolver: AgentResolver,
   config: GatewayConfig,
-  formatMappingService: FormatMappingService,
+  mcpHost: DocumentMcpHost,
+  integrations: AgentRuntimeIntegrationOptions,
 ): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.connectorMapper);
-  if (config.agentRuntime !== "fake" && !config.backgroundPi) return;
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.connectorMapper,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createConnectorMapperAgentRuntime(config, formatMappingService)
-    // 未配置 AI 时注册占位：映射生成不可用，源保持 pending（不假装成功）。
-    ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.connectorMapper));
+    id: BUILTIN_AGENT_IDS.primaryDirect,
+    name: `${bundle.name}（直连）`,
+    description: `${bundle.description} 强模型直连档：不委派轻量模型。`,
+  }), () => createUserFacingRuntime(
+    config,
+    mcpHost,
+    { ...integrations, agentResolver: resolver },
+    BUILTIN_AGENT_IDS.primaryDirect,
+    config.pi,
+    false,
+  ) ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.primaryDirect));
+  registerLiteAgentIfMissing(resolver, config, mcpHost, integrations);
 }
 
-export function registerTranscriptionSummaryAgent(resolver: AgentResolver, config: GatewayConfig): void {
-  const bundle = builtin(BUILTIN_AGENT_IDS.transcriptionSummary);
+/** 动态注册 main-lite（boot 时未配置 litePi、runtime config 保存后生效）。 */
+export function registerLiteAgentIfMissing(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  mcpHost: DocumentMcpHost,
+  integrations: AgentRuntimeIntegrationOptions,
+): boolean {
+  if (!isPiRuntimeConfigured(config.litePi) || resolver.has(BUILTIN_AGENT_IDS.lite)) return false;
+  const bundle = builtin(BUILTIN_AGENT_IDS.primary);
   resolver.register(definition(config, {
-    id: BUILTIN_AGENT_IDS.transcriptionSummary,
-    name: bundle.name,
-    description: bundle.description,
-  }), () => createBackgroundAgentRuntime(config));
+    id: BUILTIN_AGENT_IDS.lite,
+    name: `${bundle.name}（轻量）`,
+    description: `${bundle.description} 轻量模型档：简单对话直答。`,
+  }), () => createUserFacingRuntime(
+    config,
+    mcpHost,
+    { ...integrations, agentResolver: resolver },
+    BUILTIN_AGENT_IDS.lite,
+    config.litePi,
+    false,
+  ) ?? new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.lite));
+  return true;
 }
 
-export function registerCursorCompletionAgent(resolver: AgentResolver, config: GatewayConfig): void {
+export function registerCursorCompletionAgent(
+  resolver: AgentResolver,
+  config: GatewayConfig,
+  skills?: SkillGate,
+): void {
   const bundle = builtin(BUILTIN_AGENT_IDS.cursorCompletion);
   resolver.register(definition(config, {
     id: BUILTIN_AGENT_IDS.cursorCompletion,
     name: bundle.name,
     description: bundle.description,
-  }), () => createCursorCompletionRuntime(config));
+  }), () => createCursorCompletionRuntime(config, skills));
 }

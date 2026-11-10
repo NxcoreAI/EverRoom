@@ -1,0 +1,81 @@
+/* 安装向导复用 agent-shell-approval 的卡片与按钮样式（AgentChat.css），
+   这里只补条目列表、状态徽标与错误行的样式。 */
+
+.agent-adapter-wizard-list {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-adapter-wizard-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid #e7dfcd;
+  border-radius: 6px;
+  background: #fffefb;
+}
+
+.agent-adapter-wizard-item-name {
+  font-size: 12px;
+  font-weight: 650;
+  color: #43392c;
+}
+
+.agent-adapter-wizard-ready,
+.agent-adapter-wizard-busy,
+.agent-adapter-wizard-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.agent-adapter-wizard-ready {
+  color: #5c9440;
+}
+
+.agent-adapter-wizard-busy {
+  color: #8a7c62;
+}
+
+.agent-adapter-wizard-missing {
+  color: #a5946f;
+  font-weight: 550;
+}
+
+.agent-adapter-wizard-ready svg,
+.agent-adapter-wizard-busy svg {
+  width: 12px;
+  height: 12px;
+}
+
+.agent-adapter-wizard-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: #b0562f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-adapter-wizard-error svg {
+  position: relative;
+  top: 1px;
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+.agent-adapter-wizard-error code {
+  display: block;
+  max-height: 72px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  opacity: 0.85;
+}

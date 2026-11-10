@@ -3,8 +3,8 @@ import { and, eq } from "drizzle-orm";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import { documents, jobs } from "../../../infrastructure/database/schema.js";
 import { DocumentServiceError } from "../errors.js";
-import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE, enqueueDocumentDelete } from "../integration-outbox.js";
-import { enqueueWritingStyleExtract } from "../../writing-style/jobs.js";
+import { DOCUMENT_HISTORY_BACKFILL_JOB_TYPE } from "../integration-outbox.js";
+import { enqueueSearchIndex } from "../../search/jobs.js";
 import { DocumentRepository } from "./repository.js";
 
 export interface DocumentLifecycleHooks {
@@ -29,8 +29,7 @@ export class DocumentLifecycleService {
     const now = new Date();
     this.db.update(documents).set({ deletedAt: now, updatedAt: now })
       .where(eq(documents.id, documentId)).run();
-    // 风格语料跟随文档生命周期：trash 后 worker 会看到 deletedAt 并清 sketch。
-    enqueueWritingStyleExtract(this.db, { documentId, roomId: current.roomId, version: current.version }, now);
+    enqueueSearchIndex(this.db, { itemType: "document", refId: documentId, priority: "high" });
     const trashed = this.repository.get(documentId)!;
     this.hooks.trashed?.(trashed);
     return trashed;
@@ -42,8 +41,7 @@ export class DocumentLifecycleService {
     const now = new Date();
     this.db.update(documents).set({ deletedAt: null, updatedAt: now })
       .where(eq(documents.id, documentId)).run();
-    // 恢复后重新评估风格语料资格。
-    enqueueWritingStyleExtract(this.db, { documentId, roomId: current.roomId, version: current.version }, now);
+    enqueueSearchIndex(this.db, { itemType: "document", refId: documentId, priority: "high" });
     const restored = this.repository.get(documentId)!;
     this.hooks.restored?.(restored);
     return restored;
@@ -57,22 +55,18 @@ export class DocumentLifecycleService {
     const now = new Date();
     this.db.transaction((tx) => {
       this.removeHistoryBackfillJob(tx, current.id);
-      enqueueDocumentDelete(tx, { documentId: current.id, roomId: current.roomId }, now);
-      enqueueWritingStyleExtract(tx, { documentId: current.id, roomId: current.roomId, version: current.version }, now);
       tx.delete(documents).where(eq(documents.id, documentId)).run();
     });
     this.hooks.deleted?.(current);
     return current;
   }
 
-  emptyTrash(roomId: string): RoomDocument[] {
-    const trashed = this.repository.list(roomId, true);
+  emptyTrash(): RoomDocument[] {
+    const trashed = this.repository.list(true);
     if (trashed.length === 0) return trashed;
     this.db.transaction((tx) => {
       for (const document of trashed) {
         this.removeHistoryBackfillJob(tx, document.id);
-        enqueueDocumentDelete(tx, { documentId: document.id, roomId: document.roomId }, new Date());
-        enqueueWritingStyleExtract(tx, { documentId: document.id, roomId: document.roomId, version: document.version }, new Date());
         tx.delete(documents).where(eq(documents.id, document.id)).run();
       }
     });

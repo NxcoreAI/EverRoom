@@ -4,7 +4,11 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 
-const OPEN_CONNECTOR_REVISION = 'bd4213af4c96af24f1f6fa4a66765cb425a8291f'
+const OPEN_CONNECTOR_REVISION = '806663488c6e8df92755d473cd866a1d80f2222f'
+// runtimeFormat 5：provider-icons 插件改为拉取失败降级空图标（oomol.com catalog.json
+// 2026-09 改版 404，曾致 CI build:web 全平台失败）。patch 不改变 revision/version，
+// 已构建的运行时会因 marker 命中而跳过重建，需靠 bump 强制刷新。
+const RUNTIME_FORMAT = 5
 const require = createRequire(import.meta.url)
 const sourcePackagePath = require.resolve('@oomol-lab/open-connector/package.json')
 const sourceDirectory = dirname(sourcePackagePath)
@@ -18,7 +22,7 @@ const everroomIconPath = join(desktopDirectory, 'build', 'icon.png')
 
 const sourceManifest = JSON.parse(await readFile(sourcePackagePath, 'utf8'))
 const expectedMarker = JSON.stringify({
-  runtimeFormat: 2,
+  runtimeFormat: RUNTIME_FORMAT,
   brandingVersion: 2,
   revision: OPEN_CONNECTOR_REVISION,
   version: sourceManifest.version,
@@ -56,13 +60,30 @@ for (const entry of [
 }
 await cp(lockfilePath, join(stagingDirectory, 'package-lock.json'))
 
+// 源包 vitest 升到 ^4.1.11 后，其新传递依赖 @vitejs/devtools-vitest（peer vitest:*）
+// 触发 npm 10 arborist loadPeerSet 的 "Cannot read properties of null (reading 'edgesOut')"
+// 崩溃（peer 冲突不降级为 ERESOLVE 而是直接抛 null）。vitest 仅用于 connector 源码自测，
+// 本构建只跑 ensure-generated/build:web，故与 lockfile 一起钉回 4.1.9（该版本依赖树
+// 不含 devtools-vitest）。源包依赖再变动时需同步重新生成 lockfile。
+const stagedManifest = JSON.parse(await readFile(join(stagingDirectory, 'package.json'), 'utf8'))
+stagedManifest.devDependencies ??= {}
+stagedManifest.devDependencies.vitest = '4.1.9'
+stagedManifest.overrides = {
+  ...stagedManifest.overrides,
+  vitest: '4.1.9',
+  '@vitest/browser-playwright': '4.1.9',
+}
+await writeFile(join(stagingDirectory, 'package.json'), `${JSON.stringify(stagedManifest, null, 2)}\n`)
+
 try {
   // npm ci + lockfile: 浮动 install 会解析到 registry 最新版本，
   // 曾因新发布的 @vitest/browser-playwright@5.0.0（peerDep 要求 vitest@5.0.0）
   // 触发 npm arborist "Cannot read properties of null (reading 'edgesOut')" 崩溃。
+  // 注意：open-connector 依赖源/SHA 变更时必须同步重新生成 open-connector-package-lock.json，
+  // 否则 package.json 与锁文件不同步，npm 10 的 ci 同样以 edgesOut 崩溃而非 EUSAGE 报错。
   await run('npm', ['ci', '--include=dev', '--ignore-scripts', '--no-audit', '--no-fund'], stagingDirectory)
   await run(process.execPath, ['scripts/ensure-generated.ts'], stagingDirectory)
-  await applyEverRoomBranding(stagingDirectory)
+  await applyEverOfficeBranding(stagingDirectory)
   await run('npm', ['run', 'build:web'], stagingDirectory)
 
   const runtimeManifest = JSON.parse(await readFile(join(stagingDirectory, 'package.json'), 'utf8'))
@@ -104,7 +125,7 @@ try {
   await rm(stagingDirectory, { recursive: true, force: true })
 }
 
-async function applyEverRoomBranding(directory) {
+async function applyEverOfficeBranding(directory) {
   const uiPath = join(directory, 'web', 'src', 'ui.tsx')
   const indexPath = join(directory, 'web', 'index.html')
   const logoPath = join(directory, 'web', 'src', 'assets', 'everroom-connect-logo.svg')
@@ -115,10 +136,10 @@ async function applyEverRoomBranding(directory) {
   await replaceExact(uiPath, [
     ['import oomolConnectLogoUrl from "./assets/oomol-connect-logo.png";', 'import everroomConnectLogoUrl from "./assets/everroom-connect-logo.svg";'],
     ['src={oomolConnectLogoUrl}', 'src={everroomConnectLogoUrl}'],
-    ['<div className="brand-name">OOMOL Connect</div>', '<div className="brand-name">EverRoom</div>'],
+    ['<div className="brand-name">OOMOL Connect</div>', '<div className="brand-name">EverOffice</div>'],
   ])
   await replaceExact(indexPath, [
-    ['<title>OOMOL Connect</title>', '<title>EverRoom</title>'],
+    ['<title>OOMOL Connect</title>', '<title>EverOffice</title>'],
   ])
 }
 

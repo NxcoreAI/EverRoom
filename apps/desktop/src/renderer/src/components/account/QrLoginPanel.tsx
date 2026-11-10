@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { useTranslation } from 'react-i18next'
-import { Check, LoaderCircle, QrCode, RefreshCw, ShieldAlert, ShieldCheck, Smartphone } from 'lucide-react'
+import { Check, LoaderCircle, QrCode, RefreshCw, ShieldAlert, Smartphone } from 'lucide-react'
 
 import type { CloudAccountStatus, QrLoginPresentation, QrLoginStatusPayload } from '../../../../shared/sources'
 import './QrLoginPanel.css'
@@ -19,18 +19,47 @@ type RendererPhase =
 
 const POLL_INTERVAL_MS = 2_000
 
-/** 扫码登录面板：二维码展示 + 2 秒单飞轮询 + 桌面账号二次确认 + 设备准入。 */
+/** 占位二维码（非真实会话载荷，仅视觉底图）：真码未就位时先糊着，
+ *  聚焦入场才换成真码——模糊期间也能看出「这里将是一个二维码」。
+ *  模块加载即开始生成（毫秒级），用户点进扫码页时必然已就绪。 */
+const placeholderQrPromise: Promise<string | null> = QRCode
+  .toDataURL('everroom-qr-preview', { margin: 1, width: 220, errorCorrectionLevel: 'L' })
+  .catch(() => null)
+
+/** 扫码登录面板：二维码展示 + 2 秒单飞轮询 + 桌面账号二次确认 + 设备准入。
+ *  idle 态自带「或」分隔线 + 全宽入口按钮；激活后父容器可借 onActiveChange 收起其他登录方式。 */
 export function QrLoginPanel(props: {
   account: CloudAccountStatus | null
   onAccountChanged: (status: CloudAccountStatus) => void
   /** 登录成功（含设备替换后）回调；gate 场景用于拉取 runtime config 并放行。 */
   onLoginSucceeded?: () => void
+  /** 扫码流程激活（含等待/已扫/确认/终态），idle 之外都算；父容器据此收起其他登录入口。 */
+  onActiveChange?: (active: boolean) => void
+  /** 入口按钮禁用（父级正忙于其他登录流程时）。 */
+  entryDisabled?: boolean
+  /** 注册「取消当前扫码会话」句柄：父级把返回按钮画在别处（如页标题左侧）时调用；不可取消阶段注册 null。 */
+  registerCancel?: (cancel: (() => void) | null) => void
 }) {
   const { t } = useTranslation()
   const [phase, setPhase] = useState<RendererPhase>({ kind: 'idle' })
+  // 占位二维码底图（真码未就位时糊着展示）；hook 必须无条件调用，放在顶部。
+  const [placeholderQr, setPlaceholderQr] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void placeholderQrPromise.then((url) => { if (!cancelled && url) setPlaceholderQr(url) })
+    return () => { cancelled = true }
+  }, [])
+  // poll 回调需要读「此刻」的 phase（闭包捕获的是 effect 创建时的旧值），
+  // 过期自动换码只在等扫码时触发，已扫/已确认不能把用户的确认态冲掉。
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
   const inFlight = useRef(false)
   const unmounted = useRef(false)
   const lastAccountId = useRef<string | null>(props.account?.user?.id ?? null)
+
+  const onActiveChange = props.onActiveChange
+  const active = phase.kind !== 'idle'
+  useEffect(() => { onActiveChange?.(active) }, [active, onActiveChange])
 
   useEffect(() => {
     unmounted.current = false
@@ -95,13 +124,34 @@ export function QrLoginPanel(props: {
             : current)
           return
         }
+        // 过期：还在等扫码就静默换新码（无感续期）；已扫/已确认才走终态。
+        if (next.status === 'expired' && phaseRef.current.kind === 'pendingScan') {
+          void createSession()
+          return
+        }
         setPhase({ kind: 'ended', reason: next.status })
       } catch (error) {
         if (cancelled) return
         const message = error instanceof Error ? error.message : ''
         if (message.includes('请求过于频繁')) return schedule()
         if (/QR_LOGIN_(REJECTED|CANCELLED|EXPIRED|ALREADY_EXCHANGED)/.test(message)) {
+          // 过期且仍在等扫码：静默换新码；其余终态才进结束页。
+          if (/QR_LOGIN_EXPIRED/.test(message) && phaseRef.current.kind === 'pendingScan') {
+            void createSession()
+            return
+          }
           setPhase({ kind: 'ended', reason: 'expired' })
+          return
+        }
+        // 主进程已无此会话（主进程重启/会话被新建顶掉）：desktopExchangeToken
+        // 只在主进程内存，旧码必然无法 exchange。等扫码阶段静默换新码；已扫/
+        // 已确认阶段用户流程作废，进终态提示重试，不再按网络错误无限退避。
+        if (message.includes('扫码登录会话')) {
+          if (phaseRef.current.kind === 'pendingScan') {
+            void createSession()
+            return
+          }
+          setPhase({ kind: 'ended', reason: 'error', message })
           return
         }
         // 网络错误：退避后重试，不中断面板。
@@ -150,6 +200,14 @@ export function QrLoginPanel(props: {
     setPhase({ kind: 'idle' })
   }, [phase])
 
+  // 可取消阶段把 cancel 句柄注册给父级（返回按钮画在页标题左侧）。
+  const registerCancel = props.registerCancel
+  const cancelable = phase.kind === 'pendingScan' || phase.kind === 'scanned' || phase.kind === 'confirmed'
+  useEffect(() => {
+    registerCancel?.(cancelable ? () => { void cancel() } : null)
+    return () => registerCancel?.(null)
+  }, [cancelable, cancel, registerCancel])
+
   const replaceDevice = useCallback(async (replaceDeviceId: string) => {
     if (!window.nxcore || phase.kind !== 'admission') return
     const admissionToken = phase.status.admission?.admissionToken
@@ -172,22 +230,46 @@ export function QrLoginPanel(props: {
 
   if (phase.kind === 'idle') {
     return (
-      <button
-        className="secondary-button qr-login-start"
-        type="button"
-        onClick={() => void createSession()}
-      >
-        <QrCode aria-hidden="true" />
-        {t('surface:qrLogin.signInWithPhone')}
-      </button>
+      <>
+        <div className="qr-login-divider" aria-hidden="true"><span>{t('surface:qrLogin.orDivider')}</span></div>
+        <button
+          className="qr-login-entry-button"
+          type="button"
+          disabled={props.entryDisabled}
+          onClick={() => void createSession()}
+        >
+          <QrCode aria-hidden="true" />
+          {t('surface:qrLogin.signInWithPhone')}
+        </button>
+      </>
     )
   }
 
-  if (phase.kind === 'creating' || phase.kind === 'exchanging') {
+  // 创建会话：真二维码底图先糊着，就位后聚焦到清晰（无 spinner）。
+  if (phase.kind === 'creating') {
     return (
-      <div className="qr-login-panel qr-login-status" aria-live="polite">
-        <LoaderCircle className="spin" aria-hidden="true" />
-        <p>{t(phase.kind === 'creating' ? 'surface:qrLogin.creating' : 'surface:qrLogin.exchanging')}</p>
+      <div className="qr-login-panel qr-login-active" aria-live="polite">
+        <div className="qr-login-qr-box" key="creating">
+          {placeholderQr ? (
+            <img className="qr-login-qr-placeholder-img" src={placeholderQr} alt="" aria-hidden="true" width={180} height={180} />
+          ) : (
+            <div className="qr-login-qr-placeholder" aria-hidden="true" />
+          )}
+        </div>
+        <div className="qr-login-hint" key="hint-creating">
+          <strong className="qr-login-loading"><LoaderCircle className="spin" aria-hidden="true" />{t('surface:qrLogin.creatingShort')}</strong>
+        </div>
+      </div>
+    )
+  }
+
+  if (phase.kind === 'exchanging') {
+    return (
+      <div className="qr-login-panel" aria-live="polite">
+        <div className="qr-login-stage" key="exchanging">
+          <LoaderCircle className="spin" aria-hidden="true" />
+          <p>{t('surface:qrLogin.exchanging')}</p>
+        </div>
       </div>
     )
   }
@@ -196,54 +278,62 @@ export function QrLoginPanel(props: {
     const admission = phase.status.admission
     return (
       <div className="qr-login-panel qr-login-admission" aria-live="polite">
-        <div className="qr-login-admission-heading">
-          <ShieldAlert aria-hidden="true" />
-          <div>
-            <strong>{t('surface:qrLogin.deviceLimitTitle', { maxDevices: admission?.maxDevices ?? 0 })}</strong>
-            <small>{t('surface:qrLogin.deviceLimitDescription')}</small>
+        <div className="qr-login-stage" key="admission">
+          <div className="qr-login-admission-heading">
+            <ShieldAlert aria-hidden="true" />
+            <div>
+              <strong>{t('surface:qrLogin.deviceLimitTitle', { maxDevices: admission?.maxDevices ?? 0 })}</strong>
+              <small>{t('surface:qrLogin.deviceLimitDescription')}</small>
+            </div>
           </div>
+          <div className="qr-login-devices">
+            {(admission?.devices ?? []).map((device) => (
+              <button key={device.id} type="button" className="qr-login-device" onClick={() => void replaceDevice(device.id)}>
+                <Smartphone aria-hidden="true" />
+                <span>
+                  <strong>{device.name}</strong>
+                  <small>{device.platform}{device.appVersion ? ` · ${device.appVersion}` : ''}</small>
+                </span>
+                <em>{t('surface:qrLogin.replaceDevice')}</em>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="secondary-button" onClick={() => void dismissAdmission()}>
+            {t('surface:qrLogin.cancelLogin')}
+          </button>
         </div>
-        <div className="qr-login-devices">
-          {(admission?.devices ?? []).map((device) => (
-            <button key={device.id} type="button" className="qr-login-device" onClick={() => void replaceDevice(device.id)}>
-              <Smartphone aria-hidden="true" />
-              <span>
-                <strong>{device.name}</strong>
-                <small>{device.platform}{device.appVersion ? ` · ${device.appVersion}` : ''}</small>
-              </span>
-              <em>{t('surface:qrLogin.replaceDevice')}</em>
-            </button>
-          ))}
-        </div>
-        <button type="button" className="secondary-button" onClick={() => void dismissAdmission()}>
-          {t('surface:qrLogin.cancelLogin')}
-        </button>
       </div>
     )
   }
 
   if (phase.kind === 'success') {
     return (
-      <div className="qr-login-panel qr-login-status" aria-live="polite">
-        <Check className="qr-login-success-icon" aria-hidden="true" />
-        <strong>{t('surface:qrLogin.loginSuccess')}</strong>
+      <div className="qr-login-panel" aria-live="polite">
+        <div className="qr-login-stage" key="success">
+          <span className="qr-login-hit-badge qr-login-badge-standalone">
+            <Check strokeWidth={2.5} aria-hidden="true" />
+          </span>
+          <strong>{t('surface:qrLogin.loginSuccess')}</strong>
+        </div>
       </div>
     )
   }
 
   if (phase.kind === 'ended') {
     return (
-      <div className="qr-login-panel qr-login-status" aria-live="polite">
-        <strong>{t(`surface:qrLogin.ended.${phase.reason}`)}</strong>
-        {phase.message ? <small>{phase.message}</small> : null}
-        <div className="qr-login-actions">
-          <button type="button" className="secondary-button" onClick={() => void createSession()}>
-            <RefreshCw aria-hidden="true" />
-            {t('surface:qrLogin.retry')}
-          </button>
-          <button type="button" className="secondary-button" onClick={() => setPhase({ kind: 'idle' })}>
-            {t('surface:qrLogin.close')}
-          </button>
+      <div className="qr-login-panel" aria-live="polite">
+        <div className="qr-login-stage" key="ended">
+          <strong>{t(`surface:qrLogin.ended.${phase.reason}`)}</strong>
+          {phase.message ? <small>{phase.message}</small> : null}
+          <div className="qr-login-actions">
+            <button type="button" className="secondary-button" onClick={() => void createSession()}>
+              <RefreshCw aria-hidden="true" />
+              {t('surface:qrLogin.retry')}
+            </button>
+            <button type="button" className="secondary-button" onClick={() => setPhase({ kind: 'idle' })}>
+              {t('surface:qrLogin.close')}
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -256,26 +346,40 @@ export function QrLoginPanel(props: {
     : null
   if (!activePhase) return null
   const confirmationCode = activePhase.kind === 'scanned' ? activePhase.confirmationCode : activePhase.presentation.confirmationCode
+  const groupedCode = /^\d{4,}$/.test(confirmationCode) ? confirmationCode.replace(/(\d{3})(?=\d)/g, '$1 ') : confirmationCode
 
   return (
     <div className="qr-login-panel qr-login-active" aria-live="polite">
-      <div className="qr-login-qr">
-        <img src={activePhase.qrDataUrl} alt={t('surface:qrLogin.qrAlt')} width={180} height={180} />
-        {isPendingScan ? null : <span className="qr-login-qr-badge"><ShieldCheck aria-hidden="true" />{t('surface:qrLogin.scannedBadge')}</span>}
+      <div className={`qr-login-qr-box${isPendingScan ? '' : ' is-scanned'}`}>
+        <img key={activePhase.presentation.qrLoginSessionId} className="qr-login-qr-real" src={activePhase.qrDataUrl} alt={t('surface:qrLogin.qrAlt')} width={180} height={180} />
+        {!isPendingScan ? (
+          phase.kind === 'confirmed' ? (
+            <span className="qr-login-hit">
+              <span className="qr-login-hit-avatar" aria-hidden="true">{phase.account.displayName.slice(0, 1).toUpperCase()}</span>
+            </span>
+          ) : (
+            <span className="qr-login-hit">
+              <span className="qr-login-hit-ring" aria-hidden="true" />
+              <span className="qr-login-hit-badge">
+                <Check strokeWidth={2.5} aria-hidden="true" />
+              </span>
+            </span>
+          )
+        ) : null}
       </div>
       {isPendingScan ? (
-        <div className="qr-login-hint">
+        <div className="qr-login-hint" key="hint-pending">
           <strong>{t('surface:qrLogin.scanWithPhone')}</strong>
-          <small>{t('surface:qrLogin.confirmationCode', { code: confirmationCode })}</small>
+          <small>{t('surface:qrLogin.confirmationCode', { code: groupedCode })}</small>
         </div>
       ) : isScanned ? (
-        <div className="qr-login-hint">
-          <strong>{t('surface:qrLogin.scannedTitle', { code: confirmationCode })}</strong>
+        <div className="qr-login-hint" key="hint-scanned">
+          <strong className="qr-login-scanned-title">{t('surface:qrLogin.scannedTitle')}</strong>
+          <span className="qr-login-code">{groupedCode}</span>
           <small>{t('surface:qrLogin.scannedDescription')}</small>
         </div>
       ) : (
-        <div className="qr-login-account">
-          <span className="qr-login-avatar" aria-hidden="true">{phase.account.displayName.slice(0, 1).toUpperCase()}</span>
+        <div className="qr-login-hint qr-login-account" key="hint-confirmed">
           <strong>{phase.account.displayName}</strong>
           {phase.account.identifierHint ? <small>{phase.account.identifierHint}</small> : null}
           {phase.accountSwitch ? (
@@ -288,23 +392,9 @@ export function QrLoginPanel(props: {
             <button type="button" className="primary-button" onClick={() => void confirmAndExchange()}>
               {t('surface:qrLogin.loginAsThisAccount')}
             </button>
-            <button type="button" className="secondary-button" onClick={() => void cancel()}>
-              {t('surface:qrLogin.cancelLogin')}
-            </button>
           </div>
         </div>
       )}
-      <div className="qr-login-footer">
-        <span className="qr-login-countdown">{t('surface:qrLogin.refreshHint')}</span>
-        <button type="button" className="link-button" onClick={() => void createSession()}>
-          <RefreshCw aria-hidden="true" />
-          {t('surface:qrLogin.refreshQr')}
-        </button>
-        <span className="qr-login-sep" aria-hidden="true">·</span>
-        <button type="button" className="link-button" onClick={() => void cancel()}>
-          {t('surface:qrLogin.cancelLogin')}
-        </button>
-      </div>
     </div>
   )
 }

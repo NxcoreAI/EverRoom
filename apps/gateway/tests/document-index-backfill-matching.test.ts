@@ -9,7 +9,6 @@ import {
   collectParagraphTargets,
   isDriftSuspect,
   matchDeterministic,
-  type IndexMemoryCandidate,
   type IndexSourceCandidate,
   type PlannedMarkRemoval,
   type PlannedIndexMark,
@@ -39,18 +38,6 @@ function candidate(overrides: Partial<IndexSourceCandidate> = {}): IndexSourceCa
 
 const SOURCE_TEXT = "PyTorch 是一种基于 Torch 的开源深度学习框架，由 Meta AI 维护，支持动态计算图与自动求导、张量系统与 Python 优先的设计哲学。";
 
-const MEMORY_CONTENT = "团队约定：深度学习相关文档统一使用 PyTorch 作为示例框架，示例代码必须可独立运行。";
-
-function memoryCandidate(overrides: Partial<IndexMemoryCandidate> = {}): IndexMemoryCandidate {
-  return {
-    roomId: "room-1",
-    memoryId: "room-1-memory-1",
-    type: "事实",
-    content: MEMORY_CONTENT,
-    probe: "团队约定：深度学习相关文档统一使用PyTorch作为示例框架，示例代码必须可独立运行。".slice(0, 80),
-    ...overrides,
-  };
-}
 
 describe("index backfill matching", () => {
   it("collects eligible top-level paragraphs only", () => {
@@ -85,25 +72,6 @@ describe("index backfill matching", () => {
     expect(planned.get(0)).toMatchObject({ blockId: "older" });
   });
 
-  it("matches a verbatim memory candidate and prefers a longer document probe on equal length", () => {
-    const targets = collectParagraphTargets({
-      type: "doc",
-      content: [paragraph("p1", `${MEMORY_CONTENT}这条约定已写入团队文档。`)],
-    });
-    // 逐字包含记忆内容 → 命中记忆候选。
-    const memoryOnly = matchDeterministic(targets, [memoryCandidate()]);
-    expect(memoryOnly.get(0)).toMatchObject({ memoryId: "room-1-memory-1", type: "事实" });
-
-    // 记忆改写（非逐字）不命中——记忆候选只接受逐字包含。
-    const paraphrased = memoryCandidate({ probe: "深度学习文档一律选用PyTorch写示例" });
-    expect(matchDeterministic(targets, [paraphrased]).get(0)).toBeUndefined();
-
-    // 同长探针：文档候选优先（有方向启发式背书），更长探针仍赢过文档。
-    const tieDoc = candidate({ probe: memoryCandidate().probe, sourceCreatedAt: 1_000 });
-    expect(matchDeterministic(targets, [memoryCandidate(), tieDoc]).get(0)).toMatchObject({ blockId: "block-1" });
-    const longerMemory = memoryCandidate({ memoryId: "mem-long", probe: `${memoryCandidate().probe}这条约定已写入` });
-    expect(matchDeterministic(targets, [tieDoc, longerMemory]).get(0)).toMatchObject({ memoryId: "mem-long" });
-  });
 
   it("builds mark nodes with the canonical attrs shape", async () => {
     expect(buildIndexMarkNode(candidate({ documentTitle: "很长的标题".repeat(50) }))).toEqual({
@@ -118,18 +86,6 @@ describe("index backfill matching", () => {
         fallbackPreview: candidate().textPreview,
       },
     });
-    expect(buildIndexMarkNode(memoryCandidate())).toEqual({
-      type: "blockIndexMark",
-      attrs: {
-        kind: "memory",
-        targetRoomId: "room-1",
-        targetDocumentId: "",
-        targetBlockId: "",
-        targetMemoryId: "room-1-memory-1",
-        fallbackTitle: "事实",
-        fallbackPreview: MEMORY_CONTENT,
-      },
-    });
   });
 
   it("applies planned marks by blockId and leaves content untouched when nothing applies", () => {
@@ -141,7 +97,6 @@ describe("index backfill matching", () => {
     const applied = applyPlannedMarks(content, planned);
     expect(applied.applied).toBe(1);
     expect(applied.documentMarks).toBe(1);
-    expect(applied.memoryMarks).toBe(0);
     expect(applied.content.content?.[1]?.content?.at(-1)).toMatchObject({ type: "blockIndexMark" });
     // 原树不被修改。
     expect(content.content?.[1]?.content).toHaveLength(1);
@@ -149,13 +104,6 @@ describe("index backfill matching", () => {
     const untouched = applyPlannedMarks(content, []);
     expect(untouched.applied).toBe(0);
     expect(untouched.content).toEqual(content);
-
-    const memoryPlanned = applyPlannedMarks(content, [
-      { paragraphBlockId: "p1", paragraphOrdinal: 0, candidate: memoryCandidate() },
-    ]);
-    expect(memoryPlanned.applied).toBe(1);
-    expect(memoryPlanned.documentMarks).toBe(0);
-    expect(memoryPlanned.memoryMarks).toBe(1);
   });
 
   it("collects existing marks with paragraph context and original probes", () => {
@@ -175,7 +123,6 @@ describe("index backfill matching", () => {
         paragraph("p1", SOURCE_TEXT, { content: [
           { type: "text", text: SOURCE_TEXT },
           { type: "blockIndexMark", attrs: markAttrs() },
-          { type: "blockIndexMark", attrs: markAttrs({ kind: "memory", targetDocumentId: "", targetBlockId: "", targetMemoryId: "room-1-memory-1", fallbackPreview: "太短" }) },
         ] }),
         { type: "heading", attrs: { level: 1 }, content: [
           { type: "blockIndexMark", attrs: markAttrs() },
@@ -184,7 +131,7 @@ describe("index backfill matching", () => {
       ],
     };
     const marks = collectExistingMarks(content);
-    expect(marks).toHaveLength(2);
+    expect(marks).toHaveLength(1);
     expect(marks[0]).toMatchObject({
       paragraphBlockId: "p1",
       paragraphOrdinal: 0,
@@ -195,8 +142,6 @@ describe("index backfill matching", () => {
     });
     expect(marks[0]!.paragraphNormalized).toBe(normalizeIndexText(tiptapText(content.content?.[0]!)));
     expect(marks[0]!.originalProbe).toBeTruthy();
-    // 预览过短 → originalProbe 为 null（漂移门不可据此判定）。
-    expect(marks[1]).toMatchObject({ markIndex: 2, kind: "memory", targetMemoryId: "room-1-memory-1", originalProbe: null });
     // heading 内的标记不在顶层段落，不收集。
   });
 

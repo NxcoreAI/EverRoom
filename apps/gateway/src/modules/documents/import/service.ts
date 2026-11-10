@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { diffChars } from "diff";
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type {
@@ -20,6 +23,7 @@ import type {
 } from "@nxcore/agent-contract";
 import type { GatewayDatabase } from "../../../infrastructure/database/client.js";
 import {
+  documentImportBatches,
   documentImportComments,
   documentImportListCache,
   documentImportRuns,
@@ -29,11 +33,17 @@ import {
   documents,
 } from "../../../infrastructure/database/schema.js";
 import type { OpenConnectorCliConfig } from "../../../config.js";
-import { agentDocumentMarkdown } from "../agent-markdown.js";
+import { parseImportedMarkdown } from "../agent-markdown.js";
 import type { DocumentService } from "../service.js";
 import { artifactHashOf, readArtifact, storeArtifact } from "./artifact-store.js";
 import { ImportConnectorError, runImportConnectorAction, type ImportActionRunner } from "./oo-runner.js";
-import { importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
+import { DeltaUnsupportedError, importAdapterOf, type ExternalDocumentProviderAdapter, type ImportActionFn } from "./providers.js";
+import {
+  createLarkImportActionRunner,
+  downloadLarkMediaToFile,
+  larkErrorToImportConnectorError,
+} from "./lark-action-runner.js";
+import { larkAuthStatus, LarkCliError, type LarkCliConfig } from "../agent-export/lark-cli.js";
 import { runNtnCli, type NtnCliConfig } from "../agent-export/ntn-cli.js";
 
 export class ImportServiceError extends Error {
@@ -54,6 +64,8 @@ export interface CommitImportInput {
   roomId: string;
   /** 提供时表示"同一来源再次导入到该文档"：生成候选版本，不覆盖当前文档。 */
   targetDocumentId?: string;
+  /** true：跳过来源去重——同来源在该 Room 已有文档时仍新建（用户明确选"创建新的"）。 */
+  forceNewDocument?: boolean;
 }
 
 export interface CommitImportResult {
@@ -65,6 +77,52 @@ export interface CommitImportResult {
   noChange?: boolean;
   documentId: string;
   document: RoomDocument;
+}
+
+export interface CommitWorkspaceImportInput {
+  runId: string;
+  /** true：跳过来源去重——同来源已有工作区文稿时仍新建一篇（用户明确选"创建新的"）。 */
+  forceNewDocument?: boolean;
+}
+
+export interface CommitWorkspaceImportResult {
+  run: DocumentImportRunView;
+  documentId: string;
+  document: RoomDocument;
+  /** true=本次新建工作区文稿；false=在已有的同来源文稿上追加版本。 */
+  created: boolean;
+  /** 同来源重导且正文哈希未变：不落新版本，调用方据此标记「远端无更新」。 */
+  noChange: boolean;
+}
+
+/**
+ * 统一提交入参（REST 与 Agent 工具共用）：`roomId` 省略/null = 工作区导入。
+ * 显式传 Room 时保留 Room 时代的去重/候选语义（旧版桌面兼容）。
+ */
+export interface CommitDocumentImportInput {
+  runId: string;
+  roomId?: string | null;
+  /** 仅在显式 roomId 的旧路径生效：同一来源再次导入到该文档时生成候选版本。 */
+  targetDocumentId?: string;
+  forceNewDocument?: boolean;
+}
+
+/** 图片魔数嗅探：返回真实格式（远端 content-type 声明不可信）。 */
+function sniffImageMime(bytes: Uint8Array): string | null {
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "image/png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return "image/gif";
+  }
+  if (bytes.length >= 12 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    return "image/webp";
+  }
+  return null;
 }
 
 function isoToDateOrNull(value: string | null): Date | null {
@@ -337,6 +395,13 @@ function warningsOf(value: unknown): ExternalDocumentWarning[] {
   return Array.isArray(value) ? (value as ExternalDocumentWarning[]) : [];
 }
 
+/** 缓存警告合并：按 code 去重，后者（增量新警告）覆盖前者。 */
+function mergeWarnings(cached: ExternalDocumentWarning[], incoming: ExternalDocumentWarning[]): ExternalDocumentWarning[] {
+  const byCode = new Map(cached.map((warning) => [warning.code, warning]));
+  for (const warning of incoming) byCode.set(warning.code, warning);
+  return [...byCode.values()];
+}
+
 /**
  * 飞书 / Notion 文档导入编排。导入只经 OpenConnector 读 action；快照不可变，
  * Room 落地全部走 DocumentService（DocumentCommitService 乐观锁），不做任何
@@ -349,6 +414,16 @@ export class DocumentImportService {
 
   private readonly notionCli: NtnCliConfig | null;
 
+  private readonly larkCli: LarkCliConfig | null;
+
+  /** 测试缝：注入后飞书绕过 lark-cli 子进程与授权门禁（fake 输出 oo 形状）。 */
+  private readonly larkActionFn: ImportActionFn | null;
+
+  private larkAuthCache: { at: number; ok: boolean; reason: string } | null = null;
+
+  /** 飞书连接器开关（连接器页「关闭」）：关闭后 lark-cli 导入被拦截。 */
+  private readonly isFeishuDisabled: (() => boolean) | null;
+
   constructor(
     private readonly db: GatewayDatabase,
     private readonly documents: DocumentService,
@@ -360,11 +435,19 @@ export class DocumentImportService {
       /** Notion 行内（块级）评论兜底：OpenConnector 动作只覆盖页面级评论，
        * 行内评论须按 block_id 查询（官方 CLI；macOS）。缺省时跳过并告警。 */
       notionCli?: NtnCliConfig | null;
+      /** 飞书导入通道（lark-cli，桌面注入）：缺省时飞书导入报连接不可用。 */
+      larkCli?: LarkCliConfig | null;
+      larkActionFn?: ImportActionFn;
+      /** 飞书连接器开关：返回 true 时飞书导入报「连接已关闭」。 */
+      isFeishuDisabled?: () => boolean;
     },
   ) {
     this.actionRunner = options?.actionRunner ?? runImportConnectorAction;
     this.assetBridgeUrl = options?.assetBridgeUrl?.replace(/\/$/, "") ?? null;
     this.notionCli = options?.notionCli ?? null;
+    this.larkCli = options?.larkCli ?? null;
+    this.larkActionFn = options?.larkActionFn ?? null;
+    this.isFeishuDisabled = options?.isFeishuDisabled ?? null;
   }
 
   async search(
@@ -376,49 +459,183 @@ export class DocumentImportService {
     return adapter.searchDocuments(query.trim())
       .then((result) => ({ provider, items: result.items, warnings: result.warnings }))
       .catch((error) => {
-        throw this.mapConnectorError(error);
+        throw this.mapConnectorError(error, provider);
       });
   }
 
+  /** 增量水位线回看重叠窗：远端时钟与本地取时之间的边界抖动靠它兜住，
+   * 重复条目按 remoteDocumentId 幂等合并。 */
+  private static readonly DELTA_OVERLAP_MS = 5 * 60 * 1000;
+
   /**
-   * 按连接全量列举可导入文档（连接器页批量导入入口）。列举本身在 provider
-   * 适配层完成；这里回填 imported 标记——该来源已有落 Room 的导入记录时置
-   * true（重导入走现有候选版本语义，UI 仅提示不禁选）。成功结果写入列举
-   * 缓存，供面板下次打开直接回显。
+   * 按连接列举可导入文档。mode=full：全量列举并整体替换缓存（清掉远端已删
+   * 文档）；mode=delta：有缓存且水位线可用时只拉水位线（含重叠窗）之后的
+   * 变动合并进缓存——无缓存、缓存被截断或增量通道不可用（含失败）自动回退
+   * 全量。imported 标记回填同旧语义。成功结果写入列举缓存，供面板下次直接回显。
    */
   async listAllDocuments(
     provider: ExternalDocumentProvider,
     connectionName?: string,
+    mode: "full" | "delta" = "full",
   ): Promise<ExternalDocumentListResponse> {
     const adapter = this.adapterOf(provider, connectionName);
+    if (mode === "delta") {
+      const cached = this.readCacheRow(provider, connectionName);
+      if (cached?.watermarkAt && !cached.truncated) {
+        try {
+          const watermark = new Date(cached.watermarkAt.getTime() - DocumentImportService.DELTA_OVERLAP_MS);
+          const delta = await adapter.listModifiedSince(watermark.toISOString());
+          const merged = DocumentImportService.mergeListItems(cached.itemsJson, delta.items);
+          const items = this.markImported(provider, merged);
+          const watermarkAt = new Date(Math.max(
+            cached.watermarkAt.getTime(),
+            ...items.map((item) => (item.updatedAt ? new Date(item.updatedAt).getTime() : 0)),
+          ));
+          this.writeCacheRow(provider, connectionName, {
+            items,
+            truncated: false,
+            warnings: mergeWarnings(cached.warningsJson, delta.warnings),
+            syncMode: "delta",
+            watermarkAt,
+          });
+          return { provider, items, truncated: false, warnings: delta.warnings, fetchedAt: null };
+        } catch (error) {
+          if (!(error instanceof DeltaUnsupportedError)) {
+            // 增量失败回退全量重试一次；全量再失败则把原始错误抛给调用方。
+            try {
+              return await this.listAllDocuments(provider, connectionName, "full");
+            } catch {
+              throw error;
+            }
+          }
+          // DeltaUnsupportedError 同样回退全量（search 时间过滤不可用时这是常态路径）。
+        }
+      }
+    }
     const listed = await adapter.listAllDocuments().catch((error) => {
-      throw this.mapConnectorError(error);
+      throw this.mapConnectorError(error, provider);
     });
     const items = this.markImported(provider, listed.items);
+    const watermarkAt = new Date(Math.max(
+      Date.now(),
+      ...items.map((item) => (item.updatedAt ? new Date(item.updatedAt).getTime() : 0)),
+    ));
+    this.writeCacheRow(provider, connectionName, {
+      items,
+      truncated: listed.truncated,
+      warnings: listed.warnings,
+      syncMode: "full",
+      watermarkAt,
+      lastFullAt: new Date(),
+    });
+    return { provider, items, truncated: listed.truncated, warnings: listed.warnings, fetchedAt: null };
+  }
+
+  /** 增量合并：按 remoteDocumentId 覆盖或追加；搜索结果把 wiki 文档标成
+   * drive（无归属信息），保留缓存里更具体的 wiki origin/知识库名。 */
+  private static mergeListItems(
+    cached: ExternalDocumentListItem[],
+    incoming: ExternalDocumentListItem[],
+  ): ExternalDocumentListItem[] {
+    const byId = new Map(cached.map((item) => [item.remoteDocumentId, item]));
+    for (const item of incoming) {
+      const existing = byId.get(item.remoteDocumentId);
+      if (existing && existing.origin === "wiki" && item.origin === "drive") {
+        byId.set(item.remoteDocumentId, { ...item, origin: "wiki", wikiSpaceName: existing.wikiSpaceName });
+      } else {
+        byId.set(item.remoteDocumentId, item);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private readCacheRow(
+    provider: ExternalDocumentProvider,
+    connectionName?: string,
+  ) {
+    return this.db.select().from(documentImportListCache)
+      .where(and(
+        eq(documentImportListCache.provider, provider),
+        eq(documentImportListCache.connectionName, connectionName ?? ""),
+      ))
+      .get() ?? null;
+  }
+
+  private writeCacheRow(
+    provider: ExternalDocumentProvider,
+    connectionName: string | undefined,
+    row: {
+      items: ExternalDocumentListItem[];
+      truncated: boolean;
+      warnings: ExternalDocumentWarning[];
+      syncMode: "full" | "delta";
+      watermarkAt: Date;
+      lastFullAt?: Date;
+    },
+  ): void {
     const fetchedAt = new Date();
     this.db
       .insert(documentImportListCache)
       .values({
         provider,
         connectionName: connectionName ?? "",
-        itemsJson: items,
-        truncated: listed.truncated,
-        warningsJson: listed.warnings,
-        itemCount: items.length,
+        itemsJson: row.items,
+        truncated: row.truncated,
+        warningsJson: row.warnings,
+        itemCount: row.items.length,
         fetchedAt,
+        syncMode: row.syncMode,
+        watermarkAt: row.watermarkAt,
+        ...(row.lastFullAt ? { lastFullAt: row.lastFullAt } : {}),
       })
       .onConflictDoUpdate({
         target: [documentImportListCache.provider, documentImportListCache.connectionName],
         set: {
-          itemsJson: items,
-          truncated: listed.truncated,
-          warningsJson: listed.warnings,
-          itemCount: items.length,
+          itemsJson: row.items,
+          truncated: row.truncated,
+          warningsJson: row.warnings,
+          itemCount: row.items.length,
           fetchedAt,
+          syncMode: row.syncMode,
+          watermarkAt: row.watermarkAt,
+          ...(row.lastFullAt ? { lastFullAt: row.lastFullAt } : {}),
         },
       })
       .run();
-    return { provider, items, truncated: listed.truncated, warnings: listed.warnings, fetchedAt: null };
+  }
+
+  /**
+   * 工作区「已导入」预检（`/v1/document-import/existing-in-workspace` 路由）：
+   * 返回这批远端文档中已作为工作区文稿落过的 remoteDocumentId 集合。判定只看
+   * 导入任务是否已落到工作区文稿（`document_import_runs.targetDocumentId`），
+   * 不再有任何 Room 维度入参。
+   */
+  importedInWorkspace(
+    provider: ExternalDocumentProvider,
+    remoteDocumentIds: string[],
+  ): string[] {
+    if (remoteDocumentIds.length === 0) return [];
+    const sources = this.db.select({
+      id: documentImportSources.id,
+      remoteDocumentId: documentImportSources.remoteDocumentId,
+    }).from(documentImportSources)
+      .where(and(
+        eq(documentImportSources.ownerId, "local-user"),
+        eq(documentImportSources.provider, provider),
+        inArray(documentImportSources.remoteDocumentId, remoteDocumentIds),
+      )).all();
+    if (sources.length === 0) return [];
+    const byRemote = new Map(sources.map((source) => [source.id, source.remoteDocumentId]));
+    const landedSourceIds = this.db.select({ sourceId: documentImportRuns.sourceId })
+      .from(documentImportRuns)
+      .where(and(
+        eq(documentImportRuns.status, "succeeded"),
+        isNotNull(documentImportRuns.targetDocumentId),
+        inArray(documentImportRuns.sourceId, sources.map((source) => source.id)),
+      )).all()
+      .map((row) => row.sourceId)
+      .filter((id): id is string => Boolean(id));
+    return [...new Set(landedSourceIds.flatMap((id) => byRemote.get(id) ?? []))];
   }
 
   /**
@@ -429,13 +646,17 @@ export class DocumentImportService {
     provider: ExternalDocumentProvider,
     connectionName?: string,
   ): ExternalDocumentListResponse | null {
+    // 不带 connectionName 的调用方（数据源卡片汇总）：docs 连接单槽位，
+    // 按 provider 取最近一行——否则用 "" 查永远 miss 真实连接名写入的
+    // 缓存，卡片"已导入"恒为 0 占位。
     const row = this.db
       .select()
       .from(documentImportListCache)
       .where(and(
         eq(documentImportListCache.provider, provider),
-        eq(documentImportListCache.connectionName, connectionName ?? ""),
+        ...(connectionName ? [eq(documentImportListCache.connectionName, connectionName)] : []),
       ))
+      .orderBy(desc(documentImportListCache.fetchedAt))
       .get();
     if (!row) return null;
     const items = this.markImported(provider, row.itemsJson);
@@ -448,72 +669,53 @@ export class DocumentImportService {
     };
   }
 
-  /** imported 标记回填：该来源已有落 Room 的导入记录时置 true。 */
+  /** imported 标记回填：已落库（单篇导入的 room-import 记录）或批次成功导入
+   *  （批量导入只落工作区文稿、不写 room-import 记录，只在批次 items 里留痕）
+   *  时置 true。落地集合按 provider 一次 join 查询取回（不做对列举 ids 的
+   *  inArray——全量上限放开后上万条会超 SQLite 变量上限）。 */
   private markImported(
     provider: ExternalDocumentProvider,
     items: ExternalDocumentListItem[],
   ): ExternalDocumentListItem[] {
-    const remoteIds = [...new Set(items.map((item) => item.remoteDocumentId))];
-    if (remoteIds.length === 0) return items;
-    const sources = this.db.select({
-      id: documentImportSources.id,
-      remoteDocumentId: documentImportSources.remoteDocumentId,
-    }).from(documentImportSources)
+    if (items.length === 0) return items;
+    const landedRemoteIds = this.db
+      .select({ remoteDocumentId: documentImportSources.remoteDocumentId })
+      .from(documentRoomImports)
+      .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
+      .innerJoin(documentImportSources, eq(documentImportRuns.sourceId, documentImportSources.id))
       .where(and(
         eq(documentImportSources.ownerId, "local-user"),
         eq(documentImportSources.provider, provider),
-        inArray(documentImportSources.remoteDocumentId, remoteIds),
-      )).all();
-    const sourceIds = sources.map((source) => source.id);
-    const landedSourceIds = new Set(sourceIds.length > 0
-      ? this.db.select({ sourceId: documentImportRuns.sourceId })
-        .from(documentRoomImports)
-        .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
-        .where(inArray(documentImportRuns.sourceId, sourceIds))
-        .all()
-        .map((row) => row.sourceId)
-      : []);
-    const landedRemoteIds = new Set(
-      sources.filter((source) => landedSourceIds.has(source.id)).map((source) => source.remoteDocumentId),
-    );
+      ))
+      .all()
+      .reduce((set, row) => set.add(row.remoteDocumentId), new Set<string>());
+    const batchImported = this.batchImportedRemoteIds(provider);
     for (const item of items) {
-      if (landedRemoteIds.has(item.remoteDocumentId)) item.imported = true;
+      if (landedRemoteIds.has(item.remoteDocumentId) || batchImported.has(item.remoteDocumentId)) item.imported = true;
     }
     return items;
   }
 
-  /**
-   * 批量导入 auto 模式的全文读取器：从已完成的 preview run 拿回完整 markdown
-   * （preview DTO 只有 4000 字符摘录）。供孵化投喂使用，不进 REST 面。
-   */
-  async getRunMarkdown(runId: string): Promise<{
-    provider: ExternalDocumentProvider;
-    remoteDocumentId: string;
-    title: string;
-    bodyMarkdown: string;
-    sourceUrl: string | null;
-  }> {
-    const run = this.db.select().from(documentImportRuns)
-      .where(eq(documentImportRuns.id, runId)).get();
-    if (!run) {
-      throw new ImportServiceError("IMPORT_RUN_NOT_FOUND", `导入记录不存在：${runId}`, 404);
+  /** 批次成功（imported/incubated；incubated 是已删归房链路的遗留终态，旧批行
+   *  仍在库里）的远端文档 id 集合：批量导入只写工作区文稿、不落 room-import
+   *  记录，"已导入"口径须把批次 items 计入。 */
+  private batchImportedRemoteIds(provider: ExternalDocumentProvider): Set<string> {
+    const rows = this.db.select({ items: documentImportBatches.itemsJson })
+      .from(documentImportBatches)
+      .where(and(
+        eq(documentImportBatches.ownerId, "local-user"),
+        eq(documentImportBatches.provider, provider),
+        eq(documentImportBatches.status, "completed"),
+      )).all();
+    const ids = new Set<string>();
+    for (const row of rows) {
+      for (const item of row.items) {
+        if ((item.status === "imported" || item.status === "incubated") && item.remoteDocumentId) {
+          ids.add(item.remoteDocumentId);
+        }
+      }
     }
-    if (!run.snapshotId) {
-      throw new ImportServiceError("IMPORT_RUN_NOT_SNAPSHOTTED", `导入记录尚未完成读取：${runId}`, 409);
-    }
-    const snapshot = this.db.select().from(documentImportSnapshots)
-      .where(eq(documentImportSnapshots.id, run.snapshotId)).get();
-    if (!snapshot) {
-      throw new ImportServiceError("IMPORT_SNAPSHOT_NOT_FOUND", `导入快照不存在：${run.snapshotId}`, 404);
-    }
-    const artifact = await this.loadArtifact(snapshot.artifactRef);
-    return {
-      provider: artifact.provider,
-      remoteDocumentId: artifact.remoteDocumentId,
-      title: artifact.title,
-      bodyMarkdown: artifact.bodyMarkdown,
-      sourceUrl: artifact.sourceUrl,
-    };
+    return ids;
   }
 
   async preview(
@@ -522,7 +724,6 @@ export class DocumentImportService {
     connectionName?: string,
   ): Promise<ExternalDocumentPreview> {
     const adapter = this.adapterOf(provider, connectionName);
-    const config = this.requireConfig();
     const runId = randomUUID();
     const now = new Date();
     this.db.insert(documentImportRuns).values({
@@ -602,7 +803,7 @@ export class DocumentImportService {
         warnings,
       };
     } catch (error) {
-      const mapped = this.mapConnectorError(error);
+      const mapped = this.mapConnectorError(error, provider);
       this.finishRun(runId, "failed", mapped.code, mapped.message);
       throw mapped;
     }
@@ -614,7 +815,7 @@ export class DocumentImportService {
     };
     // 远端图片物化（B-9）：经桌面资产桥 PUT 落 DocumentAssetStore，改写为本机
     // nxcore-document-asset:// URL（编辑器原生可渲染）；失败保留远端链接并告警。
-    artifact = await this.materializeRemoteAssets(artifact, runId);
+    artifact = await this.materializeRemoteAssets(artifact, runId, provider);
 
     const artifactRef = await storeArtifact(this.dataDir, artifact);
     const sourceId = await this.upsertSource(artifact);
@@ -688,6 +889,37 @@ export class DocumentImportService {
     };
   }
 
+  /**
+   * 统一提交入口：显式 roomId → 旧 Room 路径（兼容旧桌面）；省略/null → 工作区导入。
+   *
+   * 两条路径的结果 DTO 保持同一形状（`CommitImportResult`）：工作区路径不写
+   * `document_room_imports`，`roomImportId` 恒 null、`relation` 记 "primary"，
+   * 旧调用方按原字段读取不会出现缺字段。
+   */
+  async commit(input: CommitDocumentImportInput): Promise<CommitImportResult> {
+    const roomId = typeof input.roomId === "string" ? input.roomId.trim() : "";
+    if (roomId) {
+      return this.commitToRoom({
+        runId: input.runId,
+        roomId,
+        ...(input.targetDocumentId ? { targetDocumentId: input.targetDocumentId } : {}),
+        ...(input.forceNewDocument ? { forceNewDocument: true } : {}),
+      });
+    }
+    const result = await this.commitToWorkspace({
+      runId: input.runId,
+      ...(input.forceNewDocument ? { forceNewDocument: true } : {}),
+    });
+    return {
+      run: result.run,
+      roomImportId: null,
+      relation: "primary",
+      ...(result.noChange ? { noChange: true } : {}),
+      documentId: result.documentId,
+      document: result.document,
+    };
+  }
+
   async commitToRoom(input: CommitImportInput): Promise<CommitImportResult> {
     const run = this.db.select().from(documentImportRuns).where(eq(documentImportRuns.id, input.runId)).get();
     if (!run) throw new ImportServiceError("NOT_FOUND", "导入任务不存在", 404);
@@ -699,12 +931,13 @@ export class DocumentImportService {
       : null;
     if (!snapshot) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
     const artifact = await this.loadArtifact(snapshot.artifactRef);
-    const contentJson = agentDocumentMarkdown.parse(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
 
     // 来源去重（方案 §3.1）：未显式指定目标文档时，若该 Room 已导入过同一来源
     // （relation=primary 且文档仍存在），自动转为该文档的候选版本，不重复落新文档。
+    // forceNewDocument=true 跳过（批量导入"创建新的"，用户已在 UI 明确选择）。
     let targetDocumentId = input.targetDocumentId ?? null;
-    if (!targetDocumentId && run.sourceId) {
+    if (!targetDocumentId && run.sourceId && !input.forceNewDocument) {
       const existing = this.db.select({ documentId: documentRoomImports.documentId })
         .from(documentRoomImports)
         .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
@@ -810,13 +1043,111 @@ export class DocumentImportService {
   }
 
   /**
-   * "检查外部更新"：对已挂接外部来源的 Room 文档重新读取远端并生成候选版本。
-   * 与"应用此版本"（applyCandidate）是两个独立动作。
+   * 工作区文稿导入提交：批量导入（连接器页勾选 → 导入）的唯一落地路径。
+   *
+   * Room 维度已删，导入产物一律是工作区文稿（`origin=import`、`roomId=null`）。
+   * 来源去重按正文哈希：同来源上一次成功导入的文稿仍在工作区时，哈希未变则不
+   * 落新版本（`noChange`，批量项记 skipped），变了则在该文稿上追加新版本——
+   * 工作区文稿本身就是可编辑正本，不再产生 Room 时代的"候选文稿"中间态
+   * （候选/应用那条链路仍服务于单篇导入的 `/v1/documents/:documentId/*` 路由，
+   * 走 commitToRoom）。
+   * `forceNewDocument=true` 跳过去重，同来源一律新建。
    */
-  async checkExternalUpdate(roomId: string, documentId: string): Promise<CommitImportResult> {
+  async commitToWorkspace(input: CommitWorkspaceImportInput): Promise<CommitWorkspaceImportResult> {
+    const run = this.db.select().from(documentImportRuns).where(eq(documentImportRuns.id, input.runId)).get();
+    if (!run) throw new ImportServiceError("NOT_FOUND", "导入任务不存在", 404);
+    if (run.status !== "preview") {
+      throw new ImportServiceError("IMPORT_RUN_NOT_PREVIEWABLE", `导入任务状态为 ${run.status}，不能提交`, 409);
+    }
+    const snapshot = run.snapshotId
+      ? this.db.select().from(documentImportSnapshots).where(eq(documentImportSnapshots.id, run.snapshotId)).get()
+      : null;
+    if (!snapshot) throw new ImportServiceError("SNAPSHOT_MISSING", "导入快照缺失", 409);
+    const artifact = await this.loadArtifact(snapshot.artifactRef);
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+
+    const previous = input.forceNewDocument ? null : this.workspaceImportTargetOf(run.sourceId);
+
+    // 无变化守卫：正文哈希与上次已落库快照相同 → 不落新版本（防空转）。
+    if (previous && previous.contentHash === snapshot.contentHash) {
+      const current = this.documents.get(previous.documentId);
+      if (current) {
+        this.db.update(documentImportRuns).set({
+          status: "committing",
+          targetRoomId: null,
+          targetDocumentId: current.id,
+          updatedAt: new Date(),
+        }).where(eq(documentImportRuns.id, run.id)).run();
+        this.finishRun(run.id, "succeeded");
+        return { run: this.getRun(run.id), documentId: current.id, document: current, created: false, noChange: true };
+      }
+    }
+
+    const previousDocument = previous ? this.documents.get(previous.documentId) : null;
+    const document = previousDocument
+      ? await this.documents.save(previousDocument.id, {
+        baseVersion: previousDocument.version,
+        title: artifact.title,
+        contentJson,
+      })
+      : await this.documents.import({
+        id: `imp-${randomUUID()}`,
+        roomId: null,
+        title: artifact.title,
+        contentJson,
+        origin: "import",
+      });
+
+    this.db.update(documentImportRuns).set({
+      status: "committing",
+      targetRoomId: null,
+      targetDocumentId: document.id,
+      updatedAt: new Date(),
+    }).where(eq(documentImportRuns.id, run.id)).run();
+    this.finishRun(run.id, "succeeded");
+
+    return { run: this.getRun(run.id), documentId: document.id, document, created: previousDocument === null, noChange: false };
+  }
+
+  /** 同来源上一次成功导入的工作区文稿及其快照哈希（已删除/已回收的跳过）。 */
+  private workspaceImportTargetOf(sourceId: string | null): { documentId: string; contentHash: string | null } | null {
+    if (!sourceId) return null;
+    const rows = this.db.select({
+      documentId: documentImportRuns.targetDocumentId,
+      snapshotId: documentImportRuns.snapshotId,
+    }).from(documentImportRuns)
+      .where(and(
+        eq(documentImportRuns.sourceId, sourceId),
+        eq(documentImportRuns.status, "succeeded"),
+      ))
+      .orderBy(desc(documentImportRuns.updatedAt))
+      .all();
+    for (const row of rows) {
+      if (!row.documentId) continue;
+      const document = this.documents.get(row.documentId);
+      if (!document || document.deletedAt) continue;
+      const landedSnapshot = row.snapshotId
+        ? this.db.select({ contentHash: documentImportSnapshots.contentHash })
+          .from(documentImportSnapshots)
+          .where(eq(documentImportSnapshots.id, row.snapshotId))
+          .get()
+        : null;
+      return { documentId: document.id, contentHash: landedSnapshot?.contentHash ?? null };
+    }
+    return null;
+  }
+
+  /**
+   * "检查外部更新"：对已挂接外部来源的工作区文档重新读取远端并生成候选版本。
+   * 与"应用此版本"（applyCandidate）是两个独立动作。
+   *
+   * 归属按文档（`/v1/documents/:documentId/check-external-update`），Room 维度已删；
+   * 新写入的关联行沿用该文档已有导入关联的 scope id，不伪造 Room。
+   */
+  async checkExternalUpdate(documentId: string): Promise<CommitImportResult> {
     const rows = this.db.select()
       .from(documentRoomImports)
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     if (rows.length === 0) {
@@ -834,7 +1165,7 @@ export class DocumentImportService {
     const preview = await this.preview(source.provider, source.remoteDocumentId);
     return this.commitToRoom({
       runId: preview.runId,
-      roomId,
+      roomId: latest.roomId,
       targetDocumentId: documentId,
     });
   }
@@ -854,16 +1185,13 @@ export class DocumentImportService {
     const artifact = await this.loadArtifact(snapshot.artifactRef);
     const target = this.documents.get(row.documentId);
     if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
-    if (target.roomId !== row.roomId) {
-      throw new ImportServiceError("ROOM_MISMATCH", "目标文档属于其他 Room", 409);
-    }
     if (target.deletedAt) {
       throw new ImportServiceError("DOCUMENT_TRASHED", "目标文档已在回收站，先恢复再应用", 409);
     }
     if (target.activeTransactionId) {
       throw new ImportServiceError("DOCUMENT_BUSY", "Agent 正在写入该文档", 409);
     }
-    const contentJson = agentDocumentMarkdown.parse(artifact.bodyMarkdown) as RoomDocument["contentJson"];
+    const contentJson = parseImportedMarkdown(artifact.bodyMarkdown) as RoomDocument["contentJson"];
     const saved = await this.documents.save(row.documentId, {
       baseVersion: target.version,
       title: artifact.title,
@@ -879,7 +1207,9 @@ export class DocumentImportService {
     return { document: saved, version: saved.version };
   }
 
-  async importHistory(roomId: string, documentId: string): Promise<{
+  /** 文档的外部导入历史（按 documentId 归属；`/v1/documents/:documentId/import-history`）。
+   *  快照/候选/评论都挂在这条文档上，Room 维度已删，不再按房过滤。 */
+  async importHistory(documentId: string): Promise<{
     entries: DocumentImportHistoryEntry[];
     commentDiff: DocumentImportCommentDiffSummary | null;
     comments: ExternalDocumentCommentView[];
@@ -894,7 +1224,7 @@ export class DocumentImportService {
       .innerJoin(documentImportRuns, eq(documentRoomImports.importRunId, documentImportRuns.id))
       .innerJoin(documentImportSnapshots, eq(documentRoomImports.snapshotId, documentImportSnapshots.id))
       .innerJoin(documentImportSources, eq(documentImportRuns.sourceId, documentImportSources.id))
-      .where(and(eq(documentRoomImports.roomId, roomId), eq(documentRoomImports.documentId, documentId)))
+      .where(eq(documentRoomImports.documentId, documentId))
       .orderBy(desc(documentRoomImports.createdAt))
       .all();
     const entries: DocumentImportHistoryEntry[] = rows.map(({ roomImport, snapshot, source }) => ({
@@ -976,7 +1306,7 @@ export class DocumentImportService {
     if (!target) throw new ImportServiceError("NOT_FOUND", "目标文档不存在", 404);
     const candidateDocument = this.documents.get(row.candidateDocumentId);
     const candidateContent = candidateDocument?.contentJson
-      ?? agentDocumentMarkdown.parse((await this.loadArtifact(snapshotRow.artifactRef)).bodyMarkdown) as RoomDocument["contentJson"];
+      ?? parseImportedMarkdown((await this.loadArtifact(snapshotRow.artifactRef)).bodyMarkdown) as RoomDocument["contentJson"];
     const cleanTitle = (candidateDocument?.title ?? snapshotRow.contentHash.slice(0, 8)).replace(/（外部更新候选）\s*$/, "");
     return {
       candidate: {
@@ -1119,9 +1449,32 @@ export class DocumentImportService {
     return { comparable: true, added, resolved, modified, removed, reason: null };
   }
 
+  /**
+   * 飞书图片字节获取：markdown 里的 `feishu.cn/file/<token>` 是文件页链接
+   * （HTML，非字节），直接 fetch 必失败。lark-cli 通道经 `docs
+   * +media-download` 落本地临时文件后读字节（outputPath 带扩展名防 CLI
+   * 自动补名漂移）；失败或非飞书场景返回 null 走原链接直连。
+   */
+  private async fetchAssetBytes(
+    url: string,
+    provider: ExternalDocumentProvider,
+    mediaDir: string | null,
+  ): Promise<Uint8Array | null> {
+    if (provider !== "feishu" || !mediaDir || !this.larkCli) return null;
+    const token = /feishu\.cn\/file\/([A-Za-z0-9]+)/.exec(url)?.[1];
+    if (!token) return null;
+    try {
+      const path = await downloadLarkMediaToFile(this.larkCli, token, join(mediaDir, `${token}.bin`));
+      return new Uint8Array(await readFile(path));
+    } catch {
+      return null;
+    }
+  }
+
   private async materializeRemoteAssets(
     artifact: CanonicalDocumentArtifact,
     runId: string,
+    provider: ExternalDocumentProvider,
   ): Promise<CanonicalDocumentArtifact> {
     if (!this.assetBridgeUrl) return artifact;
     const bridge = this.assetBridgeUrl;
@@ -1129,18 +1482,30 @@ export class DocumentImportService {
     const warnings: ExternalDocumentWarning[] = [...artifact.warnings];
     let materialized = 0;
     let failed = 0;
-    const bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
+    const failedReasons: string[] = [];
+    const mediaDir = provider === "feishu" && this.larkCli
+      ? await mkdtemp(join(tmpdir(), "nxcore-import-media-"))
+      : null;
+    let bodyMarkdown = artifact.bodyMarkdown;
+    try {
+    bodyMarkdown = await replaceAsync(artifact.bodyMarkdown, /!\[([^\]]*)\]\(\s*(https?:\/\/[^)\s]+)[^)]*\)/g,
       async (full: string, alt: string, url: string) => {
         if (materialized + failed >= 10) return full;
         try {
-          const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-          if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
-          const mime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
-          if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(mime)) {
-            throw new Error(`不支持的图片类型 ${mime}`);
+          let bytes = await this.fetchAssetBytes(url, provider, mediaDir);
+          let headerMime = "";
+          if (!bytes) {
+            const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+            if (!response.ok) throw new Error(`HTTP ${String(response.status)}`);
+            bytes = new Uint8Array(await response.arrayBuffer());
+            headerMime = ((response.headers.get("content-type") ?? "").split(";")[0] ?? "").trim();
           }
-          const bytes = new Uint8Array(await response.arrayBuffer());
           if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("图片超过 5MB");
+          // 以魔数嗅探为准：远端/中转声明的 content-type 可能与真实字节不符
+          // （实测飞书中转 PNG 字节配 image/jpeg 头，资产桥签名校验会拒收 400）。
+          const mime = sniffImageMime(bytes)
+            ?? (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(headerMime) ? headerMime : null);
+          if (!mime) throw new Error(`不支持的图片类型 ${headerMime || "unknown"}`);
           const put = await fetch(`${bridge}?doc=${encodeURIComponent(syntheticDocId)}`, {
             method: "PUT",
             headers: { "Content-Type": mime },
@@ -1153,11 +1518,15 @@ export class DocumentImportService {
           if (!src) throw new Error("资产桥未返回 src");
           materialized += 1;
           return `![${alt}](${src})`;
-        } catch {
+        } catch (error) {
           failed += 1;
+          failedReasons.push(`${url.slice(0, 60)}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 160));
           return full;
         }
       });
+    } finally {
+      if (mediaDir) await rm(mediaDir, { recursive: true, force: true }).catch(() => undefined);
+    }
     if (materialized > 0) {
       warnings.push({
         code: "remote_assets_materialized",
@@ -1167,7 +1536,7 @@ export class DocumentImportService {
     if (failed > 0) {
       warnings.push({
         code: "asset_materialize_failed",
-        message: `${String(failed)} 张远端图片下载失败，保留原链接`,
+        message: `${String(failed)} 张远端图片下载失败，保留原链接；原因：${failedReasons.join("；")}`,
       });
     }
     return { ...artifact, bodyMarkdown, warnings };
@@ -1222,7 +1591,8 @@ export class DocumentImportService {
   }
 
   private requireConfig(): OpenConnectorCliConfig {
-    if (!this.connectorConfig) {
+    // baseUrl 空 = 登出态（会话热更新清空）；cliConnector 对象恒在场。
+    if (!this.connectorConfig || !this.connectorConfig.baseUrl.trim()) {
       throw new ImportServiceError(
         "OPEN_CONNECTOR_UNAVAILABLE",
         "OpenConnector 连接层未配置或不可用，导入入口暂不可用",
@@ -1232,7 +1602,63 @@ export class DocumentImportService {
     return this.connectorConfig;
   }
 
+  /** 飞书连接器开关：连接器页「关闭」后拒绝一切 lark-cli 导入（凭据仍在本机）。 */
+  private assertFeishuEnabled(): void {
+    if (this.isFeishuDisabled?.()) {
+      throw new ImportServiceError(
+        "IMPORT_CONNECTION_REQUIRED",
+        "飞书连接已在连接器页关闭，请先开启后再导入文档",
+        422,
+      );
+    }
+  }
+
+  /** 飞书 lark-cli 授权门禁：结果缓存 30s，批量导入（逐篇 preview）不会
+   * 每篇都 spawn 一次 auth status。未授权抛 authentication_required，
+   * 经 mapConnectorError 映射 422 引导用户去数据源页连接飞书。 */
+  private async ensureFeishuLarkAuth(): Promise<void> {
+    this.assertFeishuEnabled();
+    if (this.larkAuthCache && Date.now() - this.larkAuthCache.at < 30_000) {
+      if (!this.larkAuthCache.ok) {
+        throw new ImportConnectorError("authentication_required", this.larkAuthCache.reason);
+      }
+      return;
+    }
+    const config = this.larkCli;
+    if (!config) {
+      throw new ImportServiceError("IMPORT_CONNECTION_REQUIRED", "飞书导入不可用：lark-cli 未配置", 422);
+    }
+    try {
+      const status = await larkAuthStatus(config);
+      if (status.appConfigured && status.userAvailable) {
+        this.larkAuthCache = { at: Date.now(), ok: true, reason: "" };
+        return;
+      }
+      const reason = status.appConfigured
+        ? `飞书账号未授权（${status.userName ?? status.tokenStatus ?? "未登录"}）`
+        : "lark-cli 应用未配置";
+      this.larkAuthCache = { at: Date.now(), ok: false, reason };
+      throw new ImportConnectorError("authentication_required", reason);
+    } catch (error) {
+      if (error instanceof ImportConnectorError || error instanceof ImportServiceError) throw error;
+      if (error instanceof LarkCliError) throw larkErrorToImportConnectorError(error);
+      throw new ImportConnectorError("connector_error", error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private adapterOf(provider: ExternalDocumentProvider, connectionName?: string): ExternalDocumentProviderAdapter {
+    // 飞书换轨 lark-cli：不经 OpenConnector 配置/连接解析，connectionName 无意义。
+    if (provider === "feishu") {
+      this.assertFeishuEnabled();
+      const run = this.larkActionFn
+        ?? (this.larkCli
+          ? createLarkImportActionRunner(this.larkCli, { ensureAuth: () => this.ensureFeishuLarkAuth() })
+          : null);
+      if (!run) {
+        throw new ImportServiceError("IMPORT_CONNECTION_REQUIRED", "飞书导入不可用：lark-cli 未配置", 422);
+      }
+      return importAdapterOf(provider, run);
+    }
     const config = this.requireConfig();
     // 连接器页按连接列举/批量导入：入口解析出的连接名显式注入每个 action 调用
     // （call 自带 connectionName 时以 call 为准），避免长任务中途连接解析漂移。
@@ -1247,21 +1673,27 @@ export class DocumentImportService {
     return importAdapterOf(provider, run);
   }
 
-  private mapConnectorError(error: unknown): ImportServiceError {
+  private mapConnectorError(error: unknown, provider?: ExternalDocumentProvider): ImportServiceError {
     if (error instanceof ImportServiceError) return error;
     if (error instanceof ImportConnectorError) {
       if (error.code === "authentication_required" || error.code === "no_connection") {
-        return new ImportServiceError(
-          "IMPORT_CONNECTION_REQUIRED",
-          `导入连接不可用：${error.detail}。请在连接器管理中建立该服务的导入连接。`,
-          422,
-        );
+        const message = provider === "feishu"
+          ? `飞书导入连接不可用：${error.detail}。请在数据源页连接飞书账号。`
+          : `导入连接不可用：${error.detail}。请在连接器管理中建立该服务的导入连接。`;
+        return new ImportServiceError("IMPORT_CONNECTION_REQUIRED", message, 422);
       }
       if (error.code === "action_not_found") {
         return new ImportServiceError("IMPORT_ACTION_MISSING", `OpenConnector 动作不可用：${error.detail}`, 502);
       }
+      if (error.code === "content_empty") {
+        // 空文档是数据形态而非连接器故障：批量导入按"跳过"落项，不进失败明细。
+        return new ImportServiceError("IMPORT_CONTENT_EMPTY", error.detail, 422);
+      }
       if (error.code === "connector_unavailable") {
-        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", `OpenConnector 服务不可用：${error.detail}`, 503);
+        const message = provider === "feishu"
+          ? `lark-cli 不可用：${error.detail}`
+          : `OpenConnector 服务不可用：${error.detail}`;
+        return new ImportServiceError("OPEN_CONNECTOR_UNAVAILABLE", message, 503);
       }
       return new ImportServiceError("IMPORT_READ_FAILED", `外部文档读取失败：${error.detail}`, 502);
     }

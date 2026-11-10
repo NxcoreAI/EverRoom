@@ -1,5 +1,7 @@
 # 连接器数据源平台化 — 域表合流与 Provider 插件化重构方案（v1 草案）
 
+> **历史文档（2026-10-28 起）**：连接器已从同步管道改为 Agent 即席检索，不再做定时同步/本地存储。现行方案与实施记录见 [connector-agent-query-refactor-plan.zh-CN.md](./connector-agent-query-refactor-plan.zh-CN.md)。
+
 > 状态：**草案，待评审**
 > 日期：2026-08-31
 > 范围：`apps/gateway`（`modules/connectors` 主体重构、`modules/context-rooms` 读侧、`infrastructure/database` 迁移）、`apps/desktop`（连接入口与管理面板数据驱动化）、`packages/connector-contract`（类型放宽）
@@ -420,5 +422,5 @@ vendored 树（`modules/connector/`）与 supervisor 不移除，但冻结边界
 - **Q4 Nango 路径是否接入 `connector_markdown_artifacts` 版本链**：CLI 路径有 markdown 版本化工件（含 `ingestSourceId`），Nango 路径目前直接快照进 `route_decisions`。合流后是否统一走 artifacts（获得版本回放能力）？
 - **Q5 connectionName/账号模型统一**：Nango 路径 connectionName=connection.id，CLI 路径语义为账号名且有 `connector_accounts` 表。多账号场景（同一 provider 两个 Gmail）建议在阶段三统一到 connector_accounts，是否纳入？
 - **Q6 路由瀑布 LLM 成本**：源数量放大后逐条抽取的成本与延迟（内容 hash 缓存、批抽取、规则覆盖率提升）建议作为独立优化项排期，不阻塞本方案。
-- **Q7 providers 元数据端点的多客户端契约**：browser-extension / mobile 是否消费该端点？若是，iconKey 需要跨端资源约定。
+- **Q7 providers 元数据端点的多客户端契约**：browser-extension 已随 `11969b08` 删除，端点的外部消费者只剩 mobile；mobile 是否消费该端点？若是，iconKey 需要跨端资源约定。
 

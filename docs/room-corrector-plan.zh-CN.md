@@ -1,5 +1,7 @@
 # Room 总览纠正子 agent（room-corrector）与 context_get 瘦身
 
+> **已废弃（Phase 2/3 已移除）**：Room 总览纠正子 agent（room-corrector）已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：已实现（2026-09-02，随 doc-writer 方案收官后的同域延伸，待真机验证）
 > 关联：[doc-writer-subagent-plan.zh-CN.md](doc-writer-subagent-plan.zh-CN.md)（同款"编排与计算分离"模式）、[agent-architecture-optimization-plan.zh-CN.md](agent-architecture-optimization-plan.zh-CN.md)（§2 D1 交互形态分工）
 > 决策：用户拍板两步都做——①context_get 瘦身（立即）②纠正计算外移 room-corrector 子 agent。

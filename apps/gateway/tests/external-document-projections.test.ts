@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../src/infrastructure/database/client.js";
-import { createBuiltinDocumentCapabilityRegistry } from "../src/modules/documents/capabilities/builtins.js";
+import { selectionRewritePlugin } from "../src/modules/documents/capabilities/selection-rewrite-plugin.js";
+import { DocumentCapabilityRegistry } from "../src/modules/documents/capabilities/registry.js";
 import { ExternalDocumentProjectionService } from "../src/modules/documents/external-projections/service.js";
 import { DocumentEventBroker } from "../src/modules/documents/event-broker.js";
 import { DocumentOperationService } from "../src/modules/documents/operations/service.js";
@@ -22,7 +23,8 @@ async function harness() {
   const broker = new DocumentEventBroker();
   const documents = new DocumentService(database.db, broker);
   const operations = new DocumentOperationService(database.db, broker);
-  const capabilities = createBuiltinDocumentCapabilityRegistry(documents, undefined, operations);
+  // 文稿工具链已下线；本套件只依赖 selection-rewrite capability（Obsidian 双向同步），单独注册。
+  const capabilities = new DocumentCapabilityRegistry(operations).register(selectionRewritePlugin(documents));
   const projections = new ExternalDocumentProjectionService(database.db, documents, operations, capabilities);
   return { database, documents, operations, capabilities, projections };
 }
@@ -55,6 +57,38 @@ describe("external document projections", () => {
     expect(moved.relativePath).toBe("Archive/Idea.md");
     await expect(projections.remove("obsidian-vault", "vault-1", "note-1")).resolves.toBe(1);
     expect(projections.getByDocument(first.documentId)).toBeNull();
+    database.sqlite.close();
+  });
+
+  it("supports local-directory projections with identity isolated from obsidian-vault by sourceKind", async () => {
+    const { database, projections } = await harness();
+    const obsidian = await projections.sync({
+      sourceKind: "obsidian-vault",
+      sourceId: "dir-1",
+      resourceId: "note-1",
+      roomId: "room-1",
+      relativePath: "docs/Readme.md",
+      sourceHash: "d".repeat(64),
+      title: "Readme",
+      markdown: "# Readme\n\nVault view",
+    });
+    const local = await projections.sync({
+      sourceKind: "local-directory",
+      sourceId: "dir-1",
+      resourceId: "note-1",
+      roomId: "room-1",
+      relativePath: "docs/Readme.md",
+      sourceHash: "d".repeat(64),
+      title: "Readme",
+      markdown: "# Readme\n\nVault view",
+    });
+
+    expect(local.documentId).not.toBe(obsidian.documentId);
+    expect(local.documentId.startsWith("external-document-")).toBe(true);
+
+    await expect(projections.remove("local-directory", "dir-1")).resolves.toBe(1);
+    expect(projections.getByDocument(local.documentId)).toBeNull();
+    expect(projections.getByDocument(obsidian.documentId)).not.toBeNull();
     database.sqlite.close();
   });
 

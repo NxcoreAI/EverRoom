@@ -29,9 +29,7 @@ async function setup() {
   const database = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
   databases.push(database);
   const repository = new DocumentRepository(database.db);
-  const engine = new DocumentContentEngine({
-    findDocumentRoom: (documentId) => repository.get(documentId)?.roomId ?? null,
-  });
+  const engine = new DocumentContentEngine();
   const commits = new DocumentCommitService(database.db, repository, engine);
   const history = new YjsHistoryService();
   return { database, commits, history };

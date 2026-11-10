@@ -57,7 +57,6 @@ export function LocalAgentSettingsSection() {
         <span><Bot aria-hidden="true" /></span>
         <div>
           <h2 id="local-agent-settings-title">{t('surface:localAgentSettings.title')}</h2>
-          <p>{t('surface:localAgentSettings.description')}</p>
         </div>
         <button className="secondary-button" type="button" disabled={busy} onClick={() => void scan()}>
           {busy ? <LoaderCircle className="spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
@@ -68,7 +67,7 @@ export function LocalAgentSettingsSection() {
       {importResult ? <div className="local-agent-import-result"><small>{importResult}</small></div> : null}
       {!error && agents === null ? <div className="local-agent-empty"><small>{t('surface:localAgentSettings.scanning')}</small></div> : null}
       {!error && agents?.length === 0 ? (
-        <div className="local-agent-empty"><strong>{t('surface:localAgentSettings.none')}</strong><small>{t('surface:localAgentSettings.noneHint')}</small></div>
+        <div className="local-agent-empty"><strong>{t('surface:localAgentSettings.none')}</strong></div>
       ) : null}
       {agents?.length ? (
         <div className="local-agent-list">

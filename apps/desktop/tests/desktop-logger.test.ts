@@ -12,6 +12,7 @@ import {
   flushDesktopLogs,
   logDesktop,
   logDocumentCursorCompletion,
+  logLocalDesktop,
 } from '../src/main/logging/desktop-logger'
 
 const originalConsole = {
@@ -72,5 +73,40 @@ describe('desktop logger isolation', () => {
     )
     expect(JSON.stringify(sentryMocks.captureSentryLog.mock.calls)).not.toContain(documentBody)
     expect(JSON.stringify(sentryMocks.captureSentryLog.mock.calls)).not.toContain(suggestion)
+  })
+
+  it('escalates local-only warn and error logs to remote capture', () => {
+    sentryMocks.captureSentryLog.mockClear()
+
+    logLocalDesktop('transcription-test', 'info', { event: 'pipeline.progress' })
+    logLocalDesktop('transcription-test', 'warn', { event: 'pipeline.stalled' })
+    logLocalDesktop('transcription-test', 'error', { event: 'pipeline.failed' })
+
+    expect(sentryMocks.captureSentryLog).toHaveBeenCalledTimes(2)
+    expect(sentryMocks.captureSentryLog).toHaveBeenCalledWith(
+      'transcription-test',
+      'warn',
+      { event: 'pipeline.stalled' },
+    )
+    expect(sentryMocks.captureSentryLog).toHaveBeenCalledWith(
+      'transcription-test',
+      'error',
+      { event: 'pipeline.failed' },
+    )
+  })
+
+  it('serializes Error console args with name, message and stack', () => {
+    sentryMocks.captureSentryLog.mockClear()
+
+    console.error('transcription tick failed', new Error('boom'))
+
+    expect(sentryMocks.captureSentryLog).toHaveBeenCalledWith('console', 'error', expect.objectContaining({
+      event: 'transcription tick failed',
+      details: expect.objectContaining({
+        name: 'Error',
+        message: 'boom',
+        stack: expect.any(String),
+      }),
+    }))
   })
 })

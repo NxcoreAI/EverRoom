@@ -34,7 +34,6 @@ export interface DocumentToolDiagnostic {
   toolName: string;
   sessionId: string;
   runId: string;
-  roomId: string | null;
   durationMs: number;
   /** Number of attempts for the same run/tool/operation/sequence tuple. */
   attempt?: number;
@@ -63,7 +62,7 @@ const DIAGNOSTIC_FIELDS = [
   "readReceiptResolved", "operationIdCorrected", "blockCount",
   "operationInferred", "finalSequenceCorrected", "adjacentContextStripped",
   "requiredMaximumCharacters", "expectedFinalSequence", "beforeCharacters", "afterCharacters",
-  "originalCode", "repeatedAttempts", "memoryIndexCount", "invalidTargets", "availableTargets",
+  "originalCode", "repeatedAttempts", "invalidTargets", "availableTargets",
 ] as const;
 
 const NON_PROGRESS_PATCH_ERRORS = new Set([
@@ -167,7 +166,10 @@ export class DocumentMcpHost {
     private readonly operations?: DocumentOperationService,
     private readonly onDiagnostic?: (diagnostic: DocumentToolDiagnostic) => void,
   ) {
-    this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry(documents, rooms, operations);
+    void documents;
+    void rooms;
+    // 缺省工具面只剩 Office 一组（Markdown 文稿工具链已下线，见 builtins.ts 注释）。
+    this.capabilities = capabilities ?? createBuiltinDocumentCapabilityRegistry();
   }
 
   listTools(): readonly DocumentMcpToolDefinition[] {
@@ -277,6 +279,10 @@ export class DocumentMcpHost {
       };
     }
     if (operation.status === "completed") {
+      // 成功态不替换模型正文：模型的收尾总结是有效内容，替换成干巴巴的
+      // "已完成创建。"会把"全文约 N 字"这类有用信息一并丢掉（界面另有
+      // 文档去重回退兜底长篇复述）。仅在模型没有产出任何正文时才兜底一句。
+      if (input.content.trim()) return null;
       const action = operation.capabilityId === "document.create"
         ? "创建"
         : operation.capabilityId === "document.continue" ? "续写" : "修改";
@@ -330,7 +336,7 @@ export class DocumentMcpHost {
       context: structuredClone(context),
     };
     const server = new Server(
-      { name: "everroom-context-room", version: "2.0.0" },
+      { name: "everroom-office", version: "2.0.0" },
       { capabilities: { tools: {} }, instructions: this.instructions() },
     );
     holder.server = server;
@@ -359,9 +365,8 @@ export class DocumentMcpHost {
     if (
       bound.agentSessionId !== request.agentSessionId
       || bound.runId !== request.runId
-      || bound.roomId !== request.roomId
     ) {
-      throw new Error("MCP_CONTEXT_MISMATCH: MCP session is bound to another Agent run or Room");
+      throw new Error("MCP_CONTEXT_MISMATCH: MCP session is bound to another Agent run");
     }
   }
 
@@ -387,7 +392,6 @@ export class DocumentMcpHost {
         toolName: name,
         sessionId: context.agentSessionId,
         runId: context.runId,
-        roomId: context.roomId,
         durationMs: Math.round(performance.now() - startedAt),
         attempt,
         ...(recoveredFromErrorCode ? { recovered: true, recoveredFromErrorCode } : {}),
@@ -403,7 +407,7 @@ export class DocumentMcpHost {
         && previous.lastFailureCode === failureCode
         ? previous.identicalFailureCount + 1
         : 1;
-      if (name === "context_room_patch_hunk"
+      if (name === "document_patch_hunk"
         && failureCode
         && NON_PROGRESS_PATCH_ERRORS.has(failureCode)
         && identicalFailureCount >= 2) {
@@ -440,7 +444,6 @@ export class DocumentMcpHost {
         toolName: name,
         sessionId: context.agentSessionId,
         runId: context.runId,
-        roomId: context.roomId,
         durationMs: Math.round(performance.now() - startedAt),
         attempt,
         input: diagnosticPayload(args),

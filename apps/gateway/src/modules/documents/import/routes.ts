@@ -47,17 +47,20 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
           connectionName: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           /** true = 只读上次列举缓存（面板打开即时回显）；未命中返回空列表。 */
           cachedOnly: Type.Optional(Type.Boolean()),
+          /** full = 全量列举替换缓存（手动重新拉取 / 每日对账）；delta = 有缓存
+           *  时增量合并，无缓存或增量不可用自动回退全量。 */
+          mode: Type.Optional(Type.Union([Type.Literal("full"), Type.Literal("delta")])),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        const { provider, connectionName, cachedOnly } = request.body;
+        const { provider, connectionName, cachedOnly, mode } = request.body;
         if (cachedOnly) {
           const cached = service.getCachedList(provider, connectionName);
           if (cached) return cached;
           return { provider, items: [], truncated: false, warnings: [], fetchedAt: null };
         }
-        return await service.listAllDocuments(provider, connectionName);
+        return await service.listAllDocuments(provider, connectionName, mode ?? "full");
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -93,13 +96,14 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
         tags: ["document-import"],
         body: Type.Object({
           runId: Type.String(idText),
-          roomId: Type.String(idText),
+          // 省略/null = 导入工作区文稿库（不写 document_room_imports）；旧桌面仍可传 Room。
+          roomId: Type.Optional(Type.Union([Type.String(idText), Type.Null()])),
           targetDocumentId: Type.Optional(Type.String(idText)),
         }, { additionalProperties: false }),
       },
     }, async (request, reply) => {
       try {
-        return await service.commitToRoom(request.body);
+        return await service.commit(request.body);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -131,18 +135,17 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
       }
     });
 
-    app.post("/v1/rooms/:roomId/documents/:documentId/check-external-update", {
+    app.post("/v1/documents/:documentId/check-external-update", {
       schema: {
         tags: ["document-import"],
         params: Type.Object({
-          roomId: Type.String(idText),
           documentId: Type.String(idText),
         }),
       },
     }, async (request, reply) => {
-      const { roomId, documentId } = request.params;
+      const { documentId } = request.params;
       try {
-        return await service.checkExternalUpdate(roomId, documentId);
+        return await service.checkExternalUpdate(documentId);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);
@@ -150,18 +153,17 @@ export function documentImportRoutes(service: DocumentImportService): FastifyPlu
       }
     });
 
-    app.get("/v1/rooms/:roomId/documents/:documentId/import-history", {
+    app.get("/v1/documents/:documentId/import-history", {
       schema: {
         tags: ["document-import"],
         params: Type.Object({
-          roomId: Type.String(idText),
           documentId: Type.String(idText),
         }),
       },
     }, async (request, reply) => {
-      const { roomId, documentId } = request.params;
+      const { documentId } = request.params;
       try {
-        return await service.importHistory(roomId, documentId);
+        return await service.importHistory(documentId);
       } catch (error) {
         const mapped = errorPayload(error);
         if (mapped) return reply.code(mapped.status).send(mapped.body);

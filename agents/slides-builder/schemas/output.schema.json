@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "failed"],
+      "description": "completed = every requested edit applied; partial = some edits failed after retries; failed = nothing landed."
+    },
+    "fileEntryId": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "File entry id of the edited deck."
+    },
+    "fileName": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Deck file name as reported by the tools."
+    },
+    "pages": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32,
+      "description": "Total page count of the deck."
+    },
+    "outline": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "type": "string", "maxLength": 80 },
+      "description": "Final per-page titles of the deck."
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "maxLength": 400 },
+      "description": "Edit-level tolerance warnings and failed operations worth reporting to the user."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "description": "Concise outcome for the caller to relay: what was edited, failed operations and reasons, or why nothing landed."
+    }
+  },
+  "required": ["status", "summary"],
+  "additionalProperties": false
+}

@@ -4,15 +4,32 @@ import type {
   MigrationProvider,
   MigrationRun,
   MigrationSource,
+  MigrationSourceCapabilities,
   MigrationTransport,
 } from '@nxcore/agent-contract'
-import type { NormalizedMigrationThread } from '../migrations/types'
+import type { MigrationThreadUpload, NormalizedMigrationThread } from '../migrations/types'
 import type { GatewaySupervisor } from './gateway-supervisor'
+
+export interface ExportedMigrationThread {
+  stableKey: string
+  externalSessionId: string
+  title: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string; occurredAt: string; attachments?: Array<{ sourceKey: string; name: string; mimeType?: string; fileId?: string; missing?: boolean }> }>
+}
 
 export class MigrationsGatewayBridge {
   constructor(private readonly supervisor: GatewaySupervisor) {}
 
   sources(): Promise<MigrationSource[]> { return this.request('/v1/data-migrations/sources') }
+  capabilities(sourceId: string): Promise<MigrationSourceCapabilities | null> {
+    return this.request(`/v1/data-migrations/sources/${encodeURIComponent(sourceId)}/capabilities`)
+  }
+  setCapabilities(sourceId: string, input: { syncState?: 'active' | 'paused' | 'error' }): Promise<MigrationSourceCapabilities> {
+    return this.request(`/v1/data-migrations/sources/${encodeURIComponent(sourceId)}/capabilities`, { method: 'PATCH', body: JSON.stringify(input) })
+  }
+  exportThreads(sourceId: string): Promise<ExportedMigrationThread[]> {
+    return this.request(`/v1/data-migrations/sources/${encodeURIComponent(sourceId)}/export`, undefined, 120_000)
+  }
   runs(sourceId?: string): Promise<MigrationRun[]> {
     return this.request(`/v1/data-migrations/runs${sourceId ? `?sourceId=${encodeURIComponent(sourceId)}` : ''}`)
   }
@@ -22,11 +39,11 @@ export class MigrationsGatewayBridge {
   progress(runId: string, input: Partial<MigrationRun>): Promise<MigrationRun> {
     return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/progress`, { method: 'PATCH', body: JSON.stringify(input) })
   }
-  threads(runId: string, threads: NormalizedMigrationThread[]): Promise<MigrationRun> {
-    return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/threads`, { method: 'POST', body: JSON.stringify({ threads }) })
+  threads(runId: string, threads: MigrationThreadUpload[] | NormalizedMigrationThread[]): Promise<MigrationRun> {
+    return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/threads`, { method: 'POST', body: JSON.stringify({ threads }) }, 120_000)
   }
   finish(runId: string, fullScan = true): Promise<MigrationRun> {
-    return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/finish`, { method: 'POST', body: JSON.stringify({ fullScan }) })
+    return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/finish`, { method: 'POST', body: JSON.stringify({ fullScan }) }, 120_000)
   }
   fail(runId: string, error: string): Promise<MigrationRun> {
     return this.request(`/v1/data-migrations/runs/${encodeURIComponent(runId)}/fail`, { method: 'POST', body: JSON.stringify({ error }) })
@@ -41,10 +58,11 @@ export class MigrationsGatewayBridge {
   }
   preview(id: string): Promise<ExternalConversationPreview> { return this.request(`/v1/data-migrations/conversations/${encodeURIComponent(id)}/preview`) }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(path: string, init: RequestInit = {}, timeoutMs = 60_000): Promise<T> {
     const connection = this.supervisor.getConnection()
     const response = await fetch(`${connection.baseUrl}${path}`, {
       ...init,
+      signal: AbortSignal.timeout(timeoutMs),
       headers: {
         Authorization: `Bearer ${connection.token}`,
         ...(init.body ? { 'Content-Type': 'application/json' } : {}),

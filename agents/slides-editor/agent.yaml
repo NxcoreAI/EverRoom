@@ -1,0 +1,31 @@
+schemaVersion: 1
+id: slides-editor
+name: Slides Editor
+description: 语义内容指定页修复器——按 defects 修复 storyboard/v3 页面的来源、关系与完整性；不检索、不排版、不建文件
+mode: dispatch_only
+# ppt 生成已切换到主 Agent 的 pptx skill（slides_create + slides_set_page pptxOps）路径。
+enabled: false
+
+systemPrompt: ./SYSTEM.md
+
+skills: []
+
+mcp: []
+
+inputSchema: ./schemas/input.schema.json
+outputSchema: ./schemas/output.schema.json
+
+policy:
+  allowedCallers: [primary-agent]
+  # 12~24 页 storyboard 的 JSON 输出量接近 planner 方案，90s 实测必超时。
+  maxConcurrency: 16
+  # 不设工具调用上限：修复是「读资料 → 校验 → 修复 → 提交」的长链路，硬预算中途
+  # abort 会把已收敛的树一起丢掉；run 只受 timeoutSeconds 与输出预算约束。
+  # 冒烟测试期放宽到 900s，与 planner 的修复轮余量对齐。
+  timeoutSeconds: 900
+  model:
+    # 与主 Agent 同底座（主模型，deepseek 系）。修复任务=拿长页逐字文本对照来源逐数字
+    # 核对，推理量远超输出本体（2026-10-31 实测 98k 思考字符直接烧穿 32768 预算、
+    # 0 次工具调用即截断）。与 planner/layouter 对齐 131072，覆盖多页修复 + 思考。
+    reasoning: "low"
+    maxTokens: 131072

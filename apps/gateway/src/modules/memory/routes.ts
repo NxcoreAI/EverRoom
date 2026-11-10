@@ -1,597 +1,160 @@
 import type { FastifyPluginAsyncTypebox } from "@fastify/type-provider-typebox";
 import { Type } from "@sinclair/typebox";
-import { MemoryGatewayError } from "./errors.js";
+import { readProfileView } from "./profile.js";
 import type { MemoryService } from "./service.js";
 
-const RuntimeMemoryConfigBody = Type.Object({
-  enabled: Type.Optional(Type.Boolean()),
-  baseUrl: Type.String({ minLength: 1, maxLength: 2_000 }),
-  // External MemoryCore instances may intentionally run without auth.
-  apiKey: Type.String({ maxLength: 4_000 }),
-  serviceId: Type.String({ minLength: 1, maxLength: 200 }),
-  teamId: Type.String({ minLength: 1, maxLength: 200 }),
-  agentId: Type.String({ minLength: 1, maxLength: 200 }),
-  userId: Type.String({ minLength: 1, maxLength: 200 }),
-  recallLimit: Type.Integer({ minimum: 1, maximum: 50 }),
-  charBudget: Type.Integer({ minimum: 200, maximum: 2_000_000 }),
-  timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 120_000 })),
-});
-
-const AtomicType = Type.Union([
-  Type.Literal("episodic"),
-  Type.Literal("persona"),
-  Type.Literal("instruction"),
-]);
-
-const ListQuery = Type.Object({
-  type: Type.Optional(AtomicType),
-  limit: Type.Integer({ minimum: 1, maximum: 100, default: 50 }),
-  offset: Type.Integer({ minimum: 0, default: 0 }),
-  timeStart: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
-  timeEnd: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
-});
-
-const ConversationListQuery = Type.Object({
-  sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-  limit: Type.Integer({ minimum: 1, maximum: 100, default: 50 }),
-  offset: Type.Integer({ minimum: 0, default: 0 }),
-  timeStart: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
-  timeEnd: Type.Optional(Type.String({ minLength: 4, maxLength: 40 })),
-  sourceKind: Type.Optional(Type.Union([
-    Type.Literal("conversation"),
-    Type.Literal("document"),
-  ])),
-});
-
-const AtomicDtoSchema = Type.Object({
+const MemoryHitDto = Type.Object({
   id: Type.String(),
-  type: Type.String(),
   content: Type.String(),
-  background: Type.Union([Type.String(), Type.Null()]),
+  tags: Type.Array(Type.String()),
+  strength: Type.Number(),
+  halfLifeDays: Type.Number(),
+  retrievalCount: Type.Integer(),
   createdAt: Type.String(),
-  updatedAt: Type.String(),
-  roomId: Type.Union([Type.String(), Type.Null()]),
-  roomTitle: Type.Union([Type.String(), Type.Null()]),
+  score: Type.Number(),
+  /** 记忆层：episodic/semantic（hippo 原始层，整理回合可能把经验合并成 semantic）。 */
+  layer: Type.String(),
+  /** 对外类别：fact | lesson。**以这个为准**，经验被合并成 semantic 后仍然算 lesson。 */
+  category: Type.Union([Type.Literal("fact"), Type.Literal("lesson")]),
+  /** 作用域：`workspace:<id>`；null = 全局记忆。 */
+  scope: Type.Union([Type.String(), Type.Null()]),
 });
 
-const ConversationMessageDtoSchema = Type.Object({
-  id: Type.String(),
-  role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
-  content: Type.String(),
-  timestamp: Type.Union([Type.String(), Type.Null()]),
-  sessionId: Type.Union([Type.String(), Type.Null()]),
-  sourceKind: Type.Union([Type.String(), Type.Null()]),
-});
-
-const SourceDocumentInput = Type.Object({
-  sourceId: Type.String({ minLength: 1, maxLength: 100 }),
-  sourceKind: Type.String({ minLength: 1, maxLength: 50 }),
-  documentId: Type.String({ minLength: 1, maxLength: 200 }),
-  title: Type.String({ minLength: 1, maxLength: 500 }),
-  markdown: Type.String({ minLength: 1, maxLength: 500_000 }),
-  uri: Type.Optional(Type.String({ maxLength: 2_000 })),
-  contentHash: Type.Optional(Type.String({ maxLength: 128 })),
-});
-
-const OnboardingInput = Type.Object({
-  requestId: Type.String({ minLength: 1, maxLength: 80, pattern: "^[A-Za-z0-9._:-]+$" }),
-  locale: Type.Union([Type.Literal("zh-CN"), Type.Literal("en-US")]),
-  workContext: Type.String({ minLength: 1, maxLength: 500 }),
-  currentFocus: Type.String({ minLength: 1, maxLength: 500 }),
-  collaborationPreference: Type.Optional(Type.String({ maxLength: 500 })),
-});
-
-const ScenarioEntryDtoSchema = Type.Object({
-  path: Type.String(),
-  summary: Type.Union([Type.String(), Type.Null()]),
-  isDirectory: Type.Boolean(),
-  createdAt: Type.String(),
-  updatedAt: Type.String(),
-});
-
-const DocumentDtoSchema = Type.Object({
-  id: Type.String(),
-  title: Type.String(),
-  callerRef: Type.String(),
-  version: Type.Integer(),
-  sessionId: Type.String(),
-  chunkCount: Type.Integer(),
-  derivedMemoryCount: Type.Union([Type.Integer(), Type.Null()]),
-  createdAt: Type.String(),
-  updatedAt: Type.String(),
-});
-
-const DocumentDetailDtoSchema = Type.Object({
-  document: DocumentDtoSchema,
-  chunks: Type.Array(Type.Object({
-    chunkIndex: Type.Integer(),
-    messageId: Type.String(),
-    headingPath: Type.String(),
-    lineStart: Type.Integer(),
-    lineEnd: Type.Integer(),
-    content: Type.String(),
-    recordedAt: Type.Union([Type.String(), Type.Null()]),
-  })),
-  memories: Type.Array(Type.Object({
-    id: Type.String(),
-    type: Type.String(),
-    content: Type.String(),
-    background: Type.Union([Type.String(), Type.Null()]),
-    sourceMessageIds: Type.Array(Type.String()),
-    createdAt: Type.String(),
-    updatedAt: Type.String(),
-  })),
-});
-
-const ProvenanceDtoSchema = Type.Object({
-  memoryId: Type.String(),
-  type: Type.String(),
-  content: Type.String(),
-  kind: Type.String(),
-  room: Type.Object({
-    roomId: Type.Union([Type.String(), Type.Null()]),
-    roomTitle: Type.Union([Type.String(), Type.Null()]),
-  }),
-  session: Type.Union([
-    Type.Object({ sessionId: Type.Union([Type.String(), Type.Null()]), sessionKey: Type.Union([Type.String(), Type.Null()]) }),
-    Type.Null(),
-  ]),
-  document: Type.Union([
+const ProfileViewDto = Type.Object({
+  /**
+   * aggregate=模型聚合出的一版画像；fallback=还没聚合过，按标签把原始事实分组；
+   * empty=记忆库为空（或记忆未启用）。
+   */
+  source: Type.Union([Type.Literal("aggregate"), Type.Literal("fallback"), Type.Literal("empty")]),
+  groups: Type.Array(
     Type.Object({
-      documentId: Type.String(),
       title: Type.String(),
-      callerRef: Type.String(),
-      version: Type.Integer(),
-      sessionId: Type.String(),
+      items: Type.Array(Type.Object({ id: Type.String(), content: Type.String() })),
     }),
-    Type.Null(),
-  ]),
-  anchorMessageIds: Type.Array(Type.String()),
-  anchors: Type.Array(Type.Object({
-    messageId: Type.String(),
-    role: Type.String(),
-    content: Type.String(),
-    recordedAt: Type.Union([Type.String(), Type.Null()]),
-    sessionId: Type.Union([Type.String(), Type.Null()]),
-    sourceKind: Type.String(),
-    headingPath: Type.Optional(Type.String()),
-    lineStart: Type.Optional(Type.Integer()),
-    lineEnd: Type.Optional(Type.Integer()),
-    chunkIndex: Type.Optional(Type.Integer()),
-  })),
+  ),
 });
 
+/**
+ * 记忆管理端点（桌面端面板/导出用）。
+ *
+ * 只读 + 删除 + 检索；写入由 agent 工具（memory_remember）与用户显式指令产生，
+ * 不开放任意写接口，避免绕过记忆提炼规则。
+ */
 export function memoryRoutes(service: MemoryService): FastifyPluginAsyncTypebox {
   return async (app) => {
-    app.put("/v1/memory/config", {
-      schema: { tags: ["memory"], body: RuntimeMemoryConfigBody },
-    }, async (request) => {
-      const { enabled = true, ...memoryConfig } = request.body;
-      service.injectConfig(enabled ? memoryConfig : null);
-      return { enabled: service.enabled };
-    });
-
-    app.delete("/v1/memory/config", {
-      schema: { tags: ["memory"] },
-    }, async () => {
-      service.injectConfig(null);
-      return { enabled: false };
-    });
-
     app.get(
-      "/v1/memory/overview",
-      { schema: { tags: ["memory"] } },
-      async () => service.overview(),
-    );
-
-    app.post(
-      "/v1/memory/onboarding",
+      "/v1/memory/status",
       {
         schema: {
           tags: ["memory"],
-          body: OnboardingInput,
           response: {
             200: Type.Object({
-              sessionId: Type.String(),
-              capturedAt: Type.String(),
-              accepted: Type.Literal(true),
-            }),
-          },
-        },
-      },
-      async (request) => service.captureOnboarding(request.body),
-    );
-
-    app.get(
-      "/v1/memory/atomic",
-      {
-        schema: {
-          tags: ["memory"],
-          querystring: ListQuery,
-          response: {
-            200: Type.Object({
-              items: Type.Array(AtomicDtoSchema),
+              enabled: Type.Boolean(),
+              started: Type.Boolean(),
               total: Type.Integer(),
+              scopes: Type.Record(Type.String(), Type.Integer()),
             }),
           },
         },
       },
-      async (request) => service.listAtomic({
-        type: request.query.type,
-        limit: request.query.limit,
-        offset: request.query.offset,
-        timeStart: request.query.timeStart,
-        timeEnd: request.query.timeEnd,
+      async () => ({
+        enabled: service.isEnabled(),
+        started: service.isStarted(),
+        ...service.stats(),
       }),
     );
 
-    app.post(
-      "/v1/memory/atomic/search",
+    app.get(
+      "/v1/memory/entries",
       {
         schema: {
           tags: ["memory"],
-          body: Type.Object({
-            query: Type.String({ minLength: 1, maxLength: 2048 }),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
-            type: Type.Optional(AtomicType),
+          querystring: Type.Object({
+            // 上限与适配层的硬上限（MAX_LIMIT=200）对齐：桌面端「智能体」页要一次拿够
+            // 全量条目，上限比它小会直接 400，页面就退化成「暂无内容」。
+            limit: Type.Integer({ minimum: 1, maximum: 200, default: 50 }),
+            scope: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            workspaceId: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+            category: Type.Optional(Type.Union([Type.Literal("fact"), Type.Literal("lesson")])),
           }),
+          response: {
+            200: Type.Object({ items: Type.Array(MemoryHitDto) }),
+          },
         },
       },
-      async (request) => service.searchAtomic(request.body.query, request.body.limit ?? 10),
+      async (request) => ({
+        items: service.list({
+          limit: request.query.limit,
+          ...(request.query.scope !== undefined ? { scope: request.query.scope } : {}),
+          ...(request.query.workspaceId !== undefined ? { workspaceId: request.query.workspaceId } : {}),
+          ...(request.query.category !== undefined ? { category: request.query.category } : {}),
+        }),
+      }),
     );
 
-    app.patch(
-      "/v1/memory/atomic/:id",
+    /**
+     * 「用户画像」聚合视图：聚合优先、标签兜底。
+     * 分组与词表口径在网关侧（`modules/memory/tags.ts`），桌面端只负责渲染——
+     * 口径只能有一份，散到渲染层就会出现「用户交代过但页面不认」的条目。
+     */
+    app.get(
+      "/v1/memory/profile",
       {
         schema: {
           tags: ["memory"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }),
-          body: Type.Object({
-            content: Type.String({ minLength: 1, maxLength: 8192 }),
-            background: Type.Optional(Type.String({ maxLength: 2048 })),
+          querystring: Type.Object({
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
           }),
+          response: { 200: ProfileViewDto },
         },
       },
-      async (request) => service.updateAtomic(
-        request.params.id,
-        request.body.content,
-        request.body.background,
+      async (request) => readProfileView(
+        service,
+        request.query.limit !== undefined ? { limit: request.query.limit } : {},
       ),
     );
 
-    app.put(
-      "/v1/memory/atomic/:id/room",
+    app.post(
+      "/v1/memory/search",
       {
         schema: {
           tags: ["memory"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 200 }) }),
           body: Type.Object({
-            roomId: Type.Union([
-              Type.String({ minLength: 1, maxLength: 100 }),
-              Type.Null(),
-            ]),
-            // 绑定时的记忆快照（Room 记忆注入的数据源）；清除绑定（roomId=null）时忽略。
-            content: Type.Optional(Type.String({ maxLength: 8_192 })),
-            type: Type.Optional(Type.String({ maxLength: 50 })),
-            memoryUpdatedAt: Type.Optional(Type.String({ maxLength: 64 })),
+            query: Type.String({ minLength: 1, maxLength: 500 }),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+            scope: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
           }),
           response: {
-            200: Type.Object({
-              memoryId: Type.String(),
-              roomId: Type.Union([Type.String(), Type.Null()]),
-            }),
+            200: Type.Object({ items: Type.Array(MemoryHitDto) }),
           },
         },
       },
-      async (request) => service.assignAtomicRoom(request.params.id, request.body.roomId, {
-        content: request.body.content,
-        type: request.body.type,
-        memoryUpdatedAt: request.body.memoryUpdatedAt,
+      async (request) => ({
+        items: service.recall({
+          query: request.body.query,
+          ...(request.body.limit !== undefined ? { limit: request.body.limit } : {}),
+          ...(request.body.scope !== undefined ? { scope: request.body.scope } : {}),
+        }),
       }),
     );
 
-    // Room 归属记忆列表（桌面记忆卡喂料）：直读 room_memory_attributions 快照列，
-    // 不依赖 MemoryCore 存活；与注入/回溯 worker 共用同一数据源。
-    app.get(
-      "/v1/memory/rooms/:roomId/memories",
-      {
-        schema: {
-          tags: ["memory"],
-          params: Type.Object({ roomId: Type.String({ minLength: 1, maxLength: 200 }) }),
-          response: {
-            200: Type.Object({
-              items: Type.Array(Type.Object({
-                memoryId: Type.String(),
-                type: Type.String(),
-                content: Type.String(),
-              })),
-            }),
-          },
-        },
-      },
-      async (request) => {
-        const items = await service.listRoomAttributedMemories(request.params.roomId);
-        return {
-          items: items.map((item) => ({
-            memoryId: item.id,
-            type: item.type,
-            content: item.content,
-          })),
-        };
-      },
-    );
-
     app.delete(
-      "/v1/memory/atomic",
+      "/v1/memory/entries/:id",
       {
         schema: {
           tags: ["memory"],
-          body: Type.Object({
-            ids: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
-              minItems: 1,
-              maxItems: 5000,
-            }),
-          }),
-        },
-      },
-      async (request) => service.deleteAtomic(request.body.ids),
-    );
-
-    app.get(
-      "/v1/memory/scenario",
-      {
-        schema: {
-          tags: ["memory"],
-          querystring: Type.Object({
-            pathPrefix: Type.Optional(Type.String({ maxLength: 1024 })),
-          }),
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) }),
           response: {
-            200: Type.Object({
-              entries: Type.Array(ScenarioEntryDtoSchema),
-              total: Type.Integer(),
-            }),
+            200: Type.Object({ ok: Type.Boolean() }),
+            404: Type.Object({ message: Type.String() }),
           },
-        },
-      },
-      async (request) => service.listScenarios(request.query.pathPrefix),
-    );
-
-    app.get(
-      "/v1/memory/scenario/content",
-      {
-        schema: {
-          tags: ["memory"],
-          querystring: Type.Object({
-            path: Type.String({ minLength: 1, maxLength: 1024 }),
-          }),
-        },
-      },
-      async (request) => service.readScenario(request.query.path),
-    );
-
-    app.get(
-      "/v1/memory/core",
-      { schema: { tags: ["memory"] } },
-      async () => service.readCore(),
-    );
-
-    app.put(
-      "/v1/memory/core",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            content: Type.String({ minLength: 1, maxLength: 65536 }),
-          }),
         },
       },
       async (request, reply) => {
-        const result = await service.writeCore(request.body.content);
-        return reply.code(200).send(result);
+        const ok = service.forget(request.params.id, "user_delete");
+        if (!ok) return reply.code(404).send({ message: "memory_not_found" });
+        return { ok };
       },
-    );
-
-    app.get(
-      "/v1/memory/conversation",
-      {
-        schema: {
-          tags: ["memory"],
-          querystring: ConversationListQuery,
-          response: {
-            200: Type.Object({
-              messages: Type.Array(ConversationMessageDtoSchema),
-              total: Type.Integer(),
-            }),
-          },
-        },
-      },
-      async (request) => service.listConversations({
-        sessionId: request.query.sessionId,
-        limit: request.query.limit,
-        offset: request.query.offset,
-        timeStart: request.query.timeStart,
-        timeEnd: request.query.timeEnd,
-        sourceKind: request.query.sourceKind,
-      }),
-    );
-
-    app.post(
-      "/v1/memory/conversation/search",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            query: Type.String({ minLength: 1, maxLength: 2048 }),
-            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, default: 10 })),
-            sessionId: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
-          }),
-        },
-      },
-      async (request) => service.searchConversations(
-        request.body.query,
-        request.body.limit ?? 10,
-        request.body.sessionId,
-      ),
-    );
-
-    app.post(
-      "/v1/memory/conversation/import",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            sessionId: Type.String({ minLength: 1, maxLength: 100, pattern: "^[A-Za-z0-9._:-]+$" }),
-            messages: Type.Array(Type.Object({
-              role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
-              content: Type.String({ minLength: 1, maxLength: 20_000 }),
-              timestamp: Type.String({ minLength: 10, maxLength: 40, format: "date-time" }),
-              recordedAt: Type.Optional(Type.String({ minLength: 10, maxLength: 40, format: "date-time" })),
-            }), { minItems: 1, maxItems: 200 }),
-          }),
-        },
-      },
-      async (request) => service.importConversation(request.body),
-    );
-
-    app.delete(
-      "/v1/memory/conversation",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            sessionIds: Type.Optional(Type.Array(
-              Type.String({ minLength: 1, maxLength: 100 }),
-              { minItems: 1, maxItems: 100 },
-            )),
-            messageIds: Type.Optional(Type.Array(
-              Type.String({ minLength: 1, maxLength: 200 }),
-              { minItems: 1, maxItems: 5000 },
-            )),
-          }),
-        },
-      },
-      async (request) => {
-        const { sessionIds, messageIds } = request.body;
-        if (!sessionIds && !messageIds) {
-          throw new MemoryGatewayError("memory_error", "sessionIds or messageIds is required", 400);
-        }
-        return service.deleteConversations({ sessionIds, messageIds });
-      },
-    );
-
-    // ── md 文档一等来源（资产化 + MemoryCore /v3/document/* 代理）──
-
-    app.post(
-      "/v1/memory/import/markdown",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            title: Type.String({ minLength: 1, maxLength: 512 }),
-            markdown: Type.String({ minLength: 1, maxLength: 2 * 1024 * 1024 }),
-            filename: Type.Optional(Type.String({ minLength: 1, maxLength: 255 })),
-          }),
-          response: {
-            200: Type.Object({
-              fileId: Type.String(),
-              document: DocumentDtoSchema,
-              version: Type.String(),
-              sessionId: Type.String(),
-              chunkCount: Type.Integer(),
-              deduplicated: Type.Boolean(),
-              replacedVersions: Type.Integer(),
-              acceptedChunks: Type.Integer(),
-            }),
-          },
-        },
-      },
-      async (request) => service.importMarkdown({
-        title: request.body.title,
-        markdown: request.body.markdown,
-        filename: request.body.filename,
-      }),
-    );
-
-    app.get(
-      "/v1/memory/documents",
-      {
-        schema: {
-          tags: ["memory"],
-          querystring: Type.Object({
-            limit: Type.Integer({ minimum: 1, maximum: 200, default: 50 }),
-            offset: Type.Integer({ minimum: 0, default: 0 }),
-          }),
-          response: {
-            200: Type.Object({
-              documents: Type.Array(DocumentDtoSchema),
-              total: Type.Integer(),
-            }),
-          },
-        },
-      },
-      async (request) => service.listDocuments(request.query.limit, request.query.offset),
-    );
-
-    app.get(
-      "/v1/memory/documents/:id",
-      {
-        schema: {
-          tags: ["memory"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
-          response: { 200: DocumentDetailDtoSchema },
-        },
-      },
-      async (request) => service.getDocument(request.params.id),
-    );
-
-    app.delete(
-      "/v1/memory/documents/:id",
-      {
-        schema: {
-          tags: ["memory"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
-          response: {
-            200: Type.Object({ documentId: Type.String(), deleted: Type.Boolean() }),
-          },
-        },
-      },
-      async (request) => service.deleteDocument(request.params.id),
-    );
-
-    app.get(
-      "/v1/memory/atomic/:id/provenance",
-      {
-        schema: {
-          tags: ["memory"],
-          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 128 }) }),
-          response: { 200: ProvenanceDtoSchema },
-        },
-      },
-      async (request) => service.atomicProvenance(request.params.id),
-    );
-
-    app.post(
-      "/v1/memory/document-rewrite",
-      {
-        schema: {
-          tags: ["memory"],
-          body: Type.Object({
-            roomId: Type.String({ minLength: 1, maxLength: 100 }),
-            documentId: Type.String({ minLength: 1, maxLength: 100 }),
-            documentTitle: Type.String({ minLength: 1, maxLength: 120 }),
-            instruction: Type.String({ minLength: 1, maxLength: 4_000 }),
-            originalText: Type.String({ minLength: 1, maxLength: 100_000 }),
-            replacementText: Type.String({ minLength: 1, maxLength: 100_000 }),
-          }),
-        },
-      },
-      async (request) => ({ captured: await service.captureSelectionRewrite(request.body) }),
-    );
-
-    app.post(
-      "/v1/memory/source-document",
-      { schema: { tags: ["memory"], body: SourceDocumentInput } },
-      async (request) => ({ captured: await service.captureSourceDocument(request.body) }),
     );
   };
 }

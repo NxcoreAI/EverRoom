@@ -301,7 +301,7 @@ writingStyle: {
   - **应用区**：补全应用 / 生成应用两个独立开关（读写 `writingStyle.updateSettings`），各自一句说明作用范围（两个开关对用户正文与系统摘要同时生效）；
   - **操作**：立即重算（二次确认 + 进度态）；语料列表（id/title/字数/origin/排除开关）。
 - 沿用记忆页既有模式：`MemoryEmptyView` / `memoryFailureText` / `useAsyncData`（失败与空态展示不重造）；侧边栏经 `MEMORY_TAB_EVENT` 跳转 tab 的机制天然可用（风格重算完成的通知若需要，走同一事件打开本 tab）。
-- **i18n**：挂 `memory:` 命名空间（`locales/*/memory.json`），不重蹈 detail-editor `saveState` 硬编码中文串当 key 的覆辙。
+- **i18n**：挂 `memory:` 命名空间（`locales/*/memory.json`），不重蹈 detail-editor `saveState` 硬编码中文串当 key 的覆辙。（已废弃：`memory:` 命名空间与 `locales/*/memory.json` 已随记忆页在 Phase 2g-4 移除，现行写作风格仅保留 office-editor 侧注入。）
 
 ## 10. 增量与一致性
 

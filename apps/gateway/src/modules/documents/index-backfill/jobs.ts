@@ -7,13 +7,12 @@ export const DOCUMENT_INDEX_BACKFILL_JOB_TYPE = "document.index-backfill";
 
 export interface DocumentIndexBackfillJobPayload {
   documentId: string;
-  roomId: string;
   /** 入队时的版本，仅记录用；处理时以实读为准。 */
   version: number;
   attempts: number;
 }
 
-/** 每文档单键：新版本入队前先淘汰未处理的旧任务（与 writing-style 入队同语义）。 */
+/** 每文档单键：新版本入队前先淘汰未处理的旧任务（同一文档只保留最新一次回填）。 */
 export function enqueueDocumentIndexBackfill(
   tx: GatewayDatabase,
   input: Omit<DocumentIndexBackfillJobPayload, "attempts">,

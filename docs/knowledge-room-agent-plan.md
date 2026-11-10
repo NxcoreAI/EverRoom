@@ -1,5 +1,7 @@
 # Knowledge 管线 Agent 化：转正登记 Agent + Room Profile 增量刷新
 
+> **已废弃（Phase 2/3 已移除）**：Knowledge 管线 Agent 化与 Room Profile 增量刷新已在 Office + Agent 收敛重构（Phase 2/3）中整体移除；本文记录的是移除前的设计，仅作历史留存，不代表现行架构。现行范围见 `docs/office-agent-only-refactor-plan.zh-CN.md`。
+
 > 状态：方案评审稿 v2（2026-08-21，v1 为单一 summary 版，v2 扩展为结构化 Room Profile）
 > 关联文档：[entity-room-plan.md](entity-room-plan.md)（实体/Room 模型）、[room-wiki-plan.md](room-wiki-plan.md)（wiki 沉淀语义）
 

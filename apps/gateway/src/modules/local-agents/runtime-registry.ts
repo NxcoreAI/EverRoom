@@ -1,38 +1,55 @@
-import type { AgentCard } from "@a2a-js/sdk";
 import type { LocalAgentInvocationTarget } from "@nxcore/agent-contract";
-import type { AgentRuntime } from "@nxcore/agent-runtime";
+import type { AgentRuntime, StartRuntimeRunInput } from "@nxcore/agent-runtime";
+import type { McpServer } from "@zed-industries/agent-client-protocol";
 import { resolve } from "node:path";
-import { A2ALocalAgentRuntime } from "./a2a-runtime.js";
-import { LocalA2AHost } from "./a2a-host.js";
-import { ClaudeCliAgentRuntime, OpenClawCliAgentRuntime } from "./cli-runtime.js";
+import { traceRuntime } from "../agent-debug/instrument.js";
+import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
+import { AcpAgentRuntime, acpAdapterCommand, type LocalAcpProvider } from "./acp-runtime.js";
+
+const ACP_PROVIDERS = new Set<LocalAcpProvider>(["codex", "claude", "openclaw"]);
+
+export type LocalAgentMcpServersForRun = (input: StartRuntimeRunInput) => McpServer[] | Promise<McpServer[]>;
+export type LocalAgentHumanApprovalForRun = (input: StartRuntimeRunInput) => boolean | Promise<boolean>;
 
 export class LocalAgentRuntimeRegistry {
   private readonly runtimes = new Map<string, AgentRuntime>();
+
+  constructor(
+    private readonly mcpServersForRun?: LocalAgentMcpServersForRun,
+    private readonly humanApprovalForRun?: LocalAgentHumanApprovalForRun,
+    private readonly agentDebugStore?: AgentDebugTraceStore,
+  ) {}
 
   resolve(target: LocalAgentInvocationTarget): AgentRuntime {
     const runtimeKey = `${target.id}\0${resolve(target.workingDirectory)}`;
     const cached = this.runtimes.get(runtimeKey);
     if (cached) return cached;
-    if (target.provider !== "codex" && target.provider !== "claude" && target.provider !== "openclaw") {
+    if (!ACP_PROVIDERS.has(target.provider as LocalAcpProvider)) {
       throw new Error("local_agent_provider_not_supported");
     }
     this.assertCard(target.card);
-    const runtime = target.provider === "codex"
-      ? new A2ALocalAgentRuntime(
-          new LocalA2AHost(target.executablePath, target.workingDirectory, target.id),
-          target.id,
-        )
-      : target.provider === "claude" ? new ClaudeCliAgentRuntime(
-          target.executablePath,
-          target.workingDirectory,
-          target.id,
-        ) : new OpenClawCliAgentRuntime(
-          target.executablePath,
-          target.workingDirectory,
-          target.id,
-        );
-    this.runtimes.set(runtimeKey, runtime);
-    return runtime;
+    const runtime = new AcpAgentRuntime(
+      acpAdapterCommand(target.provider as LocalAcpProvider, target.executablePath, target.acpAdapter),
+      target.workingDirectory,
+      target.id,
+      this.mcpServersForRun,
+      this.humanApprovalForRun,
+      target.provider as LocalAcpProvider,
+    );
+    const traced = this.trace(runtime, target);
+    this.runtimes.set(runtimeKey, traced);
+    return traced;
+  }
+
+  /** 本机 CLI Agent（ACP）的 trace 接入点（agentKind=local）。 */
+  private trace(runtime: AgentRuntime, target: LocalAgentInvocationTarget): AgentRuntime {
+    if (!this.agentDebugStore) return runtime;
+    return traceRuntime(runtime, this.agentDebugStore, {
+      agentId: target.id,
+      agentName: target.displayName ?? target.card.name,
+      agentKind: "local",
+      description: target.card.description,
+    });
   }
 
   async dispose(): Promise<void> {
@@ -41,9 +58,7 @@ export class LocalAgentRuntimeRegistry {
   }
 
   private assertCard(card: LocalAgentInvocationTarget["card"]): void {
-    // Keep the generated card aligned with the official A2A SDK contract at the host boundary.
-    const a2aView: Pick<AgentCard, "name" | "description" | "version" | "defaultInputModes" | "defaultOutputModes"> = card;
-    if (!a2aView.name || !a2aView.version || !a2aView.defaultInputModes.length) {
+    if (!card?.name || !card.version || !card.defaultInputModes.length) {
       throw new Error("local_agent_card_invalid");
     }
   }

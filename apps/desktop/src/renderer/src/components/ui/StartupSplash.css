@@ -1,0 +1,150 @@
+/* 首次启动闪屏：极简、独立成页，不与登录页/控制台共享框架样式。 */
+
+.startup-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: grid;
+  place-items: center;
+  color: var(--ui-text);
+  background-color: var(--ui-bg);
+  /* 与登录门同一套暖纸光晕：极淡青绿（左上）+ 蜜桃（右下）。 */
+  background-image:
+    radial-gradient(52% 44% at 18% 0%, color-mix(in srgb, var(--ui-accent) 7%, transparent) 0%, transparent 72%),
+    radial-gradient(46% 42% at 88% 100%, color-mix(in srgb, var(--ui-warm) 10%, transparent) 0%, transparent 74%);
+  -webkit-app-region: drag;
+  animation: startup-splash-fade-in 420ms ease-out both;
+}
+
+.startup-splash[data-exiting='true'] {
+  animation: startup-splash-exit 340ms cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+  pointer-events: none;
+}
+
+.startup-splash-scene {
+  display: grid;
+  justify-items: center;
+}
+
+.startup-splash-icon {
+  width: clamp(84px, 11vw, 112px);
+  height: clamp(84px, 11vw, 112px);
+  animation:
+    startup-splash-drop 760ms cubic-bezier(0.24, 1.28, 0.32, 1) both,
+    startup-splash-float 2.8s 920ms ease-in-out infinite;
+}
+
+.startup-splash-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 28px rgb(22 47 55 / 18%));
+  -webkit-user-drag: none;
+}
+
+.startup-splash-shadow {
+  width: 58%;
+  height: 10px;
+  margin-top: 18px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgb(22 47 55 / 22%), transparent 70%);
+  animation:
+    startup-splash-shadow-in 760ms ease-out both,
+    startup-splash-shadow-pulse 2.8s 920ms ease-in-out infinite;
+}
+
+/* 品牌口号：品牌色（青绿→蜜桃橙）流动渐变文字，随图标落定后淡入上移。 */
+.startup-splash-tagline {
+  margin-top: 26px;
+  font-size: clamp(21px, 2.8vw, 28px);
+  font-weight: 360;
+  letter-spacing: 0.05em;
+  background: linear-gradient(
+    100deg,
+    #35b8ab 0%,
+    #6dd0c5 18%,
+    #f5ad71 50%,
+    #6dd0c5 82%,
+    #35b8ab 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    startup-splash-tagline-in 620ms 560ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    startup-splash-tagline-flow 3.4s linear infinite;
+}
+
+@keyframes startup-splash-tagline-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 渐变首尾同色 + background 平铺，位移一个完整周期即无缝循环。 */
+@keyframes startup-splash-tagline-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 200% 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startup-splash-tagline {
+    animation: startup-splash-tagline-in 620ms 560ms ease-out both;
+  }
+}
+
+.startup-splash-dots {
+  display: flex;
+  gap: 9px;
+  margin-top: 26px;
+}
+
+.startup-splash-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ui-text);
+  animation: startup-splash-dot 1.05s cubic-bezier(0.36, 0.16, 0.64, 0.84) infinite;
+}
+
+.startup-splash-dots i:nth-child(2) { animation-delay: 140ms; }
+.startup-splash-dots i:nth-child(3) { animation-delay: 280ms; }
+
+/* 入场：图标从上方弹性落下（带回弹过冲），随后轻微上下悬浮。 */
+@keyframes startup-splash-drop {
+  0% { transform: translateY(-34px) scale(0.72); opacity: 0; }
+  55% { transform: translateY(0) scale(1); opacity: 1; }
+  70% { transform: translateY(-9px) scale(1.03); }
+  85% { transform: translateY(0) scale(0.99); }
+  100% { transform: translateY(0) scale(1); }
+}
+
+@keyframes startup-splash-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* 投影随悬浮呼吸（图标上浮时投影收窄变淡，落回时铺开变实）。 */
+@keyframes startup-splash-shadow-in {
+  from { opacity: 0; transform: scaleX(0.6); }
+  to { opacity: 1; }
+}
+
+@keyframes startup-splash-shadow-pulse {
+  0%, 100% { transform: scaleX(1); opacity: 1; }
+  50% { transform: scaleX(0.8); opacity: 0.55; }
+}
+
+@keyframes startup-splash-dot {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-7px); opacity: 1; }
+}
+
+@keyframes startup-splash-fade-in {
+  from { opacity: 0; }
+}
+
+/* 退场：整体放大淡出，像推开一扇门进入应用（下方页面同步被揭示）。 */
+@keyframes startup-splash-exit {
+  to { opacity: 0; transform: scale(1.06); }
+}

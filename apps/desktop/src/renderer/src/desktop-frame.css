@@ -1,0 +1,41 @@
+/* Electron 桌面窗口适配层：不改动业务样式，只补「浏览器原型 → 桌面窗口」的三件事——
+   1. macOS：系统红绿灯落在标签栏左侧，标签栏/侧栏让出空间；Windows 用自绘按钮（组件内）。
+   2. 标签栏整条可拖拽移动窗口，交互元素排除。
+   3. html/body 去白边、字体渲染微调。 */
+
+html[data-desktop='darwin'] .wb-tabbar {
+  /* 系统红绿灯占据 x≈16..68；让出到 88px，与活动标签保持呼吸感 */
+  padding-left: 88px;
+}
+
+html[data-desktop='darwin'] .wb-sidebar-titlebar {
+  /* 侧栏在标签栏之下，红绿灯不需要额外让位；保留细拖拽带即可 */
+  height: 4px;
+}
+
+.wb-tabbar {
+  -webkit-app-region: drag;
+}
+
+.wb-tabbar button,
+.wb-tabbar .wb-tab,
+.wb-tabbar .wb-tablist,
+.wb-tabbar .wb-tabbar-actions,
+.wb-tabbar .window-controls {
+  -webkit-app-region: no-drag;
+}
+
+html,
+body {
+  /* 浏览器默认 body margin 8px 会在窗口四周露出一条白边 */
+  margin: 0;
+  padding: 0;
+  background: var(--ui-bg, #fbfaf6);
+  height: 100%;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}

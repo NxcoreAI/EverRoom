@@ -42,7 +42,7 @@ const DOCUMENT_TARGET = "(?:文档|文件|文章|这篇|那份|这篇文章|这�
  * 同口径的否定式与咨询式排除；刻意不含纯创建/写入意图——选择卡片只服务
  * “改哪一篇”的歧义，创建类歧义由 ambiguousDocumentTopic 预检承担。
  *
- * 消费方：documents/pi-tools.ts——context_room_document_list 仅在此为真时才向
+ * 消费方：documents/pi-tools.ts——document_list 仅在此为真时才向
  * 桌面端声明 selectionRequired，避免无文档诉求的运行误弹“选择要编辑的文档”卡片。
  */
 export function requestsDocumentModification(prompt: string): boolean {

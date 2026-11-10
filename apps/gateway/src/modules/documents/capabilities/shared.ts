@@ -9,6 +9,8 @@ export type CapabilityBackend = Pick<DocumentService,
   | "list"
   | "readDocumentForAgent"
   | "get"
+  // #242：文档删除工具走与桌面手动删除相同的 trash 通道（可恢复）。
+  | "delete"
   | "prepareOperationCommit"
   | "notifyDocumentRewriteApplied"
   | "normalizeAgentDocumentChunk"
@@ -17,7 +19,6 @@ export type CapabilityBackend = Pick<DocumentService,
   // 改写信任收口（方案 §3）：invocationId → 内容解析器，由 create-server 装配注入。
   | "resolveSelectionRewriteContent"
   // doc-writer 引用透传（M3/V2）：write/patch 的 invocationId → 草稿内容解析器。
-  | "resolveDocWriterDraft"
 >;
 
 export const annotations = (readOnlyHint: boolean, destructiveHint = false) => ({
@@ -31,7 +32,6 @@ export function manifest(
   type: DocumentCapabilityManifest["type"],
   interactionMode: DocumentCapabilityManifest["interactionMode"],
   presenterKey: string | null,
-  requiresRoom: boolean,
   requiresDocument: boolean,
 ): DocumentCapabilityManifest {
   return {
@@ -43,7 +43,8 @@ export function manifest(
     permissions: type === "query"
       ? ["room:read", "document:read"]
       : ["room:read", "document:read", "document:write"],
-    requiresRoom,
+    // 契约字段仍在（packages/agent-contract）；本仓库所有文档能力都不再要求先选 Room。
+    requiresRoom: false,
     requiresDocument,
   };
 }

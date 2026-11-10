@@ -7,6 +7,8 @@ const Provider = Type.Union([
   Type.Literal("openclaw"),
   Type.Literal("codex"),
   Type.Literal("claude"),
+  Type.Literal("cherry"),
+  Type.Literal("hermes"),
 ]);
 const Transport = Type.Union([
   Type.Literal("oauth"), Type.Literal("zip"), Type.Literal("local-sqlite"),
@@ -42,6 +44,11 @@ export function dataMigrationRoutes(service: DataMigrationService): FastifyPlugi
         messages: Type.Array(Type.Object({ stableKey: Type.String({ maxLength: 512 }),
           role: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
           content: Type.String({ minLength: 1, maxLength: 1_000_000 }), occurredAt: Type.String({ minLength: 10, maxLength: 50 }),
+          attachments: Type.Optional(Type.Array(Type.Object({
+            sourceKey: Type.String({ minLength: 1, maxLength: 512 }), name: Type.String({ maxLength: 500 }),
+            mimeType: Type.Optional(Type.String({ maxLength: 200 })), fileId: Type.Optional(Type.String({ maxLength: 200 })),
+            missing: Type.Optional(Type.Boolean()),
+          }), { maxItems: 50 })),
         }), { maxItems: 5_000 }),
       }), { minItems: 1, maxItems: 100 }) }) },
     }, async (request) => service.appendThreads(request.params.id, request.body.threads as NormalizedExternalThread[]));
@@ -59,8 +66,20 @@ export function dataMigrationRoutes(service: DataMigrationService): FastifyPlugi
       schema: { params: Type.Object({ id: Type.String() }) },
     }, async (request, reply) => { await service.clear(request.params.id); return reply.code(204).send(); });
 
+    app.get("/v1/data-migrations/sources/:id/capabilities", {
+      schema: { params: Type.Object({ id: Type.String() }) },
+    }, async (request) => service.getCapabilities(request.params.id));
+    app.patch("/v1/data-migrations/sources/:id/capabilities", {
+      schema: { params: Type.Object({ id: Type.String() }), body: Type.Object({
+        syncState: Type.Optional(Type.Union([Type.Literal("active"), Type.Literal("paused"), Type.Literal("error")])),
+      }) },
+    }, async (request) => service.setCapability(request.params.id, request.body));
+    app.get("/v1/data-migrations/sources/:id/export", {
+      schema: { params: Type.Object({ id: Type.String() }) },
+    }, async (request) => service.exportSourceThreads(request.params.id));
+
     app.get("/v1/data-migrations/conversations", {
-      schema: { querystring: Type.Object({ query: Type.Optional(Type.String({ maxLength: 500 })), cursor: Type.Optional(Type.String({ maxLength: 100 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) }) },
+      schema: { querystring: Type.Object({ query: Type.Optional(Type.String({ maxLength: 500 })), cursor: Type.Optional(Type.String({ maxLength: 100 })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })) }) },
     }, async (request) => service.searchConversations(request.query.query ?? "", request.query.cursor, request.query.limit ?? 20));
     app.get("/v1/data-migrations/conversations/:id/preview", {
       schema: { params: Type.Object({ id: Type.String() }) },
