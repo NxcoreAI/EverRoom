@@ -11,38 +11,32 @@ export function isAiRelayNotReadyError(message: string): boolean {
 }
 
 /**
- * 订阅主进程中转保活事件，跟踪「LLM 额度已用尽」状态：
- * - `quota-exhausted`（SaaS 403 权威判定）置位；`fallback-restored` /
- *   重新签发成功（无事件到达）时由 status 复核兜底复位。
- * - 挂载时先查一次 `aiRelay.status()`：跨窗口重启后事件丢失的场景，
- *   以 remainingCredits <= 0 且已配置为准。
+ * 跟踪「本周期 LLM 额度已用尽」（SaaS 403/402 权威判定）：
+ * - 以 `aiRelay.verdict().quotaExhausted` 为准——直接映射主进程 keeper 的
+ *   权威标记，不自行从余量推断（已配置但余额为 0 的按量/未订阅态语义不同）。
+ * - `quota-exhausted` 事件即时置位；`session-activated`（续签成功，充值/周期
+ *   重置后发出）复核 verdict，避免组件长挂期间状态不复位。
+ * - 挂载时先查一次：覆盖窗口重启后事件丢失的场景。
  */
 export function useAiRelayQuotaExhausted(): boolean {
   const [exhausted, setExhausted] = useState(false)
 
   useEffect(() => {
     const api = window.nxcore?.aiRelay
-    if (!api) return undefined
+    if (!api?.verdict || !api.onEvent) return undefined
 
     let cancelled = false
     const reconcile = () => {
-      void api.status()
-        .then((status) => {
-          if (cancelled) return
-          // 未配置/无订阅记录时 data 为 null——不构成额度不足。
-          if (status?.configured && status.remainingCredits <= 0) setExhausted(true)
-        })
+      void api.verdict()
+        .then((verdict) => { if (!cancelled) setExhausted(verdict.quotaExhausted) })
         .catch(() => undefined)
     }
 
     reconcile()
     const removeListener = api.onEvent((event) => {
-      if (event.type === 'quota-exhausted') {
-        setExhausted(true)
-        return
-      }
-      // 网络兜底切换/恢复都不代表额度恢复，复核一次服务端余量。
-      if (event.type === 'fallback-user' || event.type === 'fallback-restored') reconcile()
+      if (event.type === 'quota-exhausted') setExhausted(true)
+      // 会话重新激活（充值/周期重置后续签成功）：复核权威标记，可能复位。
+      else if (event.type === 'session-activated') reconcile()
     })
     return () => {
       cancelled = true

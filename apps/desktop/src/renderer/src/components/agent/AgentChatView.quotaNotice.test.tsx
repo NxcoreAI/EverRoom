@@ -50,7 +50,7 @@ function stubAiRelay(relayListeners: Set<RelayListener>) {
     matchMedia: () => ({ matches: true }),
     nxcore: {
       aiRelay: {
-        status: vi.fn().mockResolvedValue({ configured: true, remainingCredits: 0 }),
+        verdict: vi.fn().mockResolvedValue({ quotaExhausted: true }),
         onEvent: (listener: RelayListener) => {
           relayListeners.add(listener)
           return () => relayListeners.delete(listener)
