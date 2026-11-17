@@ -1280,70 +1280,13 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #b42318;
 }
 
-.agent-error > span {
-  min-width: 0;
-}
-
-.agent-error-retry {
-  flex-shrink: 0;
-  padding: 1px 8px;
-  border: 1px solid rgba(180, 35, 24, 0.35);
-  border-radius: 5px;
-  background: transparent;
-  color: #b42318;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.agent-error-retry:hover {
-  background: rgba(180, 35, 24, 0.06);
-}
-
-/* Agent 桥不可用：唤起失败时的明确提示 + 重试（App 内嵌环境才会出现）。 */
-.agent-availability-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0 12px 8px;
-  padding: 9px 12px;
-  border: 1px solid #f0c6c0;
-  border-radius: 8px;
-  background: #fdf3f2;
-  animation: agent-content-enter 200ms cubic-bezier(.22, 1, .36, 1);
-}
-
-.agent-availability-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.agent-availability-copy strong {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #b42318;
-}
-
-.agent-availability-copy span {
-  font-size: 12px;
-  line-height: 1.45;
-  color: #8a4a43;
-}
-
-.agent-availability-retry {
-  flex-shrink: 0;
-  padding: 4px 12px;
-  border: 1px solid rgba(180, 35, 24, 0.35);
-  border-radius: 6px;
-  background: #fff;
-  color: #b42318;
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .agent-availability-retry:hover {
   background: rgba(180, 35, 24, 0.06);
+}
+
+/* 额度不足：灰色文字提示而非红色报错——让用户看出是额度限制，不是软件故障。 */
+.agent-error.is-notice {
+  color: #68707d;
 }
 
 .agent-shell-approval {

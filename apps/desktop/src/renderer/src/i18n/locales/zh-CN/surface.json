@@ -30,6 +30,7 @@
   "agentChat.mentionTargetUnavailable": "目标对话不存在或已删除",
   "agentChat.nextChooseTheRoomWhereItWillBe": "下一步选择保存到哪个 Room",
   "agentChat.no": "不是",
+  "agentChat.quotaExhaustedNotice": "本周期 LLM 额度已用尽，可在设置中查看或充值后继续使用。",
   "agentChat.noRoomsAvailable": "暂无可用 Room",
   "agentChat.organizingResults": "正在整理结果...",
   "agentChat.referencedFromSourceTitle": "引用自 {source} · {title}",
