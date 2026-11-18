@@ -1804,7 +1804,14 @@ export function createSubagentPiTools(
                 addonIds: Array.isArray(bpSel.addonIds) ? bpSel.addonIds : [],
                 includeX01: bpSel.includeX01 === true,
               });
-              instruction = `${instruction}\n\n${injection.instruction}`.slice(0, 16_000);
+              // 超预算时压缩用户指令部分——模板尾部的【硬约束】绝不能被截掉，否则模板失去约束力。
+              const combined = `${instruction}\n\n${injection.instruction}`;
+              if (combined.length <= 16_000) {
+                instruction = combined;
+              } else {
+                const room = Math.max(0, 16_000 - injection.instruction.length - 1);
+                instruction = `${instruction.slice(0, room)}\n${injection.instruction}`.slice(0, 16_000);
+              }
               if (!Array.isArray(params.outline)) bpInjectedOutline = injection.outline;
               if (referenceOutline.length === 0) referenceOutline = injection.referenceOutline.slice(0, 30);
             } catch (error) {
