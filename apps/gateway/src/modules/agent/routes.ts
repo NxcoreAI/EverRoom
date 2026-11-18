@@ -365,6 +365,14 @@ export function agentRoutes(
             prompt: Type.String({ maxLength: 20_000 }),
             /** 用户可见文案（人话）：落库消息/会话标题用它，prompt 仍原样交给 runtime。 */
             displayPrompt: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。 */
+            displayContent: Type.Optional(Type.String({ maxLength: 20_000 })),
+            /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+            noteCards: Type.Optional(Type.Array(Type.Object({
+              excerpt: Type.String({ minLength: 1, maxLength: 2_000 }),
+              note: Type.String({ minLength: 1, maxLength: 2_000 }),
+              title: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+            }), { maxItems: 20 })),
             idempotencyKey: Type.String({ minLength: 8, maxLength: 100 }),
             targetAgentId: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
             invocationMode: Type.Optional(Type.Union([
@@ -410,6 +418,35 @@ export function agentRoutes(
                   affinity: Type.Literal("after"),
                 })),
               })),
+              // 用户当前浏览的 Office 文件页签（桌面 main 注入）：Agent 据此
+              // 知道“这份文档”是哪个 fileId，再用 word_agent_*/file_read 读取正文。
+              activeFile: Type.Optional(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                  Type.Literal("markdown"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+              }, { additionalProperties: false })),
+              // 当前打开的全部 Office 页签（含 active）：让 Agent 知道除了
+              // 眼前这份，工作区里还开着哪些文件。
+              openFiles: Type.Optional(Type.Array(Type.Object({
+                fileId: Type.String({ minLength: 1, maxLength: 200 }),
+                title: Type.String({ minLength: 1, maxLength: 300 }),
+                kind: Type.Union([
+                  Type.Literal("docx"),
+                  Type.Literal("spreadsheet"),
+                  Type.Literal("slides"),
+                  Type.Literal("pdf"),
+                  Type.Literal("markdown"),
+                ]),
+                editable: Type.Optional(Type.Boolean()),
+                active: Type.Boolean(),
+              }, { additionalProperties: false }), { maxItems: 20 })),
               attachments: Type.Optional(Type.Array(Type.Object({
                 fileId: Type.String({ minLength: 1, maxLength: 200 }),
                 fileVersionId: Type.String({ minLength: 1, maxLength: 200 }),

@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentEvent,
   AgentEventType,
   AgentModelPreference,
   AgentNavigationTarget,
   AgentMessage,
+  AgentNoteCard,
   LocalAgentDelegationContext,
+  AgentOpenFileContext,
   AgentRun,
   AgentRunStatus,
   AgentRoomReference,
@@ -186,7 +189,40 @@ function toRun(row: typeof agentRuns.$inferSelect): AgentRun {
   };
 }
 
+function parseNoteCards(raw: string | null): AgentNoteCard[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return undefined;
+    const cards = parsed.filter((item): item is AgentNoteCard =>
+      typeof item === "object" && item !== null
+      && typeof (item as AgentNoteCard).excerpt === "string"
+      && typeof (item as AgentNoteCard).note === "string");
+    return cards.length > 0 ? cards : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 入库前的批注卡片收敛：最多 20 条，单字段 2k，来源标题 300。 */
+function sanitizeNoteCards(cards: StartAgentRunInput["noteCards"]): AgentNoteCard[] | undefined {
+  if (!Array.isArray(cards) || cards.length === 0) return undefined;
+  const cleaned = cards
+    .filter((card): card is AgentNoteCard =>
+      typeof card === "object" && card !== null
+      && typeof card.excerpt === "string" && card.excerpt.trim().length > 0
+      && typeof card.note === "string" && card.note.trim().length > 0)
+    .slice(0, 20)
+    .map((card) => ({
+      excerpt: card.excerpt.slice(0, 2_000),
+      note: card.note.slice(0, 2_000),
+      ...(typeof card.title === "string" && card.title.trim() ? { title: card.title.slice(0, 300) } : {}),
+    }));
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
+  const noteCards = parseNoteCards(row.noteCards);
   return {
     id: row.id,
     sessionId: row.sessionId,
@@ -194,6 +230,9 @@ function toMessage(row: typeof agentMessages.$inferSelect): AgentMessage {
     role: row.role,
     authorAgentId: row.authorAgentId,
     content: row.content,
+    ...(noteCards ? { noteCards } : {}),
+    // 空串＝无气泡（只有批注卡片）；旧数据/普通消息为 null → 气泡回退 content。
+    ...(typeof row.displayContent === "string" ? { displayContent: row.displayContent } : {}),
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -275,6 +314,45 @@ function normalizeAgentLocale(value: string | undefined): string | undefined {
   return normalized && normalized.length <= 35 && AGENT_LOCALE_PATTERN.test(normalized)
     ? normalized
     : undefined;
+}
+
+const ACTIVE_FILE_KINDS = new Set(["docx", "spreadsheet", "slides", "pdf", "markdown"]);
+
+/**
+ * 用户当前浏览的 Office 文件上下文：只做形状校验（fileId/title/kind）。
+ */
+function normalizeActiveFile(value: AgentActiveFileContext | undefined): AgentActiveFileContext | undefined {
+  if (!value) return undefined;
+  const fileId = typeof value.fileId === "string" ? value.fileId.trim() : "";
+  const title = typeof value.title === "string" ? value.title.trim() : "";
+  const kind = typeof value.kind === "string" && ACTIVE_FILE_KINDS.has(value.kind) ? value.kind : null;
+  if (!fileId || !title || !kind) return undefined;
+  return {
+    fileId,
+    title: title.slice(0, 200),
+    kind: kind as AgentActiveFileContext["kind"],
+    ...(value.editable === false ? { editable: false } : {}),
+  };
+}
+
+/** 打开中的页签清单上限：与运行提示的展示上限一致，超出部分对定位没有帮助。 */
+const OPEN_FILES_LIMIT = 20;
+
+/** 当前打开的全部 Office 页签：逐条做形状校验、按 fileId 去重并限量。 */
+function normalizeOpenFiles(
+  values: readonly AgentOpenFileContext[] | undefined,
+): AgentOpenFileContext[] | undefined {
+  if (!Array.isArray(values) || values.length === 0) return undefined;
+  const seen = new Set<string>();
+  const files: AgentOpenFileContext[] = [];
+  for (const value of values) {
+    const normalized = normalizeActiveFile(value);
+    if (!normalized || seen.has(normalized.fileId)) continue;
+    seen.add(normalized.fileId);
+    files.push({ ...normalized, active: value.active === true });
+    if (files.length >= OPEN_FILES_LIMIT) break;
+  }
+  return files.length ? files : undefined;
 }
 
 function localAgentDelegationContext(input: {
@@ -463,6 +541,8 @@ export class AgentService {
     roomId: string | null;
     availableRooms: AgentRoomReference[];
     activeDocument?: AgentActiveDocumentContext;
+    activeFile?: AgentActiveFileContext;
+    openFiles?: AgentOpenFileContext[];
     dispatchSource?: LocalAgentDispatchRunSource;
   }>();
   private readonly trustedMcpSessions = new Map<string, Set<string>>();
@@ -1380,6 +1460,11 @@ export class AgentService {
       ? this.documentRegistry?.validateActiveDocumentContext(input.context.activeDocument, runRoomId)
         ?? input.context.activeDocument
       : undefined;
+    // 用户当前浏览的 Office 文件页签：页签清单里的 active 项兜底（桌面漏传
+    // activeFile 时也能从 openFiles 推出当前文件）。
+    const openFiles = normalizeOpenFiles(input.context?.openFiles);
+    const activeFile = normalizeActiveFile(input.context?.activeFile)
+      ?? openFiles?.find((file) => file.active);
 
     // 档位（main/main-direct/main-lite）在会话创建时锁定：会话已锁档位时
     // 请求另一个档位不生效（静默沿用会话档位）；local agent 切换不受影响。
@@ -1518,12 +1603,21 @@ export class AgentService {
       tx.insert(agentRuns).values(runRow).run();
       if (options.persistUserMessage !== false) {
         const userMessageId = randomUUID();
+        // 批注卡片随消息入库（JSON 文本）：气泡按卡片渲染，重载会话后还原。
+        // 条目先做体积/数量收敛，坏数据在这里就被丢弃。
+        const noteCards = sanitizeNoteCards(input.noteCards);
+        // 气泡正文只在传了 displayContent 时落库（批注场景）；空串＝只有卡片无气泡。
+        const displayContent = typeof input.displayContent === "string"
+          ? input.displayContent.slice(0, 20_000)
+          : undefined;
         tx.insert(agentMessages).values({
           id: userMessageId,
           sessionId,
           runId,
           role: "user",
           content: displayPrompt,
+          ...(noteCards ? { noteCards: JSON.stringify(noteCards) } : {}),
+          ...(noteCards && displayContent !== undefined ? { displayContent } : {}),
           createdAt: now,
         }).run();
         enqueueSearchIndex(tx, { itemType: "message", refId: userMessageId, priority: "high" });
@@ -1605,6 +1699,8 @@ export class AgentService {
       roomId: runRoomId,
       availableRooms: rooms,
       ...(activeDocument ? { activeDocument } : {}),
+      ...(activeFile ? { activeFile } : {}),
+      ...(openFiles ? { openFiles } : {}),
       dispatchSource: {
         priorMessages: priorMessages.slice(-LOCAL_AGENT_HISTORY_MESSAGE_LIMIT).map((message) => ({
           role: message.role,
@@ -1680,6 +1776,8 @@ export class AgentService {
         ...(referencedConversationId ? { referencedConversationId } : {}),
         ...(referencedTargets.length ? { referencedLocalAgents: referencedTargets } : {}),
         ...(activeDocument ? { activeDocument } : {}),
+        ...(activeFile ? { activeFile } : {}),
+        ...(openFiles ? { openFiles } : {}),
         ...(delegationContext ? { delegationContext } : {}),
       });
     } catch (error) {
