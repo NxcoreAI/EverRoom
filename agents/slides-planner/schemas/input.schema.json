@@ -307,6 +307,16 @@
       "minLength": 8,
       "maxLength": 200,
       "description": "Non-batched arrange only: image-prewarm token injected by the gateway. Copy it verbatim into slides_image_prewarm for pages with an imagePrompt. Batched arrange never receives this field; the gateway handles prewarm."
+    },
+    "previousErrors": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      },
+      "description": "arrange only: 上一轮网关校验给出的具体缺陷（页级/契约级）。逐条修掉，不得重复同样的来源覆盖、数字保真或 omissions 错误。"
     }
   },
   "required": [

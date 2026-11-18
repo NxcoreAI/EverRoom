@@ -284,7 +284,7 @@ describe("semantic assembly", () => {
     await expect(assembleSemanticPlan({ plan: input, instruction: "修复", roomId: "r", repair })).rejects.toThrow("semantic_content_invalid");
     expect(repair.mock.calls[0]![0].priorStoryboard.pages[0].id).toBe("invented");
   });
-  it("scopes feedback and sources to four pages and repairs all eight within two rounds", async () => {
+  it("scopes feedback and sources to the failing pages and repairs all eight within two rounds", async () => {
     const sources = assignContentSources(Array.from({ length: 8 }, () => fixture.draft), "draft");
     const sourceIds = [...new Set(sources.map(s => s.pageId))];
     const valid = sourceIds.map(id => {
@@ -296,11 +296,14 @@ describe("semantic assembly", () => {
       const ids = input.repairPageIds as string[];
       expect(input.sources.every((s: any) => ids.includes(s.pageId))).toBe(true);
       expect(ids.every(id => input.defects.some((d: string) => d.startsWith(`[${id}]`)))).toBe(true);
-      expect(input.defects).toHaveLength(12);
+      expect(input.defects.length).toBeLessThanOrEqual(24);
       return { status: "completed", result: { structuredOutput: { schemaVersion: "storyboard/v3", pages: valid.filter(p => ids.includes(p.id)) } } } as any;
     });
     await assembleSemanticPlan({ plan: { title: "Deck", pages: pages.map(content => ({ content })), contentContext: { mode: "semantic-v3", revision: 1, sources, sourceHash: semanticHash(sources) } }, instruction: "修复", roomId: "r", repair });
-    expect(repair.mock.calls.map(([input]) => input.repairPageIds)).toEqual([sourceIds.slice(0, 4), sourceIds.slice(4)]);
+    // EverOffice 升级：修复覆盖批内全部出错页（上限 12），两轮内修完 8 页。
+    const seen = repair.mock.calls.map(([input]) => input.repairPageIds as string[]);
+    expect(seen.flat()).toHaveLength(sourceIds.length);
+    expect(new Set(seen.flat()).size).toBe(sourceIds.length);
   });
   it("rejects reordered known identities instead of silently rewriting them", async () => {
     const sources = assignContentSources([fixture.draft, fixture.draft], "draft");

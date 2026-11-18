@@ -79,7 +79,7 @@ describe("style 归一", () => {
 });
 
 describe("pricingTiers：卡面皮肤", () => {
-  it("非 featured 卡走主题卡面（cardStroke/cardShadow），featured 仍强调且不写死阴影", () => {
+  it("非 featured 卡走主题卡面（cardStroke/cardShadow），featured 浅强调底 + 一条强调边且无阴影", () => {
     const theme = resolveTheme({
       decoration: { cardStroke: "#112233", cardShadow: "soft" },
     });
@@ -90,21 +90,21 @@ describe("pricingTiers：卡面皮肤", () => {
     // 普通档 = 主题卡面处理：cardSurface + cardStroke + cardShadow。
     expect(plain!.stroke?.color).toBe("#112233");
     expect(plain!.shadow).toBe("soft");
-    // featured 档 = ink 反白卡 + 强调色顶条 + 同一档阴影，仍然可区分。
-    expect(featured!.fill).toBe(theme.colors.text);
-    expect(featured!.stroke).toBeUndefined();
-    expect(featured!.shadow).toBe("soft");
+    // featured 档 = 浅强调底 + 一条强调边（不叠顶条/阴影/反白）。
+    expect(featured!.fill).toBe(resolveComponentSkin(undefined, theme).colors.emphasisSoft);
+    expect(featured!.stroke).toEqual({ color: resolveComponentSkin(undefined, theme).colors.emphasis, widthPt: 1.25 });
+    expect(featured!.shadow).toBeUndefined();
     expect(featured!.fill).not.toBe(plain!.fill);
-    // 顶条与实心 CTA 用强调色，不再从 chartSeries 借色。
-    expect(shapes(elements).filter((el) => el.shape === "rect" && el.h === 4)).toHaveLength(1);
+    // 顶条已取消：featured 强调只剩浅底 + 强调边 + 实心 CTA。
+    expect(shapes(elements).filter((el) => el.shape === "rect" && el.h === 4)).toHaveLength(0);
   });
 
   it("cardShadow:none 时 featured 卡不留任何硬编码阴影", () => {
     const elements = expandPricingTiers(TIERS, 1, FRAME, PLAIN, "定价", resolveComponentSkin(undefined, PLAIN));
-    // 平铺风格卡下非 featured 档不铺卡；featured 仍是一块 ink 卡，但无阴影。
+    // 平铺风格卡下非 featured 档不铺卡；featured 仍是浅强调底 + 强调边，无阴影。
     const cards = shapes(elements).filter((el) => el.shape === "roundRect" && el.h > 100);
     expect(cards).toHaveLength(1);
-    expect(cards[0]!.fill).toBe(PLAIN.colors.text);
+    expect(cards[0]!.fill).toBe(resolveComponentSkin(undefined, PLAIN).colors.emphasisSoft);
     expect(cards[0]!.shadow).toBeUndefined();
   });
 });

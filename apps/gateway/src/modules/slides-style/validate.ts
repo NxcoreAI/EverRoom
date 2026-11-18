@@ -50,6 +50,9 @@ export const COMPOSITION_LABELS: Record<StyleComposition, string> = {
   immersive: "沉浸大图",
 };
 
+/** 候选 composition 缺失/重复时的确定性补位顺序。 */
+export const COMPOSITION_FILL_ORDER: readonly StyleComposition[] = ["swiss", "editorial", "poster", "immersive"];
+
 /**
  * 构图效果文案（effectLines 规范：只写达成效果，无来源说明）。
  */

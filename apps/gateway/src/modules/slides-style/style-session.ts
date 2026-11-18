@@ -105,4 +105,24 @@ export class SlidesStyleSessionStore {
       .where(eq(slidesStyleSessions.id, id))
       .run();
   }
+  /** 最新一份带风格卡的会话（恢复链兜底：draft 已回收/上下文压缩后仍能续跑）。 */
+  latestWithStyleCard(): SlidesStyleSessionData | null {
+    const row = this.db.select().from(slidesStyleSessions)
+      .where(inArray(slidesStyleSessions.stage, ["card_ready", "confirmed"]))
+      .orderBy(desc(slidesStyleSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
+  /** 全局按草稿 id 找会话（不限 Room；恢复链兜底）。 */
+  byDraftIdAnywhere(draftDocumentId: string): SlidesStyleSessionData | null {
+    const row = this.db.select().from(slidesStyleSessions)
+      .where(eq(slidesStyleSessions.draftDocumentId, draftDocumentId))
+      .orderBy(desc(slidesStyleSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
 }

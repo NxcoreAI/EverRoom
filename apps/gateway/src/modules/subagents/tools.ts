@@ -95,6 +95,79 @@ const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> 
   edit: new Set(["task", "instruction", "fileId", "roomId"]),
 };
 
+const CN_NUMERALS: Record<string, number> = { 单: 1, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+/** 数字/数词前缀＝复合页码引用（第 N 页、每页、四十页、126 页），不当目标页数。 */
+const PAGE_REF_BEFORE = /[第每一两二三四五六七八九十\d]/u;
+
+/**
+ * 指令里的显式页数要求（「一页/单页/12 页」）。取最后一个匹配当目标页数
+ * （「把四页合并为一页」的目标是后者）；「第 N 页」「每页」与复合数字不算。
+ * 识别不出返回 undefined——宁可不拦，也不误拦。
+ */
+export function instructionPageIntent(instruction: string): number | undefined {
+  const matches = [...instruction.matchAll(/(单|一|两|二|三|四|五|六|七|八|九|十|\d{1,2})\s*页/gu)];
+  const wanted = matches.filter((m) => {
+    const before = instruction.slice(0, m.index!).replace(/\s+$/u, "").at(-1);
+    return before === undefined || !PAGE_REF_BEFORE.test(before);
+  });
+  const last = wanted.at(-1);
+  if (!last) return undefined;
+  const token = last[1]!;
+  const value = /^\d+$/u.test(token) ? Number(token) : CN_NUMERALS[token];
+  return value !== undefined && value >= 1 && value <= 32 ? value : undefined;
+}
+
+const PREVIEW_SCOPE_PATTERN = /(试看|预览|试一页|先出一页|先生成|逐页试)/u;
+const RESTRUCTURE_PATTERN = /(合并|压到|压缩|缩减|拆分|扩到|扩成|整册|全册|总共|一共)/u;
+// ponytail: 短窗正则，误伤（如「不要把封面做深色」）代价只是一次带指引的失败重试
+const PAGE_EXCLUSION_PATTERN = /(不需要|不要|不用|无需|去掉|删掉|删除|去除)(?=[^。！？\n，,]{0,4}(封面|目录|致谢|收尾|结尾|封底))/u;
+
+/** generate 指令里的页型排除意图（「不要封面页」）：编排不能增删页，须在草稿层改。 */
+export function pageExclusionIntent(instruction: string): boolean {
+  return PAGE_EXCLUSION_PATTERN.test(instruction);
+}
+
+/**
+ * generate 入口的页数范围解析：指令里的「N 页」是本轮试看落页范围，还是整册页数要求。
+ * previewPages 参数优先；带试看语义的指令不当整册冲突，但其中的页数仍要推导成试看
+ * 范围——否则「先生成一页示例」会按整册跑，且「一页」原样进编排批次，planner 遵循
+ * 指令只出 1 页、批次校验按批大小收，「页数不符」重试死循环（2026-11-02 实测）。
+ */
+export function resolveGeneratePageScope(input: {
+  instruction: string;
+  draftPageCount: number;
+  previewPages?: number;
+  targetPages?: number;
+}): { previewPages?: number; autoNote?: string; conflict?: { requested: number; draft: number } } {
+  let previewPages = input.previewPages;
+  let autoNote: string | undefined;
+  const scopeIntent = PREVIEW_SCOPE_PATTERN.test(input.instruction);
+  if (scopeIntent && previewPages === undefined) {
+    const scopedCount = instructionPageIntent(input.instruction);
+    if (scopedCount !== undefined && scopedCount < input.draftPageCount) {
+      previewPages = Math.min(32, scopedCount);
+      autoNote = `指令要求本轮先出 ${previewPages} 页试看：编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    }
+  }
+  const pageCountIntent = previewPages !== undefined || scopeIntent
+    ? undefined
+    : (instructionPageIntent(input.instruction) ?? input.targetPages);
+  if (pageCountIntent !== undefined && pageCountIntent !== input.draftPageCount) {
+    // 小于草稿页数的 N 几乎都是"本轮只出 N 页"的范围语义：自动按试看处理，
+    // 只落前 N 页（草稿/风格保留）。只有明确的整册重整措辞（合并/压到/拆分…）才拦下引导改草稿。
+    if (pageCountIntent < input.draftPageCount && !RESTRUCTURE_PATTERN.test(input.instruction)) {
+      previewPages = Math.min(32, pageCountIntent);
+      autoNote = `指令要求本轮生成 ${pageCountIntent} 页：已按试看处理，编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    } else {
+      return { conflict: { requested: pageCountIntent, draft: input.draftPageCount } };
+    }
+  }
+  return {
+    ...(previewPages !== undefined ? { previewPages } : {}),
+    ...(autoNote ? { autoNote } : {}),
+  };
+}
+
 function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
   const task = params.task;
   if (task !== "draft" && task !== "style" && task !== "style_select" && task !== "generate" && task !== "edit") {
@@ -1978,7 +2051,9 @@ export function createSubagentPiTools(
             instruction,
             roomId,
             repair: (input, round) => retryDispatch(() => dispatch({
-              agentId: "slides-editor", task: "单页内容修复", input,
+              agentId: "slides-editor", task: "单页内容修复",
+              // EverRoom：slides-editor 的 input schema 要求 roomId（Room 归属）。
+              input: { ...input, roomId },
               idempotencyKey: dispatchKey(run.runId, "slides-editor", `${repairKeyPrefix}:${round}`, input),
               source: "primary_agent", parentSessionId: run.sessionId,
               ...(repairParentRunId ? { parentRunId: repairParentRunId } : {}),

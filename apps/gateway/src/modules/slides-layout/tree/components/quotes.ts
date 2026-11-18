@@ -1,10 +1,10 @@
 /**
  * quotes 组件（editorial）：客户评价卡。
  *
- * 版式（每张卡）：标本索引 + 星级（强调色）→ 幽灵引号（强调色浅档）→ 引文
- * （19–20pt，正文色）→ 强调短规则 → 底部署名（首字徽章/头像 + 姓名 20 + 角色微标签）。
- * 内容顶底锚定、引文在中段垂直居中：卡面被填满，不留「大卡小字 + 底部空纸」。
- * 卡面/内边距/字距/颜色全部来自 ComponentSkin，不写裸像素/裸色号。
+ * 版式（每张卡）：星级（有评分时，强调色，卡顶）→ 引文（正文色，中段垂直居中）
+ * → 底部署名（首字徽章/头像 + 姓名 + 角色微标签）。引文与署名是主体；
+ * 无图片时用首字头像，不叠加徽章装饰。卡面/内边距/字距/颜色全部来自
+ * ComponentSkin，不写裸像素/裸色号。
  */
 
 import { padFrame, splitColumns, type Frame } from "../../grid.js";
@@ -44,8 +44,6 @@ function cardBox(skin: ComponentSkin, frame: Frame, pad: number): Frame {
   return inset > 0 ? padFrame(base, inset) : base;
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
-
 export function expandQuotes(
   items: QuoteEntry[],
   frame: Frame,
@@ -65,8 +63,6 @@ export function expandQuotes(
   const starSize = Math.max(16, Math.round(m.body * 0.9));
   const avatarSize = Math.min(72, Math.max(56, Math.round(m.pad * 2.5)));
   const initialSize = Math.round(avatarSize * 0.42);
-  const ruleH = Math.max(2, Math.round(m.label * 0.16));
-  const ruleW = Math.max(32, Math.round(m.display * 0.3));
 
   items.forEach((item, i) => {
     const col = cols[i]!;
@@ -74,47 +70,40 @@ export function expandQuotes(
     const box = cardBox(skin, col, pad);
     const innerW = box.w;
 
-    // 顶行：标本索引（左）+ 星级（右）——同一行，卡片顶部有结构件。
-    const topH = singleLineBoxHeight(Math.max(roleSize, starSize));
-    elements.push(
-      textElement({ x: box.x, y: box.y, w: Math.round(innerW * 0.5), h: topH }, [
-        { runs: [skin.micro(`${pad2(i + 1)} / ${pad2(items.length)}`, skin.colors.muted)] },
-      ]),
-    );
+    // 星级是用户提供的数据：有评分时画在卡顶。
+    const topH = item.rating && item.rating > 0 ? singleLineBoxHeight(starSize) : 0;
     if (item.rating && item.rating > 0) {
       const starGap = Math.max(4, Math.round(starSize * 0.3));
       const starsW = item.rating * starSize + (item.rating - 1) * starGap;
-      const starsX = align === "center" ? box.x + Math.round((innerW - starsW) / 2) : box.x + innerW - starsW;
+      const starsX = align === "center" ? box.x + Math.round((innerW - starsW) / 2) : box.x;
       for (let s = 0; s < item.rating; s++) {
         elements.push({
           type: "icon",
           icon: "star",
           color: skin.colors.emphasis,
           x: Math.round(starsX + s * (starSize + starGap)),
-          y: Math.round(box.y + (topH - starSize) / 2),
+          y: Math.round(box.y),
           w: starSize,
           h: starSize,
         });
       }
     }
 
-    // 底部署名块：首字徽章/圆头像 + 姓名 + 角色；底对齐，卡底不再空。
+    // 底部署名块：首字徽章/圆头像 + 姓名 + 角色；底对齐，卡底由署名收口。
     const nameH = singleLineBoxHeight(nameSize);
     const roleH = item.role ? singleLineBoxHeight(roleSize) : 0;
     const stackH = nameH + roleH;
     const footerH = Math.max(avatarSize, stackH);
     const footerY = box.y + box.h - footerH;
-    const ruleY = footerY - Math.round(m.tightGap * 0.9) - ruleH;
-    const ruleX = align === "center" ? box.x + Math.round((innerW - ruleW) / 2) : box.x;
-    elements.push(skin.accentRule(box, { x: ruleX, y: ruleY, width: ruleW, height: ruleH }));
 
-    // 引文在中段垂直居中：顶行与署名规则之间的留白对称，卡面不空、底部由署名收口。
+    // 引文在中段垂直居中：星级与署名之间的留白对称。
     const contentTop = box.y + topH + Math.round(m.tightGap * 0.35);
-    const contentBottom = ruleY - Math.round(m.tightGap * 0.7);
+    const contentBottom = footerY - Math.round(m.tightGap * 0.9);
     const areaH = contentBottom - contentTop;
     let qSize = quoteSize;
     let quoteBoxH = textBoxHeight(item.text, qSize, innerW);
-    while (quoteBoxH > areaH && qSize > 15) {
+    // 正文有限收缩：不低于 16pt。
+    while (quoteBoxH > areaH && qSize > 16) {
       qSize -= 1;
       quoteBoxH = textBoxHeight(item.text, qSize, innerW);
     }
@@ -132,7 +121,7 @@ export function expandQuotes(
       ),
     );
 
-    // 署名：徽章/头像 + 姓名（20 标题字体）+ 角色（强调色全大写微标签）。
+    // 署名：徽章/头像 + 姓名（标题字体）+ 角色（强调色全大写微标签）。
     const nameW = estimateTextWidth(item.name, nameSize);
     const roleW = item.role ? estimateTextWidth(item.role, roleSize) + item.role.length * 1.6 : 0;
     const avatarGap = Math.max(12, Math.round(avatarSize * 0.18));

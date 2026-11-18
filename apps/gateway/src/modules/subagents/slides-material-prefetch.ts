@@ -1,5 +1,16 @@
-import type { MaterialHit } from "../materials/service.js";
 import type { SlidesProgressPage } from "./slides-draft-doc.js";
+
+/**
+ * 素材检索单条命中（原 modules/materials 退役后内联：slides 配图预取仅消费
+ * 该结构，检索源由调用方通过 `searchMaterials` 注入）。
+ */
+export interface MaterialHit {
+  ref: string;
+  kind: "screenshot" | "photo" | "web-clip" | "document";
+  desc: string;
+  meta: string;
+  rank: number;
+}
 
 /**
  * arrange 前置素材预取：网关在派发 slides-planner 之前，按确认稿的每页配图意图

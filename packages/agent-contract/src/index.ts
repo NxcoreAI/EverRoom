@@ -277,6 +277,8 @@ export interface SubagentInvocation {
   result: SubagentInvocationResult | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** 续会话链路：pi 会话 ref（deck 级续跑用；普通一次性调用为 null）。 */
+  runtimeSessionRef?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;

@@ -9,7 +9,7 @@
 import { CANVAS_H, CANVAS_W, padFrame, type Frame } from "../../grid.js";
 import { darkPageTheme, mixHex, withAlpha, type ResolvedTheme } from "../../theme.js";
 import type { SpecElement, SpecParagraph, SpecRun, TableElement } from "../../elements.js";
-import { estimateLineHeight, estimateTextWidth } from "../../text-metrics.js";
+import { estimateLineHeight, estimateLines, estimateTextWidth } from "../../text-metrics.js";
 import type { LayoutContract } from "../layout-contract.js";
 import { valueAxisPlan } from "../../chart-axis.js";
 import { COLOR_RULES, ensureContrast, isPlainHex } from "../../color-guard.js";
@@ -18,7 +18,7 @@ import type {
   V2Bleed, V2ChartNode, V2GroupChild, V2GroupDirection, V2GroupPanel, V2ImageNode, V2Node, V2Page, V2Run,
   V2ShapeNode, V2Slot, V2StatsNode, V2TableNode, V2TextNode,
 } from "./schema.js";
-import { expandComponent } from "../components/index.js";
+import { expandComponent, type ComponentLeaf } from "../components/index.js";
 import { DARK_COVER_ROLES, pageMotifElements } from "../components/kit.js";
 import { isTreeErrorLike } from "../leaf-renderers.js";
 
@@ -142,6 +142,40 @@ function runSize(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): 
   return theme.typeScale[run.token ?? node.token];
 }
 
+/**
+ * v2 token → 场景字号下限变体（fit:"shrink" 缩字到此为止）。
+ * 标题级归 heading、hero/display 归 display、说明级（label/kicker/caption）归 caption。
+ */
+const TOKEN_FLOOR_VARIANT: Record<string, "display" | "heading" | "subtitle" | "body" | "caption"> = {
+  display: "display",
+  hero: "display",
+  h1: "heading",
+  h2: "heading",
+  h3: "heading",
+  lead: "subtitle",
+  body: "body",
+  label: "caption",
+  kicker: "caption",
+  caption: "caption",
+};
+
+function tokenFloors(contract: LayoutContract): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [token, variant] of Object.entries(TOKEN_FLOOR_VARIANT)) {
+    out[token] = contract.fontFloors[variant];
+  }
+  return out;
+}
+
+/** fit:"shrink" 的缩放档：最多缩小 15%，取能容纳内容的最大一档。 */
+const SHRINK_STEPS = [0.95, 0.9, 0.85] as const;
+
+/** 缩一个字号：原字号已低于下限时保持原字号（不再缩小）。 */
+function shrinkSize(size: number, scale: number, floor: number | undefined): number {
+  if (floor === undefined || size < floor) return size;
+  return Math.max(floor, Math.round(size * scale));
+}
+
 function runColor(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): string {
   return toneColor(run.tone ?? node.tone ?? "text", theme);
 }
@@ -154,8 +188,15 @@ function runFont(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): 
   return HEADING_TOKENS.has(node.token) ? theme.fonts.heading : theme.fonts.body;
 }
 
-function buildRun(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecRun {
-  const size = runSize(run, node, theme);
+function buildRun(
+  run: V2Run,
+  node: Unplaced<V2TextNode>,
+  theme: ResolvedTheme,
+  scale = 1,
+  floors?: Record<string, number>,
+): SpecRun {
+  const base = runSize(run, node, theme);
+  const size = floors ? shrinkSize(base, scale, floors[run.token ?? node.token]) : base;
   const bold = run.bold ?? node.bold ?? ["display", "hero", "h1", "h2", "h3", "kicker", "label"].includes(node.token);
   const letterSpacing = run.letterSpacing ?? node.letterSpacing;
   const font = runFont(run, node, theme);
@@ -169,7 +210,12 @@ function buildRun(run: V2Run, node: Unplaced<V2TextNode>, theme: ResolvedTheme):
   };
 }
 
-function textParagraphs(node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecParagraph[] {
+function textParagraphs(
+  node: Unplaced<V2TextNode>,
+  theme: ResolvedTheme,
+  scale = 1,
+  floors?: Record<string, number>,
+): SpecParagraph[] {
   const paragraphs = node.paragraphs
     ?? [{ runs: node.runs ?? [{ text: node.text ?? "" }] }];
   return paragraphs.map((paragraph) => ({
@@ -179,7 +225,7 @@ function textParagraphs(node: Unplaced<V2TextNode>, theme: ResolvedTheme): SpecP
       : {}),
     ...(paragraph.spaceBeforePt !== undefined ? { spaceBeforePt: paragraph.spaceBeforePt } : {}),
     ...(paragraph.spaceAfterPt !== undefined ? { spaceAfterPt: paragraph.spaceAfterPt } : {}),
-    runs: paragraph.runs.map((run) => buildRun(run, node, theme)),
+    runs: paragraph.runs.map((run) => buildRun(run, node, theme, scale, floors)),
   }));
 }
 
@@ -210,9 +256,25 @@ function verticalParagraphs(paragraphs: SpecParagraph[]): SpecParagraph[] {
   return out;
 }
 
-function buildText(node: Unplaced<V2TextNode>, frame: Frame, theme: ResolvedTheme): { element: SpecElement; neededHeight: number } {
-  const source = textParagraphs(node, theme);
-  const paragraphs = node.direction === "vertical" ? verticalParagraphs(source) : source;
+function buildText(
+  node: Unplaced<V2TextNode>,
+  frame: Frame,
+  theme: ResolvedTheme,
+  floors?: Record<string, number>,
+): { element: SpecElement; neededHeight: number; maxPt: number } {
+  const build = (scale: number): SpecParagraph[] => {
+    const source = textParagraphs(node, theme, scale, floors);
+    return node.direction === "vertical" ? verticalParagraphs(source) : source;
+  };
+  let paragraphs = build(1);
+  // fit:"shrink"：溢出时同一比例缩全部 run（保留字号比例与段落结构），取能容纳的最大档；
+  // 缩到下限/15% 仍放不下就按最小档落元素，缺陷照常上报（量测用同一份字号）。
+  if (node.fit === "shrink" && floors && textNeededHeight(paragraphs, frame.w) > frame.h) {
+    for (const scale of SHRINK_STEPS) {
+      paragraphs = build(scale);
+      if (textNeededHeight(paragraphs, frame.w) <= frame.h) break;
+    }
+  }
   const element: SpecElement = {
     type: "text",
     x: frame.x,
@@ -222,7 +284,8 @@ function buildText(node: Unplaced<V2TextNode>, frame: Frame, theme: ResolvedThem
     paragraphs,
     valign: node.valign ?? "top",
   };
-  return { element, neededHeight: textNeededHeight(paragraphs, frame.w) };
+  const maxPt = Math.max(9, ...paragraphs.flatMap((paragraph) => paragraph.runs.map((run) => run.sizePt ?? 12)));
+  return { element, neededHeight: textNeededHeight(paragraphs, frame.w), maxPt };
 }
 
 function buildImage(node: Unplaced<V2ImageNode>, frame: Frame, theme: ResolvedTheme): { element: SpecElement; extra: SpecElement[] } {
@@ -317,15 +380,25 @@ function buildStats(node: Unplaced<V2StatsNode>, frame: Frame, theme: ResolvedTh
     const row = Math.floor(index / columns);
     const x = Math.round(frame.x + column * cellWidth);
     const y = Math.round(frame.y + row * cellHeight + 4);
-    const paragraphs: SpecParagraph[] = [
+    // value 字号按格子高度降档（h2→h3→lead）：页面级 stats 没有组件层的缩字重试，
+    // 写死 h2 会让塞在 group 深处的小帧必然溢出 + 墨迹重叠（模型只剩手写 text 数字一条路）。
+    const valueTiers = [theme.typeScale.h2, theme.typeScale.h3, theme.typeScale.lead].filter(
+      (size, i, tiers) => size <= tiers[0]! && tiers.indexOf(size) === i,
+    );
+    const buildParagraphs = (valueSize: number): SpecParagraph[] => [
       {
         runs: [
-          { text: item.value, sizePt: theme.typeScale.h2, bold: true, color: theme.colors.primary, font: theme.fonts.heading },
+          { text: item.value, sizePt: valueSize, bold: true, color: theme.colors.primary, font: theme.fonts.heading },
           ...(item.unit ? [{ text: ` ${item.unit}`, sizePt: theme.typeScale.label, color: theme.colors.textMuted, font: theme.fonts.body }] : []),
         ],
       },
       { spaceBeforePt: 4, runs: [{ text: item.label, sizePt: theme.typeScale.caption, color: theme.colors.textMuted, font: theme.fonts.body }] },
     ];
+    let paragraphs = buildParagraphs(valueTiers[0]!);
+    for (const tier of valueTiers.slice(1)) {
+      if (textNeededHeight(paragraphs, cellWidth) > boxHeight) paragraphs = buildParagraphs(tier);
+      else break;
+    }
     elements.push({
       type: "text",
       x,
@@ -340,11 +413,48 @@ function buildStats(node: Unplaced<V2StatsNode>, frame: Frame, theme: ResolvedTh
   return { elements, heights };
 }
 
+/**
+ * v2 表格行高预算（与 v1 renderTableLeaf 同口径）：单元格折行 × 行高，超框即缺陷。
+ * 落页引擎（genoffice）会按真实排版实测并整页拒绝——这里在校验阶段提前拦下，
+ * 让 layouter 能自纠，而不是漏到落页才炸。缺口 ≤15% 时 fontSize 降 1pt 通常可收口。
+ */
+function tableHeightOverflow(node: Unplaced<V2TableNode>, frame: Frame, theme: ResolvedTheme):
+  { detail: string; requiredHeight: number; availableHeight: number; overflowPx: number; frame: { x: number; y: number; w: number; h: number } } | null {
+  const fontSize = node.fontSize ?? theme.typeScale.caption;
+  const lineH = fontSize * 1.8;
+  const colCount = node.rows[0]?.length ?? 0;
+  if (colCount === 0) return null;
+  const widthSum = (node.colWidths ?? node.rows[0]!.map(() => 1)).reduce((a, b) => a + b, 0);
+  let estHeight = 0;
+  for (const [rowIndex, row] of node.rows.entries()) {
+    let maxLines = 1;
+    for (let c = 0; c < colCount; c++) {
+      const cell = row[c];
+      if (!cell) continue;
+      const colW = ((node.colWidths ?? node.rows[0]!.map(() => 1))[c]! / widthSum) * frame.w - 12;
+      maxLines = Math.max(maxLines, estimateLines(cell.text, fontSize, Math.max(1, colW)));
+    }
+    const rowFactor = node.header !== false && rowIndex === 0 ? 1.15 : 1;
+    estHeight += maxLines * lineH * rowFactor + 10;
+  }
+  if (estHeight <= frame.h + 4) return null;
+  const gapRatio = (estHeight - frame.h) / frame.h;
+  const shrinkHint = fontSize > 8 && gapRatio <= 0.15
+    ? `；缺口 ≤15%：fontSize 由 ${fontSize} 降 1pt（下限 8）通常可收口`
+    : "";
+  return {
+    detail: `表格行高预算约 ${Math.round(estHeight)}px 超过区域 ${Math.round(frame.h)}px——砍行、缩短单元格文字或扩大表格区域${shrinkHint}`,
+    requiredHeight: Math.round(estHeight),
+    availableHeight: Math.round(frame.h),
+    overflowPx: Math.round(estHeight - frame.h),
+    frame: { x: Math.round(frame.x), y: Math.round(frame.y), w: Math.round(frame.w), h: Math.round(frame.h) },
+  };
+}
+
 function buildTable(node: Unplaced<V2TableNode>, frame: Frame, theme: ResolvedTheme): TableElement {
   const header = node.header !== false;
   const style = node.style ?? "banded";
-  const fontSize = node.fontSize ?? theme.typeScale.caption;
-  const rows = node.rows.map((row, rowIndex) => row.map((cell, columnIndex) => {
+  const fontSize = node.fontSize ?? theme.typeScale.caption;  const rows = node.rows.map((row, rowIndex) => row.map((cell, columnIndex) => {
     const isHeader = header && rowIndex === 0;
     const headerFill = style === "banded" ? theme.colors.primary : style === "outline" ? theme.colors.background : undefined;
     return {
@@ -518,6 +628,11 @@ interface CompileState {
   backdrop: string | null;
   /** 主题缝隙：row 用 gutter、column 用 rowGutter（页面 grid 覆盖优先）。 */
   gap: { row: number; column: number };
+  /** token → 场景字号下限（fit:"shrink" 用）。 */
+  tokenFloors: Record<string, number>;
+  /** 本页内容区与栅格口径：组件溢出时用它把"需要多大"换算成列×行。 */
+  area: Frame;
+  grid: { cols: number; rows: number; gutter: number; rowGutter: number };
   elements: SpecElement[];
   placements: LeafPlacement[];
   defects: CompileDefect[];
@@ -529,6 +644,56 @@ interface CompileState {
 function groupGap(direction: "row" | "column", gapScale: number | undefined, state: CompileState): number {
   const base = direction === "row" ? state.gap.row : state.gap.column;
   return Math.max(0, Math.round(base * (gapScale ?? 1)));
+}
+
+/** 组件溢出时按当前内容量反推最小槽位：分轴（加宽/加高/整体）逐档扩框重试展开。 */
+const COMPONENT_HINT_PROBES: Array<{ w: number; h: number; axis: "" | "加宽" | "加高" }> = [
+  { w: 1.1, h: 1.1, axis: "" },
+  { w: 1.25, h: 1.25, axis: "" },
+  { w: 1.5, h: 1.25, axis: "加宽" },
+  { w: 1.25, h: 1.5, axis: "加高" },
+  { w: 1.5, h: 1.5, axis: "" },
+  { w: 2, h: 1.5, axis: "加宽" },
+  { w: 1.5, h: 2, axis: "加高" },
+  { w: 2, h: 2, axis: "" },
+  { w: 3, h: 2, axis: "加宽" },
+  { w: 2, h: 3, axis: "加高" },
+];
+
+/**
+ * 组件装不下时的可执行建议。
+ *
+ * 为什么不写死"每个组件最小几列"：同样一个组件，条目数和单条字数不同，需要的最小区域也不同；
+ * 静态表只能给经验值。这里用真实展开器在放大后的帧上重试，得到的是**本页内容量**下的实际下限，
+ * 再换算成 layouter 能直接改的列×行。
+ */
+function componentSlotHint(leaf: ComponentLeaf, frame: Frame, state: CompileState): string {
+  const generic = "该组件在当前内容量下无法在可用区域内铺开：减少条目，或改用更简单的节点/组件";
+  try {
+    const { theme, area, grid } = state;
+    const maxW = Math.max(frame.w, Math.round(area.x + area.w - frame.x));
+    const maxH = Math.max(frame.h, Math.round(area.y + area.h - frame.y));
+    for (const probe of COMPONENT_HINT_PROBES) {
+      const w = Math.round(frame.w * probe.w);
+      const h = Math.round(frame.h * probe.h);
+      if (w > maxW || h > maxH) continue;
+      try {
+        expandComponent(leaf, { ...frame, w, h }, theme, "slot-hint");
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("LAYOUT_LEAF_INVALID:")) continue;
+        return generic;
+      }
+      const colW = (area.w - (grid.cols - 1) * grid.gutter) / grid.cols;
+      const rowH = (area.h - (grid.rows - 1) * grid.rowGutter) / grid.rows;
+      const cols = Math.min(grid.cols, Math.ceil((w + grid.gutter) / (colW + grid.gutter)));
+      const rows = Math.min(grid.rows, Math.ceil((h + grid.rowGutter) / (rowH + grid.rowGutter)));
+      return `该组件至少需要约 ${w}×${h}px（${cols} 列 × ${rows} 行${probe.axis ? `，优先${probe.axis}` : ""}，当前 ${frame.w}×${frame.h}px）：先扩大槽位，不要缩字号或删内容`;
+    }
+    return generic;
+  } catch {
+    // 建议是尽力而为：提示生成失败不能把整页编译带崩，退回通用建议。
+    return generic;
+  }
 }
 
 /** 按 weights 切子帧：先扣缝隙，再按比例分（取整余数给末位，至少 1px）。 */
@@ -590,10 +755,12 @@ function groupChildFrames(node: GroupLike, inner: Frame, state: CompileState): F
       };
     });
   }
+  // 统一权重规则：显式父 weights 优先；未提供时从各子节点 weight 推导（缺省 1）。
+  const weights = node.weights ?? node.children.map((child) => child.weight ?? 1);
   return splitByWeights(
     inner,
     node.children.length,
-    node.weights,
+    weights,
     groupGap(node.direction, node.gapScale, state),
     node.direction,
   );
@@ -668,10 +835,10 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     return;
   }
   if (node.type === "text") {
-    const { element, neededHeight } = buildText(node, frame, theme);
+    const { element, neededHeight, maxPt } = buildText(node, frame, theme, state.tokenFloors);
     state.push(element);
     state.stats.leaves += 1;
-    state.placements.push({ path, kind: "text", frame, label: node.token, sizePt: theme.typeScale[node.token], neededHeight, flexible: true });
+    state.placements.push({ path, kind: "text", frame, label: node.token, sizePt: maxPt, neededHeight, flexible: true });
     return;
   }
   if (node.type === "image") {
@@ -742,7 +909,13 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     return;
   }
   if (node.type === "table") {
-    state.push(buildTable(node, frame, theme));
+    const tableOverflow = tableHeightOverflow(node, frame, theme);
+    if (tableOverflow) {
+      // 编译期报 overflow 缺陷且不落元素：落页引擎对撑高表格整页拒绝，这里提前拦。
+      state.defects.push({ path, type: "overflow", hint: tableOverflow.detail, ...tableOverflow });
+    } else {
+      state.push(buildTable(node, frame, theme));
+    }
     state.stats.leaves += 1;
     state.placements.push({ path, kind: "table", frame, flexible: true });
     return;
@@ -762,7 +935,12 @@ function compileNode(node: V2Node | V2GroupChild, frame: Frame, path: string, st
     } catch (error) {
       // 组件装不下（LAYOUT_LEAF_INVALID）在 v1 转缺陷；v2 同样不中断整页，回给 layouter 自纠。
       if (isTreeErrorLike(error)) {
-        state.defects.push({ path, type: "overflow", detail: (error as Error).message.replace(/^LAYOUT_LEAF_INVALID: /, "") });
+        state.defects.push({
+          path,
+          type: "overflow",
+          detail: (error as Error).message.replace(/^LAYOUT_LEAF_INVALID: /, ""),
+          hint: componentSlotHint(node.component, frame, state),
+        });
       } else {
         throw error;
       }
@@ -795,6 +973,14 @@ export function compileV2Page(page: V2Page, contract: LayoutContract, options: C
     gap: {
       row: page.grid?.gutter ?? theme.spacing.gutter,
       column: page.grid?.rowGutter ?? 16,
+    },
+    tokenFloors: tokenFloors(contract),
+    area: areaFor(page, theme),
+    grid: {
+      cols: page.grid?.cols ?? 12,
+      rows: page.grid?.rows ?? 8,
+      gutter: page.grid?.gutter ?? theme.spacing.gutter,
+      rowGutter: page.grid?.rowGutter ?? 16,
     },
     elements,
     placements,
