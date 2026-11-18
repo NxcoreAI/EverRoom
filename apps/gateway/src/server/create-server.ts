@@ -199,6 +199,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
+import { createBpTemplatePiTool } from "../modules/bp-template/tool.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
@@ -1189,6 +1190,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
         understanding: () => documentUnderstandingRef.current,
       }),
       createFileSearchPiTool({ files: () => filesServiceRef.current }),
+      // BP 赛道模板读取（PPT 直生路径）：主 Agent 写 pptxgenjs 脚本前按赛道取模块骨架。
+      createBpTemplatePiTool(),
       ...createRoomOverviewAgentTools(roomOverviewService),
       ...createScreenMemorySearchPiTools(screenMemoryService),
       ...createDocumentExportPiTools(agentDocumentExportService),

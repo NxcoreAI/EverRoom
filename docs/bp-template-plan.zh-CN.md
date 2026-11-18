@@ -1,6 +1,6 @@
 # BP 赛道模板：配置化接入 slides 生成管线 — 实施方案
 
-> 状态：M1/M2 已实现（2026-11-18，分支 `bp-template`）；M3 事实联动待 FA 迭代工作项二
+> 状态：M1/M2 已实现（2026-11-18）；**2026-11-18 路线变更：PPT 生成切换为只走主 Agent 脚本直生（slides_create/pptxgenjs），slides_draft 子代理工作流不再是主 Agent 工具面入口**——M2 的注入链路（bpTemplate 参数）保留为网关侧逃生舱（`slidesDraftToolEnabled: true` 显式开启），主路径改为 `bp_template_get` 工具：主 Agent 写脚本前按赛道取模块骨架，逐模块成页。M3 事实联动待 FA 迭代工作项二。
 > 范围：新增 BP 模板配置层与选型入口；`slides-planner` 输入侧轻量扩展；不动 `slides-layouter`、`slides-styler`、semantic v3 契约与渲染引擎
 > 输入文档：[BP 赛道分类与模块内容标准（v1.0）](https://vyi-tech.feishu.cn/docx/FXRrdQCydo7vSax4yIRcbKz7nd3)（下称"标准"）、[FA 标准化与 AI 化运行体系 v4.0](https://vyi-tech.feishu.cn/docx/SH5dd3dlDolublxVMN2cmUEynLf)（下称"蓝图"，其 §18.1 BP 质量门与本方案对接）
 > 关联：[fa-industry-iteration.zh-CN.md](fa-industry-iteration.zh-CN.md)（FA 行业版迭代总索引）、[slides-storyboard-form-plan.zh-CN.md](slides-storyboard-form-plan.zh-CN.md)（semantic v3 与确认稿 1:1 约束的由来）

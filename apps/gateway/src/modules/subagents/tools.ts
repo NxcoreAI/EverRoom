@@ -878,6 +878,12 @@ export function createSubagentPiTools(
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
     slidesGenerationBudget?: Partial<GenerationBudgetLimits>;
     /**
+     * 主 Agent 工具面是否挂载 slides_draft（PPT 子代理四阶段工作流入口）。
+     * PPT 生成已切换为只走主 Agent 脚本直生（slides_create）：主 Agent 面传
+     * false 剔除；子代理消费点（doc-writer 的分析工具面等）不受影响。
+     */
+    slidesDraftToolEnabled?: boolean;
+    /**
      * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
      * 返回 documentId 供用户编辑与 generate 阶段读回。
      */
@@ -1551,7 +1557,11 @@ export function createSubagentPiTools(
       },
     });
   }
-  const slidesBuilder = registry.get("slides-builder");
+  // PPT 生成只走主 Agent 脚本直生（slides_create）：主 Agent 面默认不挂
+  // slides_draft（slidesDraftToolEnabled !== false 仅作显式开启的逃生舱）。
+  // slides-builder 子代理本身保留——两段式工具面（context_room_slides_*）与其
+  // 他消费点不受影响。
+  const slidesBuilder = options.slidesDraftToolEnabled === true ? registry.get("slides-builder") : undefined;
   if (slidesBuilder) {
     const slidesDraftTool: PiAgentRuntimeTool = {
       name: "slides_draft",

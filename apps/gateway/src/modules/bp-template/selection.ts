@@ -68,7 +68,7 @@ const NARRATIVE_HEAD_MODULES: readonly BpModuleId[][] = [
   ["M02", "M04", "M07", "M08", "M09"], // 服务或资产交付驱动：客户交付→单元经济→复制
 ];
 
-function reorderForNarrative(trackOrder: readonly BpModuleId[], narrativeIndex: number): BpModuleId[] {
+export function reorderForNarrative(trackOrder: readonly BpModuleId[], narrativeIndex: number): BpModuleId[] {
   const heads = NARRATIVE_HEAD_MODULES[narrativeIndex];
   if (!heads) return [...trackOrder];
   const headSet = new Set(heads);
