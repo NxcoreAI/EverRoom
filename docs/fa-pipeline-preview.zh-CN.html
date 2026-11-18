@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="EverRoom 行业版 FA：从原始材料到最终成果，每一步的效果示意与实现依据。" />
+<title>EverRoom FA · 从原始材料到最终成果</title>
+<!--
+  独立静态页：零依赖，可直接用浏览器打开。
+  内容依据《EverRoom 行业版-FA｜产品介绍》（feishu EA5pdqlxuozoPpx8vfVcGRwinVb）
+  与 FA 分支已落地实现（docs/fa-industry-iteration.zh-CN.md、docs/bp-template-plan.zh-CN.md）。
+  页面中的数据均为示意，接口、数据表与算法为真实实现。
+-->
+<style>
+  :root {
+    color-scheme: light;
+    /* EverRoom 产品 token（apps/desktop/src/renderer/src/styles/tokens.css） */
+    --bg: #fdfcfc;
+    --surface: #ffffff;
+    --surface-alt: #f9fafb;
+    --text: #151a22;
+    --muted: #536070;
+    --subtle: #8490a0;
+    --border: #e1e5eb;
+    --border-strong: #ccd3dd;
+    --accent: #3d6ff6;
+    --accent-strong: #1e47c4;
+    --accent-soft: rgba(61, 111, 246, 0.14);
+    --danger: #dd5c64;
+    --danger-soft: rgba(221, 92, 100, 0.12);
+    --teal: #239f91;
+    --teal-soft: rgba(35, 159, 145, 0.12);
+    /* 事实五档 */
+    --fact: #2fac68;
+    --fact-soft: rgba(47, 172, 104, 0.13);
+    --analysis: #3d6ff6;
+    --analysis-soft: rgba(61, 111, 246, 0.12);
+    --forecast: #8b63c7;
+    --forecast-soft: rgba(139, 99, 199, 0.13);
+    --opinion: #d98c2f;
+    --opinion-soft: rgba(217, 140, 47, 0.14);
+    --unknown: #8490a0;
+    --unknown-soft: rgba(132, 144, 160, 0.15);
+    --raised-shadow: 0 1px 2px rgba(21, 26, 34, 0.06), 0 10px 28px rgba(21, 26, 34, 0.06);
+    --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    --font-display: "Songti SC", "Noto Serif SC", "STSong", "SimSun", serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "PingFang SC", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  /* ---------- 头部 ---------- */
+  .hero { padding: 88px 0 40px; }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.22em;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 42px;
+    line-height: 1.25;
+    letter-spacing: 0.02em;
+    margin: 0 0 16px;
+  }
+  .thesis { max-width: 640px; color: var(--muted); margin: 0 0 28px; }
+  .thesis b { color: var(--text); font-weight: 600; }
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin: 0 0 22px; }
+  .chain a {
+    text-decoration: none;
+    font-size: 13px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .chain a:hover { border-color: var(--accent); color: var(--accent-strong); }
+  .chain .arrow { color: var(--subtle); padding: 0 7px; font-size: 12px; }
+  .chain .loop { color: var(--teal); font-size: 15px; padding: 0 4px 0 9px; }
+  .hero .note { font-size: 12.5px; color: var(--subtle); margin: 0; }
+
+  /* ---------- 顶部流水线轨道 ---------- */
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(253, 252, 252, 0.94);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .rail-inner {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 32px;
+    display: flex;
+    align-items: stretch;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .rail-inner::-webkit-scrollbar { display: none; }
+  .rail a {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 13px 13px 12px;
+    text-decoration: none;
+    font-size: 13px;
+    color: var(--subtle);
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+  }
+  .rail a .num { font-family: var(--font-mono); font-size: 11px; color: var(--subtle); }
+  .rail a:hover { color: var(--accent-strong); }
+  .rail a.active { color: var(--accent-strong); border-bottom-color: var(--accent); }
+  .rail a.active .num { color: var(--accent); }
+  .rail .loopmark {
+    align-self: center;
+    margin-left: auto;
+    color: var(--teal);
+    font-size: 14px;
+    padding: 0 2px 0 14px;
+    white-space: nowrap;
+  }
+  .rail-progress { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0; background: var(--accent); transition: width 0.15s linear; }
+
+  /* ---------- 站点 ---------- */
+  main { padding-bottom: 24px; }
+  .station {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 20px 48px;
+    padding: 64px 0 72px;
+    border-top: 1px solid var(--border);
+    scroll-margin-top: 64px;
+  }
+  .station-head { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 18px; margin-bottom: 10px; }
+  .station-head .num {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+  }
+  .station-head h2 {
+    font-family: var(--font-display);
+    font-size: 25px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin: 0;
+  }
+  .station-head .mapping {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--subtle);
+    text-align: right;
+  }
+
+  .station-body .q { font-size: 13.5px; color: var(--accent-strong); margin: 0 0 16px; }
+  .io { display: grid; gap: 10px; margin: 0 0 18px; }
+  .io-row { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 14px; }
+  .io-row dt {
+    margin: 0;
+    font-size: 12px;
+    color: var(--subtle);
+    padding-top: 2px;
+  }
+  .io-row dd { margin: 0; font-size: 14px; color: var(--text); }
+  .io-row dd .dim { color: var(--muted); }
+  .station-body .why { font-size: 13.5px; color: var(--muted); margin: 0; }
+
+  .impl { grid-column: 1 / -1; margin: 26px 0 0; padding-top: 16px; border-top: 1px solid var(--border); font-family: var(--font-mono); font-size: 12px; color: var(--subtle); line-height: 1.9; overflow-wrap: anywhere; }
+  .impl .k { color: var(--muted); font-family: var(--font-body); font-size: 12px; margin-right: 10px; }
+  .impl code { font-family: inherit; }
+
+  /* ---------- 效果示意卡 ---------- */
+  .artifact {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--raised-shadow);
+    padding: 18px 20px 16px;
+    align-self: start;
+  }
+  .artifact-tag {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .artifact-tag .t { font-size: 12px; color: var(--subtle); letter-spacing: 0.08em; }
+  .artifact-tag .src { font-family: var(--font-mono); font-size: 11px; color: var(--subtle); }
+
+  .chip {
+    display: inline-block;
+    font-size: 11px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .chip.fact      { color: #1d7a4b; background: var(--fact-soft); }
+  .chip.analysis  { color: var(--accent-strong); background: var(--analysis-soft); }
+  .chip.forecast  { color: #6a48a8; background: var(--forecast-soft); }
+  .chip.opinion   { color: #a4651a; background: var(--opinion-soft); }
+  .chip.unknown   { color: var(--muted); background: var(--unknown-soft); }
+  .chip.teal      { color: #17756a; background: var(--teal-soft); }
+  .chip.red       { color: #b23a41; background: var(--danger-soft); }
+  .chip.plain     { color: var(--muted); background: var(--surface-alt); border: 1px solid var(--border); }
+  .chip.ok        { color: #1d7a4b; background: var(--fact-soft); }
+
+  /* 01 Room 卡 */
+  .rooms { display: grid; gap: 10px; }
+  .room-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    background: var(--surface-alt);
+  }
+  .room-card .rk { font-size: 11px; color: var(--subtle); letter-spacing: 0.08em; }
+  .room-card .rt { font-size: 14px; font-weight: 600; margin: 2px 0 3px; }
+  .room-card .rl { font-size: 12.5px; color: var(--muted); }
+  .rel-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 12px 2px 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .rel-line .rel { font-family: var(--font-mono); color: var(--accent-strong); }
+
+  /* 02 事实列表 */
+  .facts { display: grid; gap: 8px; }
+  .fact-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px 12px;
+    align-items: start;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .fact-row .ft { font-size: 13.5px; }
+  .fact-row .fm { grid-column: 2; font-family: var(--font-mono); font-size: 11px; color: var(--subtle); line-height: 1.6; }
+  .facts-take {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    font-size: 12.5px;
+    color: var(--accent-strong);
+  }
+
+  /* 03 机构三表 */
+  .tables { display: grid; gap: 8px; }
+  .trow {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .trow .tk { font-family: var(--font-mono); font-size: 11px; color: var(--subtle); }
+  .trow .tv { font-size: 13px; }
+  .trow .tv b { font-weight: 600; }
+  .trow .tv .dim { color: var(--muted); }
+  .tables-note { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+  .tables-note .mono { font-family: var(--font-mono); font-size: 11px; color: var(--subtle); }
+
+  /* 04 BP 模板 */
+  .bp-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0; margin-bottom: 14px; }
+  .bp-flow .m {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 8px;
+    background: var(--surface-alt);
+  }
+  .bp-flow .m.sel { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+  .bp-flow .a { color: var(--subtle); padding: 0 6px; font-size: 11px; }
+  .slide {
+    aspect-ratio: 16 / 8.2;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: linear-gradient(180deg, #ffffff 0%, #f7f9fe 100%);
+    padding: 16px 18px 12px;
+    display: flex;
+    flex-direction: column;
+  }
+  .slide .st { font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+  .slide .ss { font-size: 11.5px; color: var(--subtle); margin: 2px 0 10px; }
+  .slide .sc { display: flex; gap: 10px; align-items: stretch; flex: 1; }
+  .slide .big {
+    font-family: var(--font-display);
+    font-size: 34px;
+    font-weight: 700;
+    color: var(--accent-strong);
+    line-height: 1.1;
+  }
+  .slide .big small { display: block; font-family: var(--font-body); font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 4px; }
+  .slide ul { margin: 0; padding: 0 0 0 16px; font-size: 12px; color: var(--muted); }
+  .slide .sf { margin-top: 8px; font-family: var(--font-mono); font-size: 10.5px; color: var(--subtle); }
+
+  /* 05 匹配名单 */
+  .match { display: grid; gap: 8px; }
+  .m-row { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .m-row.out { border-left: 3px solid var(--danger); background: #fdfafa; }
+  .m-row.hold { border-left: 3px solid var(--unknown); background: var(--surface-alt); }
+  .m-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .m-top .mn { font-size: 13.5px; font-weight: 600; }
+  .m-score { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .m-score .bar { width: 90px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .m-score .bar i { display: block; height: 100%; background: var(--accent); }
+  .m-score .v { font-family: var(--font-mono); font-size: 12px; color: var(--accent-strong); }
+  .m-basis { margin-top: 5px; font-size: 12px; color: var(--muted); }
+  .m-basis .mono { font-family: var(--font-mono); font-size: 11px; }
+  .dual { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); font-size: 12px; color: var(--muted); }
+
+  /* 06 会前简报 */
+  .brief-sec { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 14px; }
+  .brief-sec .bk { font-size: 12px; color: var(--subtle); padding-top: 1px; white-space: nowrap; }
+  .brief-sec .bv { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+  .brief-sec .bv .dim { color: var(--muted); }
+  .brief-alert {
+    margin-top: 12px;
+    border: 1px solid rgba(217, 140, 47, 0.45);
+    background: var(--opinion-soft);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    color: #8a5514;
+  }
+
+  /* 07 反馈确认 */
+  .fb-flow { display: grid; gap: 0; }
+  .fb-step { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; position: relative; padding-bottom: 16px; }
+  .fb-step::before {
+    content: "";
+    position: absolute;
+    left: 7px;
+    top: 18px;
+    bottom: 2px;
+    width: 1px;
+    background: var(--border-strong);
+  }
+  .fb-step:last-child { padding-bottom: 0; }
+  .fb-step:last-child::before { display: none; }
+  .fb-dot {
+    width: 15px; height: 15px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: var(--surface);
+    margin-top: 3px;
+    z-index: 1;
+  }
+  .fb-step.ok .fb-dot { background: var(--fact); border-color: var(--fact); }
+  .fb-body .fbt { font-size: 13.5px; }
+  .fb-body .fbd { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .fb-chips { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* 08 回流 */
+  .back-flow { display: grid; gap: 8px; }
+  .b-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 13px;
+  }
+  .b-row .bt { font-family: var(--font-mono); font-size: 11px; color: var(--subtle); white-space: nowrap; }
+  .b-row .bc, .b-row > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
+  .b-row .bc { font-size: 12px; color: var(--muted); }
+  .loop-card {
+    margin-top: 14px;
+    border: 1px solid rgba(35, 159, 145, 0.4);
+    background: var(--teal-soft);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    color: #17756a;
+  }
+
+  /* ---------- 回路收尾 ---------- */
+  .loop-end {
+    border-top: 1px solid var(--border);
+    padding: 56px 0 72px;
+    text-align: center;
+  }
+  .loop-end .glyph { font-size: 26px; color: var(--teal); }
+  .loop-end h3 {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    margin: 10px 0 8px;
+  }
+  .loop-end p { max-width: 560px; margin: 0 auto; font-size: 13.5px; color: var(--muted); }
+
+  /* ---------- 页脚 ---------- */
+  footer { border-top: 1px solid var(--border); padding: 36px 0 64px; }
+  footer .src-line { display: grid; gap: 6px; font-size: 12.5px; color: var(--muted); }
+  footer .src-line .k { color: var(--subtle); margin-right: 10px; }
+  footer .src-line a { color: var(--accent-strong); }
+  footer .fineprint { margin-top: 18px; font-size: 12px; color: var(--subtle); }
+
+  /* ---------- 动效 ---------- */
+  @media (prefers-reduced-motion: no-preference) {
+    /* 仅在 JS 可用时隐藏待进场区块（渐进增强：无 JS 内容直接可见） */
+    .js .station, .js .loop-end { opacity: 0; transform: translateY(14px); }
+    .js .station.in, .js .loop-end.in { opacity: 1; transform: none; transition: opacity 0.55s ease, transform 0.55s ease; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+  }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width: 900px) {
+    .hero { padding-top: 64px; }
+    .hero h1 { font-size: 32px; }
+    .station { grid-template-columns: minmax(0, 1fr); padding: 48px 0 56px; gap: 24px; }
+    .station-head { flex-wrap: wrap; gap: 8px 14px; }
+    .station-head .mapping { margin-left: 0; width: 100%; text-align: left; }
+    .wrap { padding: 0 20px; }
+    .rail-inner { padding: 0 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">EVERROOM 行业版 · FA 效果总览</p>
+    <h1>从原始材料到最终成果</h1>
+    <p class="thesis">三类 Room 承载项目、人物与投资机构，<b>每一步的产出都带着来源与确认，成为下一步的依据</b>——从资料进入，到材料、名单、简报，最后回流为下一轮的知识与任务。</p>
+    <nav class="chain" aria-label="流水线各步">
+      <a href="#s1">资料进入 Room</a><span class="arrow">→</span>
+      <a href="#s2">核实事实</a><span class="arrow">→</span>
+      <a href="#s3">机构档案</a><span class="arrow">→</span>
+      <a href="#s4">制作材料</a><span class="arrow">→</span>
+      <a href="#s5">投资人匹配</a><span class="arrow">→</span>
+      <a href="#s6">会前准备</a><span class="arrow">→</span>
+      <a href="#s7">会后反馈</a><span class="arrow">→</span>
+      <a href="#s8">知识回流</a>
+      <span class="loop" title="回流后进入下一轮">↺</span>
+    </nav>
+    <p class="note">以下效果均为示意数据；右侧标注的接口、数据表与算法为 FA 分支已落地的真实实现。</p>
+  </div>
+</header>
+
+<nav class="rail" aria-label="流水线轨道">
+  <div class="rail-inner" id="railInner">
+    <a href="#s1"><span class="num">01</span>进入 Room</a>
+    <a href="#s2"><span class="num">02</span>核实事实</a>
+    <a href="#s3"><span class="num">03</span>机构档案</a>
+    <a href="#s4"><span class="num">04</span>制作材料</a>
+    <a href="#s5"><span class="num">05</span>投资人匹配</a>
+    <a href="#s6"><span class="num">06</span>会前准备</a>
+    <a href="#s7"><span class="num">07</span>会后反馈</a>
+    <a href="#s8"><span class="num">08</span>知识回流</a>
+    <span class="loopmark" title="知识回流后进入下一轮">↺ 回到 01</span>
+  </div>
+  <div class="rail-progress" id="railProgress"></div>
+</nav>
+
+<main class="wrap">
+
+  <!-- 01 -->
+  <section class="station" id="s1">
+    <div class="station-head">
+      <span class="num">01</span>
+      <h2>资料进入 Room</h2>
+      <span class="mapping">产品文档 · 环节 1 项目获取与登记 / 环节 5 材料收集与核验</span>
+    </div>
+    <div class="station-body">
+      <p class="q">项目适合谁？应该找谁？机构投了谁？——三类 Room 分别回答。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>BP、会议记录、推荐信息、机构官网与投资组合页</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>按长期对象分房：项目、人物、投资机构；<span class="dim">同一场会议可关联多个 Room，原始来源保持一致</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>带关系的 Room 网络——任职、投资、创始、介绍四类语义关系</dd></div>
+      </dl>
+      <p class="why">关联不意味着开放权限：竞争项目和敏感关系备注仍按授权隔离。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="三类 Room 与关系的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">rooms · room_relations</span></div>
+      <div class="rooms">
+        <div class="room-card">
+          <div class="rk">项目 ROOM</div>
+          <div class="rt">曜途科技 · A 轮</div>
+          <div class="rl">融资诉求 8,000 万 · BP v6 · 当前卡点：客户结构待补充</div>
+        </div>
+        <div class="room-card">
+          <div class="rk">人物 ROOM</div>
+          <div class="rt">陈默 · 创始人</div>
+          <div class="rl">两次创业 · 沟通直接关注交付 · 决策角色：最终决定</div>
+        </div>
+        <div class="room-card">
+          <div class="rk">机构 ROOM</div>
+          <div class="rt">澜峰资本</div>
+          <div class="rl">两支基金 · 23 个投资案例 · 近期姿态待复核</div>
+        </div>
+      </div>
+      <div class="rel-line">
+        <span>陈默 <span class="rel">—founder_of→</span> 曜途科技</span>
+        <span>王珉 <span class="rel">—employed_by→</span> 澜峰资本</span>
+        <span>澜峰资本 <span class="rel">—invested_in→</span> 云枢科技</span>
+        <span>李行的引荐 <span class="rel">—introduced_by→</span> 王珉</span>
+      </div>
+    </figure>
+    <p class="impl"><span class="k">实现</span><code>ContextRoomKind</code> 新增「机构」一等实体 · <code>RoomRelationManualType</code>：founder_of / employed_by / invested_in / introduced_by（REST 校验同步）</p>
+  </section>
+
+  <!-- 02 -->
+  <section class="station" id="s2">
+    <div class="station-head">
+      <span class="num">02</span>
+      <h2>核实事实</h2>
+      <span class="mapping">产品文档 · 环节 5 材料收集与核验</span>
+    </div>
+    <div class="station-body">
+      <p class="q">关键数字和观点区分事实、分析、预测、意见与未知，并回链来源。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>Room 内材料与访谈记录</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>实体抽取时逐条标注五档之一；<span class="dim">公司预测不得标 fact，行业平均标 analysis，拿不准宁可标低；数字带口径元数据</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>带分级的事实库——下游 BP 取数、简报聚合只取 <span class="dim">grade = fact</span></dd></div>
+      </dl>
+      <p class="why">未标注的事实不冒充事实：解析到非法分级时回落为 opinion，旧格式自动兼容。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="事实五档分级的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">room_entity_facts.grade</span></div>
+      <div class="facts">
+        <div class="fact-row"><span class="chip fact">事实 fact</span><span class="ft">2025 年客户续费率 87%</span><span class="fm">FY2025 · 审计后 · 来源：客户对账单</span></div>
+        <div class="fact-row"><span class="chip analysis">分析 analysis</span><span class="ft">行业平均续费率约 60%</span><span class="fm">行业报告 · 2026-03</span></div>
+        <div class="fact-row"><span class="chip forecast">预测 forecast</span><span class="ft">2026 年收入预计翻倍</span><span class="fm">创始人财务模型 · 未审计</span></div>
+        <div class="fact-row"><span class="chip opinion">观点 opinion</span><span class="ft">创始人执行力强</span><span class="fm">首轮访谈记录 · 待多次验证</span></div>
+        <div class="fact-row"><span class="chip unknown">未知 unknown</span><span class="ft">已在接触 B 轮机构</span><span class="fm">传闻 · 无确认来源</span></div>
+      </div>
+      <p class="facts-take">BP 取数入口缺省只出「事实」档：GET /v1/fa/rooms/:roomId/verified-facts?grade=fact</p>
+    </figure>
+    <p class="impl"><span class="k">实现</span><code>room_entity_facts</code> 增 grade 五档 + numeric 元数据（value/unit/period/currency/audited/verifiedBy）· entity-extraction Skill 教五档标注 · parseExtractionResponse 严格解析</p>
+  </section>
+
+  <!-- 03 -->
+  <section class="station" id="s3">
+    <div class="station-head">
+      <span class="num">03</span>
+      <h2>机构档案</h2>
+      <span class="mapping">产品文档 · 环节 8 前置 · 机构情报与私有关系知识</span>
+    </div>
+    <div class="station-body">
+      <p class="q">机构既要能回答「投了谁」，也要帮助理解「为什么可能适合这个项目」。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>公开投资记录 + 团队私有交流（会议、电话、邮件）</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>结构化直读不经模型；来源与确认走确认制；<span class="dim">投资事件不可变，修正走删除重录；明确表达与行为归纳分开标记</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>基金 / 投资案例 / 任职三张表 + 带来源时间确认人的私有信号</dd></div>
+      </dl>
+      <p class="why">历史投资方向与本期基金策略分别保留——「投过消费硬件」与「本期优先企业服务」同时成立，差异交给人判断。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="机构档案三表的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">fa_funds / fa_investments / fa_positions</span></div>
+      <div class="tables">
+        <div class="trow"><span class="tk">fa_funds</span><span class="tv"><b>澜峰创投二期</b> · RMB · <span class="dim">投资期至 2027-06 · 状态：活跃</span></span><span class="chip ok">已确认</span></div>
+        <div class="trow"><span class="tk">fa_investments</span><span class="tv"><b>云枢科技</b> · A 轮 · 2024-11 · <span class="dim">领投</span></span><span class="chip ok">已确认 · 不可变</span></div>
+        <div class="trow"><span class="tk">fa_positions</span><span class="tv"><b>王珉</b> · 合伙人 · <span class="dim">投委会成员 · 可领投 · 覆盖：企业服务</span></span><span class="chip plain">待确认</span></div>
+      </div>
+      <p class="tables-note">私有信号示例：<span class="mono">2026-11 交流 · 王珉称「本期优先看企业服务」· 确认人：李行 · 可见：项目组</span>——旧观点保留历史，新观点按适用范围追加。</p>
+    </figure>
+    <p class="impl"><span class="k">实现</span>迁移 <code>0086_fa_institution_archives</code>（88 行 DDL）· /v1/fa/institutions/:roomId/{funds,investments,positions}（CRUD + confirm + 软删 + 幂等去重）</p>
+  </section>
+
+  <!-- 04 -->
+  <section class="station" id="s4">
+    <div class="station-head">
+      <span class="num">04</span>
+      <h2>制作材料</h2>
+      <span class="mapping">产品文档 · 环节 7 BP 与融资材料制作</span>
+    </div>
+    <div class="station-body">
+      <p class="q">在项目 Room 中调用已核事实起草 PPT、Word、One-pager 和 FAQ。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>项目事实库（只取 fact 档）+ 赛道选型结论</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>主 Agent 写脚本前按赛道取模块骨架，<span class="dim">逐模块成页：赛道决定模块顺序，模块决定内容要求；数字与引用可回链来源</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>可编辑材料与对外候选版本，保留版本与修改依据</dd></div>
+      </dl>
+      <p class="why">选型是决策树不是生成任务：卖什么 → 怎么赚钱 → 已验证什么 → 本轮要证明什么，六问定模板。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="BP 赛道模板选型与成页效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">bp_template_get · slides_create</span></div>
+      <div class="bp-flow">
+        <span class="m sel">T01 企业软件与行业数字化</span><span class="a">→</span>
+        <span class="m sel">M01 定位与融资摘要</span><span class="a">→</span>
+        <span class="m sel">M02 问题</span><span class="a">→</span>
+        <span class="m">M04 产品</span><span class="a">→</span>
+        <span class="m">M07 商业模式</span><span class="a">→</span>
+        <span class="m">…</span>
+      </div>
+      <div class="slide">
+        <div class="st">续费率 87% 的企业服务公司</div>
+        <div class="ss">M01 定位与融资摘要 · 第 2 页 / 共 14 页</div>
+        <div class="sc">
+          <div class="big">87%<small>2025 年客户续费率 · 审计后</small></div>
+          <ul>
+            <li>客户续约收入占 2025 年总收入的 71%</li>
+            <li>本轮融资 8,000 万，用于交付团队扩张</li>
+          </ul>
+        </div>
+        <div class="sf">来源：verified-facts（grade=fact）· 每个数字可回链原始材料</div>
+      </div>
+    </figure>
+    <p class="impl"><span class="k">实现</span>T01–T18 × M01–M13 配置库 + 四种讲述顺序 + 三档发展阶段 · <code>bp_template_get</code> 工具 · slides 脚本直生（pptxgenjs）</p>
+  </section>
+
+  <!-- 05 -->
+  <section class="station" id="s5">
+    <div class="station-head">
+      <span class="num">05</span>
+      <h2>投资人匹配</h2>
+      <span class="mapping">产品文档 · 环节 8 投资人筛选与匹配</span>
+    </div>
+    <div class="station-body">
+      <p class="q">先核对阶段、币种、票面及冲突，再解释匹配理由和未知条件。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>项目条件（轮次 / 金额 / 赛道 / 可比公司）+ 全部机构档案</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>两阶段：<span class="dim">硬筛不合格必须带理由出局；数据缺失标 unknown 不判死。再按赛道认知、阶段匹配、决策可达、当前姿态、数据完整度加权评分</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>带得分依据的候选名单——<span class="dim">最终名单与时机由合伙人确定</span></dd></div>
+      </dl>
+      <p class="why">投过类似公司既可能是行业认知，也可能是组合矛盾——每条可比公司给「认知 / 冲突」双解释。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="投资人两阶段匹配的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">POST /v1/fa/match</span></div>
+      <div class="match">
+        <div class="m-row">
+          <div class="m-top"><span class="mn">澜峰资本</span><span class="chip ok">硬筛通过</span>
+            <span class="m-score"><span class="bar"><i style="width:86%"></i></span><span class="v">86</span></span></div>
+          <div class="m-basis">赛道认知：投过 3 家可比 · 阶段匹配：近两年 A 轮 4 次 · 决策可达：王珉（投委会 · 可领投）</div>
+          <div class="dual">可比公司 云枢科技 双解释：<span class="chip teal">认知</span> 同赛道经验可复用 · <span class="chip red">冲突</span> 组合内已有同类资产</div>
+        </div>
+        <div class="m-row out">
+          <div class="m-top"><span class="mn">屹峰投资</span><span class="chip red">出局</span></div>
+          <div class="m-basis">理由：基金投资期已于 2025-09 结束，无活跃在投基金</div>
+        </div>
+        <div class="m-row out">
+          <div class="m-top"><span class="mn">汇川创投</span><span class="chip red">出局</span></div>
+          <div class="m-basis">理由：组合冲突——已领投同赛道可比公司 云枢科技</div>
+        </div>
+        <div class="m-row hold">
+          <div class="m-top"><span class="mn">恒曜资本</span><span class="chip unknown">unknown</span></div>
+          <div class="m-basis">无基金档案——数据缺失 ≠ 机构没投能力，待人工补充后重筛</div>
+        </div>
+      </div>
+    </figure>
+    <p class="impl"><span class="k">实现</span><code>screenInstitutions</code> 两阶段算法（fa-archive/matching.ts）· 每项得分带 basis · 可比公司 synergy / conflict 双解释</p>
+  </section>
+
+  <!-- 06 -->
+  <section class="station" id="s6">
+    <div class="station-head">
+      <span class="num">06</span>
+      <h2>会前准备</h2>
+      <span class="mapping">产品文档 · 环节 10 路演与会前准备</span>
+    </div>
+    <div class="station-body">
+      <p class="q">汇总机构近期投资、参会人关注点、历史互动和未完成承诺。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>项目 Room + 机构 Room + 参会人物 Room</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>纯读聚合：<span class="dim">基金投资期、投委会与可领投联系人、投资案例与组合冲突、历史反馈（含未确认草稿）、未兑现重启条件、项目已核事实</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>会前 Brief + 披露边界 + 会议目标，<span class="dim">沟通策略由负责人确认</span></dd></div>
+      </dl>
+      <p class="why">重启条件未满足的机构出现在「不该打扰」清单里——会前先看到，避免踩线。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="会前简报的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">GET /v1/fa/meeting-brief</span></div>
+      <div class="brief-sec">
+        <span class="bk">为什么匹配</span><span class="bv">近两年投 4 家企业服务 A 轮，单笔 3,000–6,000 万</span>
+        <span class="bk">决策链</span><span class="bv">王珉 · 合伙人 · 投委会成员 · 可领投 <span class="dim">· 覆盖：企业服务</span></span>
+        <span class="bk">已投案例</span><span class="bv">云枢科技（A 轮 · 领投）<span class="dim">· 关系：组合冲突标记 ⚠</span></span>
+        <span class="bk">历史互动</span><span class="bv">2026-08 初步交流 · 状态：观察 <span class="dim">· 本项目房内可查</span></span>
+        <span class="bk">本次强调</span><span class="bv">续费率 87%（审计后）· 交付团队扩张计划 <span class="dim">· 仅取 fact 档</span></span>
+      </div>
+      <div class="brief-alert">⚠ 未兑现重启条件：「等客户续费数据出来再聊，先把客户结构补给我」——材料补齐前不应主动打扰。</div>
+    </figure>
+    <p class="impl"><span class="k">实现</span><code>buildMeetingBrief</code> 聚合（fa-archive/brief.ts）· 机构/人物信号事实 + 未确认 draft 一并供会前知悉</p>
+  </section>
+
+  <!-- 07 -->
+  <section class="station" id="s7">
+    <div class="station-head">
+      <span class="num">07</span>
+      <h2>会后反馈</h2>
+      <span class="mapping">产品文档 · 环节 11 会后反馈与跟进</span>
+    </div>
+    <div class="station-body">
+      <p class="q">提取问题、关注点、反馈、承诺和任务，分别提出待确认变更。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>会议记录（获授权部分）</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>AI 整理为草稿：<span class="dim">四分类记录态度，暂缓 / 观察必须带标准原因码；重启条件决定何时可再次接触——AI 只产建议，人确认才回写</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>负责人确认后的反馈记录 + 按分类生成的跟进任务</dd></div>
+      </dl>
+      <p class="why">不会因一句「先不聊」就把人物或机构永久标记为「不投这个赛道」——拒绝原因标准化，重启条件可复核。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="会后反馈确认流转的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">/v1/fa/feedbacks</span></div>
+      <div class="fb-flow">
+        <div class="fb-step">
+          <span class="fb-dot"></span>
+          <div class="fb-body"><div class="fbt">会议记录归档</div><div class="fbd">王珉：「等客户续费数据出来再聊，先把客户结构补给我。」</div></div>
+        </div>
+        <div class="fb-step">
+          <span class="fb-dot"></span>
+          <div class="fb-body"><div class="fbt">AI 草稿：暂缓 · 原因码 timing（时机不对）</div><div class="fbd">重启条件：客户结构补充完成 + 续费数据出炉 · draft 不写任何档案</div></div>
+        </div>
+        <div class="fb-step ok">
+          <span class="fb-dot"></span>
+          <div class="fb-body"><div class="fbt">负责人确认 ✓ → 三路信号分别回写</div><div class="fbd">部分确认与确认时修订均支持 · dismiss 仅门禁拦截，不入档案</div></div>
+        </div>
+      </div>
+      <div class="fb-chips">
+        <span class="chip teal">强意向 strong_interest</span>
+        <span class="chip analysis">意向 interest</span>
+        <span class="chip opinion">观察 watch</span>
+        <span class="chip red">暂缓 pass</span>
+        <span class="chip plain">原因码十项：阶段 / 票面 / 赛道 / 组合 / 地域 / 估值 / 验证 / 额度 / 时机 / 其他</span>
+      </div>
+    </figure>
+    <p class="impl"><span class="k">实现</span><code>FaFeedbackService</code>：createDraft（pass/watch 必须带原因）· confirm（三路回写 + 任务定时限）· dismiss · 幂等</p>
+  </section>
+
+  <!-- 08 -->
+  <section class="station" id="s8">
+    <div class="station-head">
+      <span class="num">08</span>
+      <h2>知识回流</h2>
+      <span class="mapping">产品文档 · 环节 11 / 15 复盘与持续积累</span>
+    </div>
+    <div class="station-body">
+      <p class="q">每次更新可确认：确认后的信号各回各的 Room，成为下一轮依据。</p>
+      <dl class="io">
+        <div class="io-row"><dt>输入</dt><dd>已确认的反馈与跟进安排</dd></div>
+        <div class="io-row"><dt>处理</dt><dd>三路回写：<span class="dim">项目侧进事实库 grade=fact；人物与机构侧信号挂对应 Room——个人观点不上升为机构策略；任务按分类定时限与优先级</span></dd></div>
+        <div class="io-row"><dt>产出</dt><dd>更新后的事实库、画像信号与跟进任务，<span class="dim">下次会前简报自动带上</span></dd></div>
+      </dl>
+      <p class="why">团队积累的经验持续参与下一笔交易：接续他人工作只需进入 Room。</p>
+    </div>
+    <figure class="artifact" role="img" aria-label="三路信号回流的效果示意">
+      <div class="artifact-tag"><span class="t">效果示意</span><span class="src">applyConfirm · roomLocalActions</span></div>
+      <div class="back-flow">
+        <div class="b-row"><span class="bt">项目 ROOM</span><span>事实库 +1「澜峰要求先补客户结构再推进」</span><span class="chip fact">fact</span></div>
+        <div class="b-row"><span class="bt">人物 ROOM</span><span>王珉信号「关注客户续费验证」</span><span class="chip analysis">信号</span></div>
+        <div class="b-row"><span class="bt">机构 ROOM</span><span>澜峰信号「本期优先看企业服务」</span><span class="chip analysis">信号</span></div>
+        <div class="b-row"><span class="bt">任务</span><span>48h 内补充客户结构 · 指派：李行</span><span class="chip teal">高优先</span></div>
+      </div>
+      <div class="loop-card">↺ 下一轮：这些更新自动进入 06 会前简报——每个项目越做越清楚，每个人物和机构越了解越准确。</div>
+    </figure>
+    <p class="impl"><span class="k">实现</span>三路信号各挂各的 Room（个人观点挂人物房，不上升机构策略）· 跟进任务：strong_interest 24h / interest 48h · <code>roomLocalActions</code></p>
+  </section>
+
+  <section class="loop-end" id="loop">
+    <div class="glyph">↺</div>
+    <h3>最后一格回到第一格</h3>
+    <p>从项目进入到交易复盘，资料、判断依据、交付物和下一动作始终在同一条工作线上——这一次会议的产出，是下一次工作的依据。</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="src-line">
+      <span><span class="k">产品文档</span>EverRoom 行业版-FA｜产品介绍（飞书文档 EA5pdqlxuozoPpx8vfVcGRwinVb）</span>
+      <span><span class="k">实现索引</span><a href="./fa-industry-iteration.zh-CN.md">docs/fa-industry-iteration.zh-CN.md</a> · <a href="./bp-template-plan.zh-CN.md">docs/bp-template-plan.zh-CN.md</a></span>
+      <span><span class="k">产品官网</span>https://r.nxcore.ai/</span>
+    </div>
+    <p class="fineprint">本页为静态效果展示，不连接网关；人物、机构与数字均为虚构示意。行业专用工作流、自定义爬虫、结构化回写、团队权限与文件编辑等能力，以试点验证和实际交付清单为准。</p>
+  </div>
+</footer>
+
+<script>
+  document.documentElement.classList.add('js');
+  (function () {
+    var stations = Array.prototype.slice.call(document.querySelectorAll('.station, .loop-end'));
+    var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+    var progress = document.getElementById('railProgress');
+    var railH = 0;
+
+    function reveal() {
+      if (!('IntersectionObserver' in window)) {
+        stations.forEach(function (s) { s.classList.add('in'); });
+        return;
+      }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+        });
+      }, { rootMargin: '0px 0px -12% 0px', threshold: 0.05 });
+      stations.forEach(function (s) { io.observe(s); });
+    }
+
+    function railHeight() {
+      var rail = document.querySelector('.rail');
+      return rail ? rail.offsetHeight : 0;
+    }
+
+    function onScroll() {
+      railH = railHeight();
+      var probe = railH + 96;
+      var current = null;
+      stations.forEach(function (s) {
+        if (!s.id) return;
+        if (s.getBoundingClientRect().top - probe <= 0) current = s.id;
+      });
+      links.forEach(function (a) {
+        a.classList.toggle('active', current !== null && a.getAttribute('href') === '#' + current);
+      });
+      var doc = document.documentElement;
+      var total = doc.scrollHeight - window.innerHeight;
+      var p = total > 0 ? Math.min(1, Math.max(0, window.scrollY / total)) : 0;
+      progress.style.width = (p * 100).toFixed(2) + '%';
+    }
+
+    var ticking = false;
+    window.addEventListener('scroll', function () {
+      if (!ticking) {
+        ticking = true;
+        window.requestAnimationFrame(function () { onScroll(); ticking = false; });
+      }
+    }, { passive: true });
+    window.addEventListener('resize', onScroll);
+
+    reveal();
+    onScroll();
+  })();
+</script>
+</body>
+</html>
