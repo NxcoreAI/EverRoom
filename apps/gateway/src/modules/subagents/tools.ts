@@ -34,7 +34,7 @@ import type {
 import { collectPendingImagePages, generateSlidesPageImages } from "./slides-page-images.js";
 import { createSlideImageVlmReviewer } from "./slides-image-vlm-qc.js";
 import { analyzeReferenceFiles } from "./slides-reference.js";
-import { buildPlannerInjection } from "../bp-template/selection.js";
+import { buildPlannerInjection, missingModuleCoverage } from "../bp-template/selection.js";
 import type { BpTrackId } from "../bp-template/data.js";
 import {
   applyPrewarmReadyToPlan,
@@ -1558,6 +1558,7 @@ export function createSubagentPiTools(
       label: "Create or edit a slides deck",
       description: "PPT 流程入口。每次只执行一个 task，参数按 task 隔离；不适用字段会拒绝。"
         + "draft 需 instruction，生成内容草稿并暂停；完成后等用户确认。可选 title/outline、参考文件和 sourceDocumentIds。"
+        + "生成融资 BP 时传 bpTemplate（赛道模板选型：trackId T01-T18、stage early/growth/mature、keyJudgement 本轮关键判断；选型需用户确认），网关渲染模板骨架注入 planner。"
         + "style 可选 draftDocumentId/instruction，生成或重显风格候选；只有用户要求换一批时传 regenerate=true 和反馈 instruction。"
         + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
         + "generate 需 draftDocumentId 或 styleSessionId，可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
@@ -1965,13 +1966,24 @@ export function createSubagentPiTools(
               });
             }
           }
+          // BP 模板覆盖校验：注入了 bpTemplate 时，draft 页必须覆盖全部 13 个模块。
+          // 缺口只记账进 warnings 供用户与主 Agent 复核——草稿本身就是给用户改的，不拦交付。
+          let bpCoverageWarnings: string[] = [];
+          if (params.bpTemplate && typeof params.bpTemplate === "object") {
+            const bpSel = params.bpTemplate as { trackId: string };
+            const draftTitles = gatePlan.pages.map((p: { title?: unknown }) => String(p?.title ?? ""));
+            const missing = missingModuleCoverage(draftTitles, bpSel.trackId as BpTrackId);
+            if (missing.length > 0) {
+              bpCoverageWarnings = [`BP 模块覆盖缺口（${bpSel.trackId}）：${missing.join("、")}。请在草稿中补齐或说明取舍。`];
+            }
+          }
           return {
             content: JSON.stringify({
               status: "draft_ready",
               documentId: draftDocument.documentId,
               documentTitle: draftDocument.title,
               pages: gatePlan.pages.length,
-              warnings: gatePlan.warnings ?? [],
+              warnings: [...(gatePlan.warnings ?? []), ...bpCoverageWarnings],
               message: "内容草稿文档已创建。告诉用户：打开草稿检查修改（一个章节=一页，改章节/要点/数据就是改页），"
                 + "确认内容无误后点「内容确认，去选风格」进入下一步；用户确认前不要生成 PPT。",
             }),
