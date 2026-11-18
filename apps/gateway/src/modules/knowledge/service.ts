@@ -54,6 +54,7 @@ import { KnowledgeRouter, fallbackSummary } from "./router.js";
 import {
   ROOM_RELATION_INDEX_JOB_TYPE,
   RoomRelationRegistry,
+  type RelationIndexFactInput,
   type RelationIndexInput,
   type RoomGraphDto,
   type RoomRelationDto,
@@ -1923,7 +1924,7 @@ export class KnowledgeService {
     )).orderBy(desc(routeDecisions.createdAt)).get();
     const evidence = (decision?.evidence ?? {}) as {
       entities?: Array<{ entityId?: unknown; role?: unknown; salience?: unknown; evidence?: unknown }>;
-      facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[] }>;
+      facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[]; grade?: unknown; numeric?: unknown }>;
     };
     let sourceTitle = decision?.sourceTitle ?? payload.sourceId;
     let mentions: RelationIndexInput["mentions"] = [];
@@ -1938,10 +1939,16 @@ export class KnowledgeService {
     if (Array.isArray(evidence.facts)) {
       facts = evidence.facts.flatMap((item) => {
         if (typeof item.content !== "string" || !item.content.trim()) return [];
+        const grade = (item as { grade?: unknown }).grade;
+        const numericRaw = (item as { numeric?: unknown }).numeric;
         return [{
           content: item.content,
           type: item.type === "关系" ? "关系" as const : "属性" as const,
           entityIds: (item.entityIds ?? []).flatMap((entityId) => typeof entityId === "string" ? [entityId] : []),
+          ...(grade === "fact" || grade === "analysis" || grade === "forecast" || grade === "unknown"
+            ? { grade: grade as "fact" | "analysis" | "forecast" | "unknown" } : {}),
+          ...(numericRaw && typeof numericRaw === "object"
+            ? { numeric: numericRaw as NonNullable<RelationIndexFactInput["numeric"]> } : {}),
         }];
       });
     }
@@ -1979,6 +1986,8 @@ export class KnowledgeService {
               const entityId = extractedEntityIds.get(name);
               return entityId ? [entityId] : [];
             }),
+            ...(fact.grade ? { grade: fact.grade } : {}),
+            ...(fact.numeric ? { numeric: fact.numeric } : {}),
           }));
         }
       }

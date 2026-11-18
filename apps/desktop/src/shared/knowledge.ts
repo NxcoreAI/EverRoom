@@ -169,8 +169,8 @@ export interface KnowledgeWikiGraphDto {
   edges: Array<{ source: string; target: string }>
 }
 
-/** 实体六类（与 gateway ENTITY_KINDS 对齐）。 */
-export const KNOWLEDGE_ENTITY_KINDS = ['人物', '项目', '主题', '长期目标', '议题', '事件'] as const
+/** 实体七类（与 gateway ENTITY_KINDS 对齐；FA 行业版新增"机构"）。 */
+export const KNOWLEDGE_ENTITY_KINDS = ['人物', '项目', '机构', '主题', '长期目标', '议题', '事件'] as const
 
 /** ready = 推荐态（达阈值等用户确认创建，entity-room-plan 推荐确认制）。 */
 export type KnowledgeEntityStatus = 'weak' | 'ready' | 'promoting' | 'room' | 'archived' | 'suppressed'

@@ -15,7 +15,7 @@ import { BUILTIN_AGENT_IDS, type AgentResolver } from "../agent/resolver.js";
 const CHAT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_CHARS = 4_000;
 
-export const ENTITY_KINDS = ["人物", "项目", "主题", "长期目标", "议题", "事件"] as const;
+export const ENTITY_KINDS = ["人物", "项目", "机构", "主题", "长期目标", "议题", "事件"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 export class KnowledgeLlmError extends Error {
@@ -40,6 +40,17 @@ export interface ExtractedFact {
   content: string;
   type: "属性" | "关系";
   entities: string[];
+  /** FA 可信度分级（fa-industry-iteration 工作项二）：缺省 opinion。 */
+  grade?: "fact" | "analysis" | "forecast" | "opinion" | "unknown";
+  /** 数字元数据：content 含关键数字时尽量携带。 */
+  numeric?: {
+    value?: number;
+    unit?: string;
+    period?: string;
+    currency?: string;
+    audited?: boolean;
+    verifiedBy?: string;
+  };
 }
 
 export interface ExtractionResult {
@@ -392,12 +403,26 @@ export function parseExtractionResponse(content: string): ExtractionResult {
     if (!factContent) continue;
     const typeRaw = typeof fact.type === "string" ? fact.type.trim() : "";
     const type: ExtractedFact["type"] = typeRaw === "关系" ? "关系" : "属性";
+    const gradeRaw = typeof fact.grade === "string" ? fact.grade.trim() : "";
+    const grade: ExtractedFact["grade"] = gradeRaw === "fact" || gradeRaw === "analysis"
+      || gradeRaw === "forecast" || gradeRaw === "unknown" ? gradeRaw : "opinion";
+    const numericRaw = (typeof fact.numeric === "object" && fact.numeric !== null ? fact.numeric : null) as Record<string, unknown> | null;
+    const numeric: ExtractedFact["numeric"] | undefined = numericRaw
+      ? {
+          ...(typeof numericRaw.value === "number" && Number.isFinite(numericRaw.value) ? { value: numericRaw.value } : {}),
+          ...(typeof numericRaw.unit === "string" && numericRaw.unit.trim() ? { unit: numericRaw.unit.trim().slice(0, 16) } : {}),
+          ...(typeof numericRaw.period === "string" && numericRaw.period.trim() ? { period: numericRaw.period.trim().slice(0, 20) } : {}),
+          ...(typeof numericRaw.currency === "string" && numericRaw.currency.trim() ? { currency: numericRaw.currency.trim().slice(0, 8) } : {}),
+          ...(typeof numericRaw.audited === "boolean" ? { audited: numericRaw.audited } : {}),
+          ...(typeof numericRaw.verifiedBy === "string" && numericRaw.verifiedBy.trim() ? { verifiedBy: numericRaw.verifiedBy.trim().slice(0, 60) } : {}),
+        }
+      : undefined;
     const entities = (Array.isArray(fact.entities) ? fact.entities : [])
       .flatMap((name) => (typeof name === "string" ? [name.trim().slice(0, 120)] : []))
       .filter((name) => name.length > 0)
       .slice(0, 4);
     // 同内容只保留一条（后到覆盖：保留最新形态，实体引用更全的通常在后）
-    factsByContent.set(factContent, { content: factContent, type, entities });
+    factsByContent.set(factContent, { content: factContent, type, entities, grade, ...(numeric ? { numeric } : {}) });
   }
 
   return {

@@ -26,7 +26,7 @@ export function removeDemoContextRoomState(
   };
 }
 
-const CONTEXT_ROOM_KINDS = new Set(['人物', '项目', '主题', '长期目标', '议题', '事件']);
+const CONTEXT_ROOM_KINDS = new Set(['人物', '项目', '机构', '主题', '长期目标', '议题', '事件']);
 
 const LEGACY_BRAND_REPLACEMENTS = [
   ['极核 NEXCORE HUB', 'Everroom HUB'],

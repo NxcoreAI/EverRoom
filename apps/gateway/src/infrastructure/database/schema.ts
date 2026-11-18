@@ -1653,9 +1653,9 @@ export const entities = sqliteTable(
     name: text("name").notNull(),
     /** 曾用名/同义词：解析命中不同叫法时累积；合并时并集。 */
     aliases: text("aliases", { mode: "json" }).$type<string[]>(),
-    /** 人物/项目/主题/长期目标/议题/事件。 */
+    /** 人物/项目/机构/主题/长期目标/议题/事件（FA 行业版新增"机构"）。 */
     kind: text("kind", {
-      enum: ["人物", "项目", "主题", "长期目标", "议题", "事件"],
+      enum: ["人物", "项目", "机构", "主题", "长期目标", "议题", "事件"],
     }).notNull().default("主题"),
     /** 晋升时"转正登记"一次性综合产出（弱期为 NULL——依据句日志即事实源，ED7）。 */
     summary: text("summary"),
@@ -1829,6 +1829,7 @@ export const roomEntityMentions = sqliteTable(
  * 事实记忆投影（PRD 6.6.1：描述实体属性或实体间关系的明确陈述）。
  * 与 room_entity_mentions 同语义：来源级投影，replaceSource 按来源整体替换；
  * 同一事实跨来源 = 多行，读取侧按 factId（sha256(content) 指纹）聚合去重。
+ * FA 行业版（fa-industry-iteration）扩展：grade 五档可信度分级 + 数字元数据。
  */
 export const roomEntityFacts = sqliteTable(
   "room_entity_facts",
@@ -1840,6 +1841,29 @@ export const roomEntityFacts = sqliteTable(
     content: text("content").notNull(),
     /** 属性 = 单一实体的性质/状态/归属；关系 = 实体间关系。 */
     type: text("type", { enum: ["属性", "关系"] }).notNull().default("属性"),
+    /**
+     * FA 可信度分级（fa-industry-iteration 工作项二；抽取时由提示词标注，
+     * verified 由人工确认动作升级）：fact 有来源可核验的事实；analysis 基于事实
+     * 的分析推断；forecast 管理层预测或前瞻假设；opinion 主观判断/观点；
+     * unknown 目前未知（禁止 AI 补写）。缺省 opinion——未标注分级的旧数据与
+     * 模糊陈述不冒充事实。
+     */
+    grade: text("grade", { enum: ["fact", "analysis", "forecast", "opinion", "unknown"] })
+      .notNull()
+      .default("opinion"),
+    /**
+     * 数字元数据（关键数字必挂，材料引用与口径冲突检测的依据）：
+     * value 数值、unit 单位、period 口径期间（如 2025H1）、currency 币种、
+     * audited 是否经审计、verifiedBy 确认人。content 含关键数字时尽量填写。
+     */
+    numeric: text("numeric", { mode: "json" }).$type<{
+      value?: number;
+      unit?: string;
+      period?: string;
+      currency?: string;
+      audited?: boolean;
+      verifiedBy?: string;
+    } | null>(),
     /** 涉及实体（抽取名称经 resolveMentionEntity 解析后的 id；解析不到的不进表）。 */
     entityIds: text("entity_ids", { mode: "json" }).$type<string[]>(),
     sourceKind: text("source_kind", {
@@ -1865,6 +1889,7 @@ export const roomEntityFacts = sqliteTable(
     index("room_entity_facts_room_idx").on(table.roomId),
     index("room_entity_facts_source_idx").on(table.sourceKind, table.sourceId),
     index("room_entity_facts_fact_idx").on(table.factId),
+    index("room_entity_facts_room_grade_idx").on(table.roomId, table.grade),
   ],
 );
 
@@ -1886,7 +1911,13 @@ export const roomRelations = sqliteTable(
     pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
     hidden: integer("hidden", { mode: "boolean" }).notNull().default(false),
     manualType: text("manual_type", {
-      enum: ["related", "depends_on", "part_of", "supports", "blocks", "owns", "custom"],
+      enum: ["related", "depends_on", "part_of", "supports", "blocks", "owns",
+        // FA 行业版语义关系（fa-industry-iteration 工作项一）
+        "employed_by", // 任职：人物 → 机构（带时间区间，manualNote 记角色）
+        "invested_in", // 投资：机构/基金 → 项目
+        "founder_of", // 创始人：人物 → 项目
+        "introduced_by", // 介绍路径：项目/人物 → 人物（manualNote 记介绍人）
+        "custom"],
     }),
     manualFromRoomId: text("manual_from_room_id"),
     manualToRoomId: text("manual_to_room_id"),
@@ -1918,6 +1949,158 @@ export const roomWikis = sqliteTable("room_wikis", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * FA 机构档案三表（fa-industry-iteration 工作项一：机构成为一等实体）。
+ * 设计原则：结构化字段直接读库参与筛选与计算，不经模型生成；每条记录带
+ * 来源与确认状态，确认制对齐事实分级（confirmed 由人工确认后置位）。
+ */
+
+/** 机构旗下的基金记录（挂在机构 Room 下；币种/期数/投资期/投资约束）。 */
+export const faFunds = sqliteTable(
+  "fa_funds",
+  {
+    id: text("id").primaryKey(),
+    /** 机构 Room id（kind=机构）。 */
+    institutionRoomId: text("institution_room_id").notNull(),
+    name: text("name").notNull(),
+    /** 期数（如 "三期"）。 */
+    sequence: text("sequence"),
+    /** 币种（CNY/USD/EUR…）。 */
+    currency: text("currency"),
+    /** 设立年份。 */
+    vintageYear: integer("vintage_year"),
+    /** 目标/已知规模（数值 + 单位分开存，避免字符串解析）。 */
+    targetSize: real("target_size"),
+    sizeUnit: text("size_unit"),
+    /** 投资期截止年（过投资期不可领投新项目）。 */
+    investmentPeriodEnd: integer("investment_period_end"),
+    /** 投资约束（JSON string[]：地域/行业/LP 要求等文字条款）。 */
+    constraints: text("constraints", { mode: "json" }).$type<string[]>(),
+    /** active = 当前在投；inactive = 已过投资期/关账。 */
+    status: text("status", { enum: ["active", "inactive", "unknown"] }).notNull().default("unknown"),
+    /** 来源与确认（导入待核对 → 人工确认）。 */
+    sourceKind: text("source_kind"),
+    sourceId: text("source_id"),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("fa_funds_institution_idx").on(table.institutionRoomId),
+    uniqueIndex("fa_funds_institution_name_idx").on(table.institutionRoomId, table.name),
+  ],
+);
+
+/**
+ * 投资记录（机构/基金 → 被投公司）：轮次、日期、领投/跟投、票面区间。
+ * 一行一条投资事件；未公开票面存 null（未知不冒充数据，对齐蓝图 §12.4）。
+ */
+export const faInvestments = sqliteTable(
+  "fa_investments",
+  {
+    id: text("id").primaryKey(),
+    /** 投资方：机构 Room 或基金 id（fundId 优先）。 */
+    institutionRoomId: text("institution_room_id").notNull(),
+    fundId: text("fund_id"),
+    /** 被投公司名（未建 Room 的历史案例直接挂名；建 Room 后回填 projectRoomId）。 */
+    portfolioCompany: text("portfolio_company").notNull(),
+    projectRoomId: text("project_room_id"),
+    /** 轮次（种子/天使/Pre-A/A/B/C/D/Pre-IPO/并购/战略）。 */
+    round: text("round"),
+    /** 投资日期（YYYY-MM-DD 或 YYYY-MM，精度随来源）。 */
+    investedOn: text("invested_on"),
+    /** lead = 领投；follow = 跟投；unknown = 未确认。 */
+    role: text("role", { enum: ["lead", "follow", "unknown"] }).notNull().default("unknown"),
+    /** 已知票面（数值，币种单列；未公开 = null）。 */
+    ticketSize: real("ticket_size"),
+    ticketCurrency: text("ticket_currency"),
+    /** 与当前项目的协同或竞争标记（matching 硬筛的组合冲突输入）。 */
+    relationToPortfolio: text("relation_to_portfolio", { enum: ["synergy", "conflict", "neutral", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    sourceKind: text("source_kind"),
+    sourceId: text("source_id"),
+    sourceUrl: text("source_url"),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("fa_investments_institution_idx").on(table.institutionRoomId),
+    index("fa_investments_project_idx").on(table.projectRoomId),
+    index("fa_investments_company_idx").on(table.portfolioCompany),
+    /** 同机构同公司同轮次同日期视为同一事件（导入去重键）。 */
+    uniqueIndex("fa_investments_dedup_idx").on(
+      table.institutionRoomId,
+      table.portfolioCompany,
+      table.round,
+      table.investedOn,
+    ),
+  ],
+);
+
+/**
+ * 任职关系（人物 → 机构，带时间区间与角色）：
+ * "个人观点不自动变成机构策略"的结构保障——观点挂人物，任职只是归属事实。
+ */
+export const faPositions = sqliteTable(
+  "fa_positions",
+  {
+    id: text("id").primaryKey(),
+    /** 人物 Room id（kind=人物）。 */
+    personRoomId: text("person_room_id").notNull(),
+    /** 机构 Room id（kind=机构）。 */
+    institutionRoomId: text("institution_room_id").notNull(),
+    /** 职位（合伙人/MD/VP/投资总监…）。 */
+    title: text("title"),
+    /** 任职起年（null = 未知起始）。 */
+    fromYear: integer("from_year"),
+    /** 任职止年（null = 在任）。 */
+    toYear: integer("to_year"),
+    /** 是否进投委会（决策链输入）。 */
+    icMember: integer("ic_member", { mode: "boolean" }),
+    /** 能否领投（决策链/匹配输入）。 */
+    canLead: integer("can_lead", { mode: "boolean" }),
+    /** 覆盖赛道（JSON string[]）。 */
+    sectors: text("sectors", { mode: "json" }).$type<string[]>(),
+    sourceKind: text("source_kind"),
+    sourceId: text("source_id"),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("fa_positions_person_idx").on(table.personRoomId),
+    index("fa_positions_institution_idx").on(table.institutionRoomId),
+    uniqueIndex("fa_positions_pair_title_idx").on(
+      table.personRoomId,
+      table.institutionRoomId,
+      table.title,
+    ),
+  ],
+);
 
 /**
  * 写作路线导图（聚焦改版 2026-09）：新文档创建时由 route-planner subAgent 逐层

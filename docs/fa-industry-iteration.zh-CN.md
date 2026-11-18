@@ -1,6 +1,6 @@
 # FA 行业版迭代：输入文档索引
 
-> 状态：调研与规划阶段（2026-11-18）
+> 状态：第一批开工（2026-11-18）——机构档案（数据层 + REST）与事实分级（grade/numeric + 抽取标注 + 已核事实查询）已落地；会前/会后闭环、匹配未启动
 > 范围：EverRoom 面向股权融资 FA（财务顾问）团队的行业版迭代
 
 本迭代以三份文档为输入，分工如下：
@@ -15,12 +15,22 @@
 
 ## 与代码库现状的差距摘要
 
-- **机构实体**：`ContextRoomKind` 六值枚举（人物/项目/主题/长期目标/议题/事件）无"机构"，基金/投资记录/任职关系无结构化存储（`apps/desktop/src/renderer/src/components/context-room/ported/types.ts`、`apps/gateway/src/modules/knowledge/llm.ts` 的 `ENTITY_KINDS`）。
-- **事实分级**：`roomEntityFacts` 只有"属性/关系"两类，无事实/分析/假设/意见/未知五档分级，也无数字元数据（口径、币种、审计状态、责任人）。
-- **关系类型**：`roomRelations` 为通用类型（related/depends_on/part_of 等），无任职（带时间）、投资、创始人、介绍路径等 FA 语义关系。
-- **会前/会后闭环**：transcription-summary agent 可产出会议纪要，但无"反馈分类 → 待确认变更 → 回写三档档案 → 跟进任务"的结构化链路，也无会前 Brief 聚合。
-- **匹配**：无基于结构化档案的硬筛 + 适配评分链路。
-- **数据入口**：connectors 体系为 SaaS 连接器（飞书/Notion/Gmail），无通用采集源插槽。
+> 2026-11-18 更新：前两项已落地（迁移 0086），见下文"已落地"。
+
+**已落地（第一批）**：
+- "机构"入 `ContextRoomKind` / `ENTITY_KINDS` / entities 表枚举（gateway + desktop 全链，含图标/色调/图谱色值）
+- `fa_funds` / `fa_investments` / `fa_positions` 三表（迁移 `0086_fa_institution_archives`）：结构化字段直接读库；来源与确认字段走确认制；投资事件不可变（去重命中返回原行，修正走删除重录）
+- FA 语义关系类型：`employed_by`（任职）/ `invested_in`（投资）/ `founder_of`（创始人）/ `introduced_by`（介绍）入 `RoomRelationManualType` 与 REST 校验
+- 事实分级：`room_entity_facts` 加 `grade`（fact/analysis/forecast/opinion/unknown，缺省 opinion——未标注不冒充事实）与 `numeric`（value/unit/period/currency/audited/verifiedBy）数字元数据；抽取 Skill（entity-extraction）已教五档标注与硬规则（公司预测不得标 fact、行业平均标 analysis）；`parseExtractionResponse` 严格解析 + 非法回落 opinion
+- REST：`/v1/fa/institutions/:roomId/{funds,investments,positions}`（CRUD + confirm）+ `/v1/fa/persons/:roomId/positions` + `/v1/fa/rooms/:roomId/verified-facts?grade=`（BP 取数入口，缺省只出 fact）
+- 服务层：`modules/fa-archive/service.ts`（Room kind 校验、幂等 upsert、软删、确认动作）
+
+**未落地**：
+- 会前 Brief / 会后反馈结构化闭环（第二批）
+- 投资人匹配（第三批）
+- 数据源插槽（第三批）；connectors 体系现为 SaaS 连接器（飞书/Notion/Gmail），无通用采集源插槽
+
+
 
 ## 相关代码
 
