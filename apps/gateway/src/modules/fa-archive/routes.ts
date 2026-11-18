@@ -13,6 +13,7 @@ import { roomEntityFacts } from "../../infrastructure/database/schema.js";
 import { FaArchiveService, FaArchiveError } from "./service.js";
 import { FaFeedbackService, FaFeedbackError, FA_PASS_REASONS } from "./feedback.js";
 import { buildMeetingBrief } from "./brief.js";
+import { screenInstitutions } from "./matching.js";
 
 const iso = (value: Date | number | null): string | null =>
   value === null ? null : (value instanceof Date ? value : new Date(value)).toISOString();
@@ -304,6 +305,25 @@ export function faArchiveRoutes(db: GatewayDatabase): FastifyPluginAsyncTypebox 
         return faErrorReply(reply, error);
       }
     });
+
+    // ── 投资人匹配（fa-industry-iteration 工作项五）：硬筛 + 适配排序 ──
+    app.post("/v1/fa/match", {
+      schema: {
+        tags: ["fa"],
+        body: Type.Object({
+          projectRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+          round: Type.Optional(Type.String({ maxLength: 40 })),
+          askAmount: Type.Optional(Type.Number({ minimum: 0 })),
+          askCurrency: Type.Optional(Type.String({ maxLength: 8 })),
+          sectors: Type.Optional(Type.Array(Type.String({ maxLength: 60 }), { maxItems: 8 })),
+          comparableCompanies: Type.Optional(Type.Array(Type.String({ maxLength: 200 }), { maxItems: 20 })),
+          includeRejectedWithUnmetConditions: Type.Optional(Type.Boolean()),
+        }),
+        response: { 200: Type.Object({ items: Type.Array(Type.Unknown()) }) },
+      },
+    }, async (request) => ({
+      items: screenInstitutions(db, request.body as never),
+    }));
 
     // ── 会前简报（fa-industry-iteration 工作项四）：聚合机构档案/人物信号/历史反馈/已核事实 ──
     app.get("/v1/fa/meeting-brief", {
