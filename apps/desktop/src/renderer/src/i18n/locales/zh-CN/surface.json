@@ -2171,5 +2171,13 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "看大图挑选",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} 条提示",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "内容稿已归档，可在资料面板恢复。",
-  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。"
+  "agentConnections.loadTimeout": "加载超时：网关未响应，请点右上角刷新重试；若持续超时请重启应用。",
+  "noteQueue": {
+    "noteQueue.annotationsCount": "{count} 条评论",
+    "noteQueue.annotationsPending": "待发送评论",
+    "noteQueue.editAnnotationNamed": "修改这条评论",
+    "noteQueue.deleteAnnotationNamed": "删除这条评论",
+    "noteQueue.editAnnotation": "修改评论",
+    "noteQueue.noteEditorHint": "回车保存 · Esc 取消"
+  }
 }

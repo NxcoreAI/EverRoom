@@ -2171,5 +2171,13 @@
   "agentChat.SLIDES_STYLE_VIEW_BIG_ACTION": "View large previews",
   "agentChat.SLIDES_WARNINGS_SUMMARY": "{{count}} notes",
   "agentChat.SLIDES_DRAFT_ARCHIVED": "The content draft was archived; you can restore it from the Materials panel.",
-  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app."
+  "agentConnections.loadTimeout": "Load timed out: gateway not responding. Use the refresh button; if it persists, restart the app.",
+  "noteQueue": {
+    "noteQueue.annotationsCount": "{count} annotations",
+    "noteQueue.annotationsPending": "Pending annotations",
+    "noteQueue.editAnnotationNamed": "Edit this annotation",
+    "noteQueue.deleteAnnotationNamed": "Delete this annotation",
+    "noteQueue.editAnnotation": "Edit annotation",
+    "noteQueue.noteEditorHint": "Enter to save · Esc to cancel"
+  }
 }

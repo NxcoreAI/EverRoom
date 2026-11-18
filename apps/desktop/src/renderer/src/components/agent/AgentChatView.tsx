@@ -1,3 +1,4 @@
+import type { AgentNoteCard } from '@nxcore/agent-contract'
 import { ArrowDown, Check, ChevronRight, CircleHelp, Copy, FileText, Folder, FolderKanban, Link2, MessageSquareText, RotateCcw, X } from 'lucide-react'
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
