@@ -49,10 +49,14 @@ tools:
   - word_agent_read
   - word_agent_edit
   - word_agent_ops
+  - word_agent_revert
   - word_compare
   - word_export_pdf
+  - word_agent_illustration
   - sheets_agent_read
   - sheets_agent_edit
+  - pdf_agent_read
+  - pdf_agent_edit
   - file_read
   - file_search
   - file_open
