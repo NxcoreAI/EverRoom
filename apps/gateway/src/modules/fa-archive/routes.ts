@@ -11,6 +11,8 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { roomEntityFacts } from "../../infrastructure/database/schema.js";
 import { FaArchiveService, FaArchiveError } from "./service.js";
+import { FaFeedbackService, FaFeedbackError, FA_PASS_REASONS } from "./feedback.js";
+import { buildMeetingBrief } from "./brief.js";
 
 const iso = (value: Date | number | null): string | null =>
   value === null ? null : (value instanceof Date ? value : new Date(value)).toISOString();
@@ -144,7 +146,19 @@ function faErrorReply(reply: any, error: unknown): void {
 
 export function faArchiveRoutes(db: GatewayDatabase): FastifyPluginAsyncTypebox {
   const service = new FaArchiveService(db);
+  const feedback = new FaFeedbackService(db);
   return async function routes(app) {
+    // 错误映射 helper 也覆盖 FaFeedbackError
+    const errorReply = (reply: unknown, error: unknown): void => {
+      if (error instanceof FaArchiveError || error instanceof FaFeedbackError) {
+        const reason = error.message.split(":")[0] ?? "";
+        const notFound = reason.endsWith("_not_found");
+        // biome-ignore lint/suspicious/noExplicitAny: reply 泛型随路由变化
+        (reply as any).code(notFound ? 404 : 422).send({ error: error.message });
+        return;
+      }
+      throw error;
+    };
     // ── 基金 ──
     app.get("/v1/fa/institutions/:roomId/funds", {
       schema: { tags: ["fa"], params: RoomIdParams, response: { 200: Type.Object({ items: Type.Array(FundDto) }) } },
@@ -288,6 +302,113 @@ export function faArchiveRoutes(db: GatewayDatabase): FastifyPluginAsyncTypebox 
         return reply.status(204).send(null);
       } catch (error) {
         return faErrorReply(reply, error);
+      }
+    });
+
+    // ── 会前简报（fa-industry-iteration 工作项四）：聚合机构档案/人物信号/历史反馈/已核事实 ──
+    app.get("/v1/fa/meeting-brief", {
+      schema: {
+        tags: ["fa"],
+        querystring: Type.Object({
+          projectRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+          institutionRoomId: Type.String({ minLength: 1, maxLength: 128 }),
+          personRoomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
+        response: { 200: Type.Unknown() },
+      },
+    }, async (request) => buildMeetingBrief(db, request.query as never));
+
+    // ── 会后反馈闭环（fa-industry-iteration 工作项三）──
+    app.get("/v1/fa/feedbacks", {
+      schema: {
+        tags: ["fa"],
+        querystring: Type.Object({
+          roomId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          status: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("confirmed"), Type.Literal("dismissed")])),
+        }),
+        response: { 200: Type.Object({ items: Type.Array(Type.Unknown()) }),
+        },
+      },
+    }, async (request) => ({
+      items: feedback.list(
+        (request.query as { roomId?: string }).roomId,
+        (request.query as { status?: "draft" | "confirmed" | "dismissed" }).status,
+      ),
+    }));
+
+    app.post("/v1/fa/feedbacks", {
+      schema: {
+        tags: ["fa"],
+        body: Type.Object({
+          roomId: Type.String({ minLength: 1, maxLength: 128 }),
+          sourceKind: Type.Optional(Type.String({ maxLength: 40 })),
+          sourceId: Type.Optional(Type.String({ maxLength: 128 })),
+          institutionRoomId: Type.Optional(Type.String({ maxLength: 128 })),
+          personRoomId: Type.Optional(Type.String({ maxLength: 128 })),
+          meetingAt: Type.Optional(Type.String({ maxLength: 20 })),
+          disposition: Type.Union([
+            Type.Literal("strong_interest"), Type.Literal("interest"),
+            Type.Literal("watch"), Type.Literal("pass"), Type.Literal("unknown"),
+          ]),
+          passReasons: Type.Optional(Type.Array(Type.Union(FA_PASS_REASONS.map((r) => Type.Literal(r))), { maxItems: 5 })),
+          reopenConditions: Type.Optional(Type.String({ maxLength: 1000 })),
+          projectUpdates: Type.Optional(Type.String({ maxLength: 4000 })),
+          personSignals: Type.Optional(Type.String({ maxLength: 4000 })),
+          institutionSignals: Type.Optional(Type.String({ maxLength: 4000 })),
+          meetingNotes: Type.Optional(Type.String({ maxLength: 8000 })),
+        }),
+        response: { 201: Type.Unknown() },
+      },
+    }, async (request, reply) => {
+      try {
+        const row = feedback.createDraft(request.body as never);
+        return reply.status(201).send(row);
+      } catch (error) {
+        errorReply(reply, error);
+      }
+    });
+
+    app.post("/v1/fa/feedbacks/:id/confirm", {
+      schema: {
+        tags: ["fa"],
+        params: IdParams,
+        body: Type.Object({
+          confirmedBy: Type.String({ minLength: 1, maxLength: 120 }),
+          edits: Type.Optional(Type.Object({
+            projectUpdates: Type.Optional(Type.String({ maxLength: 4000 })),
+            personSignals: Type.Optional(Type.String({ maxLength: 4000 })),
+            institutionSignals: Type.Optional(Type.String({ maxLength: 4000 })),
+            reopenConditions: Type.Optional(Type.String({ maxLength: 1000 })),
+            followUpTitle: Type.Optional(Type.String({ maxLength: 200 })),
+            followUpDueAt: Type.Optional(Type.String({ maxLength: 30 })),
+          })),
+          applyScopes: Type.Optional(Type.Array(Type.Union([
+            Type.Literal("project"), Type.Literal("person"), Type.Literal("institution"),
+          ]), { maxItems: 3 })),
+          createFollowUpTask: Type.Optional(Type.Boolean()),
+        }),
+        response: { 200: Type.Unknown() },
+      },
+    }, async (request, reply) => {
+      try {
+        const row = feedback.confirm(request.params.id, request.body.confirmedBy, {
+          ...(request.body.edits ? { edits: request.body.edits } : {}),
+          ...(request.body.applyScopes ? { applyScopes: request.body.applyScopes as never } : {}),
+          ...(request.body.createFollowUpTask !== undefined ? { createFollowUpTask: request.body.createFollowUpTask } : {}),
+        });
+        return reply.status(200).send(row);
+      } catch (error) {
+        errorReply(reply, error);
+      }
+    });
+
+    app.post("/v1/fa/feedbacks/:id/dismiss", {
+      schema: { tags: ["fa"], params: IdParams, response: { 200: Type.Unknown() } },
+    }, async (request, reply) => {
+      try {
+        return reply.status(200).send(feedback.dismiss(request.params.id));
+      } catch (error) {
+        errorReply(reply, error);
       }
     });
 

@@ -2103,6 +2103,62 @@ export const faPositions = sqliteTable(
 );
 
 /**
+ * FA 会后反馈（fa-industry-iteration 工作项三）：一场会议的结构化整理与
+ * 三路待确认变更（项目/人物/机构）。确认制核心：AI 只产建议，未确认的
+ * 变更不回写档案；反馈结论用统一分类，拒绝必须带标准原因与可重启条件。
+ */
+export const faMeetingFeedbacks = sqliteTable(
+  "fa_meeting_feedbacks",
+  {
+    id: text("id").primaryKey(),
+    /** 反馈挂在哪个 Room（通常是项目 Room；会议可关联多 Room，主 Room 承载）。 */
+    roomId: text("room_id").notNull(),
+    /** 会议来源（asr 会话/上传纪要/手工登记）。 */
+    sourceKind: text("source_kind"),
+    sourceId: text("source_id"),
+    /** 参会机构 Room（可空：非投资人会议也有反馈）。 */
+    institutionRoomId: text("institution_room_id"),
+    /** 主要参会人 Room（可多个时取最主要）。 */
+    personRoomId: text("person_room_id"),
+    meetingAt: text("meeting_at"),
+    /** 反馈结论四分类（蓝图 §15.3）。 */
+    disposition: text("disposition", {
+      enum: ["strong_interest", "interest", "watch", "pass", "unknown"],
+    }).notNull().default("unknown"),
+    /** 拒绝/暂缓的标准原因（多选，JSON string[]；pass/watch 必填至少一条）。 */
+    passReasons: text("pass_reasons", { mode: "json" }).$type<string[]>(),
+    /** 重新联系条件（"客户续费数据出来再聊"这类可重启约定）。 */
+    reopenConditions: text("reopen_conditions"),
+    /** 项目侧：进展、暂缓原因、补充材料要求与期限。 */
+    projectUpdates: text("project_updates"),
+    /** 人物侧：参会人关注点与沟通偏好（待确认后回写人物档案）。 */
+    personSignals: text("person_signals"),
+    /** 机构侧：策略信号与决策进展（待确认后回写机构档案）。 */
+    institutionSignals: text("institution_signals"),
+    /** 会议原文要点（问题、承诺、下一步；供回查）。 */
+    meetingNotes: text("meeting_notes"),
+    /** 状态：draft 整理完成待确认 → confirmed 已确认（变更已回写）→ dismissed。 */
+    status: text("status", { enum: ["draft", "confirmed", "dismissed"] }).notNull().default("draft"),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    /** 确认动作的回写结果（JSON：facts 写入数/任务 id 等），供审计。 */
+    applyResult: text("apply_result", { mode: "json" }).$type<Record<string, unknown> | null>(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("fa_meeting_feedbacks_room_idx").on(table.roomId, table.status, table.deletedAt),
+    index("fa_meeting_feedbacks_institution_idx").on(table.institutionRoomId),
+    index("fa_meeting_feedbacks_source_idx").on(table.sourceKind, table.sourceId),
+  ],
+);
+
+/**
  * 写作路线导图（聚焦改版 2026-09）：新文档创建时由 route-planner subAgent 逐层
  * 生成的路线选择图，一行一文档。全图（含未选分支与回退历史）记录在 graph，
  * 展示层按 selectionPath 过滤；拍板（finalize）后锁只读并派 doc-writer 写正文。

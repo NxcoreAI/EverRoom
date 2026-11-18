@@ -86,3 +86,33 @@ ALTER TABLE `room_entity_facts` ADD `grade` text DEFAULT 'opinion' NOT NULL;
 ALTER TABLE `room_entity_facts` ADD `numeric` text;
 --> statement-breakpoint
 CREATE INDEX `room_entity_facts_room_grade_idx` ON `room_entity_facts` (`room_id`,`grade`);
+--> statement-breakpoint
+CREATE TABLE `fa_meeting_feedbacks` (
+	`id` text PRIMARY KEY NOT NULL,
+	`room_id` text NOT NULL,
+	`source_kind` text,
+	`source_id` text,
+	`institution_room_id` text,
+	`person_room_id` text,
+	`meeting_at` text,
+	`disposition` text DEFAULT 'unknown' NOT NULL,
+	`pass_reasons` text,
+	`reopen_conditions` text,
+	`project_updates` text,
+	`person_signals` text,
+	`institution_signals` text,
+	`meeting_notes` text,
+	`status` text DEFAULT 'draft' NOT NULL,
+	`confirmed_by` text,
+	`confirmed_at` integer,
+	`apply_result` text,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	`deleted_at` integer
+);
+--> statement-breakpoint
+CREATE INDEX `fa_meeting_feedbacks_room_idx` ON `fa_meeting_feedbacks` (`room_id`,`status`,`deleted_at`);
+--> statement-breakpoint
+CREATE INDEX `fa_meeting_feedbacks_institution_idx` ON `fa_meeting_feedbacks` (`institution_room_id`);
+--> statement-breakpoint
+CREATE INDEX `fa_meeting_feedbacks_source_idx` ON `fa_meeting_feedbacks` (`source_kind`,`source_id`);
