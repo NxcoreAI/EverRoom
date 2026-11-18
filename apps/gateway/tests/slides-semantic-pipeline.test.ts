@@ -34,6 +34,7 @@ describe("semantic generation pipeline", () => {
       return { status: "completed", id: "layout", result: { structuredOutput: { tree, designIntent: "主题与两项导航", bindings: content.blocks.map((b, i) => ({ blockId: b.id, paths: [`nodes/${i}`] })) } } };
     });
     const tool = createSubagentPiTools({ get: (id: string) => ({ id }) } as any, { dispatch } as any, {
+      slidesDraftToolEnabled: true,
       slidesEditor: { active: true, store: { save } as any, generationConfig },
       resolveDocumentForDraft: () => ({ document: { title: "项目" }, markdown: "## 项目目录\n- 市场与客户\n- 产品与交付" }) as any,
       trashSlidesDraftDocument: trash,

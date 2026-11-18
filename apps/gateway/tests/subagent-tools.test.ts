@@ -555,7 +555,7 @@ describe('createSubagentPiTools slides_draft', () => {
   }
 
   it('工具 schema 按 task 隔离字段，并允许无 instruction 的生成续接', () => {
-    const slidesDraft = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorReturning({}))
+    const slidesDraft = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorReturning({}), { slidesDraftToolEnabled: true })
       .find((tool) => tool.name === 'slides_draft')!
     const validate = new Ajv({ strict: false, allErrors: true }).compile(slidesDraft.parameters)
 
@@ -578,6 +578,7 @@ describe('createSubagentPiTools slides_draft', () => {
       title: '季度汇报',
     }))
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       createSlidesDraftDocument,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -653,6 +654,7 @@ describe('createSubagentPiTools slides_draft', () => {
       }
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       createSlidesDraftDocument: async () => ({ documentId: 'doc-draft-1', title: '季度汇报' }),
       resolveDocumentForDraft,
     })
@@ -703,6 +705,7 @@ describe('createSubagentPiTools slides_draft', () => {
       rank: 4,
     }])
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       trashSlidesDraftDocument: trashDraft,
       slidesLayoutOffice: makeLayouterOffice().office,
@@ -814,6 +817,7 @@ describe('createSubagentPiTools slides_draft', () => {
       },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot10,
       slidesLayoutOffice: makeLayouterOffice().office,
       slidesEditor: { active: true },
@@ -892,6 +896,7 @@ describe('createSubagentPiTools slides_draft', () => {
     }
     const office = makeLayouterOffice()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator as never, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot10,
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
@@ -940,6 +945,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const office = makeLayouterOffice()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), base, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
@@ -1011,6 +1017,7 @@ describe('createSubagentPiTools slides_draft', () => {
       slidesEditor: { active: true },
     }
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       ...options, slidesCheckpoints: new SlidesGenerationCheckpointStore(database.db),
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1033,6 +1040,7 @@ describe('createSubagentPiTools slides_draft', () => {
     database.sqlite.close()
     database = createDatabase(databasePath, resolve('drizzle'))
     const resumed = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       ...options, slidesCheckpoints: new SlidesGenerationCheckpointStore(database.db),
     }).find(tool => tool.name === 'slides_draft')!
     const second = await resumed.execute({ ...run, roomId: 'room-1' } as never, params, undefined)
@@ -1061,6 +1069,7 @@ describe('createSubagentPiTools slides_draft', () => {
       registryWith(['slides-planner', 'slides-builder', 'slides-editor']),
       orchestrator,
       {
+      slidesDraftToolEnabled: true,
         resolveDocumentForDraft: () => draftSnapshot,
         slidesLayoutOffice: makeLayouterOffice().office,
         slidesEditor: { active: true },
@@ -1119,7 +1128,7 @@ describe('createSubagentPiTools slides_draft', () => {
     const tools = createSubagentPiTools(
       registryWith(['slides-planner', 'slides-builder', 'slides-editor']),
       orchestrator,
-      { resolveDocumentForDraft: () => draftSnapshot, slidesLayoutOffice: makeLayouterOffice().office, slidesEditor: { active: true } },
+      { slidesDraftToolEnabled: true, resolveDocumentForDraft: () => draftSnapshot, slidesLayoutOffice: makeLayouterOffice().office, slidesEditor: { active: true } },
     )
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const result = await slidesDraft.execute(
@@ -1162,6 +1171,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const generateImage = vi.fn(async (_input: { prompt: string; retryDelaysMs?: number[] }) => ({ contentHash: 'e'.repeat(64) }))
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       slidesStyle: { images: { generateImage } } as never,
       slidesLayoutOffice: makeLayouterOffice().office,
@@ -1212,6 +1222,7 @@ describe('createSubagentPiTools slides_draft', () => {
     })
     const generateImage = vi.fn(async () => { throw new Error('生图请求失败（HTTP 500）') })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       slidesStyle: { images: { generateImage } } as never,
       slidesLayoutOffice: makeLayouterOffice().office,
@@ -1246,6 +1257,7 @@ describe('createSubagentPiTools slides_draft', () => {
     office.fillPage.mockImplementation(async (_input: { slideIndex: number }) =>
       _input.slideIndex === 1 ? { ok: false, applied: false, error: '桌面端拒绝' } : { ok: true, applied: true })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       trashSlidesDraftDocument: trashDraft,
       slidesLayoutOffice: office.office,
@@ -1268,6 +1280,7 @@ describe('createSubagentPiTools slides_draft', () => {
   it('generate：缺少 draftDocumentId 或草稿解析不到页结构即返回 failed，不发生调度', async () => {
     const orchestrator = orchestratorReturning({})
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => ({ ...draftSnapshot, markdown: '被清空的文档' }),
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1298,6 +1311,7 @@ describe('createSubagentPiTools slides_draft', () => {
       },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1316,6 +1330,7 @@ describe('createSubagentPiTools slides_draft', () => {
   it('generate：方案代理未注册时返回 failed，不发生调度', async () => {
     const orchestrator = orchestratorReturning({})
     const tools = createSubagentPiTools(registryWith(['slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1332,7 +1347,7 @@ describe('createSubagentPiTools slides_draft', () => {
 
   it('edit：不经方案阶段直落 slides-builder；fileId 缺省不进 input；roomId 冲突与缺失直接拒绝', async () => {
     const orchestrator = orchestratorReturning({})
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator)
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     await expect(
@@ -1495,6 +1510,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1537,7 +1553,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
   it('style：direction 失败的三个兜底均采用内容页、浅底默认值与同一内容结构', async () => {
     const { deps, orchestrator, generateImages } = await setupStyleDeps()
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -1556,7 +1572,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
   it('style：兜底保留明确深色要求、参考配色及按时间排序的修改', async () => {
     const { deps, orchestrator, generateImages } = await setupStyleDeps()
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const referenceStyle = { palette: { background: '#111111', primary: '#008877' }, darkCover: true }
     const first = await slidesDraft.execute(
@@ -1599,6 +1615,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
       },
     })
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
     })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
@@ -1631,7 +1648,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
         ],
       },
     })
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const first = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -1679,7 +1696,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
         ],
       },
     })
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const first = await slidesDraft.execute(
@@ -1704,7 +1721,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
 
   it('style_select：提取+复核+降级演示页 → 风格卡就绪；坏序号被拒', async () => {
     const { deps, orchestrator, saveDemoPng } = await setupStyleDeps()
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const style = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -1760,7 +1777,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
         ],
       },
     })
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
 
     const result = await slidesDraft.execute(
@@ -1790,7 +1807,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
         ],
       },
     })
-    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesStyle: deps })
+    const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, { slidesDraftToolEnabled: true, slidesStyle: deps })
     const slidesDraft = tools.find((tool) => tool.name === 'slides_draft')!
     const style = await slidesDraft.execute(
       { ...run, roomId: 'room-1' } as never,
@@ -1897,6 +1914,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
     void orchestrator
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorTwo, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
       slidesLayoutOffice: makeLayouterOffice().office,
       slidesEditor: { active: true },
@@ -2011,6 +2029,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     } as unknown as SubagentOrchestrator
     const office = makeLayouterOffice()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorSameTree, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
@@ -2129,6 +2148,7 @@ describe('createSubagentPiTools slides_draft 风格阶段', () => {
     } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
     const office = makeLayouterOffice()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestratorTwo, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
       slidesLayoutOffice: office.office,
       slidesEditor: { active: true },
@@ -2326,6 +2346,7 @@ describe('createSubagentPiTools slides_draft 配图交互', () => {
 
   function buildTools(setup: PageImagesSetup) {
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), setup.orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       trashSlidesDraftDocument: async () => {},
       slidesStyle: setup.deps,
@@ -2802,6 +2823,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
       }),
     } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       trashSlidesDraftDocument: async () => {},
       slidesStyle: deps,
@@ -2889,6 +2911,7 @@ describe('createSubagentPiTools slides_draft 配图打回', () => {
     } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
     const office = makeLayouterOffice()
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot10 as never,
       slidesStyle: deps,
       slidesLayoutOffice: office.office,
@@ -3182,6 +3205,7 @@ describe('createSubagentPiTools slides_draft 配图后台流水', () => {
       }),
     } as unknown as SubagentOrchestrator & { dispatch: ReturnType<typeof vi.fn> }
     const tools = createSubagentPiTools(registryWith(['slides-planner', 'slides-builder']), orchestrator, {
+      slidesDraftToolEnabled: true,
       resolveDocumentForDraft: () => draftSnapshot,
       trashSlidesDraftDocument: async () => {},
       slidesStyle: deps,
