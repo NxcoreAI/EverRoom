@@ -40,6 +40,7 @@ const TYPE_ICON: Record<ManuscriptType, LucideIcon> = {
   slides: Presentation,
   spreadsheet: FileSpreadsheet,
   pdf: FileText,
+  markdown: FileText,
 }
 
 interface ManuscriptRow {

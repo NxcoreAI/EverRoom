@@ -27,6 +27,7 @@ import type { AgentApprovalDecision } from '../../shared/sources'
 import { desktopText } from '../desktop-locale'
 import { createLoggedHttpClient } from '../network/http-client'
 import type { GatewaySupervisor } from './gateway-supervisor'
+import type { AgentActiveFileContext, AgentOpenFileContext } from '@nxcore/agent-contract'
 import { WebContentsLifecycle } from './web-contents-lifecycle'
 
 const AGENT_EVENT_CHANNEL = 'agent:event'
@@ -62,6 +63,12 @@ interface RunWatch {
   closed: boolean
 }
 
+/** openFiles 的条目带 active 标记；activeFile 的 schema 不允许这个字段。 */
+function stripOpenFileFlag(file: AgentOpenFileContext): AgentActiveFileContext {
+  const { active: _active, ...rest } = file
+  return rest
+}
+
 export class AgentGatewayBridge {
   private readonly subscriptions = new Map<number, Subscription>()
   private readonly contentsLifecycle = new WebContentsLifecycle()
@@ -74,14 +81,24 @@ export class AgentGatewayBridge {
       trackRun(run: AgentRun): void
       trackEvent(event: AgentEvent): void
     },
-    options: { eventChannel?: string } = {},
+    options: {
+      eventChannel?: string
+      /** 当前浏览的 Office 文件页签（焦点）：注入 run 的 context.activeFile。 */
+      activeFile?: () => AgentActiveFileContext | null
+      /** 打开中的全部 Office 页签（含 active 标记）：注入 context.openFiles。 */
+      openFiles?: () => readonly AgentOpenFileContext[]
+    } = {},
   ) {
     // 默认 'agent:event' 是主 Agent UI 的通道；补全等旁路桥必须传独立
     // channel，否则两个桥的 websocket 帧会在同一渲染进程通道里串台。
     this.eventChannel = options.eventChannel ?? AGENT_EVENT_CHANNEL
+    this.activeFile = options.activeFile ?? null
+    this.openFiles = options.openFiles ?? null
   }
 
   private readonly eventChannel: string
+  private readonly activeFile: (() => AgentActiveFileContext | null) | null
+  private readonly openFiles: (() => readonly AgentOpenFileContext[]) | null
 
   setEventObserver(observer: ((event: AgentEvent) => void) | null): void {
     this.eventObserver = observer
@@ -204,9 +221,21 @@ export class AgentGatewayBridge {
   }
 
   async startRun(sessionId: string, input: StartAgentRunInput): Promise<AgentRun> {
+    // 当前浏览的 Office 文件以 main 的焦点实例为准；openFiles 是同一份
+    // 注册表的全量页签，activeFile 从清单里的 active 项推出。
+    const openFiles = (this.openFiles?.() ?? []).slice(0, 20)
+    const focused = openFiles.find((file) => file.active)
+    const activeFile = this.activeFile?.()
+      ?? (focused ? stripOpenFileFlag(focused) : null)
+    const context = {
+      ...input.context,
+      ...(activeFile ? { activeFile } : {}),
+      ...(openFiles.length ? { openFiles } : {}),
+    }
+    const data = Object.keys(context).length ? { ...input, context } : input
     const run = await this.request<AgentRun>(`/v1/agent/sessions/${encodeURIComponent(sessionId)}/runs`, {
       method: 'POST',
-      data: input,
+      data,
     })
     this.activity?.trackRun(run)
     this.watchRun(run)

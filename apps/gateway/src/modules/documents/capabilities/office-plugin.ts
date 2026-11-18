@@ -1905,6 +1905,128 @@ export function officePlugin(
   };
 
 
+  const contextRoomOfficeCreate: DocumentCapabilityTool = {
+    name: "context_room_office_create",
+    title: "生成 Word 文档入 Room",
+    description: "用本地 Word 引擎生成一份新的 .docx 文档并加入当前 Room（产物库 Office 产物 + 文件库），"
+      + "生成的是真实 Word 排版（表格、列表、代码块、引用），适合正式报告、交付文档、需要 Word 排版的内容。"
+      + "普通速记、笔记、随手总结仍用文档创建工具（markdown），不要用本工具。"
+      + `title 用作文档标题与默认文件名（<title>.docx，可用 fileName 覆盖）。${HTML_GUIDE}`
+      + "生成完成后桌面端会自动打开预览；在回复中告知文件名即可。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 120, description: "文档标题（同时是默认文件名）" },
+        html: { type: "string", minLength: 1, maxLength: MAX_HTML_LENGTH, description: "文档正文（受限 HTML 片段）" },
+        fileName: { type: "string", minLength: 5, maxLength: 120, description: "可选文件名，必须以 .docx 结尾" },
+        format: { type: "string", enum: ["docx"], description: "文档格式，当前仅支持 docx" },
+      },
+      required: ["title", "html"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+      const title = stringArg(args, "title").trim().slice(0, 120);
+      const html = stringArg(args, "html");
+      if (html.length > MAX_HTML_LENGTH) {
+        throw new Error(`INVALID_REQUEST: html 超过长度上限（${MAX_HTML_LENGTH} 字符），请拆分内容`);
+      }
+      const format = args.format === undefined ? "docx" : args.format;
+      if (format !== "docx") throw new Error("INVALID_REQUEST: 目前仅支持 docx 格式");
+      const fileName = optionalFileName(args, ".docx");
+      // 同 run 同标题幂等：桌面侧以 sourceKey=agent:word:<key> 去重/续版本链。
+      const result = await bridge.generate({
+        title,
+        html,
+        roomId: context.roomId,
+        fileName,
+        idempotencyKey: idempotencyKey("agent-word", context.runId, title),
+      });
+      if (!result.fileEntryId) throw new Error("OFFICE_GENERATION_FAILED: 桌面端未返回文件条目");
+      return success({
+        fileEntryId: result.fileEntryId,
+        fileVersionId: result.fileVersionId,
+        jobId: result.jobId,
+        contentHash: result.contentHash,
+        originalName: result.originalName,
+        format: "docx",
+        roomId: context.roomId,
+        deduped: result.versionDeduped || result.blobDeduped,
+        // Room 资料页投影由路由决策异步完成（知识路由关闭时会降级为仅入库）。
+        roomRoutingRequested: result.roomRequested,
+        nextAction: "report_result",
+      });
+    },
+  };
+
+  const contextRoomSheetsCreate: DocumentCapabilityTool = {
+    name: "context_room_sheets_create",
+    title: "生成 Excel 表格入 Room",
+    description: "生成本地排版的一份新 .xlsx 电子表格并加入当前 Room（产物库 Office 产物 + 文件库），"
+      + "适合数据清单、预算、对比表、统计汇总等结构化数据。title 用作默认文件名（<title>.xlsx，可用 fileName 覆盖）。"
+      + `sheets 是工作表数组。${SHEETS_GUIDE}`
+      + "生成完成后桌面端会自动打开预览；在回复中告知文件名与表结构即可。",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 120, description: "表格标题（同时是默认文件名）" },
+        sheets: {
+          type: "array",
+          minItems: 1,
+          maxItems: MAX_SHEETS,
+          description: "工作表数组，每项 {name?, rows}",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 31, description: "工作表名（可选）" },
+              rows: {
+                type: "array",
+                minItems: 1,
+                description: "二维数组；每行是单元格数组（string|number|boolean|null）；首行视为表头",
+                items: { type: "array", items: {} },
+              },
+            },
+            required: ["rows"],
+          },
+        },
+        fileName: { type: "string", minLength: 6, maxLength: 120, description: "可选文件名，必须以 .xlsx 结尾" },
+      },
+      required: ["title", "sheets"],
+    },
+    annotations: annotations(false, false),
+    execute: async (args, context) => {
+      if (!context.roomId) throw new Error("ROOM_SELECTION_REQUIRED: Select a Context Room first");
+      const title = stringArg(args, "title").trim().slice(0, 120);
+      const sheets = normalizeSheets(args.sheets);
+      const fileName = optionalFileName(args, ".xlsx");
+      const result = await bridge.generate({
+        title,
+        format: "xlsx",
+        sheets,
+        roomId: context.roomId,
+        fileName,
+        idempotencyKey: idempotencyKey("agent-sheets", context.runId, title),
+      });
+      if (!result.fileEntryId) throw new Error("OFFICE_GENERATION_FAILED: 桌面端未返回文件条目");
+      return success({
+        fileEntryId: result.fileEntryId,
+        fileVersionId: result.fileVersionId,
+        jobId: result.jobId,
+        contentHash: result.contentHash,
+        originalName: result.originalName,
+        format: "xlsx",
+        sheets: sheets.length,
+        roomId: context.roomId,
+        deduped: result.versionDeduped || result.blobDeduped,
+        roomRoutingRequested: result.roomRequested,
+        nextAction: "report_result",
+      });
+    },
+  };
+
   const contextRoomSlidesCreate: DocumentCapabilityTool = {
     name: "context_room_slides_create",
     title: "创建 PPT 入 Room",
@@ -2185,6 +2307,9 @@ export function officePlugin(
       sheetsCreate,
       slidesRead,
       slidesEdit,
+      // EverRoom Room 归属工具面：office/sheets 生成入 Room（要求先选 Room）。
+      contextRoomOfficeCreate,
+      contextRoomSheetsCreate,
       // EverRoom 两段式 PPT 工具面（slides-builder 子代理独占，主 Agent 面按
       // SLIDES_TOOL_NAMES 剔除）：create 建骨架 + set_page 逐页生成。
       contextRoomSlidesCreate,

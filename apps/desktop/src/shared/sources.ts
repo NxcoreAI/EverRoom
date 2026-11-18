@@ -85,7 +85,7 @@ import type {
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -870,7 +870,7 @@ export interface OfficeWorkspaceBounds {
 }
 
 /** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf' | 'markdown'
 
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
@@ -903,6 +903,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
+  if (extension === '.md' || extension === '.markdown') return 'markdown'
   return null
 }
 
@@ -1003,8 +1004,23 @@ export interface NxcoreDesktopApi {
     onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
-    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    /** slides/Word/Excel/PDF「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
+    syncAskQueue(input: {
+      fileId: string
+      items: Array<{
+        id: string
+        instruction: string
+        excerpt?: string
+        /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+        anchor?: OfficeAskAnchor
+      }>
+    }): void
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction(listener: (event: OfficeAskQueueActionEvent) => void): () => void
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded(listener: (event: { id: string; kind: OfficePreviewKind }) => void): () => void
   }
   locale: {
     system: string

@@ -19,6 +19,7 @@ import {
   ingestEvents,
   jobs,
   parsedContents,
+  parsedDocuments,
   roomSourceMemberships,
   uploadedFiles,
 } from "../../infrastructure/database/schema.js";
@@ -522,10 +523,21 @@ export class FilesService {
     };
   }
 
-  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string, ingestEventId: string): void {
+  touchVersionParsed(fileEntryId: string, fileVersionId: string, parsedId: string | null, ingestEventId?: string): void {
     const now = new Date();
+    // parsed_id 的外键指向历史表 parsed_contents；新解析管线落的是
+    // parsed_documents（pdoc-*）。把 pdoc id 直接写进 parsed_id 会触发
+    // FOREIGN KEY constraint failed，整次导入被判 ingest_failed（Office 文件
+    // 因此永远解析不了）。旧表里有同 id 才写，否则置空，正文按 parsed_documents
+    // 反查（见 catalogMarkdownOf）。
+    const legacyParsedId = parsedId
+      ? this.db.select({ id: parsedContents.id }).from(parsedContents)
+          .where(eq(parsedContents.id, parsedId)).get()?.id ?? null
+      : null;
     this.db.update(fileVersions).set({
-      parsedId, ingestEventId, status: "parsed", errorCode: null, errorMessage: null,
+      parsedId: legacyParsedId,
+      ...(ingestEventId !== undefined ? { ingestEventId } : {}),
+      status: "parsed", errorCode: null, errorMessage: null,
       processedAt: now,
     }).where(and(eq(fileVersions.id, fileVersionId), eq(fileVersions.fileEntryId, fileEntryId))).run();
     const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
@@ -581,7 +593,7 @@ export class FilesService {
       clusterId: cluster?.id ?? null,
       contentHash: version?.contentHash ?? "",
       currentVersionId: version?.id ?? null,
-      parsed: Boolean(version?.parsedId),
+      parsed: Boolean(version?.parsedId) || version?.status === "parsed",
       updatedAt: entry.updatedAt.toISOString(),
     } satisfies CatalogFileDto);
   }
@@ -762,11 +774,18 @@ export class FilesService {
   }
 
   catalogMarkdownOf(fileEntryId: string): string | null {
-    const row = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
+    const legacy = this.db.select({ markdown: parsedContents.markdown }).from(fileEntries)
       .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
       .innerJoin(parsedContents, eq(fileVersions.parsedId, parsedContents.id))
       .where(eq(fileEntries.id, fileEntryId)).get();
-    return row?.markdown ?? null;
+    if (legacy) return legacy.markdown;
+    // 现行解析器写 parsed_documents（按 fileVersionId 挂载）；旧 parsed_id 外键
+    // 只对历史行有效，这里按当前版本反查，否则 Office 文件正文永远读不到。
+    const parsed = this.db.select({ markdown: parsedDocuments.markdown }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .innerJoin(parsedDocuments, eq(parsedDocuments.fileVersionId, fileVersions.id))
+      .where(eq(fileEntries.id, fileEntryId)).get();
+    return parsed?.markdown ?? null;
   }
 
   catalogStoragePathOf(fileEntryId: string): string | null {
