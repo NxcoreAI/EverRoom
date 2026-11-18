@@ -471,10 +471,6 @@ export function PortedContextRoom({
     <HomeView
       rooms={state.rooms}
       deletedRooms={state.deletedRooms}
-      onRoomMounted={async (room) => {
-        await refreshVaults()
-        onOpenRoomTab({ id: room.id, title: room.title })
-      }}
       onRenameRoom={renameRoom}
       onDeleteRoom={deleteRoom}
       onRestoreRoom={restoreRoom}

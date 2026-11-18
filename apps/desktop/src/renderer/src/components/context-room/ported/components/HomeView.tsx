@@ -90,7 +90,6 @@ export function HomeView({
   onFocusAgent,
   onRefreshRooms,
   onManualMerge,
-  onRoomMounted,
 }: {
   rooms: ContextRoomRecord[];
   deletedRooms: ContextRoomRecord[];
@@ -103,8 +102,6 @@ export function HomeView({
   onRefreshRooms: () => Promise<void>;
   /** 手动合并入口：对话框与预览由 PortedContextRoom 宿主。 */
   onManualMerge?: (room: ContextRoomRecord) => void;
-  /** 挂载目录新建房间成功后的开房回调。 */
-  onRoomMounted?: (room: { id: string; title: string }) => void;
 }) {
   const { t } = useLocale();
   const [query, setQuery] = useState('');
@@ -252,8 +249,20 @@ export function HomeView({
         </div>
       </main>
 
-      <ReferenceDialog open={newRoomOpen} onOpenChange={setNewRoomOpen} title={t('contextRoom:home.newContextRoom')}>
-        <RoomCreationStudio open={newRoomOpen} onOpenChange={setNewRoomOpen} onRoomMounted={onRoomMounted} />
+      <ReferenceDialog
+        open={newRoomOpen}
+        onOpenChange={setNewRoomOpen}
+        title={t('contextRoom:home.newContextRoom')}
+        contentClassName="context-room-creation-quick-shell"
+      >
+        <RoomCreationStudio
+          open={newRoomOpen}
+          onOpenChange={setNewRoomOpen}
+          onRoomCreated={async (room) => {
+            await onRefreshRooms()
+            onOpenDetail(room.id)
+          }}
+        />
       </ReferenceDialog>
       <RoomDuplicateCenter
         open={duplicateCenterOpen}

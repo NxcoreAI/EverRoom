@@ -1,193 +1,110 @@
-import { FileText, Folder, LoaderCircle, Send, X } from 'lucide-react'
+import { LoaderCircle, Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import type { ObsidianImportResult } from '../../../../../../shared/obsidian'
 import { showToast } from '@/state/toast'
 import { useLocale } from '../../../../i18n/LocaleContext'
-import { DirectoryMountPanel } from '@/components/pages/sources/DirectoryMountPanel'
-import {
-  ROOM_RECOMMENDATION_RUN_EVENT,
-  type RoomRecommendationRunPayload,
-  type StagedPath,
-} from '../roomRecommendationRun'
-
-const basenameOf = (path: StagedPath): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
+import { useContextRoomState } from '../../ContextRoomStateProvider'
 
 /**
- * 新建 Room 统一入口，双模式：
- * - 描述与文件：只暂存路径与目标描述，不导入；提交后由首页「推荐 Rooms」卡片接手。
- * - 挂载本地目录：选中目录即挂载（新建房间或只进记忆），源文件保留在原目录。
+ * 新建 Room 极简弹窗：只有名称输入框。提交即调网关直建（fallback 内容先行，
+ * room-enrich 子 Agent 异步整理），成功后刷新列表并打开新 Room。
+ * 无描述也允许创建——网关侧缺省用标题兜底（#241 后续简化）。
  */
 export function RoomCreationStudio({
   open,
   onOpenChange,
-  onRoomMounted,
+  onRoomCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onRoomMounted?: (room: { id: string; title: string }) => void
+  /** 创建成功回调：宿主负责刷新本地态/打开新 Room。 */
+  onRoomCreated: (room: { id: string; title: string }) => void
 }) {
   const { t } = useLocale()
-  const [intent, setIntent] = useState('')
-  const [paths, setPaths] = useState<StagedPath[]>([])
-  const [picking, setPicking] = useState(false)
-  const [mode, setMode] = useState<'smart' | 'mount'>('smart')
+  const { refreshFromBackend } = useContextRoomState()
+  const [name, setName] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // 重新打开时保留上一轮暂存内容，避免误关丢列表。
+  // 每次打开重置表单：极简弹窗不留脏状态，输入即所见。
   useEffect(() => {
-    if (open) setPicking(false)
+    if (open) {
+      setName('')
+      setError(null)
+    }
   }, [open])
 
-  const pickPaths = async () => {
-    const filesApi = window.nxcore?.files
-    if (!filesApi?.pickPaths || picking) return
-    setPicking(true)
+  const submit = async () => {
+    const title = name.trim()
+    if (!title || submitting) return
+    setSubmitting(true)
+    setError(null)
     try {
-      const picked = await filesApi.pickPaths()
-      if (picked.length > 0) {
-        setPaths((current) => {
-          const seen = new Set(current)
-          return [...current, ...picked.filter((path) => !seen.has(path))]
-        })
-      }
-    } catch (cause) {
+      const api = window.nxcore?.contextRooms
+      if (!api?.create) throw new Error(t('contextRoom:roomDialogs.serviceUnavailable'))
+      const result = await api.create({ title: title.slice(0, 40) })
+      await refreshFromBackend().catch(() => undefined)
       showToast({
-        title: t('contextRoom:knowledgePending.uploadFailed'),
-        message: cause instanceof Error ? cause.message : undefined,
+        title: t('contextRoom:creation.created', { title: result.room.title || title }),
+        message: t('contextRoom:creation.createdHint'),
       })
+      onOpenChange(false)
+      onRoomCreated({ id: result.room.id, title: result.room.title || title })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('contextRoom:roomDialogs.createFailed'))
     } finally {
-      setPicking(false)
-    }
-  }
-
-  const removePath = (path: StagedPath) => {
-    setPaths((current) => current.filter((item) => item !== path))
-  }
-
-  /** 提交：把暂存路径与描述交接给推荐卡片的进度会话，随即关闭弹窗。 */
-  const submit = () => {
-    const trimmedIntent = intent.trim()
-    // #241：允许不带文件直接创建空 Room（须给出用途描述），不再强制选择内容
-    if (paths.length === 0 && !trimmedIntent) return
-    const payload: RoomRecommendationRunPayload = {
-      paths,
-      intent: trimmedIntent || null,
-    }
-    window.dispatchEvent(new CustomEvent(ROOM_RECOMMENDATION_RUN_EVENT, { detail: payload }))
-    showToast({
-      title: paths.length > 0
-        ? t('contextRoom:creation.submitted', { count: paths.length })
-        : t('contextRoom:creation.emptySubmitted'),
-    })
-    onOpenChange(false)
-  }
-
-  const handleMounted = (result: ObsidianImportResult) => {
-    if (result.kind === 'new-room') {
-      showToast({ title: t('contextRoom:creation.mountSuccess', { name: result.vault.name }) })
-      onRoomMounted?.({ id: result.vault.roomId, title: result.vault.name })
-    } else if (result.kind === 'memory') {
-      showToast({ title: t('surface:obsidian.memoryImportComplete', { name: result.projectName, succeeded: result.succeeded, failed: result.failed }) })
+      setSubmitting(false)
     }
   }
 
   return (
-    <div className="context-room-creation-studio" data-testid="context-room-creation-studio">
-      <header className="context-room-creation-header">
+    <form
+      className="context-room-creation-quick"
+      data-testid="context-room-creation-quick"
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit()
+      }}
+    >
+      <header>
         <h2>{t('contextRoom:home.newContextRoom')}</h2>
-        <div className="context-room-segmented" role="tablist" aria-label={t('contextRoom:creation.modeLabel')}>
-          <button type="button" role="tab" aria-pressed={mode === 'smart'} onClick={() => setMode('smart')}>
-            {t('contextRoom:creation.modeSmart')}
-          </button>
-          <button type="button" role="tab" aria-pressed={mode === 'mount'} onClick={() => setMode('mount')}>
-            {t('contextRoom:creation.modeMount')}
-          </button>
-        </div>
       </header>
-
-      <div className="context-room-creation-body">
-        {mode === 'smart' ? (
-          <div className="context-room-creation-tabpanel context-room-creation-smart">
-            <label className="context-room-creation-description">
-              <span>{t('contextRoom:creation.descriptionLabel')}</span>
-              <textarea
-                rows={3}
-                maxLength={2_000}
-                value={intent}
-                placeholder={t('contextRoom:creation.descriptionPlaceholder')}
-                onChange={(event) => setIntent(event.target.value)}
-              />
-            </label>
-
-            <div className="context-room-creation-files">
-              <button
-                type="button"
-                className="context-room-creation-dropzone"
-                data-testid="context-room-creation-dropzone"
-                disabled={picking}
-                onClick={() => void pickPaths()}
-              >
-                <span className="context-room-creation-dropzone-icon" aria-hidden="true">
-                  {picking ? <LoaderCircle className="spin" /> : <Folder />}
-                </span>
-                <b>{t('contextRoom:creation.pickFiles')}</b>
-                <small>{t('contextRoom:creation.dropzoneHint')}</small>
-              </button>
-              {paths.length > 0 ? (
-                <>
-                  <p className="context-room-creation-filelist-count">
-                    {t('contextRoom:creation.filesSelected', { count: paths.length })}
-                  </p>
-                  <ul data-testid="context-room-creation-filelist">
-                    {paths.map((path) => (
-                      <li key={path}>
-                        <FileText aria-hidden="true" />
-                        <span title={path}>{basenameOf(path)}</span>
-                        <button
-                          type="button"
-                          className="context-room-creation-file-remove"
-                          aria-label={t('contextRoom:creation.removeFile', { filename: basenameOf(path) })}
-                          onClick={() => removePath(path)}
-                        >
-                          <X aria-hidden="true" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                // #241：不选内容时明确告知行为——按描述直接创建空 Room，后续可再添加
-                <p className="context-room-creation-empty-hint" data-testid="context-room-creation-empty-hint">
-                  {t('contextRoom:creation.emptyRoomHint')}
-                </p>
-              )}
-            </div>
-
-            <div className="context-room-creation-footer">
-              <button
-                type="button"
-                className="context-room-primary context-room-creation-submit"
-                data-testid="context-room-creation-start"
-                disabled={picking || (paths.length === 0 && !intent.trim())}
-                onClick={submit}
-              >
-                <Send aria-hidden="true" />
-                {t('contextRoom:creation.submit')}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="context-room-creation-tabpanel">
-            <div className="directory-mount-panel">
-              <DirectoryMountPanel
-                target={{ kind: 'choose' }}
-                onClose={() => onOpenChange(false)}
-                onImported={handleMounted}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+      <label>
+        <span>{t('contextRoom:roomDialogs.name')}</span>
+        <input
+          name="name"
+          value={name}
+          maxLength={40}
+          autoFocus
+          autoComplete="off"
+          placeholder={t('contextRoom:creation.namePlaceholder')}
+          disabled={submitting}
+          onChange={(event) => {
+            setName(event.target.value)
+            setError(null)
+          }}
+        />
+      </label>
+      {error ? <p className="context-room-form-error" role="alert">{error}</p> : null}
+      <footer>
+        <button
+          type="button"
+          className="context-room-ghost"
+          disabled={submitting}
+          onClick={() => onOpenChange(false)}
+        >
+          {t('contextRoom:roomDialogs.cancel')}
+        </button>
+        <button
+          type="submit"
+          className="context-room-primary context-room-creation-quick-submit"
+          data-testid="context-room-creation-start"
+          disabled={submitting || !name.trim()}
+        >
+          {submitting ? <LoaderCircle className="spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
+          {submitting ? t('contextRoom:roomDialogs.creatingQuick') : t('contextRoom:home.newRoom')}
+        </button>
+      </footer>
+    </form>
   )
 }

@@ -554,7 +554,8 @@ export interface SaveContextRoomSnapshotInput {
 
 export interface CreateContextRoomInput {
   title: string;
-  description: string;
+  /** 缺省时网关用标题兜底（极简创建弹窗只填名称）。 */
+  description?: string;
   duplicateOverrideToken?: string;
 }
 
