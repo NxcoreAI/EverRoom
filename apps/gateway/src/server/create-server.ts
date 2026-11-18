@@ -149,6 +149,7 @@ import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-histor
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
 import { faArchiveRoutes } from "../modules/fa-archive/routes.js";
+import { faConsoleRoutes } from "../modules/fa-console/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
@@ -2312,8 +2313,14 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
   if (config.knowledge) await app.register(routeMindmapRoutes(routeMindmapService));
-  // FA 机构档案 + 已核事实（fa-industry-iteration 第一批；与 knowledge 同门控）。
-  if (config.knowledge) await app.register(faArchiveRoutes(db));
+  // FA 机构档案 + 已核事实（fa-industry-iteration 第一批）。fa-archive 全部
+  // 读写网关本地表（fa_* / room_entity_facts），不依赖外部 knowledge 服务，
+  // 与控制台一样放开 knowledge 门控——独立 `pnpm dev` 网关也能跑 FA 全链。
+  await app.register(faArchiveRoutes(db));
+  // FA 全阶段分析控制台：节点注册表 + 模板纯读 + Room/事实流。只读网关本地
+  // 表（rooms/room_entity_facts）与 bp-template 配置库，不依赖外部 knowledge
+  // 服务，因此不做 knowledge 门控——独立 `pnpm dev` 网关也能用控制台。
+  await app.register(faConsoleRoutes(db));
 
   return app;
 }
