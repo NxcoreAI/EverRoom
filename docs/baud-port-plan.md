@@ -126,3 +126,38 @@
 - agent-gateway-bridge openFiles 选项需契约类型先落。
 - file_read 依赖 understanding.describeImageVersion 只在 images-describe 用——不移植
   workspace-images-describe，避免拖入 describeImageVersion 缺口。
+
+## 执行结果（2026-11-18）
+
+六个阶段全部落地，提交链：
+
+| 提交 | 内容 |
+|---|---|
+| b0a3c1f1 | genoffice 子模块整体替换 → 9142831d（EverOffice main pin） |
+| ac5a8877 | 阶段 A：契约（批注卡片/活动文件）+ 运行时刹车四件套 + note_cards 列 |
+| 86b4bc4c | 阶段 B：网关 Office 工具面（word/sheets/pdf_agent_*、office_edit、file_*、pptx skill） |
+| 68160444 | 阶段 C：桌面桥四端点 + 后台编辑会话 + pptx 脚本沙箱 + genoffice 运行时 v7 |
+| d6bb4dec | 阶段 D：PPT 管线升级（布局树 v2、语义装配、deck 续会话、逐页追加落页） |
+| 5f1ec760 | 阶段 E：评论链路 UI（NoteQueueChip、气泡批注卡片、锚点同步） |
+| （本次） | 阶段 F：vitest 排除 vendor、测试适配收尾 |
+
+### 验证结论
+- 全包 typecheck 0 错误（agent-contract / agent-runtime / agent-runtime-pi / gateway / desktop）。
+- genoffice 运行时 v7 构建通过（markdown 应用 + PDF wasm 就位）。
+- 网关全量：2519 用例，16 失败全部为分支基线预存（干净树逐一比对一致：数据库迁移分支对账、
+  文件目录口径、记忆 Office 管线、thesis 本地模板路径等），移植零回归。
+- 桌面全量（vendor 排除后）：1772 用例，44 失败全部预存（force-graph/pixi、context-room 面板、
+  i18n 旧键等干净树同样失败）。
+- 移植测试套全绿：office-plugin-formats、word_agent_*、sheets_agent_*、office_edit、
+  file_read/file_search、agent-pptx-script、pptx-theme-fonts、office-bridge-*、
+  slides-semantic(-pipeline)、subagent-tools、slides-layout-tail、docs-sync、askDrafts、
+  office-agent-ask、office-agent-*-session。
+
+### 双轨 PPT 说明
+- slides_draft 四阶段管线（Room 语境）保留为默认路线，并升级至 EverOffice 后期形态
+  （修复覆盖 12 页、试看/重排/恢复链、语义组件采用闸、deck 续会话）。
+- 主 Agent 新增「脚本直生」备用通道：pptx skill（内联 SKILL.md）+ slides_create
+  （pptxgenjs vm 沙箱）+ slides_read/slides_edit 直改；SYSTEM.md 第 9 条路由规则圈定
+  适用场合（短 deck、明确要求一次性生成、generate 多次失败的兜底）。
+- SLIDES_TOOL_NAMES 仍为 context_room_slides_* 4 件套（slides-builder 子代理独占），
+  新 slides_create/read/edit 不进剔除名单。

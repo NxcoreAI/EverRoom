@@ -148,7 +148,6 @@ describe('AgentPdfSessionManager（后台 PDF 编辑会话）', () => {
       filePath: workCopy,
       originalName: '合同.pdf',
       roomId: 'room-1',
-      workspaceId: null,
     })
     expect(harness.manager.has('file-agent-pdf')).toBe(true)
     expect(harness.manager.hasAny()).toBe(true)

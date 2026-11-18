@@ -158,7 +158,7 @@ describe('AgentSheetSessionManager（后台 Excel 编辑会话）', () => {
     expect(harness.runtime.sheets.waitForAgentReady).toHaveBeenCalledWith(
       view.webContents,
       spreadsheets.workCopy,
-      15_000,
+      45_000,
     )
     expect(harness.editSync.register).toHaveBeenCalledWith({
       fileId: 'file-agent-sheet',
@@ -166,7 +166,6 @@ describe('AgentSheetSessionManager（后台 Excel 编辑会话）', () => {
       filePath: spreadsheets.workCopy,
       originalName: '预算表.xlsx',
       roomId: 'room-1',
-      workspaceId: null,
     })
     // 隐藏会话用 agent 专用工作副本文件名：不能命中用户可见视图的恢复副本。
     expect(vi.mocked(prepareSpreadsheet)).toHaveBeenCalledWith(
