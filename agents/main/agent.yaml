@@ -7,6 +7,7 @@ runtime: pi
 systemPrompt: ./SYSTEM.md
 skills:
   - ./skills/document-export
+  - ./skills/pptx
 
 capabilities:
   - conversation.respond
@@ -40,6 +41,21 @@ tools:
   - context_room_write_abort
   - document_draft
   - slides_draft
+  - office_create
+  - slides_create
+  - slides_read
+  - slides_edit
+  - sheets_create
+  - word_agent_read
+  - word_agent_edit
+  - word_agent_ops
+  - word_compare
+  - word_export_pdf
+  - sheets_agent_read
+  - sheets_agent_edit
+  - file_read
+  - file_search
+  - file_open
   - room_correction_draft
   - context_room_context_get
   - context_room_overview_regenerate

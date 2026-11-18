@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
-import { and, desc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, ne, notInArray, or } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import { sniffImageMime } from "../../infrastructure/image-mime.js";
 import { enqueueSearchIndex } from "../search/jobs.js";
@@ -37,6 +37,18 @@ import {
 } from "./format-registry.js";
 
 export type UploadedFileRow = typeof uploadedFiles.$inferSelect;
+
+/**
+ * 产物库口径：Agent 生成 + 用户导入的产物。其余 sourceKind 一律归资料库。
+ *
+ * Agent 侧为什么要这个维度：用户在界面里看到的是「资料库 / 产物」两个分区，
+ * 说「产物库里那本 PPT」时模型只有文件名和扩展名可依，靠猜。file_search 带上
+ * scope 才能把「产物」这个说法翻成确定过滤条件。
+ */
+export const ARTIFACT_SOURCE_KINDS: readonly FileSourceKind[] = ["agent-generated", "artifact-imported"];
+
+/** file_search / files.list 的范围口径：all = 整个文件库。 */
+export type FileCatalogScope = "all" | "library" | "artifacts";
 
 export const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
   ...FILE_FORMAT_CAPABILITIES.map((item) => item.extension),
@@ -582,6 +594,131 @@ export class FilesService {
     const total = this.db.select({ id: fileEntries.id }).from(fileEntries)
       .where(isNull(fileEntries.deletedAt)).all().length;
     return { items, total };
+  }
+
+  /**
+   * 按名称检索文件库（file_search 工具面）：名称/显示名 LIKE 子串匹配 +
+   * 扩展名过滤 + 产物库/资料库范围过滤。EverRoom 无工作空间列，全库口径。
+   */
+  searchCatalog(
+    query: string,
+    options: {
+      /** 扩展名过滤（.docx / docx 都接受，大小写不敏感）。 */
+      extensions?: readonly string[];
+      /** 产物库 / 资料库范围（缺省 all = 不按来源过滤）。 */
+      scope?: FileCatalogScope;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ): { items: CatalogFileDto[]; total: number } {
+    const normalizedQuery = query.trim();
+    const limit = Math.min(Math.max(Math.trunc(options.limit ?? 20), 1), 100);
+    const offset = Math.max(Math.trunc(options.offset ?? 0), 0);
+    const extensions = [...new Set((options.extensions ?? [])
+      .map((extension) => extension.trim().toLowerCase())
+      .filter((extension) => extension.length > 0)
+      .map((extension) => (extension.startsWith(".") ? extension : `.${extension}`)))];
+    const normalizedScope: FileCatalogScope = options.scope ?? "all";
+    const filters = [isNull(fileEntries.deletedAt)];
+    if (normalizedQuery) {
+      // SQLite LIKE 对 ASCII 大小写不敏感；中文按子串精确匹配。
+      const pattern = `%${normalizedQuery}%`;
+      filters.push(or(
+        like(fileEntries.originalName, pattern),
+        like(fileEntries.displayName, pattern),
+      )!);
+    }
+    if (extensions.length > 0) filters.push(inArray(fileEntries.extension, extensions));
+    if (normalizedScope === "artifacts") {
+      filters.push(inArray(fileEntries.sourceKind, [...ARTIFACT_SOURCE_KINDS]));
+    } else if (normalizedScope === "library") {
+      filters.push(notInArray(fileEntries.sourceKind, [...ARTIFACT_SOURCE_KINDS]));
+    }
+    const where = and(...filters);
+    const rows = this.catalogQuery()
+      .where(where).orderBy(desc(fileEntries.updatedAt)).limit(limit).offset(offset).all();
+    const total = this.db.select({ id: fileEntries.id }).from(fileEntries).where(where).all().length;
+    return { items: rows.map((row) => this.toCatalogFileDto(row)), total };
+  }
+
+  currentVersionIdOf(fileEntryId: string): string | null {
+    const row = this.db.select({ currentVersionId: fileEntries.currentVersionId })
+      .from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    return row?.currentVersionId ?? null;
+  }
+
+  findBySourcePath(sourcePath: string, contentHash: string): { fileEntryId: string; originalName: string } | null {
+    if (!sourcePath || !/^[a-f0-9]{64}$/.test(contentHash)) return null;
+    const row = this.db.select({
+      id: fileEntries.id,
+      originalName: fileEntries.originalName,
+      contentHash: fileVersions.contentHash,
+    }).from(fileEntries)
+      .innerJoin(fileVersions, eq(fileEntries.currentVersionId, fileVersions.id))
+      .where(and(
+        eq(fileEntries.sourceKind, "local-folder"),
+        eq(fileEntries.sourcePath, sourcePath),
+        isNull(fileEntries.deletedAt),
+      )).get();
+    if (!row || row.contentHash !== contentHash) return null;
+    return { fileEntryId: row.id, originalName: row.originalName };
+  }
+
+  /** 版本历史（agent 回滚用）：按版本号倒序，最近 N 条。 */
+  listVersions(
+    fileEntryId: string,
+    limit = 30,
+  ): Array<{ versionNo: number; contentHash: string; createdAt: string; status: string; byteSize: number; current: boolean }> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return [];
+    const rows = this.db.select({ version: fileVersions, blob: fileBlobs })
+      .from(fileVersions)
+      .leftJoin(fileBlobs, eq(fileVersions.contentHash, fileBlobs.contentHash))
+      .where(eq(fileVersions.fileEntryId, fileEntryId))
+      .orderBy(desc(fileVersions.versionNo)).limit(limit).all();
+    return rows.map(({ version, blob }) => ({
+      versionNo: version.versionNo,
+      contentHash: version.contentHash,
+      createdAt: version.createdAt.toISOString(),
+      status: version.status,
+      byteSize: blob?.byteSize ?? 0,
+      current: version.id === entry.currentVersionId,
+    }));
+  }
+
+  /**
+   * 回滚到历史版本：旧 blob 的字节重新走 importFile（按 fileEntryId 钉住条目）。
+   * 内容哈希与旧版本一致 → registerImportedFile 的判重分支只把 currentVersionId
+   * 指回既有版本行（版本不增、字节零拷贝），并重新入队解析让索引跟上。
+   * 返回 null = 条目/版本不存在；返回 current=true 表示目标就是当前版（幂等空操作）。
+   */
+  async revertToVersion(
+    fileEntryId: string,
+    versionNo: number,
+  ): Promise<{ versionNo: number; contentHash: string; alreadyCurrent: boolean } | null> {
+    const entry = this.db.select().from(fileEntries).where(eq(fileEntries.id, fileEntryId)).get();
+    if (!entry) return null;
+    const target = this.db.select().from(fileVersions)
+      .where(and(eq(fileVersions.fileEntryId, fileEntryId), eq(fileVersions.versionNo, versionNo))).get();
+    if (!target) return null;
+    const alreadyCurrent = entry.currentVersionId === target.id;
+    if (alreadyCurrent) return { versionNo, contentHash: target.contentHash, alreadyCurrent: true };
+    const blob = this.db.select().from(fileBlobs)
+      .where(eq(fileBlobs.contentHash, target.contentHash)).get();
+    if (!blob) return null;
+    const blobPath = join(this.dataDir, blob.storagePath);
+    if (!existsSync(blobPath)) return null;
+    const buffer = await readFile(blobPath);
+    const result = await this.importFile({
+      // sourceKind/sourceKey 会被 fileEntryId 钉住逻辑忽略，取合法占位即可。
+      sourceKind: "artifact-imported",
+      sourceKey: `revert:${fileEntryId}`,
+      originalName: entry.originalName,
+      buffer,
+      mime: blob.mime,
+      fileEntryId,
+    });
+    return { versionNo, contentHash: result.contentHash, alreadyCurrent: false };
   }
 
   capabilities() {
