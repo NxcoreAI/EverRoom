@@ -34,6 +34,8 @@ import type {
 import { collectPendingImagePages, generateSlidesPageImages } from "./slides-page-images.js";
 import { createSlideImageVlmReviewer } from "./slides-image-vlm-qc.js";
 import { analyzeReferenceFiles } from "./slides-reference.js";
+import { buildPlannerInjection } from "../bp-template/selection.js";
+import type { BpTrackId } from "../bp-template/data.js";
 import {
   applyPrewarmReadyToPlan,
   enqueuePrewarmImage,
@@ -80,7 +82,7 @@ type SlidesDraftTask = "draft" | "style" | "style_select" | "generate" | "edit";
 const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> = {
   draft: new Set([
     "task", "instruction", "title", "outline", "referencePath", "referencePaths", "referenceStyle",
-    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId",
+    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId", "bpTemplate",
   ]),
   style: new Set([
     "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle", "roomId",
@@ -168,7 +170,7 @@ export function resolveGeneratePageScope(input: {
   };
 }
 
-function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
+export function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
   const task = params.task;
   if (task !== "draft" && task !== "style" && task !== "style_select" && task !== "generate" && task !== "edit") {
     throw new Error("slides_draft_task_invalid");
@@ -264,6 +266,15 @@ const SLIDES_DRAFT_PARAMETERS = Type.Union([
     targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
     /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
     sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
+    /** BP 赛道模板选型（人选确认后传入）；网关渲染为 outline/referenceOutline/instruction 注入 planner。 */
+    bpTemplate: Type.Optional(Type.Object({
+      trackId: Type.String({ minLength: 2, maxLength: 3 }),
+      stage: Type.Union([Type.Literal("early"), Type.Literal("growth"), Type.Literal("mature")]),
+      keyJudgement: Type.String({ minLength: 1, maxLength: 200 }),
+      narrativeOrderIndex: Type.Optional(Type.Integer({ minimum: 0, maximum: 3 })),
+      addonIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 40 }), { maxItems: 3 })),
+      includeX01: Type.Optional(Type.Boolean()),
+    })),
   }),
   slidesDraftTaskSchema("style", {
     instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
@@ -1775,6 +1786,38 @@ export function createSubagentPiTools(
               remainingChars -= take;
             }
           }
+          // BP 赛道模板注入：选型结果渲染为 outline/referenceOutline/instruction（方案 §4.3）。
+          // 注入的 outline 是模板骨架；用户显式 outline 优先（planner 契约：冲突时保留大纲）。
+          let bpInjectedOutline: string[] | null = null;
+          if (params.bpTemplate && typeof params.bpTemplate === "object") {
+            try {
+              const bpSel = params.bpTemplate as {
+                trackId: string; stage: "early" | "growth" | "mature"; keyJudgement: string;
+                narrativeOrderIndex?: number; addonIds?: string[]; includeX01?: boolean;
+              };
+              const injection = buildPlannerInjection({
+                trackId: bpSel.trackId as BpTrackId,
+                stage: bpSel.stage,
+                keyJudgement: bpSel.keyJudgement,
+                ...(bpSel.narrativeOrderIndex !== undefined ? { narrativeOrderIndex: bpSel.narrativeOrderIndex } : {}),
+                addonIds: Array.isArray(bpSel.addonIds) ? bpSel.addonIds : [],
+                includeX01: bpSel.includeX01 === true,
+              });
+              instruction = `${instruction}\n\n${injection.instruction}`.slice(0, 16_000);
+              if (!Array.isArray(params.outline)) bpInjectedOutline = injection.outline;
+              if (referenceOutline.length === 0) referenceOutline = injection.referenceOutline.slice(0, 30);
+            } catch (error) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_bp_template_invalid",
+                  retryable: false,
+                  message: `BP 模板选型无效：${error instanceof Error ? error.message : String(error)}`,
+                }),
+                details: { errorCode: "slides_bp_template_invalid" },
+              };
+            }
+          }
           const plannerInput: Record<string, unknown> = {
             phase: "draft",
             instruction,
@@ -1782,7 +1825,9 @@ export function createSubagentPiTools(
             ...(titleArg ? { title: titleArg } : {}),
             ...(Array.isArray(params.outline)
               ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
-              : {}),
+              : bpInjectedOutline
+                ? { outline: bpInjectedOutline }
+                : {}),
             ...(referenceStyle ? { referenceStyle } : {}),
             ...(referenceOutline.length > 0 ? { referenceOutline } : {}),
             ...(targetPages !== undefined ? { targetPages } : {}),
