@@ -34,6 +34,7 @@ import {
   type AgentDocumentSelectionSubmission,
 } from './agentDocumentSelection'
 import { useLinkedAgentRun, type LinkedAgentRunState } from './useLinkedAgentRun'
+import { isAiRelayNotReadyError, useAiRelayQuotaExhausted } from './useAiRelayQuotaExhausted'
 import type { DisplayAgentMessage, DisplayAgentToolCall } from './useAgentSession'
 import type { MentionedItem } from './agentMentions'
 import { modelPreferenceFromAgentId, type AgentNavigationTarget, type AgentRoomReference, type AgentSessionLink, type PendingAgentIntent, type RoomDocument } from '@nxcore/agent-contract'
@@ -361,6 +362,7 @@ function RunNavigation({
 
 function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<string, string>; state: LinkedAgentRunState }) {
   const { t } = useLocale()
+  const quotaExhausted = useAiRelayQuotaExhausted()
   const active = state.status === 'accepted' || state.status === 'running'
   const assistantMessage = [...state.messages].reverse().find((message) => message.role === 'assistant')
   const rawFinalContent = state.documentPending
@@ -392,7 +394,13 @@ function LinkedRunProgress({ agentNamesById, state }: { agentNamesById: Record<s
         {state.status === 'completed' && !finalContent ? (
           <div className="agent-linked-status" role="status">{t('surface:agentChat.creationComplete')}</div>
         ) : null}
-        {state.error ? <div className="agent-error" role="alert">{state.error}</div> : null}
+        {state.error ? (
+          quotaExhausted && isAiRelayNotReadyError(state.error) ? (
+            <div className="agent-error is-notice" role="status">{t('surface:agentChat.quotaExhaustedNotice')}</div>
+          ) : (
+            <div className="agent-error" role="alert">{state.error}</div>
+          )
+        ) : null}
       </section>
       {finalContent ? (
         <div className="agent-assistant-response">
@@ -497,6 +505,8 @@ export function AgentChatView({
   toolCallsByRun: Record<string, DisplayAgentToolCall[]>
 }) {
   const { t } = useLocale()
+  // 额度耗尽时错误条降级为灰色提示：让用户看出是额度限制而非软件故障。
+  const quotaExhausted = useAiRelayQuotaExhausted()
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [dismissedDocumentIntents, setDismissedDocumentIntents] = useState<Set<string>>(() => new Set())
   const [dismissedRoomSelections, setDismissedRoomSelections] = useState<Set<string>>(() => new Set())
@@ -1380,14 +1390,18 @@ export function AgentChatView({
           ) : null}
           {loading && messages.length === 0 ? <div className="agent-loading">{t('surface:agentChat.loadingConversation')}</div> : null}
           {error ? (
-            <div className="agent-error" role="alert">
-              <span>{error}</span>
-              {onRetryError ? (
-                <button type="button" className="agent-error-retry" onClick={onRetryError}>
-                  {t('surface:agentComposer.retry')}
-                </button>
-              ) : null}
-            </div>
+            quotaExhausted && isAiRelayNotReadyError(error) ? (
+              <div className="agent-error is-notice" role="status">{t('surface:agentChat.quotaExhaustedNotice')}</div>
+            ) : (
+              <div className="agent-error" role="alert">
+                <span>{error}</span>
+                {onRetryError ? (
+                  <button type="button" className="agent-error-retry" onClick={onRetryError}>
+                    {t('surface:agentComposer.retry')}
+                  </button>
+                ) : null}
+              </div>
+            )
           ) : null}
       </div>
       {scrollDetached ? (
