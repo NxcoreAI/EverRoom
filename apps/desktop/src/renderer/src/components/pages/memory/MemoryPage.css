@@ -1219,7 +1219,7 @@
 
 .mem-ledger-table .table-head,
 .mem-ledger-table .table-row {
-  grid-template-columns: minmax(180px, 1.4fr) minmax(90px, 0.7fr) minmax(120px, 0.9fr) minmax(120px, 0.8fr) minmax(88px, 0.6fr);
+  grid-template-columns: minmax(180px, 1.4fr) minmax(90px, 0.7fr) minmax(120px, 0.9fr) minmax(120px, 0.8fr) minmax(44px, 0.3fr) minmax(88px, 0.6fr);
 }
 
 /* 行可点击查看详情 */

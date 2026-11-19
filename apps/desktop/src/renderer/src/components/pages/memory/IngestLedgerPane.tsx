@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Eye, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, RefreshCw, RotateCcw, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocale } from '@/i18n/LocaleContext'
 import { showToast } from '@/state/toast'
@@ -24,6 +24,8 @@ export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {})
   const [failure, setFailure] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [reinstatingId, setReinstatingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<IngestEventDto | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [detail, setDetail] = useState<IngestEventDto | null>(null)
 
@@ -89,6 +91,32 @@ export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {})
     }
   }, [reinstatingId, t])
 
+  // 手动删除（issue: 无法手动删除数据源导入的数据——邮件类）：
+  // 台账事件级级联——记忆文档 + knowledge 归属 + 台账软删。
+  const requestDelete = (event: IngestEventDto) => {
+    if (deletingId) return
+    setConfirmDelete(event)
+  }
+
+  const confirmDeleteEvent = useCallback(async () => {
+    const target = confirmDelete
+    if (!target || deletingId) return
+    setDeletingId(target.id)
+    setMessage(null)
+    try {
+      await window.nxcore!.ingest.deleteEvent(target.id)
+      setRows((prev) => prev.filter((event) => event.id !== target.id))
+      setTotal((prev) => Math.max(0, prev - 1))
+      setDetail((current) => (current && current.id === target.id ? null : current))
+      setConfirmDelete(null)
+      setMessage(t('memory:ledger.deleteDone', { title: target.title }))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t('memory:ledger.deleteFailed'))
+    } finally {
+      setDeletingId(null)
+    }
+  }, [confirmDelete, deletingId, t])
+
   if (failure && rows.length === 0 && !loading) {
     return <div className="mem-pane-error">{failure}</div>
   }
@@ -133,6 +161,7 @@ export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {})
             <span>{t('memory:ledger.type')}</span>
             <span>{t('memory:ledger.pipeline')}</span>
             <span>{t('memory:ledger.filter')}</span>
+            <span aria-hidden="true" />
             <span>{t('memory:ledger.time')}</span>
           </div>
           {rows.map((event) => (
@@ -163,6 +192,23 @@ export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {})
                 busy={reinstatingId === event.id}
                 onReinstate={() => void reinstate(event.id)}
               />
+              <span
+                className="filter-status-cell"
+                onClick={(clickEvent) => clickEvent.stopPropagation()}
+                onKeyDown={(clickEvent) => clickEvent.stopPropagation()}
+                role="presentation"
+              >
+                <button
+                  type="button"
+                  className="icon-button mem-ledger-delete"
+                  aria-label={t('memory:ledger.delete')}
+                  title={t('memory:ledger.deleteHint')}
+                  disabled={deletingId === event.id}
+                  onClick={() => requestDelete(event)}
+                >
+                  <Trash2 aria-hidden="true" strokeWidth={1.8} className={deletingId === event.id ? 'mem-spin' : undefined} />
+                </button>
+              </span>
               <span>{formatDate(event.createdAt, locale)}</span>
             </div>
           ))}
@@ -185,7 +231,40 @@ export function IngestLedgerPane({ refreshTick }: { refreshTick?: number } = {})
           onClose={() => setDetail(null)}
           onReinstate={() => void reinstate(detail.id)}
           reinstating={reinstatingId === detail.id}
+          onRequestDelete={() => requestDelete(detail)}
         />
+      ) : null}
+      {confirmDelete ? (
+        <div
+          className="evidence-dialog-backdrop"
+          role="presentation"
+          onMouseDown={(mouseEvent) => {
+            if (mouseEvent.currentTarget === mouseEvent.target) setConfirmDelete(null)
+          }}
+        >
+          <section className="evidence-dialog mem-ledger-detail" role="dialog" aria-modal="true" aria-labelledby="ledger-delete-title">
+            <header className="evidence-dialog-head">
+              <div>
+                <span className="mem-ledger-detail-kind">{t('memory:ledger.delete')}</span>
+                <h2 id="ledger-delete-title">{confirmDelete.title}</h2>
+              </div>
+              <div className="mem-ledger-detail-actions">
+                <button type="button" className="icon-button" title={t('memory:ledger.close')} aria-label={t('memory:ledger.close')} onClick={() => setConfirmDelete(null)}>
+                  <X aria-hidden="true" strokeWidth={1.8} />
+                </button>
+              </div>
+            </header>
+            <div className="evidence-dialog-body mem-ledger-detail-body">
+              <p className="mem-doc-delete-warning">{t('memory:ledger.deleteConfirmHint')}</p>
+            </div>
+            <footer className="mem-doc-delete-foot">
+              <button type="button" disabled={deletingId !== null} onClick={() => setConfirmDelete(null)}>{t('memory:document.cancel')}</button>
+              <button type="button" className="mem-danger" disabled={deletingId !== null} onClick={() => void confirmDeleteEvent()}>
+                {deletingId !== null ? t('memory:document.deleting') : t('memory:ledger.deleteConfirm')}
+              </button>
+            </footer>
+          </section>
+        </div>
       ) : null}
     </div>
   )
@@ -264,11 +343,12 @@ function FilterStatusCell({ status, verdict, busy, onReinstate, action = true }:
 }
 
 /** 条目详情：判定快照 + 归一化产物全文；被拦的附恢复按钮。 */
-function LedgerDetailDialog({ event, onClose, onReinstate, reinstating }: {
+function LedgerDetailDialog({ event, onClose, onReinstate, reinstating, onRequestDelete }: {
   event: IngestEventDto
   onClose: () => void
   onReinstate: () => void
   reinstating: boolean
+  onRequestDelete: () => void
 }) {
   const { locale, t } = useLocale()
   const [content, setContent] = useState<{ markdown: string; parsedAt: string } | null>(null)
@@ -307,6 +387,15 @@ function LedgerDetailDialog({ event, onClose, onReinstate, reinstating }: {
                 {t('memory:ledger.reinstate')}
               </button>
             ) : null}
+            <button
+              type="button"
+              className="mem-ledger-reinstate mem-danger"
+              onClick={onRequestDelete}
+              title={t('memory:ledger.deleteHint')}
+            >
+              <Trash2 aria-hidden="true" strokeWidth={1.7} />
+              {t('memory:ledger.delete')}
+            </button>
             <button type="button" className="icon-button" title={t('memory:ledger.close')} aria-label={t('memory:ledger.close')} onClick={onClose}>
               <X aria-hidden="true" strokeWidth={1.8} />
             </button>
