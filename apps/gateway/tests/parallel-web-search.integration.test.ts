@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, type GatewayConfig } from "../src/config.js";
+import { invokeRuntime } from "../src/modules/agent/invoke.js";
 import { createAgentResolver } from "../src/modules/agent/runtime-factory.js";
 import { createWebSearchPiTools } from "../src/modules/agent/web-search-tools.js";
 import { createServer } from "../src/server/create-server.js";
@@ -24,7 +25,14 @@ const primaryEnv = {
   NXCORE_SUBAGENTS_ENABLED: "false",
 };
 
+beforeEach(() => {
+  for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]) {
+    vi.stubEnv(name, undefined);
+  }
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   for (const dispose of testDisposables.splice(0).reverse()) await dispose();
 });
@@ -39,6 +47,10 @@ async function listen(handle: (request: IncomingMessage, response: ServerRespons
   const server = createHttpServer((request, response) => {
     void handle(request, response).catch(() => response.writeHead(500).end());
   });
+  return bind(server);
+}
+
+async function bind(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   testDisposables.push(() => new Promise<void>((resolve) => {
     server.close(() => resolve());
@@ -155,7 +167,11 @@ describe("Parallel web search", () => {
         sendRpc(response, id, { content: [{ type: "text", text: JSON.stringify(data) }] });
       }
     });
-    const chat = await gatewayChat({ NXCORE_WEB_SEARCH_PROVIDER: "parallel" });
+    const chat = await gatewayChat({
+      NXCORE_WEB_SEARCH_PROVIDER: "parallel",
+      NXCORE_WEB_SEARCH_BASE_URL: "http://127.0.0.1:1/v1",
+      NXCORE_WEB_SEARCH_API_KEY: "unused-incumbent-test-key",
+    });
     for (let call = 0; call < 2; call += 1) {
       const answer = await chat.run();
       expect(answer).toContain(sourceUrl);
@@ -179,6 +195,15 @@ describe("Parallel web search", () => {
     expect(policy.statusCode).toBe(200);
     expect(await chat.run()).toContain("external_call_budget_exceeded");
     expect(calls.filter(({ method }) => method === "tools/call")).toHaveLength(2);
+    const audit = await chat.app.inject({
+      method: "GET", url: "/v1/external-calls/audits?service=WEB_SEARCH", headers: chat.headers,
+    });
+    expect(audit.statusCode).toBe(200);
+    expect(audit.json().items).toMatchObject([
+      { tool: "web_search", outcome: "BLOCKED", consumedCalls: 0 },
+      { tool: "web_search", outcome: "SUCCEEDED", consumedCalls: 1 },
+      { tool: "web_search", outcome: "SUCCEEDED", consumedCalls: 1 },
+    ]);
   }, 30_000);
 
   it("keeps the existing default request and honors the Parallel disable switch", async () => {
@@ -239,6 +264,43 @@ describe("Parallel web search", () => {
       content: "Parallel 联网搜索未返回任何结果。",
       details: { query: publicQuery, agentId: "web-search" },
     });
+  });
+
+  it("keeps usable sources within the result limit even after skipped entries", async () => {
+    const results = [
+      { url: `https://example.org/${"a".repeat(9_900)}`, excerpts: [] },
+      ...Array.from({ length: 4 }, () => ({ url: "about:blank", excerpts: [] })),
+      { url: sourceUrl, title: "NASA", excerpts: ["Apollo 11 landed on July 20, 1969."] },
+    ];
+    await captureParallel((response, id) => sendRpc(response, id, {
+      content: [], structuredContent: { results, warnings: ["fixture warning"] },
+    }));
+    const { content } = await executeTool();
+    expect(content.length).toBeLessThanOrEqual(10_000);
+    expect(content).toContain(sourceUrl);
+    expect(content).toContain("July 20, 1969");
+    expect(content).not.toContain("about:blank");
+  });
+
+  it("uses the Gateway HTTPS proxy for the Parallel connection", async () => {
+    const connect = vi.fn();
+    const proxy = createHttpServer();
+    proxy.on("connect", (request, socket) => {
+      connect(request.url);
+      socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    });
+    vi.stubEnv("https_proxy", await bind(proxy));
+    vi.stubEnv("no_proxy", "localhost,127.0.0.1,::1");
+    const directFetch = vi.fn(async () => { throw new Error("Direct fetch is unavailable"); });
+    vi.stubGlobal("fetch", directFetch);
+    // Load a fresh transport module so it reads this test's proxy environment.
+    vi.resetModules();
+    const { ParallelWebSearchAgentRuntime } = await import("../src/modules/agent/parallel-web-search-runtime.js");
+    const runtime = new ParallelWebSearchAgentRuntime("web-search");
+    await expect(invokeRuntime(runtime, publicQuery, { sessionId: "search", pageLabel: "Search" }))
+      .rejects.toThrow("Parallel web search request failed");
+    expect(connect).toHaveBeenCalledExactlyOnceWith("mcp.parallel.ai:443");
+    expect(directFetch).not.toHaveBeenCalled();
   });
 
   async function executeTool(signal?: AbortSignal) {
