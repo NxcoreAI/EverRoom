@@ -1280,6 +1280,11 @@ button.agent-user-mention:hover { color: #1f6feb; text-decoration: underline; }
   color: #b42318;
 }
 
+/* 额度不足：灰色文字提示而非红色报错——让用户看出是额度限制，不是软件故障。 */
+.agent-error.is-notice {
+  color: #68707d;
+}
+
 .agent-error > span {
   min-width: 0;
 }
