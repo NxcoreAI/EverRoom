@@ -3,7 +3,7 @@ import { Check, Copy, RefreshCw } from 'lucide-react'
 
 interface UpdateStatus {
   version: string
-  channel: 'stable' | 'nightly'
+  channel: 'stable' | 'nightly' | 'fa'
   installId: string
   supported: boolean
   lastError: string | null
@@ -79,6 +79,7 @@ export function UpdateSection() {
           <small>
             更新渠道 {status?.channel ?? '—'}
             {status?.channel === 'nightly' ? '（每日构建，可能不稳定）' : ''}
+            {status?.channel === 'fa' ? '（FA 试点构建，不启用应用内更新）' : ''}
           </small>
           {status?.installId && (
             <small>
@@ -98,7 +99,9 @@ export function UpdateSection() {
         <div className="reality-setting-row">
           <small>
             {status?.supported === false
-              ? '开发模式不支持更新检查'
+              ? status?.channel === 'fa'
+                ? 'FA 试点构建不启用应用内更新，请从 GitHub Releases 手动下载新版本'
+                : '开发模式不支持更新检查'
               : updateError
                 ? `更新失败：${updateError}`
                 : downloaded

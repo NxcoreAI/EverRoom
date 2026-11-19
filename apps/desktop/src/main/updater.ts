@@ -5,13 +5,19 @@ import { join } from 'node:path'
 import { autoUpdater, type UpdateInfo } from 'electron-updater'
 import type { SaasClient } from './cloud/saas-client'
 
-type UpdateChannel = 'stable' | 'nightly'
+type UpdateChannel = 'stable' | 'nightly' | 'fa'
 
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
-/** 渠道由环境变量切换（打包场景走 packaged-env），默认 stable。 */
+/**
+ * 渠道由环境变量切换（打包场景走 packaged-env），默认 stable。
+ * fa = FA 试点构建：版本号（X.Y.Z-fa.N）semver 低于 stable 正式版，
+ * 若走 feed 会被自动"升级"回正式版，因此该渠道完全不启用应用内更新。
+ */
 function currentChannel(): UpdateChannel {
-  return process.env.NXCORE_UPDATE_CHANNEL === 'nightly' ? 'nightly' : 'stable'
+  const raw = process.env.NXCORE_UPDATE_CHANNEL
+  if (raw === 'nightly' || raw === 'fa') return raw
+  return 'stable'
 }
 
 /** OSS 直链备源：控制面不可用时无灰度兜底，未配置则跳过降级。 */
@@ -117,6 +123,9 @@ export class DesktopUpdater {
     // IPC 两种模式都注册：dev 下按钮可点（supported=false，返回错误态），打包版才有真实更新链路
     this.registerIpc()
     if (!app.isPackaged) return
+    // fa 渠道：应用内更新整体停用（原因见 currentChannel 注释）。
+    // IPC 保留（设置页仍能显示版本/渠道做诊断），但不设 feed、不轮询、不弹任何提示。
+    if (this.channel === 'fa') return
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     // nightly 包内烙完整版本（CI extraMetadata.version），currentVersion 与 feed 版本
@@ -159,6 +168,8 @@ export class DesktopUpdater {
 
   /** 设置页「检查更新」按钮：与后台轮询共用下载与弹窗链路。 */
   async checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'> {
+    // fa 渠道无更新链路：明确报错而非静默无更新，避免试点用户误以为已是最新
+    if (this.channel === 'fa') return 'error'
     if (this.manualChecking) return 'busy'
     this.manualChecking = true
     try {
@@ -181,8 +192,9 @@ export class DesktopUpdater {
       version: app.getVersion(),
       channel: this.channel,
       installId: this.installId,
-      supported: app.isPackaged,
-      lastError: this.lastError,
+      // fa 渠道不支持应用内更新（更新走 GitHub Releases 手动下载）
+      supported: app.isPackaged && this.channel !== 'fa',
+      lastError: this.channel === 'fa' ? 'FA 试点构建不启用应用内更新，请从 GitHub Releases 手动下载新版本' : this.lastError,
     }
   }
 
