@@ -1966,6 +1966,25 @@ summary:focus-visible {
   transition: width 180ms ease;
 }
 
+.file-import-cancel {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.file-import-cancel:hover {
+  border-color: var(--danger, #e5484d);
+  color: var(--danger, #e5484d);
+}
+
 .source-delete-progress-copy strong {
   color: var(--text);
   font-size: 11px;

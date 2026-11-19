@@ -344,6 +344,55 @@ describe('FilesGatewayBridge.importPathsOnce', () => {
     expect(coordinator.list()).toEqual([])
     expect(uploadedNames).toEqual(['proposal.pdf', 'proposal.pdf'])
   })
+
+  it('cancelImport stops the batch: remaining files are skipped and a cancelled progress event fires', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'everroom-import-cancel-'))
+    temporaryDirectories.push(directory)
+    // 6 个文件：第 2 个上传中触发取消 → 已完成的 2 个保留，其余 4 个不再导入。
+    await Promise.all(Array.from({ length: 6 }, (_, index) =>
+      writeFile(join(directory, `note-${index}.md`), '# note')))
+
+    const uploadedNames: string[] = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/v1/files/capabilities')) {
+        return new Response(JSON.stringify({ items: [{ extension: '.md', manualImport: true }] }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const metadata = JSON.parse(String((init?.body as FormData).get('metadata'))) as { originalName: string }
+      uploadedNames.push(metadata.originalName)
+      if (uploadedNames.length === 2) {
+        // 第 2 个文件上传中用户点「取消」：当前文件完成后停批。
+        const result = bridge.cancelImport()
+        expect(result.cancelled).toBe(true)
+      }
+      return new Response(JSON.stringify({
+        fileEntryId: `file-${uploadedNames.length}`, fileVersionId: `version-${uploadedNames.length}`,
+        versionDeduped: false, jobId: `job-${uploadedNames.length}`,
+      }), { headers: { 'Content-Type': 'application/json' } })
+    })
+    const supervisor = {
+      getConnection: () => ({ baseUrl: 'http://gateway.test', token: 'token' }),
+    } as unknown as GatewaySupervisor
+    const bridge = new FilesGatewayBridge(supervisor)
+    const progressEvents: Array<{ status: string; batchId: string }> = []
+    bridge.onImportProgress((event) => progressEvents.push({ status: event.status, batchId: event.batchId }))
+
+    const outcomes = await bridge.importPathsOnce([directory])
+
+    // 已导入的 2 个保留，其余 4 个未导入（无失败行——取消不是错误）。
+    expect(outcomes).toHaveLength(2)
+    expect(uploadedNames).toHaveLength(2)
+    // 事件序：scanning → started → file-started/completed ×2 → cancelled（收口）。
+    const statuses = progressEvents.map((event) => event.status)
+    expect(statuses[0]).toBe('scanning')
+    expect(statuses.at(-1)).toBe('cancelled')
+    // 全部事件同一 batchId（UI 进度条对得上取消按钮的目标批）。
+    expect(new Set(progressEvents.map((event) => event.batchId)).size).toBe(1)
+    // 批结束后取消注册表已清：再取消返回 false。
+    expect(bridge.cancelImport()).toMatchObject({ cancelled: false })
+  })
 })
 
 describe('FilesGatewayBridge.readMarkdown', () => {

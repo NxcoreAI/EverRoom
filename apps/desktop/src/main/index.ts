@@ -661,6 +661,7 @@ const FILES_CHANNELS = {
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
+  cancelImport: 'files:cancel-import',
   importArtifacts: 'files:import-artifacts',
   importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
@@ -674,6 +675,7 @@ const INGEST_CHANNELS = {
   getFilterRules: 'ingest:filter-rules:get',
   updateFilterPreference: 'ingest:filter-rules:update-preference',
   reinstateEvent: 'ingest:events:reinstate',
+  deleteEvent: 'ingest:events:delete',
   getEventContent: 'ingest:events:content',
   getPause: 'ingest:pause:get',
   setPause: 'ingest:pause:set',
@@ -2040,7 +2042,10 @@ async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
         continue
       }
       if (await connectorTombstones.has(userId, provider)) continue
-      await bridge.registerConnection({ provider, service, connectionName }).catch((error: unknown) => {
+      // 云端凭证后台对账注册：登记但不启用（registerPaused）——授权不是用户
+      // 在本设备主动发起的，静默开同步会在无意识时导入大量杂乱数据。
+      // 用户在数据源页看到连接卡（显示「已停用」），点「启用连接」才开始同步。
+      await bridge.registerConnection({ provider, service, connectionName, registerPaused: true }).catch((error: unknown) => {
         console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
       })
     }
@@ -3237,6 +3242,7 @@ function registerFilesHandlers(
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
   )
+  handle(FILES_CHANNELS.cancelImport, (_event, batchId?: string) => bridge.cancelImport(batchId))
   handle(
     FILES_CHANNELS.importArtifacts,
     (_event, paths: string[], roomId: string) => {
@@ -3278,6 +3284,7 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   )
   // 误杀恢复（导入记录页「恢复」按钮）
   handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
+  handle(INGEST_CHANNELS.deleteEvent, (_event, eventId: string) => bridge.deleteEvent(eventId))
   // 事件详情：归一化产物全文
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
   // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
