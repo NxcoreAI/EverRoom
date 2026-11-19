@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EverRoom FA 工作台 · 交互原型</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --line: #E3E6EB;
+    --line-strong: #C9CED6;
+    --ink: #1A2129;
+    --ink-2: #4A5563;
+    --ink-3: #8A94A3;
+    --accent: #2B5FD9;
+    --accent-weak: #EDF2FE;
+    --ok: #1D7A4F;
+    --ok-weak: #E7F4EE;
+    --warn: #A36A00;
+    --warn-weak: #FBF3E3;
+    --danger: #B3372E;
+    --danger-weak: #FBEDEB;
+    --unknown: #6B5BD2;
+    --unknown-weak: #EFEDFB;
+    --grade-fact: #1D7A4F;
+    --grade-analysis: #2B5FD9;
+    --grade-forecast: #A36A00;
+    --grade-opinion: #8A94A3;
+    --grade-unknown: #B3372E;
+    --radius: 6px;
+    --mono: "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .frame { max-width: 1080px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  /* ── 顶栏 ── */
+  .topbar { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
+  .topbar h1 { font-size: 17px; font-weight: 650; letter-spacing: .01em; }
+  .topbar .crumb { color: var(--ink-3); font-size: 12px; }
+  .lede { color: var(--ink-2); font-size: 12.5px; margin-bottom: 18px; max-width: 720px; }
+  .lede b { color: var(--ink); }
+
+  /* ── 步骤导航（真实顺序即信息）── */
+  .steps { display: flex; gap: 2px; border-bottom: 1px solid var(--line-strong); margin-bottom: 0; }
+  .step {
+    appearance: none; border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: 13px; color: var(--ink-2);
+    padding: 9px 18px 8px; position: relative; display: flex; align-items: center; gap: 7px;
+  }
+  .step .n {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+    border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 4px; line-height: 16px;
+  }
+  .step:hover { color: var(--ink); }
+  .step[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+  .step[aria-selected="true"]::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent);
+  }
+  .step[aria-selected="true"] .n { border-color: var(--accent); color: var(--accent); }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line); border-top: 0;
+    border-radius: 0 0 var(--radius) var(--radius); padding: 22px 24px 26px;
+  }
+  .stage { display: none; }
+  .stage.active { display: block; }
+
+  /* ── 通用 ── */
+  .h2 { font-size: 14px; font-weight: 650; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); font-size: 12px; margin-bottom: 16px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 8px; border-radius: 99px; line-height: 18px; white-space: nowrap;
+  }
+  .chip.pass { background: var(--ok-weak); color: var(--ok); }
+  .chip.fail { background: var(--danger-weak); color: var(--danger); }
+  .chip.unknown { background: var(--unknown-weak); color: var(--unknown); }
+  .chip.interest { background: var(--accent-weak); color: var(--accent); }
+  .chip.watch { background: var(--warn-weak); color: var(--warn); }
+  .grade { font-family: var(--mono); font-size: 10px; padding: 0 6px; border-radius: 3px; line-height: 17px; display: inline-block; }
+  .grade.fact { background: var(--ok-weak); color: var(--grade-fact); }
+  .grade.analysis { background: var(--accent-weak); color: var(--grade-analysis); }
+  .grade.forecast { background: var(--warn-weak); color: var(--grade-forecast); }
+  .grade.opinion { background: #EEF0F3; color: var(--grade-opinion); }
+  .grade.unknown { background: var(--danger-weak); color: var(--grade-unknown); }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  button:focus-visible, .row-click:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ════ 一、匹配 ════ */
+  .match-list { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .match-row { border-bottom: 1px solid var(--line); }
+  .match-row:last-child { border-bottom: 0; }
+  .match-head {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center;
+    padding: 12px 16px; cursor: pointer;
+  }
+  .match-row.excluded .match-head { background: #FAFBFC; }
+  .match-name { font-weight: 600; font-size: 13.5px; }
+  .match-meta { color: var(--ink-3); font-size: 11.5px; margin-top: 2px; }
+  .score {
+    font-family: var(--mono); font-size: 18px; font-weight: 600; text-align: right; min-width: 52px;
+  }
+  .score small { font-size: 10px; color: var(--ink-3); font-weight: 400; }
+  .match-reason { padding: 0 16px 12px 16px; color: var(--danger); font-size: 12px; }
+  .match-detail {
+    padding: 14px 16px; border-top: 1px dashed var(--line); background: #FAFBFC;
+    display: none;
+  }
+  .match-row.open .match-detail { display: block; }
+  .bd-title { font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: .08em; margin-bottom: 8px; }
+  .bd-row { display: grid; grid-template-columns: 88px 44px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid #F0F2F5; font-size: 12px; align-items: baseline; }
+  .bd-row:last-child { border-bottom: 0; }
+  .bd-pts { font-family: var(--mono); text-align: right; color: var(--ok); }
+  .bd-note { color: var(--ink-2); }
+  .unk-list { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .unk-list li { list-style: none; font-size: 12px; color: var(--unknown); padding: 3px 0 3px 18px; position: relative; }
+  .unk-list li::before { content: "?"; position: absolute; left: 0; font-family: var(--mono); font-size: 10px; border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; line-height: 14px; }
+  .dual { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .dual-note { font-size: 11.5px; padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--line); }
+  .dual-note b { font-weight: 600; }
+  .dual-note.syn { background: var(--ok-weak); border-color: #CFE8DC; }
+  .dual-note.con { background: var(--danger-weak); border-color: #F1D4D0; }
+  .footnote { color: var(--ink-3); font-size: 11.5px; margin-top: 12px; }
+
+  /* ════ 二、会前 ════ */
+  .brief-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+  .brief-card { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .brief-card > .bc-head {
+    padding: 9px 14px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 12.5px;
+    display: flex; justify-content: space-between; align-items: center; background: #FAFBFC;
+  }
+  .bc-body { padding: 12px 14px; }
+  .fact-line { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid #F0F2F5; font-size: 12.5px; }
+  .fact-line:last-child { border-bottom: 0; }
+  .fact-line .grade { flex-shrink: 0; transform: translateY(1px); }
+  .table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .table th { text-align: left; color: var(--ink-3); font-weight: 500; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); font-size: 11px; }
+  .table td { padding: 5px 8px 5px 0; border-bottom: 1px solid #F0F2F5; vertical-align: top; }
+  .table tr:last-child td { border-bottom: 0; }
+  .warn-box { border-left: 3px solid var(--warn); background: var(--warn-weak); padding: 10px 14px; border-radius: 0 var(--radius) var(--radius) 0; margin-top: 14px; }
+  .warn-box .t { font-weight: 600; color: var(--warn); font-size: 12px; margin-bottom: 4px; }
+  .warn-box .d { font-size: 12.5px; }
+
+  /* ════ 三、会后（签名交互）════ */
+  .fb-flow { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .fb-step { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); }
+  .fb-step .dot { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--line-strong); display: grid; place-items: center; font-size: 11px; font-family: var(--mono); }
+  .fb-step.on { color: var(--ink); font-weight: 600; }
+  .fb-step.on .dot { border-color: var(--accent); color: var(--accent); background: var(--accent-weak); }
+  .fb-step.done { color: var(--ok); }
+  .fb-step.done .dot { border-color: var(--ok); color: var(--ok); background: var(--ok-weak); }
+  .fb-arrow { color: var(--line-strong); font-size: 11px; }
+
+  .fb-disposition { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .disp {
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 14px; cursor: pointer;
+    font-size: 12.5px; background: var(--surface); display: flex; align-items: center; gap: 7px;
+  }
+  .disp:hover { border-color: var(--line-strong); }
+  .disp[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .disp small { color: var(--ink-3); font-weight: 400; }
+
+  .channel { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; transition: opacity .2s; }
+  .channel.off { opacity: .45; }
+  .ch-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #FAFBFC; }
+  .ch-head .name { font-weight: 600; font-size: 12.5px; }
+  .ch-head .dest { color: var(--ink-3); font-size: 11.5px; }
+  .ch-head label { margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--ink-2); cursor: pointer; }
+  .ch-body { padding: 12px 14px; font-size: 12.5px; color: var(--ink-2); }
+  .ch-body .will { margin-top: 8px; padding: 7px 10px; background: var(--ok-weak); border-radius: 4px; color: var(--ok); font-size: 11.5px; display: flex; gap: 6px; align-items: baseline; }
+  .reason-picker { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .reason {
+    font-size: 11.5px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line);
+    cursor: pointer; color: var(--ink-2); background: var(--surface);
+  }
+  .reason[aria-pressed="true"] { background: var(--danger-weak); border-color: #E4B8B3; color: var(--danger); }
+  .fb-actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .btn {
+    font: inherit; font-size: 13px; border-radius: var(--radius); padding: 8px 20px; cursor: pointer;
+    border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+  }
+  .btn:hover { border-color: var(--ink-3); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:disabled { background: var(--line); border-color: var(--line); color: var(--ink-3); cursor: not-allowed; }
+  .apply-result { display: none; margin-top: 14px; border: 1px solid #CFE8DC; background: var(--ok-weak); border-radius: var(--radius); padding: 12px 16px; font-size: 12.5px; }
+  .apply-result.show { display: block; }
+  .apply-result .t { font-weight: 600; color: var(--ok); margin-bottom: 6px; }
+  .apply-result li { list-style: none; padding: 2px 0 2px 16px; position: relative; color: var(--ink-2); }
+  .apply-result li::before { content: "↳"; position: absolute; left: 0; color: var(--ok); }
+
+  /* ════ 四、档案 ════ */
+  .arc-grid { display: grid; grid-template-columns: 240px 1fr; gap: 20px; }
+  .arc-side { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .arc-side .head { padding: 10px 14px; border-bottom: 1px solid var(--line); background: #FAFBFC; font-weight: 600; font-size: 12.5px; }
+  .arc-item { padding: 10px 14px; border-bottom: 1px solid #F0F2F5; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  .arc-item:hover { background: #FAFBFC; }
+  .arc-item[aria-selected="true"] { background: var(--accent-weak); }
+  .arc-item .k { font-size: 15px; line-height: 1; }
+  .arc-item .nm { font-weight: 600; font-size: 12.5px; }
+  .arc-item .mt { color: var(--ink-3); font-size: 11px; }
+  .confirmed-tag { font-size: 10px; color: var(--ok); border: 1px solid #CFE8DC; border-radius: 3px; padding: 0 4px; line-height: 15px; margin-left: auto; }
+  .pending-tag { font-size: 10px; color: var(--warn); border: 1px solid #EBD9B5; border-radius: 3px; padding: 0 4px; line-height: 15px; margin-left: auto; }
+  .confirm-inline { font-size: 11.5px; color: var(--accent); cursor: pointer; background: none; border: 0; padding: 0; font-family: inherit; text-decoration: underline dotted; }
+  .confirm-inline:hover { color: var(--ink); }
+
+  @media (max-width: 860px) {
+    .brief-grid, .arc-grid { grid-template-columns: 1fr; }
+    .steps { overflow-x: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="topbar">
+    <h1>FA 工作台</h1>
+    <span class="crumb">某AI项目 · A 轮 · 交互原型</span>
+  </div>
+  <p class="lede">围绕一笔交易的四段工作流：<b>筛选匹配 → 会前准备 → 会后回写 → 档案沉淀</b>。核心交互是<b>确认制</b>——AI 只产建议，灰底待确认的数据在你点确认之前不进任何档案。点开每一行看细节。</p>
+
+  <div class="steps" role="tablist">
+    <button class="step" role="tab" aria-selected="true" data-stage="match"><span class="n">01</span>匹配</button>
+    <button class="step" role="tab" aria-selected="false" data-stage="brief"><span class="n">02</span>会前简报</button>
+    <button class="step" role="tab" aria-selected="false" data-stage="feedback"><span class="n">03</span>会后反馈</button>
+    <button class="step" role="tab" aria-selected="false" data-stage="archive"><span class="n">04</span>机构档案</button>
+  </div>
+
+  <div class="panel">
+
+    <!-- ═══════════ 01 匹配 ═══════════ -->
+    <section class="stage active" id="stage-match">
+      <div class="h2">投资人候选名单</div>
+      <p class="sub">先硬筛（出局必须带理由），再按适配度排序。标 <span class="chip unknown" style="font-size:10px">unknown</span> 的是数据缺口——由你决定补数据还是谨慎保留，系统不替你判死。最终名单与接触顺序由人定。</p>
+
+      <div class="match-list" id="matchList"></div>
+      <p class="footnote">※ "投过可比公司"同时给出两种解释：可能是行业认知（绿），也可能是组合冲突（红）。冲突在硬筛阶段直接出局。</p>
+    </section>
+
+    <!-- ═══════════ 02 会前简报 ═══════════ -->
+    <section class="stage" id="stage-brief">
+      <div class="h2">会前简报 · 活跃机构</div>
+      <p class="sub">见投资人之前的一页底稿：档案 + 信号 + 历史反馈 + 项目已核事实，全部来自结构化档案直读。</p>
+      <div class="brief-grid">
+        <div>
+          <div class="brief-card">
+            <div class="bc-head"><span>项目已核事实（材料底稿）</span><span class="chip pass" style="font-size:10px">仅 fact 级</span></div>
+            <div class="bc-body">
+              <div class="fact-line"><span class="grade fact">fact</span><span>2025H1 营收 1.2 亿元（经审计，CNY，财务确认）</span></div>
+              <div class="fact-line"><span class="grade fact">fact</span><span>付费客户 47 家，续费率 86%（合同台账口径）</span></div>
+              <div class="fact-line"><span class="grade forecast">fcst</span><span>管理层预测：明年收入翻番（未验证，勿当成绩讲）</span></div>
+              <div class="fact-line"><span class="grade opinion">opin</span><span>创始人认为赛道三年内完成洗牌</span></div>
+            </div>
+          </div>
+          <div class="warn-box">
+            <div class="t">未兑现的承诺（上次答应、还没做到的事）</div>
+            <div class="d">2026-10-20 会议约定：「等客户续费数据出来再聊，先把客户结构补给我」——重启条件未满足，本次触达前先核对。</div>
+          </div>
+        </div>
+        <div>
+          <div class="brief-card">
+            <div class="bc-head"><span>基金与投资期</span></div>
+            <div class="bc-body">
+              <table class="table">
+                <tr><th>基金</th><th>币种</th><th>状态</th><th>投资期至</th></tr>
+                <tr><td>一期基金</td><td>CNY</td><td><span class="chip pass" style="font-size:10px">在投</span></td><td class="mono">2028</td></tr>
+              </table>
+            </div>
+          </div>
+          <div class="brief-card" style="margin-top:12px">
+            <div class="bc-head"><span>决策链与联系人</span></div>
+            <div class="bc-body">
+              <table class="table">
+                <tr><th>人物</th><th>职位</th><th>角色</th><th>覆盖</th></tr>
+                <tr><td>王合伙人</td><td>合伙人</td><td><span class="chip interest" style="font-size:10px">投委会 · 可领投</span></td><td>AI应用、企业软件</td></tr>
+              </table>
+            </div>
+          </div>
+          <div class="brief-card" style="margin-top:12px">
+            <div class="bc-head"><span>信号（已确认事实）</span></div>
+            <div class="bc-body">
+              <div class="fact-line"><span class="grade fact">fact</span><span>机构：本期基金优先看企业服务（2026-10 会议）</span></div>
+              <div class="fact-line"><span class="grade fact">fact</span><span>王合伙人：偏好简短数据表、关注留存口径</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════ 03 会后反馈（签名交互）═══════════ -->
+    <section class="stage" id="stage-feedback">
+      <div class="h2">会后反馈 · 待确认</div>
+      <p class="sub">AI 已把会议整理成三路建议。你逐路核对，可修改文字、可只确认其中几路；点「确认回写」才会写入档案。</p>
+
+      <div class="fb-flow" id="fbFlow">
+        <div class="fb-step on"><span class="dot">1</span>会议整理</div><span class="fb-arrow">→</span>
+        <div class="fb-step" id="fs2"><span class="dot">2</span>逐路核对</div><span class="fb-arrow">→</span>
+        <div class="fb-step" id="fs3"><span class="dot">3</span>确认回写</div><span class="fb-arrow">→</span>
+        <div class="fb-step" id="fs4"><span class="dot">✓</span>跟进任务生成</div>
+      </div>
+
+      <div class="bd-title">反馈结论（四选一，决定跟进节奏）</div>
+      <div class="fb-disposition" id="dispPicker">
+        <button class="disp" data-d="strong_interest" aria-pressed="false">强兴趣 <small>24h 内发定制材料</small></button>
+        <button class="disp" data-d="interest" aria-pressed="true">有兴趣 <small>48h 内闭环问题</small></button>
+        <button class="disp" data-d="watch" aria-pressed="false">观察 <small>设重启条件</small></button>
+        <button class="disp" data-d="pass" aria-pressed="false">拒绝 <small>须选原因码</small></button>
+      </div>
+      <div id="reasonWrap" style="display:none">
+        <div class="bd-title">拒绝原因（标准码，必选）</div>
+        <div class="reason-picker" id="reasonPicker">
+          <button class="reason" aria-pressed="false">阶段不符</button>
+          <button class="reason" aria-pressed="false">票面不符</button>
+          <button class="reason" aria-pressed="false">组合冲突</button>
+          <button class="reason" aria-pressed="false">验证不足</button>
+          <button class="reason" aria-pressed="false">估值偏高</button>
+          <button class="reason" aria-pressed="false">额度用尽</button>
+          <button class="reason" aria-pressed="false">时机不对</button>
+        </div>
+      </div>
+
+      <div class="channel" id="ch-project">
+        <div class="ch-head">
+          <span class="name">项目侧</span><span class="dest">写入 · 某AI项目（项目 Room）</span>
+          <label><input type="checkbox" checked data-ch="project">本次回写</label>
+        </div>
+        <div class="ch-body">
+          会议结论：等客户续约数据再推进；要求先补充客户结构材料（客户名单、续费分组）。
+          <input type="text" class="ch-edit" style="display:none" />
+          <div class="will"><span class="grade fact">fact</span>确认后写入项目事实库，并记录重启条件「客户续费数据出来再聊」</div>
+        </div>
+      </div>
+
+      <div class="channel" id="ch-person">
+        <div class="ch-head">
+          <span class="name">人物侧</span><span class="dest">写入 · 王合伙人（人物 Room）</span>
+          <label><input type="checkbox" checked data-ch="person">本次回写</label>
+        </div>
+        <div class="ch-body">
+          偏好简短数据表；反复追问留存口径与客户集中度；不喜欢长篇叙事。
+          <div class="will"><span class="grade fact">fact</span>确认后挂人物档案——个人观点不自动上升为机构策略</div>
+        </div>
+      </div>
+
+      <div class="channel" id="ch-inst">
+        <div class="ch-head">
+          <span class="name">机构侧</span><span class="dest">写入 · 活跃机构（机构 Room）</span>
+          <label><input type="checkbox" checked data-ch="institution">本次回写</label>
+        </div>
+        <div class="ch-body">
+          对方口头表示本期基金优先看企业服务方向；下月投委会有一次排期。
+          <div class="will"><span class="grade fact">fact</span>确认后挂机构档案，供后续项目匹配参考</div>
+        </div>
+      </div>
+
+      <div class="fb-actions">
+        <button class="btn primary" id="fbConfirm">确认回写</button>
+        <button class="btn" id="fbReset" style="display:none">再看一遍流程</button>
+        <span id="fbHint" style="color:var(--ink-3);font-size:12px">至少勾选一路才会写入</span>
+      </div>
+
+      <div class="apply-result" id="applyResult">
+        <div class="t">已回写（grade=fact，确认人：李展萍）</div>
+        <ul id="applyList"></ul>
+      </div>
+    </section>
+
+    <!-- ═══════════ 04 机构档案 ═══════════ -->
+    <section class="stage" id="stage-archive">
+      <div class="h2">机构档案</div>
+      <p class="sub">结构化字段直接读库参与计算，不经模型生成。橙标 <span class="pending-tag">待确认</span> 是导入/抽取的候选数据——人工确认后转绿，才参与匹配与简报。</p>
+      <div class="arc-grid">
+        <div class="arc-side">
+          <div class="head">机构</div>
+          <div class="arc-item" aria-selected="true" data-inst="good">
+            <span class="k">🏛️</span><div><div class="nm">活跃机构</div><div class="mt">1 基金 · 1 投资 · 1 任职</div></div>
+          </div>
+          <div class="arc-item" aria-selected="false" data-inst="conflict">
+            <span class="k">🏛️</span><div><div class="nm">组合冲突机构</div><div class="mt">已投冲突公司</div></div>
+          </div>
+        </div>
+        <div id="arcDetail"></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script>
+// ── 标签页 ──
+const steps = document.querySelectorAll('.step');
+steps.forEach(btn => btn.addEventListener('click', () => {
+  steps.forEach(b => b.setAttribute('aria-selected', String(b === btn)));
+  document.querySelectorAll('.stage').forEach(s => s.classList.toggle('active', s.id === 'stage-' + btn.dataset.stage));
+}));
+
+// ── 01 匹配数据（与后端 screenInstitutions 输出同构）──
+const matches = [
+  {
+    name: '活跃机构', meta: '一期基金 · CNY · 投资期至 2028 ｜ 王合伙人（投委会·可领投）', passed: true, score: 85,
+    breakdown: [
+      ['赛道认知', 20, '投过 1 家可比公司（可比AI公司，认知解释）'],
+      ['阶段匹配', 20, '近两年投过 1 个 A 轮'],
+      ['决策可达', 20, '1 名投委会/可领投联系人'],
+      ['数据完整度', 5, '2/4 条记录已人工确认'],
+    ],
+    unknowns: ['未发现拒绝记录 ≠ 一定愿意投（仅表示无 pass 反馈）'],
+    dual: [ { c: '可比AI公司', t: 'syn' } ],
+  },
+  { name: '过投资期机构', meta: '老基金 · 投资期已于 2025 年结束', passed: false, reasons: ['全部基金已过投资期或标记不活跃'] },
+  { name: '组合冲突机构', meta: '二期基金 · 已投同赛道冲突公司', passed: false, reasons: ['组合冲突：已投 冲突公司'], dual: [ { c: '冲突公司', t: 'con' } ] },
+  { name: '已拒绝机构', meta: '2026-09 反馈 pass（阶段不符），无可重启条件', passed: false, reasons: ['已明确拒绝且无可重启条件'] },
+  { name: '无档案机构', meta: '尚未建档', passed: true, score: 0, breakdown: [], unknowns: ['无基金档案（数据缺失，不能判定为没有投资能力）', '无投委会/领投联系人档案'], weak: true },
+];
+
+const ml = document.getElementById('matchList');
+matches.forEach((m, i) => {
+  const row = document.createElement('div');
+  row.className = 'match-row' + (m.passed ? '' : ' excluded');
+  const dual = (m.dual || []).map(d => `<span class="dual-note ${d.t}"><b>${d.c}</b> · ${d.t === 'syn' ? '认知：懂这个赛道' : '冲突：组合里已有竞品'}</span>`).join('');
+  row.innerHTML = `
+    <div class="match-head" role="button" tabindex="0" aria-expanded="false">
+      <div>
+        <div class="match-name">${m.name}</div>
+        <div class="match-meta">${m.meta}</div>
+      </div>
+      ${m.passed ? `<div class="score">${m.weak ? '—' : m.score}<small>/100</small></div>` : ''}
+      <span class="chip ${m.passed ? 'pass' : 'fail'}">${m.passed ? '进入候选' : '出局'}</span>
+    </div>
+    ${m.passed ? '' : `<div class="match-reason">出局理由：${m.reasons[0]}</div>`}
+    <div class="match-detail">
+      ${m.breakdown && m.breakdown.length ? `<div class="bd-title">得分依据</div>
+        ${m.breakdown.map(b => `<div class="bd-row"><span>${b[0]}</span><span class="bd-pts">+${b[1]}</span><span class="bd-note">${b[2]}</span></div>`).join('')}` : ''}
+      ${m.unknowns && m.unknowns.length ? `<ul class="unk-list">${m.unknowns.map(u => `<li>${u}</li>`).join('')}</ul>` : ''}
+      ${dual ? `<div class="dual">${dual}</div>` : ''}
+    </div>`;
+  const head = row.querySelector('.match-head');
+  const toggle = () => { row.classList.toggle('open'); head.setAttribute('aria-expanded', row.classList.contains('open')); };
+  head.addEventListener('click', toggle);
+  head.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  ml.appendChild(row);
+});
+
+// ── 03 会后反馈 ──
+let currentDisp = 'interest';
+const dispBtns = document.querySelectorAll('.disp');
+dispBtns.forEach(b => b.addEventListener('click', () => {
+  dispBtns.forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  currentDisp = b.dataset.d;
+  document.getElementById('reasonWrap').style.display = currentDisp === 'pass' ? 'block' : 'none';
+  validate();
+}));
+const reasonBtns = document.querySelectorAll('.reason');
+reasonBtns.forEach(b => b.addEventListener('click', () => {
+  b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+  validate();
+}));
+document.querySelectorAll('.channel input[type=checkbox]').forEach(cb => {
+  cb.addEventListener('change', () => {
+    cb.closest('.channel').classList.toggle('off', !cb.checked);
+    validate();
+  });
+});
+function validate() {
+  const anyScope = [...document.querySelectorAll('.channel input:checked')].length > 0;
+  const needReason = currentDisp === 'pass' && ![...reasonBtns].some(b => b.getAttribute('aria-pressed') === 'true');
+  const btn = document.getElementById('fbConfirm');
+  btn.disabled = !anyScope || needReason;
+  document.getElementById('fbHint').textContent = needReason ? '拒绝必须选至少一个原因码' : (anyScope ? '至少勾选一路才会写入' : '全部取消勾选 = 只登记不发档案');
+}
+document.getElementById('fbConfirm').addEventListener('click', () => {
+  const list = [];
+  if (document.querySelector('#ch-project input').checked) list.push('项目 Room：会议反馈（interest）+ 重启条件「客户续费数据出来再聊」');
+  if (document.querySelector('#ch-person input').checked) list.push('人物 Room：偏好简短数据表、关注留存口径（王合伙人）');
+  if (document.querySelector('#ch-inst input').checked) list.push('机构 Room：本期优先企业服务；下月投委会排期');
+  const due = currentDisp === 'strong_interest' ? '24 小时内' : currentDisp === 'interest' ? '48 小时内' : '按重启条件';
+  list.push(`跟进任务：会后跟进（${currentDisp}）· 截止 ${due} · 已入 Room 待办`);
+  document.getElementById('applyList').innerHTML = list.map(x => `<li>${x}</li>`).join('');
+  document.getElementById('applyResult').classList.add('show');
+  document.getElementById('fbConfirm').style.display = 'none';
+  document.getElementById('fbReset').style.display = '';
+  document.getElementById('fbHint').textContent = '';
+  document.getElementById('fs2').classList.add('done'); document.getElementById('fs2').classList.remove('on');
+  document.getElementById('fs3').classList.add('done');
+  document.getElementById('fs4').classList.add('done');
+});
+document.getElementById('fbReset').addEventListener('click', () => {
+  document.getElementById('applyResult').classList.remove('show');
+  document.getElementById('fbConfirm').style.display = '';
+  document.getElementById('fbReset').style.display = 'none';
+  ['fs2','fs3','fs4'].forEach(id => document.getElementById(id).classList.remove('done'));
+  document.getElementById('fs2').classList.add('on');
+  validate();
+});
+validate();
+
+// ── 04 机构档案 ──
+const archives = {
+  good: {
+    funds: [
+      { name: '一期基金', cur: 'CNY', end: '2028', st: '在投', confirmed: true },
+      { name: '二期基金（公告披露）', cur: 'CNY', end: '2031', st: '在投', confirmed: false },
+    ],
+    investments: [
+      { co: '可比AI公司', round: 'A', on: '2026-05', role: '领投', rel: '认知', confirmed: true },
+      { co: '某企业服务公司', round: 'Pre-A', on: '2025-11', role: '跟投', rel: '—', confirmed: false },
+    ],
+    positions: [
+      { who: '王合伙人', title: '合伙人', ic: true, lead: true, sectors: 'AI应用、企业软件', confirmed: true },
+    ],
+  },
+  conflict: {
+    funds: [{ name: '二期', cur: 'CNY', end: '2029', st: '在投', confirmed: true }],
+    investments: [{ co: '冲突公司', round: 'A', on: '2025-05', role: '跟投', rel: '冲突', confirmed: true }],
+    positions: [],
+  },
+};
+function renderArchive(key) {
+  const a = archives[key];
+  const tag = c => c ? '<span class="confirmed-tag">已确认</span>' : '<span class="pending-tag">待确认</span>';
+  const confirmBtn = c => c ? '' : ' <button class="confirm-inline" onclick="this.previousElementSibling.textContent=\'已确认\';this.previousElementSibling.className=\'confirmed-tag\';this.remove()">确认</button>';
+  document.getElementById('arcDetail').innerHTML = `
+    <div class="brief-card">
+      <div class="bc-head"><span>基金</span></div>
+      <div class="bc-body"><table class="table">
+        <tr><th>名称</th><th>币种</th><th>投资期至</th><th>状态</th><th></th></tr>
+        ${a.funds.map(f => `<tr><td>${f.name}</td><td class="mono">${f.cur}</td><td class="mono">${f.end}</td><td>${f.st}</td><td><span class="${f.confirmed?'confirmed-tag':'pending-tag'}">${f.confirmed?'已确认':'待确认'}</span>${f.confirmed?'':' <button class="confirm-inline">确认</button>'}</td></tr>`).join('')}
+      </table></div>
+    </div>
+    <div class="brief-card" style="margin-top:12px">
+      <div class="bc-head"><span>投资记录</span></div>
+      <div class="bc-body"><table class="table">
+        <tr><th>被投公司</th><th>轮次</th><th>日期</th><th>角色</th><th>关系</th><th></th></tr>
+        ${a.investments.map(v => `<tr><td>${v.co}</td><td>${v.round}</td><td class="mono">${v.on}</td><td>${v.role}</td><td>${v.rel === '冲突' ? '<span class="chip fail" style="font-size:10px">组合冲突</span>' : v.rel === '认知' ? '<span class="chip pass" style="font-size:10px">认知</span>' : '—'}</td><td><span class="${v.confirmed?'confirmed-tag':'pending-tag'}">${v.confirmed?'已确认':'待确认'}</span>${v.confirmed?'':' <button class="confirm-inline">确认</button>'}</td></tr>`).join('')}
+      </table></div>
+    </div>
+    ${a.positions.length ? `<div class="brief-card" style="margin-top:12px">
+      <div class="bc-head"><span>任职</span></div>
+      <div class="bc-body"><table class="table">
+        <tr><th>人物</th><th>职位</th><th>决策角色</th><th>覆盖赛道</th><th></th></tr>
+        ${a.positions.map(p => `<tr><td>${p.who}</td><td>${p.title}</td><td>${p.ic ? '投委会' : ''}${p.ic && p.lead ? ' · ' : ''}${p.lead ? '可领投' : ''}</td><td>${p.sectors}</td><td><span class="confirmed-tag">已确认</span></td></tr>`).join('')}
+      </table></div>
+    </div>` : ''}`;
+  document.querySelectorAll('.confirm-inline').forEach(b => b.addEventListener('click', () => {
+    const t = b.previousElementSibling;
+    t.textContent = '已确认'; t.className = 'confirmed-tag'; b.remove();
+  }));
+}
+document.querySelectorAll('.arc-item').forEach(item => item.addEventListener('click', () => {
+  document.querySelectorAll('.arc-item').forEach(x => x.setAttribute('aria-selected', String(x === item)));
+  renderArchive(item.dataset.inst);
+}));
+renderArchive('good');
+</script>
+</body>
+</html>
