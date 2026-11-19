@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, parse, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
@@ -5357,12 +5357,42 @@ app.on('before-quit', (event) => {
   ]).then(async () => {
     await flushDesktopLogs()
     if (clearUserDataOnQuit) {
+      // 登录态保留：refresh token（credentials.json）与设备密钥（account-keyring.json）
+      // 都在将被整删的目录里，先搬到临时位置，删除后原样还原——重启后
+      // restoreSession 用保留的 token 自动恢复会话，设备无需重新批准。
+      const loginFiles = ['credentials.json', 'account-keyring.json'] as const
+      const backupDir = join(app.getPath('temp'), `everroom-login-backup-${process.pid}`)
+      await rm(backupDir, { recursive: true, force: true }).catch(() => undefined)
+      let loginPreserved = false
+      try {
+        for (const file of loginFiles) {
+          // force:true 的 copyFile 在源缺失时不报错（ENOENT 被吞），正合"没登录
+          // 就没有这两个文件"的情况；backups/ 子目录属于数据备份，不属于登录态。
+          await copyFile(join(resolvedDataDirectory, file), join(backupDir, file)).catch(() => undefined)
+        }
+        loginPreserved = true
+      } catch (error) {
+        console.error('Failed to back up EverRoom login state before wipe', error)
+      }
       try {
         await rm(resolvedDataDirectory, { recursive: true, force: true })
       } catch (error) {
         console.error('Failed to clear EverRoom user data', error)
         clearUserDataOnQuit = false
       }
+      if (clearUserDataOnQuit && loginPreserved) {
+        for (const file of loginFiles) {
+          const backupPath = join(backupDir, file)
+          if (!existsSync(backupPath)) continue
+          try {
+            await mkdir(dirname(resolvedDataDirectory), { recursive: true })
+            await copyFile(backupPath, join(resolvedDataDirectory, file))
+          } catch (error) {
+            console.error(`Failed to restore EverRoom login file ${file}`, error)
+          }
+        }
+      }
+      await rm(backupDir, { recursive: true, force: true }).catch(() => undefined)
     }
     if (clearUserDataOnQuit) app.relaunch()
   }).finally(() => app.quit())
