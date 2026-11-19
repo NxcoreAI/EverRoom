@@ -83,7 +83,7 @@ function isSupportedImportFile(filePath: string, extensions: ReadonlySet<string>
   return extensions.has(extname(filePath).toLowerCase())
 }
 
-async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>): Promise<ImportCollectionPlan> {
+async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<string>, isCancelled?: () => boolean): Promise<ImportCollectionPlan> {
   const rootPath = resolve(directory)
   const candidates: ImportCandidate[] = []
   const unsupported: ImportCandidate[] = []
@@ -96,6 +96,8 @@ async function collectDirectoryFiles(directory: string, extensions: ReadonlySet<
       return
     }
     for (const entry of entries) {
+      // 目录展开可被取消：取消后不再继续 walk（已收集的文件由调用方决定去留）。
+      if (isCancelled?.()) return
       if (entry.name.startsWith('.')) continue
       const filePath = resolve(currentDirectory, entry.name)
       if (entry.isDirectory()) {
@@ -124,11 +126,13 @@ function uniqueCandidates(candidates: ImportCandidate[]): ImportCandidate[] {
 export async function collectImportPlan(
   selectedPaths: string[],
   extensions: ReadonlySet<string> = DEFAULT_IMPORT_EXTENSIONS,
+  isCancelled?: () => boolean,
 ): Promise<{ candidates: ImportCandidate[]; unsupported: ImportCandidate[]; highRiskFileCount: number }> {
   const candidates: ImportCandidate[] = []
   const unsupported: ImportCandidate[] = []
   const seen = new Set<string>()
   for (const selectedPath of selectedPaths) {
+    if (isCancelled?.()) break
     const resolvedPath = resolve(selectedPath)
     if (seen.has(resolvedPath)) continue
     seen.add(resolvedPath)
@@ -139,7 +143,7 @@ export async function collectImportPlan(
       continue
     }
     if (selectedStat.isDirectory()) {
-      const plan = await collectDirectoryFiles(resolvedPath, extensions)
+      const plan = await collectDirectoryFiles(resolvedPath, extensions, isCancelled)
       candidates.push(...plan.candidates)
       unsupported.push(...plan.unsupported)
     }
@@ -191,8 +195,16 @@ export async function collectImportCandidates(
  * 统一导入主路径（选文件 → /v1/files 唯一字节入口 → /v1/ingest 进链路）。
  * 与 KnowledgeGatewayBridge 同构（Bearer token 只在主进程）。
  */
+/** 进行中的导入批（issue: 文件导入无法中断）：batchId → 取消标记。 */
+export interface ActiveImportBatch {
+  batchId: string
+  cancel(): void
+}
+
 export class FilesGatewayBridge {
   private readonly importProgressListeners = new Set<(event: FileImportProgressEvent) => void>()
+  /** 进行中的手动导入批：cancelImport 按 batchId 置取消标记，导入循环逐文件检查。 */
+  private readonly activeImportBatches = new Map<string, () => void>()
 
   constructor(
     private readonly supervisor: GatewaySupervisor,
@@ -204,6 +216,24 @@ export class FilesGatewayBridge {
   onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void {
     this.importProgressListeners.add(listener)
     return () => this.importProgressListeners.delete(listener)
+  }
+
+  /** 取消进行中的导入批：已开始的单文件上传不中断（可能已入库），其余文件不再导入。 */
+  cancelImport(batchId?: string): { cancelled: boolean; batchId: string | null } {
+    const cancelBatch = (id: string): boolean => {
+      const cancel = this.activeImportBatches.get(id)
+      if (!cancel) return false
+      cancel()
+      return true
+    }
+    if (batchId) {
+      const cancelled = cancelBatch(batchId)
+      return { cancelled, batchId: cancelled ? batchId : null }
+    }
+    // 未指定 batchId（渲染端进度条取消按钮）：取消最早启动的一批（同刻多批只有一个人工触发源）。
+    const [firstId] = this.activeImportBatches.keys()
+    if (firstId && cancelBatch(firstId)) return { cancelled: true, batchId: firstId }
+    return { cancelled: false, batchId: null }
   }
 
   list(limit = 100, offset = 0): Promise<{ items: FileCatalogDto[]; total: number }> {
@@ -465,20 +495,34 @@ export class FilesGatewayBridge {
     if (!Array.isArray(selectedPaths) || selectedPaths.length === 0) return []
 
     const manualExtensions = await this.manualImportExtensions()
+    // 取消标记先注册（scanning 阶段即可取消）；目录展开是大头，逐目录检查。
+    // 注意 cancelToken（置位）与 isCancelled（只读）必须分开：collectImportPlan
+    // 每步「调用并检查返回值」，把置位函数传进去会把标志自己点亮。
+    let cancelled = false
+    const batchId = randomUUID()
+    this.activeImportBatches.set(batchId, () => { cancelled = true })
+    const isCancelled = () => cancelled
+    try {
     // 目录展开阶段先发 scanning：大目录 walk 可能数分钟且无文件计数，
     // 不发则界面停在 0/0 且无法区分「扫描中」与「卡死」。
-    this.emitImportProgress({ batchId: randomUUID(), status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+    this.emitImportProgress({ batchId, status: 'scanning', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
     const scanStartedAt = Date.now()
     const importPlan = await collectImportPlan(
       selectedPaths.filter((filePath): filePath is string => typeof filePath === 'string' && filePath.length > 0),
       manualExtensions,
+      isCancelled,
     )
     console.info('[files] import plan ready', {
       paths: selectedPaths.length,
       candidates: importPlan.candidates.length,
       unsupported: importPlan.unsupported.length,
+      cancelled,
       scanMs: Date.now() - scanStartedAt,
     })
+    if (cancelled) {
+      this.emitImportProgress({ batchId, status: 'cancelled', total: 0, completed: 0, filename: null, succeeded: 0, failed: 0 })
+      return []
+    }
     // 本会话已明确跳过的文件直接排除：重试/再导入同一目录不再重复进入高风险审查。
     const highRiskImports = this.highRiskImports
     let candidates = highRiskImports
@@ -499,12 +543,15 @@ export class FilesGatewayBridge {
       heldForReview = highRiskCandidates
     }
 
-    const outcomes = await this.importCandidates(candidates, options)
+    const outcomes = await this.importCandidates(candidates, options, { batchId, isCancelled: () => cancelled })
     return [
       ...outcomes,
       ...importPlan.unsupported.map((candidate) => skippedOutcome(candidate.filename, 'unsupported_format')),
       ...heldForReview.map((candidate) => skippedOutcome(candidate.filename, 'pending_review')),
     ]
+    } finally {
+      this.activeImportBatches.delete(batchId)
+    }
   }
 
   async importObsidianProject(input: {
@@ -594,13 +641,21 @@ export class FilesGatewayBridge {
     pipelines?: IngestPipelines
     roomId?: string
     source?: { id: string; label: string; resourceIdsByRelativePath?: Readonly<Record<string, string>> }
-  }): Promise<FileImportOutcome[]> {
+  }, cancel?: { batchId: string; isCancelled: () => boolean }): Promise<FileImportOutcome[]> {
     const outcomes: FileImportOutcome[] = []
-    const batchId = randomUUID()
+    // 取消上下文：importPathsOnce 传入（scanning 与 started 同批 id，UI 才能对上进度条）。
+    // 独立调用（obsidian / 人工确认批）没有取消入口，自铸 batchId 且永不取消。
+    const batchId = cancel?.batchId ?? randomUUID()
+    const isCancelled = cancel?.isCancelled ?? (() => false)
     let succeeded = 0
     let failed = 0
     this.emitImportProgress({ batchId, status: 'started', total: candidates.length, completed: 0, filename: null, succeeded, failed })
     for (const { filePath, filename } of candidates) {
+      if (isCancelled()) {
+        // 已取消：剩余文件不再导入，整批以 cancelled 收口（UI 关进度条并提示）。
+        this.emitImportProgress({ batchId, status: 'cancelled', total: candidates.length, completed: outcomes.length, filename: null, succeeded, failed })
+        return outcomes
+      }
       this.emitImportProgress({ batchId, status: 'file-started', total: candidates.length, completed: outcomes.length, filename, succeeded, failed })
       try {
         let uploadPath = filePath

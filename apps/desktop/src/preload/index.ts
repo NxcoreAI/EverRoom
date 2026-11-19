@@ -1050,6 +1050,7 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('files:import-progress', handleProgress)
       return () => ipcRenderer.removeListener('files:import-progress', handleProgress)
     },
+    cancelImport: (batchId?: string) => invoke('files:cancel-import', batchId),
     listHighRiskReviews: () => invoke('files:high-risk-reviews:list'),
     resolveHighRiskReview: (id: string, accepted: boolean) =>
       invoke('files:high-risk-reviews:resolve', id, accepted),
@@ -1121,6 +1122,7 @@ const api: NxcoreDesktopApi = {
     updateFilterPreference: (content: string) =>
       invoke('ingest:filter-rules:update-preference', content),
     reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
+    deleteEvent: (eventId: string) => invoke('ingest:events:delete', eventId),
     getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
     getPause: () => invoke('ingest:pause:get'),
     setPause: (paused: boolean) => invoke('ingest:pause:set', paused),

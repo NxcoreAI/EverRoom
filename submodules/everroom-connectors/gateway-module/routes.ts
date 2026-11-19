@@ -121,7 +121,15 @@ export const nangoConnectorRoutes =
       )
         return reply.code(400).send({ error: "invalid_connection" });
       try {
-        return reply.code(201).send(await manager.register(b));
+        // registerPaused：后台对账注册（云端已有凭证）只登记不启用——
+        // scope 建 disabled、不触发首同步，等用户显式启用。
+        return reply.code(201).send(await manager.register({
+          provider: b.provider,
+          service: b.service,
+          connectionName: b.connectionName,
+          ...(typeof b.filters === "object" && b.filters !== null ? { filters: b.filters } : {}),
+          ...(b.registerPaused === true ? { registerPaused: true } : {}),
+        }));
       } catch {
         return reply
           .code(409)

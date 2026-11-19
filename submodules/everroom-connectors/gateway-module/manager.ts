@@ -64,13 +64,24 @@ export class ConnectorManager {
      * 暂缓期间由轮询周期兜底（默认 5 分钟后无论如何开始同步）。
      */
     deferFirstSync?: boolean;
+    /**
+     * 登记但不启用（issue: 云端有凭证的连接器默认打开）：scope 以 disabled
+     * 建立且不触发首同步——等用户在数据源页显式「启用连接」才开始同步。
+     * 用于后台对账（reconcile）发现的云端既有凭证：授权不是用户在此设备
+     * 上主动发起的，静默同步会把大量杂乱数据导入。显式授权流程不用此标记。
+     */
+    registerPaused?: boolean;
   }) {
     const c = this.repository.registerConnection(input);
     try {
-      const created = await this.ensureScopesForConnection(c);
+      const created = await this.ensureScopesForConnection(c, input.registerPaused === true);
       // 首次连接立即触发全量同步：不等轮询周期（默认 5 分钟）——
       // "连接成功但什么都不发生"是最迷惑的首次体验。失败静默，轮询兜底。
-      if (created.length > 0 && this.executor && !input.deferFirstSync && this.autoSyncEnabled(c.provider)) {
+      // registerPaused 除外：scope 建成 disabled，等用户显式启用。
+      if (
+        created.length > 0 && this.executor && !input.deferFirstSync
+        && !input.registerPaused && this.autoSyncEnabled(c.provider)
+      ) {
         for (const scopeId of created) {
           try {
             this.trigger(scopeId, "full");
@@ -90,8 +101,9 @@ export class ConnectorManager {
    * discoverScopes 实现（gmail/notion/google-docs 等单邮箱类）时发现结果为空，
    * 必须回退注册表 defaultScopes——否则连接零 scope，同步按钮/轮询/首同步
    * 全部无目标，连接永远不跑数据。返回本次新建（非已存在）的 scope id。
+   * paused=true 时新建 scope 以 disabled 建立（等用户显式启用）。
    */
-  private async ensureScopesForConnection(c: ConnectorConnection): Promise<string[]> {
+  private async ensureScopesForConnection(c: ConnectorConnection, paused = false): Promise<string[]> {
     const fallbackScopes =
       syncProviderOf(c.provider)?.defaultScopes.map((scope) => ({
         id: scope.providerScopeId,
@@ -107,7 +119,7 @@ export class ConnectorManager {
     );
     const created: string[] = [];
     for (const scope of scopes) {
-      const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName);
+      const ensured = this.repository.ensureScope(c.id, scope.id, scope.displayName, paused);
       if (!knownBefore.has(scope.id)) created.push(ensured.id);
     }
     return created;
@@ -115,6 +127,7 @@ export class ConnectorManager {
   /**
    * 存量自愈：空发现回归时期注册的连接（scope 为空）补建 scope 并触发首同步。
    * 否则这类连接永远无法开始同步——UI 同步按钮对空 scope 列表是无操作。
+   * registerPaused 登记的连接（scope 全 disabled）不属于「空 scope」，不在此自愈。
    */
   private async healScopelessConnections(): Promise<void> {
     const allScopes = this.repository.listScopes();

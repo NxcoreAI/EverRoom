@@ -217,7 +217,8 @@ export type IngestErrorCode =
   | "empty_content"
   | "router_disabled"
   | "not_filtered"
-  | "parsed_missing";
+  | "parsed_missing"
+  | "gate_paused";
 
 export class IngestError extends Error {
   constructor(

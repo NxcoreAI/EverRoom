@@ -152,7 +152,7 @@ const FilterRulesSchema = Type.Object({
 
 const errorCodes = ["source_required", "source_conflict", "path_unreadable", "ref_not_found",
   "unsupported_type", "unknown_data_type", "invalid_pipelines", "no_pipelines",
-  "convert_failed", "empty_content", "router_disabled", "not_filtered", "parsed_missing"] as const;
+  "convert_failed", "empty_content", "router_disabled", "not_filtered", "parsed_missing", "gate_paused"] as const;
 
 const ErrorResponse = Type.Object({
   error: Type.Union(errorCodes.map((code) => Type.Literal(code))),
@@ -321,6 +321,27 @@ export function ingestRoutes(
         const event = await service.reinstate(request.params.id);
         if (!event) throw new IngestError("台账无此事件", "ref_not_found", 404);
         return event;
+      },
+    );
+
+    // 台账事件级手动删除：级联清记忆文档 + knowledge 归属 + 台账软删。
+    // 邮件/日程类数据此前没有任何删除入口（文件类在文件中心可删），统一走这里。
+    app.delete(
+      "/v1/ingest/:id",
+      {
+        schema: {
+          tags: ["ingest"],
+          params: Type.Object({ id: Type.String({ minLength: 1, maxLength: 64 }) }),
+          response: {
+            200: Type.Object({ deleted: Type.Integer() }),
+            404: ErrorSchema,
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = await service.deleteEventCascade(request.params.id);
+        if (!result) throw new IngestError("台账无此事件", "ref_not_found", 404);
+        return result;
       },
     );
 

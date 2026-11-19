@@ -1674,6 +1674,8 @@ export interface NxcoreDesktopApi {
     importArtifacts(files: File[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
+    /** 取消进行中的导入（进度条取消按钮）：当前文件完成后停批，返回是否命中活动批。 */
+    cancelImport(batchId?: string): Promise<{ cancelled: boolean; batchId: string | null }>
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
@@ -1757,6 +1759,8 @@ export interface NxcoreDesktopApi {
     updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
     /** 误杀恢复：filtered 事件重新放行扇出（FilesPage「恢复」按钮）。 */
     reinstateEvent(eventId: string): Promise<IngestEventDto>
+    /** 台账事件级删除：级联清记忆/知识归属（邮件类数据的手动删除入口）。 */
+    deleteEvent(eventId: string): Promise<{ deleted: number }>
     /** 事件归一化产物全文（台账详情查看）。 */
     getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
     /** 记忆引擎暂停闸读取（记忆页顶部「继续/暂停」）。 */
