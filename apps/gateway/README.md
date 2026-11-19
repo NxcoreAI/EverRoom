@@ -20,6 +20,12 @@ the name `gateway.YYYY-MM-DD.N.log`. The active file is rolled at midnight and
 
 In production Electron should generate a fresh high-entropy token, start the gateway with `--port 0 --token <token>`, and wait for the runtime manifest before loading application data.
 
+## Web search
+
+With the Pi runtime configured, set `NXCORE_WEB_SEARCH_PROVIDER=parallel` in the Gateway environment and restart it to use Parallel for the built-in `web_search` tool. Unset it or set it to `dashscope` to use the existing provider configuration. `NXCORE_WEB_SEARCH=false` prevents the Parallel opt-in from taking effect.
+
+When Parallel is selected, the agent can send search queries to `https://mcp.parallel.ai/mcp` during a run. Parallel returns excerpts and original source URLs for the agent to cite. This connection is anonymous and subject to free usage limits. Gateway sends its project User-Agent so Parallel can measure aggregate free MCP usage. See [Parallel's privacy policy](https://parallel.ai/privacy-policy).
+
 ## Alibaba Cloud ASR
 
 Long-recording ASR is disabled by default. Users enable it with their own Alibaba Cloud Model Studio credentials:

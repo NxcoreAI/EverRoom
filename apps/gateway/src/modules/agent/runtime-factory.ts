@@ -15,9 +15,10 @@ import { createOpenConnectorPiTools } from "@nxcore/connectors-module/open-conne
 import type { FormatMappingService } from "../connectors/format-mapping-service.js";
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
-import { createWebSearchPiTools } from "./web-search-tools.js";
+import { createWebSearchPiTools, isWebSearchConfigured } from "./web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
+import { ParallelWebSearchAgentRuntime } from "./parallel-web-search-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
 import type { AgentDebugTraceStore } from "../agent-debug/trace-store.js";
 import { loadBuiltinAgentBundle } from "./builtin-bundles.js";
@@ -148,8 +149,8 @@ function createUserFacingRuntime(
       ...(config.cliConnector?.baseUrl
         ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls)
         : []),
-      ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
+      ...(isWebSearchConfigured(config) && knowledge?.agentResolver
+        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls, config.parallelWebSearch)
         : []),
       // Smart 档专属：轻量模型可用时才暴露委派工具（primary/lite 档不挂）。
       ...(liteDelegate && knowledge?.agentResolver && isPiRuntimeConfigured(config.litePi)
@@ -430,35 +431,16 @@ export function createAgentResolver(config: GatewayConfig, agentDebugStore?: Age
     });
     });
   }
-  if (config.webSearch) {
-    const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
-    const directories = agentDirectories(config, BUILTIN_AGENT_IDS.webSearch);
-    resolver.register(definition(config, {
-      id: BUILTIN_AGENT_IDS.webSearch,
-      name: bundle.name,
-      description: bundle.description,
-    }), () => {
-      const webSearch = config.webSearch;
-      if (!webSearch) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.webSearch);
-      return new OpenAiCompletionAgentRuntime({
-        runtimeId: BUILTIN_AGENT_IDS.webSearch,
-        ...webSearch,
-        systemPrompt: bundle.systemPrompt,
-        requestOptions: { enable_search: true },
-        includeProviderErrorBody: false,
-        ...directories,
-      });
-    });
-  }
+  registerWebSearchAgentIfMissing(resolver, config);
   return resolver;
 }
 
 /**
  * 动态注册 webSearch agent（boot 时 env 未配、runtime config 保存后才生效）。
- * 与 createAgentResolver 的注册体一致；已注册时跳过。
+ * 启动时也走同一注册入口；已注册时跳过。
  */
 export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config: GatewayConfig): boolean {
-  if (!config.webSearch || resolver.has(BUILTIN_AGENT_IDS.webSearch)) return false;
+  if (!isWebSearchConfigured(config) || resolver.has(BUILTIN_AGENT_IDS.webSearch)) return false;
   const bundle = builtin(BUILTIN_AGENT_IDS.webSearch);
   const directories = agentDirectories(config, BUILTIN_AGENT_IDS.webSearch);
   resolver.register(definition(config, {
@@ -466,6 +448,7 @@ export function registerWebSearchAgentIfMissing(resolver: AgentResolver, config:
     name: bundle.name,
     description: bundle.description,
   }), () => {
+    if (config.parallelWebSearch) return new ParallelWebSearchAgentRuntime(BUILTIN_AGENT_IDS.webSearch);
     const webSearch = config.webSearch;
     if (!webSearch) return new UnconfiguredAgentRuntime(BUILTIN_AGENT_IDS.webSearch);
     return new OpenAiCompletionAgentRuntime({
