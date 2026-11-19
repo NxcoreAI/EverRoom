@@ -95,6 +95,8 @@ export interface KnowledgeServiceConfig {
 export interface KnowledgeServiceOptions {
   /** Agent 调试页数据面：知识模块自建 resolver 的 runtime 也接入 trace。 */
   agentDebugStore?: AgentDebugTraceStore;
+  /** 测试注入替身 KS 客户端（缺省构造真实 KsAdminClient）。 */
+  ksClient?: KsAdminClient;
 }
 
 export interface KnowledgeServiceLogger {
@@ -486,7 +488,7 @@ export class KnowledgeService {
   ) {
     this.agentDebugStore = options.agentDebugStore;
     this.files = new FilesService(db, config.dataDir);
-    this.ks = new KsAdminClient({
+    this.ks = options.ksClient ?? new KsAdminClient({
       baseUrl: config.baseUrl,
       serviceId: config.serviceId,
       teamId: config.teamId,
@@ -2522,8 +2524,13 @@ export class KnowledgeService {
     if (decisions.length === 0) return;
 
     // 按落盘账本逐房清理：多对多沉淀下一份资料会进多个 wiki（路由命中
-    // 多个已晋升实体 + mention 实体后晋升的补账），只看最新 primaryRoomId 会漏
+    // 多个已晋升实体 + mention 实体后晋升的补账），只看最新 primaryRoomId 会漏。
+    // 源文件删尽后 KS 会拒绝 ingest（"wiki has no source files"→400），且决策
+    // 必须及时 revert（否则启动 rebuildFromFacts 会按 confirmed 决策复活
+    // membership 投影）——因此 rawRm 成功即记为已清，KS 重 ingest 失败只降级
+    // 告警，不阻断 revert、不让 job 失败重试（源已删，重试无意义）。
     const handledWikis = new Set<string>();
+    const degradedWikis: string[] = [];
     for (const decision of decisions) {
       for (const entry of ingestLedgerOf(decision)) {
         const key = `${entry.roomId}:${entry.filename}`;
@@ -2532,8 +2539,22 @@ export class KnowledgeService {
         const knowledgeId = this.registry.resolveRoomWikiId(entry.roomId);
         if (!knowledgeId) continue;
         await this.ks.rawRm(knowledgeId, [entry.filename]);
-        await this.ks.ingest(knowledgeId);
-        await this.waitUntilSettled(knowledgeId);
+        try {
+          await this.ks.ingest(knowledgeId);
+          await this.waitUntilSettled(knowledgeId);
+        } catch (error) {
+          // 源删尽（400 no source files）或 KS 暂不可用：源已删是终态，
+          // 页面级联是 KS 侧的降级残留（下次有新源 ingest 时会整体重建）。
+          const message = error instanceof Error ? error.message : String(error);
+          const noSourcesLeft = /no source files/i.test(message);
+          this.logger[noSourcesLeft ? "info" : "warn"](
+            { event: "knowledge.cleanup.wiki_ingest_degraded", knowledgeId, sourceId: payload.sourceId, reason: message },
+            noSourcesLeft
+              ? "wiki has no source files left; skipped re-ingest (pages rebuilt on next upload)"
+              : "wiki re-ingest after cleanup failed; kept source removal only",
+          );
+          if (!noSourcesLeft) degradedWikis.push(knowledgeId);
+        }
       }
     }
     this.db.update(routeDecisions).set({ status: "reverted", updatedAt: new Date() })
@@ -2544,7 +2565,7 @@ export class KnowledgeService {
       ))
       .run();
     this.logger.info(
-      { event: "knowledge.cleanup.done", sourceId: payload.sourceId, wikis: [...handledWikis] },
+      { event: "knowledge.cleanup.done", sourceId: payload.sourceId, wikis: [...handledWikis], degradedWikis },
       "document removed from room wikis",
     );
   }
