@@ -261,6 +261,9 @@ jobs:
           pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false \
             --config.win.artifactName="\${productName}-${FULL_VERSION}-windows-\${arch}.\${ext}" \
             --config.extraMetadata.version="$FULL_VERSION"
+          # verify-windows-package.mjs 靠此变量定位 fa 后缀的安装包（缺失时回退
+          # package.json 版本，找不到 0.1.9-fa.* 产物，audit 误报 Missing）
+          echo "EVERROOM_FULL_VERSION=$FULL_VERSION" >> "$GITHUB_ENV"
 
       - name: Audit package contents
         shell: bash
