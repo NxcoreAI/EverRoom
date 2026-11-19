@@ -92,6 +92,9 @@ const RoomGraphResponse = Type.Object({
 const ManualRelationType = Type.Union([
   Type.Literal("related"), Type.Literal("depends_on"), Type.Literal("part_of"),
   Type.Literal("supports"), Type.Literal("blocks"), Type.Literal("owns"), Type.Literal("custom"),
+  // FA 语义关系（fa-industry-iteration 工作项一）
+  Type.Literal("employed_by"), Type.Literal("invested_in"),
+  Type.Literal("founder_of"), Type.Literal("introduced_by"),
 ]);
 
 const CreateRoomRelationBody = Type.Object({

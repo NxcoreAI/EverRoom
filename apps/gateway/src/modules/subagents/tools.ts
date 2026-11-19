@@ -34,6 +34,8 @@ import type {
 import { collectPendingImagePages, generateSlidesPageImages } from "./slides-page-images.js";
 import { createSlideImageVlmReviewer } from "./slides-image-vlm-qc.js";
 import { analyzeReferenceFiles } from "./slides-reference.js";
+import { buildPlannerInjection, missingModuleCoverage } from "../bp-template/selection.js";
+import type { BpTrackId } from "../bp-template/data.js";
 import {
   applyPrewarmReadyToPlan,
   enqueuePrewarmImage,
@@ -80,7 +82,7 @@ type SlidesDraftTask = "draft" | "style" | "style_select" | "generate" | "edit";
 const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> = {
   draft: new Set([
     "task", "instruction", "title", "outline", "referencePath", "referencePaths", "referenceStyle",
-    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId",
+    "referenceOutline", "targetPages", "sourceDocumentIds", "roomId", "bpTemplate",
   ]),
   style: new Set([
     "task", "instruction", "title", "draftDocumentId", "regenerate", "referenceStyle", "roomId",
@@ -95,7 +97,80 @@ const SLIDES_DRAFT_FIELDS_BY_TASK: Record<SlidesDraftTask, ReadonlySet<string>> 
   edit: new Set(["task", "instruction", "fileId", "roomId"]),
 };
 
-function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
+const CN_NUMERALS: Record<string, number> = { 单: 1, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+/** 数字/数词前缀＝复合页码引用（第 N 页、每页、四十页、126 页），不当目标页数。 */
+const PAGE_REF_BEFORE = /[第每一两二三四五六七八九十\d]/u;
+
+/**
+ * 指令里的显式页数要求（「一页/单页/12 页」）。取最后一个匹配当目标页数
+ * （「把四页合并为一页」的目标是后者）；「第 N 页」「每页」与复合数字不算。
+ * 识别不出返回 undefined——宁可不拦，也不误拦。
+ */
+export function instructionPageIntent(instruction: string): number | undefined {
+  const matches = [...instruction.matchAll(/(单|一|两|二|三|四|五|六|七|八|九|十|\d{1,2})\s*页/gu)];
+  const wanted = matches.filter((m) => {
+    const before = instruction.slice(0, m.index!).replace(/\s+$/u, "").at(-1);
+    return before === undefined || !PAGE_REF_BEFORE.test(before);
+  });
+  const last = wanted.at(-1);
+  if (!last) return undefined;
+  const token = last[1]!;
+  const value = /^\d+$/u.test(token) ? Number(token) : CN_NUMERALS[token];
+  return value !== undefined && value >= 1 && value <= 32 ? value : undefined;
+}
+
+const PREVIEW_SCOPE_PATTERN = /(试看|预览|试一页|先出一页|先生成|逐页试)/u;
+const RESTRUCTURE_PATTERN = /(合并|压到|压缩|缩减|拆分|扩到|扩成|整册|全册|总共|一共)/u;
+// ponytail: 短窗正则，误伤（如「不要把封面做深色」）代价只是一次带指引的失败重试
+const PAGE_EXCLUSION_PATTERN = /(不需要|不要|不用|无需|去掉|删掉|删除|去除)(?=[^。！？\n，,]{0,4}(封面|目录|致谢|收尾|结尾|封底))/u;
+
+/** generate 指令里的页型排除意图（「不要封面页」）：编排不能增删页，须在草稿层改。 */
+export function pageExclusionIntent(instruction: string): boolean {
+  return PAGE_EXCLUSION_PATTERN.test(instruction);
+}
+
+/**
+ * generate 入口的页数范围解析：指令里的「N 页」是本轮试看落页范围，还是整册页数要求。
+ * previewPages 参数优先；带试看语义的指令不当整册冲突，但其中的页数仍要推导成试看
+ * 范围——否则「先生成一页示例」会按整册跑，且「一页」原样进编排批次，planner 遵循
+ * 指令只出 1 页、批次校验按批大小收，「页数不符」重试死循环（2026-11-02 实测）。
+ */
+export function resolveGeneratePageScope(input: {
+  instruction: string;
+  draftPageCount: number;
+  previewPages?: number;
+  targetPages?: number;
+}): { previewPages?: number; autoNote?: string; conflict?: { requested: number; draft: number } } {
+  let previewPages = input.previewPages;
+  let autoNote: string | undefined;
+  const scopeIntent = PREVIEW_SCOPE_PATTERN.test(input.instruction);
+  if (scopeIntent && previewPages === undefined) {
+    const scopedCount = instructionPageIntent(input.instruction);
+    if (scopedCount !== undefined && scopedCount < input.draftPageCount) {
+      previewPages = Math.min(32, scopedCount);
+      autoNote = `指令要求本轮先出 ${previewPages} 页试看：编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    }
+  }
+  const pageCountIntent = previewPages !== undefined || scopeIntent
+    ? undefined
+    : (instructionPageIntent(input.instruction) ?? input.targetPages);
+  if (pageCountIntent !== undefined && pageCountIntent !== input.draftPageCount) {
+    // 小于草稿页数的 N 几乎都是"本轮只出 N 页"的范围语义：自动按试看处理，
+    // 只落前 N 页（草稿/风格保留）。只有明确的整册重整措辞（合并/压到/拆分…）才拦下引导改草稿。
+    if (pageCountIntent < input.draftPageCount && !RESTRUCTURE_PATTERN.test(input.instruction)) {
+      previewPages = Math.min(32, pageCountIntent);
+      autoNote = `指令要求本轮生成 ${pageCountIntent} 页：已按试看处理，编排与落页都只做前 ${previewPages} 个内容页（不含封面）；整册请确认后重新 generate`;
+    } else {
+      return { conflict: { requested: pageCountIntent, draft: input.draftPageCount } };
+    }
+  }
+  return {
+    ...(previewPages !== undefined ? { previewPages } : {}),
+    ...(autoNote ? { autoNote } : {}),
+  };
+}
+
+export function validateSlidesDraftTaskParams(params: Record<string, unknown>): SlidesDraftTask {
   const task = params.task;
   if (task !== "draft" && task !== "style" && task !== "style_select" && task !== "generate" && task !== "edit") {
     throw new Error("slides_draft_task_invalid");
@@ -191,6 +266,15 @@ const SLIDES_DRAFT_PARAMETERS = Type.Union([
     targetPages: Type.Optional(Type.Integer({ minimum: 4, maximum: 32 })),
     /** draft 阶段点名要读的 Room 文档（最多 2 篇）；缺省时网关从 instruction 里的 UUID 自动识别。 */
     sourceDocumentIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1, maxItems: 2 })),
+    /** BP 赛道模板选型（人选确认后传入）；网关渲染为 outline/referenceOutline/instruction 注入 planner。 */
+    bpTemplate: Type.Optional(Type.Object({
+      trackId: Type.String({ minLength: 2, maxLength: 3 }),
+      stage: Type.Union([Type.Literal("early"), Type.Literal("growth"), Type.Literal("mature")]),
+      keyJudgement: Type.String({ minLength: 1, maxLength: 200 }),
+      narrativeOrderIndex: Type.Optional(Type.Integer({ minimum: 0, maximum: 3 })),
+      addonIds: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 40 }), { maxItems: 3 })),
+      includeX01: Type.Optional(Type.Boolean()),
+    })),
   }),
   slidesDraftTaskSchema("style", {
     instruction: Type.Optional(Type.String({ minLength: 1, maxLength: 16_000 })),
@@ -793,6 +877,12 @@ export function createSubagentPiTools(
     slidesProgress?: SlidesProgressTracker | null;
     slidesCheckpoints?: SlidesGenerationCheckpointStore;
     slidesGenerationBudget?: Partial<GenerationBudgetLimits>;
+    /**
+     * 主 Agent 工具面是否挂载 slides_draft（PPT 子代理四阶段工作流入口）。
+     * PPT 生成已切换为只走主 Agent 脚本直生（slides_create）：主 Agent 面传
+     * false 剔除；子代理消费点（doc-writer 的分析工具面等）不受影响。
+     */
+    slidesDraftToolEnabled?: boolean;
     /**
      * 草稿文档落地（draft 阶段）：方案渲染成 markdown 后由网关建 Room 文档，
      * 返回 documentId 供用户编辑与 generate 阶段读回。
@@ -1467,13 +1557,18 @@ export function createSubagentPiTools(
       },
     });
   }
-  const slidesBuilder = registry.get("slides-builder");
+  // PPT 生成只走主 Agent 脚本直生（slides_create）：主 Agent 面默认不挂
+  // slides_draft（slidesDraftToolEnabled !== false 仅作显式开启的逃生舱）。
+  // slides-builder 子代理本身保留——两段式工具面（context_room_slides_*）与其
+  // 他消费点不受影响。
+  const slidesBuilder = options.slidesDraftToolEnabled === true ? registry.get("slides-builder") : undefined;
   if (slidesBuilder) {
     const slidesDraftTool: PiAgentRuntimeTool = {
       name: "slides_draft",
       label: "Create or edit a slides deck",
       description: "PPT 流程入口。每次只执行一个 task，参数按 task 隔离；不适用字段会拒绝。"
         + "draft 需 instruction，生成内容草稿并暂停；完成后等用户确认。可选 title/outline、参考文件和 sourceDocumentIds。"
+        + "生成融资 BP 时传 bpTemplate（赛道模板选型：trackId T01-T18、stage early/growth/mature、keyJudgement 本轮关键判断；选型需用户确认），网关渲染模板骨架注入 planner。"
         + "style 可选 draftDocumentId/instruction，生成或重显风格候选；只有用户要求换一批时传 regenerate=true 和反馈 instruction。"
         + "style_select 需 styleSessionId 与 candidateIndex，确认候选并生成风格卡。"
         + "generate 需 draftDocumentId 或 styleSessionId，可传 pageImagesDecision 及配图页序处理确认/续接；instruction 可省略，网关恢复原主题要求。"
@@ -1702,6 +1797,45 @@ export function createSubagentPiTools(
               remainingChars -= take;
             }
           }
+          // BP 赛道模板注入：选型结果渲染为 outline/referenceOutline/instruction（方案 §4.3）。
+          // 注入的 outline 是模板骨架；用户显式 outline 优先（planner 契约：冲突时保留大纲）。
+          let bpInjectedOutline: string[] | null = null;
+          if (params.bpTemplate && typeof params.bpTemplate === "object") {
+            try {
+              const bpSel = params.bpTemplate as {
+                trackId: string; stage: "early" | "growth" | "mature"; keyJudgement: string;
+                narrativeOrderIndex?: number; addonIds?: string[]; includeX01?: boolean;
+              };
+              const injection = buildPlannerInjection({
+                trackId: bpSel.trackId as BpTrackId,
+                stage: bpSel.stage,
+                keyJudgement: bpSel.keyJudgement,
+                ...(bpSel.narrativeOrderIndex !== undefined ? { narrativeOrderIndex: bpSel.narrativeOrderIndex } : {}),
+                addonIds: Array.isArray(bpSel.addonIds) ? bpSel.addonIds : [],
+                includeX01: bpSel.includeX01 === true,
+              });
+              // 超预算时压缩用户指令部分——模板尾部的【硬约束】绝不能被截掉，否则模板失去约束力。
+              const combined = `${instruction}\n\n${injection.instruction}`;
+              if (combined.length <= 16_000) {
+                instruction = combined;
+              } else {
+                const room = Math.max(0, 16_000 - injection.instruction.length - 1);
+                instruction = `${instruction.slice(0, room)}\n${injection.instruction}`.slice(0, 16_000);
+              }
+              if (!Array.isArray(params.outline)) bpInjectedOutline = injection.outline;
+              if (referenceOutline.length === 0) referenceOutline = injection.referenceOutline.slice(0, 30);
+            } catch (error) {
+              return {
+                content: JSON.stringify({
+                  status: "failed",
+                  errorCode: "slides_bp_template_invalid",
+                  retryable: false,
+                  message: `BP 模板选型无效：${error instanceof Error ? error.message : String(error)}`,
+                }),
+                details: { errorCode: "slides_bp_template_invalid" },
+              };
+            }
+          }
           const plannerInput: Record<string, unknown> = {
             phase: "draft",
             instruction,
@@ -1709,7 +1843,9 @@ export function createSubagentPiTools(
             ...(titleArg ? { title: titleArg } : {}),
             ...(Array.isArray(params.outline)
               ? { outline: params.outline.map((item) => String(item ?? "").trim().slice(0, 80)).filter(Boolean) }
-              : {}),
+              : bpInjectedOutline
+                ? { outline: bpInjectedOutline }
+                : {}),
             ...(referenceStyle ? { referenceStyle } : {}),
             ...(referenceOutline.length > 0 ? { referenceOutline } : {}),
             ...(targetPages !== undefined ? { targetPages } : {}),
@@ -1847,13 +1983,24 @@ export function createSubagentPiTools(
               });
             }
           }
+          // BP 模板覆盖校验：注入了 bpTemplate 时，draft 页必须覆盖全部 13 个模块。
+          // 缺口只记账进 warnings 供用户与主 Agent 复核——草稿本身就是给用户改的，不拦交付。
+          let bpCoverageWarnings: string[] = [];
+          if (params.bpTemplate && typeof params.bpTemplate === "object") {
+            const bpSel = params.bpTemplate as { trackId: string };
+            const draftTitles = gatePlan.pages.map((p: { title?: unknown }) => String(p?.title ?? ""));
+            const missing = missingModuleCoverage(draftTitles, bpSel.trackId as BpTrackId);
+            if (missing.length > 0) {
+              bpCoverageWarnings = [`BP 模块覆盖缺口（${bpSel.trackId}）：${missing.join("、")}。请在草稿中补齐或说明取舍。`];
+            }
+          }
           return {
             content: JSON.stringify({
               status: "draft_ready",
               documentId: draftDocument.documentId,
               documentTitle: draftDocument.title,
               pages: gatePlan.pages.length,
-              warnings: gatePlan.warnings ?? [],
+              warnings: [...(gatePlan.warnings ?? []), ...bpCoverageWarnings],
               message: "内容草稿文档已创建。告诉用户：打开草稿检查修改（一个章节=一页，改章节/要点/数据就是改页），"
                 + "确认内容无误后点「内容确认，去选风格」进入下一步；用户确认前不要生成 PPT。",
             }),
@@ -1978,7 +2125,9 @@ export function createSubagentPiTools(
             instruction,
             roomId,
             repair: (input, round) => retryDispatch(() => dispatch({
-              agentId: "slides-editor", task: "单页内容修复", input,
+              agentId: "slides-editor", task: "单页内容修复",
+              // EverRoom：slides-editor 的 input schema 要求 roomId（Room 归属）。
+              input: { ...input, roomId },
               idempotencyKey: dispatchKey(run.runId, "slides-editor", `${repairKeyPrefix}:${round}`, input),
               source: "primary_agent", parentSessionId: run.sessionId,
               ...(repairParentRunId ? { parentRunId: repairParentRunId } : {}),

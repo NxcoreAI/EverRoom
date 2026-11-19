@@ -1,0 +1,338 @@
+# FA 试点专用构建：与正式发布链路（release-desktop.yml）完全隔离。
+# - 触发：push 到 FA 分支（无需打 tag）
+# - 产物：GitHub prerelease（fa-v* tag 由 gh release create --target 指向触发 commit），
+#   不传 OSS、不登记管理端、不抢占 latest
+# - 渠道：包内烙 NXCORE_UPDATE_CHANNEL=fa，客户端禁用应用内自动更新——
+#   FA 版本号（如 0.1.9-fa.20261119.130）semver 上低于 stable 正式版 0.1.9，
+#   若不隔离会被 stable feed 自动"升级"回正式版，直接毁掉试点设备。
+name: FA desktop release
+
+on:
+  push:
+    branches: [FA]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fa-desktop-release
+  cancel-in-progress: true
+
+jobs:
+  # 版本号只派生一次，双平台复用：同 run 内 GITHUB_RUN_NUMBER 一致，但跨上海
+  # 午夜的日期翻转仍可能让两平台各算各的对不上，集中派生彻底消除。
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      full-version: ${{ steps.derive.outputs.full-version }}
+    steps:
+      - name: Check out FA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Derive FA version
+        id: derive
+        shell: bash
+        run: |
+          base="$(node -p "require('./apps/desktop/package.json').version")"
+          full_version="$base-fa.$(TZ=Asia/Shanghai date +%Y%m%d).$GITHUB_RUN_NUMBER"
+          echo "full-version=$full_version" >> "$GITHUB_OUTPUT"
+          echo "FA version: $full_version"
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    env:
+      NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
+      NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
+      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
+      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
+      NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
+      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
+      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
+      NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
+      NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
+      NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
+      NXCORE_NANGO_GOOGLE_CLIENT_ID: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_ID }}
+      NXCORE_NANGO_GOOGLE_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_SECRET }}
+      NXCORE_NANGO_NOTION_CLIENT_ID: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_ID }}
+      NXCORE_NANGO_NOTION_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
+      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
+      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
+      # FA 构建烙渠道（读取处见 apps/desktop/src/main/index.ts loadPackagedEnvironment）
+      NXCORE_UPDATE_CHANNEL: fa
+
+    steps:
+      - name: Check out FA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # FA 构建不做签名（试点设备手动放行 Gatekeeper 即可），无证书准备步骤。
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache npm tarballs for submodule builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
+          restore-keys: npm-tarballs-${{ runner.os }}-
+
+      - name: Cache Rust build for xlsx sidecar
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: apps/desktop/vendor/genoffice/apps/sheets/native/xlsx-engine
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Build app and bundled runtimes
+        run: |
+          pnpm build
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
+
+      - name: Package macOS arm64
+        shell: bash
+        env:
+          FULL_VERSION: ${{ needs.version.outputs.full-version }}
+        run: |
+          # 未配置签名证书：显式关闭签名探测，产出未签名构建。
+          # 产物文件名与包内版本用完整版本号（含 -fa 后缀），与 nightly 打包口径一致。
+          export CSC_IDENTITY_AUTO_DISCOVERY=false
+          pnpm --filter @nxcore/desktop exec electron-builder --mac dmg zip --arm64 --publish never \
+            --config.mac.artifactName="\${productName}-${FULL_VERSION}-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$FULL_VERSION"
+
+      - name: Audit package contents
+        shell: bash
+        run: |
+          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          test -n "$app_path" || { echo "EverRoom.app was not produced" >&2; exit 1; }
+          resources="$app_path/Contents/Resources"
+          forbidden='(^|/)(\.env($|\.)|(__tests__|tests?)(/|$)|[^/]*(\.test|\.spec)\.[^/]+$|(test|spec)\.[^/]+$)|\.map$'
+
+          loose_files="$(find "$resources" -type f -print)"
+          if printf '%s\n' "$loose_files" | grep -Eiq "$forbidden"; then
+            printf '%s\n' "$loose_files" | grep -Ei "$forbidden" >&2
+            exit 1
+          fi
+          unexpected_typescript="$(printf '%s\n' "$loose_files" | grep -Ei '\.(ts|tsx|mts|cts)$' | grep -Ev "^$resources/open-connector/" || true)"
+          test -z "$unexpected_typescript" || { printf '%s\n' "$unexpected_typescript" >&2; exit 1; }
+
+          for dir in open-connector oo lark-cli ntn acp-adapters; do
+            test -d "$resources/$dir" || { echo "missing bundled runtime: $resources/$dir" >&2; exit 1; }
+          done
+          for adapter_manifest in \
+            "$resources/acp-adapters/claude/node_modules/@zed-industries/claude-agent-acp/package.json" \
+            "$resources/acp-adapters/codex/node_modules/@agentclientprotocol/codex-acp/package.json"; do
+            test -f "$adapter_manifest" || { echo "missing bundled ACP adapter: $adapter_manifest" >&2; exit 1; }
+          done
+
+          # FA 渠道标记必须烙进包：漏了会导致客户端走 stable feed 被自动升级回正式版
+          grep -Fq '"NXCORE_UPDATE_CHANNEL": "fa"' "$resources/packaged-env.json" || {
+            echo "FA channel flag missing from packaged-env.json" >&2
+            exit 1
+          }
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          app_path="$(find release -type d -name EverRoom.app -print -quit)"
+          dmgs=(release/*.dmg)
+          zips=(release/*.zip)
+          test "${#dmgs[@]}" -eq 1 && test -f "${dmgs[0]}" || { echo "Expected one DMG" >&2; exit 1; }
+          test "${#zips[@]}" -eq 1 && test -f "${zips[0]}" || { echo "Expected one ZIP" >&2; exit 1; }
+          test "$(lipo -archs "$app_path/Contents/MacOS/EverRoom")" = "arm64"
+          hdiutil verify "${dmgs[0]}"
+          unzip -t "${zips[0]}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-assets
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.zip.blockmap
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  windows:
+    needs: version
+    runs-on: windows-2025
+    env:
+      NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
+      NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
+      NXCORE_KNOWLEDGE_ROUTER_ENABLED: ${{ vars.NXCORE_KNOWLEDGE_ROUTER_ENABLED }}
+      NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS: ${{ vars.NXCORE_KNOWLEDGE_INGEST_DEBOUNCE_MS }}
+      NXCORE_CONNECTOR_POLL_MS: ${{ vars.NXCORE_CONNECTOR_POLL_MS }}
+      NXCORE_INGEST_FILTER_ENABLED: ${{ vars.NXCORE_INGEST_FILTER_ENABLED }}
+      NXCORE_INGEST_FILTER_MODE: ${{ vars.NXCORE_INGEST_FILTER_MODE }}
+      NXCORE_NANGO_URL: ${{ secrets.NXCORE_NANGO_URL }}
+      NXCORE_NANGO_SECRET: ${{ secrets.NXCORE_NANGO_SECRET }}
+      NXCORE_NANGO_GMAIL_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_GMAIL_CONFIG_KEY }}
+      NXCORE_NANGO_GOOGLE_CLIENT_ID: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_ID }}
+      NXCORE_NANGO_GOOGLE_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_GOOGLE_CLIENT_SECRET }}
+      NXCORE_NANGO_NOTION_CLIENT_ID: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_ID }}
+      NXCORE_NANGO_NOTION_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_NOTION_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_ID: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_ID }}
+      NXCORE_NANGO_OUTLOOK_CLIENT_SECRET: ${{ secrets.NXCORE_NANGO_OUTLOOK_CLIENT_SECRET }}
+      NXCORE_NANGO_OUTLOOK_CONFIG_KEY: ${{ secrets.NXCORE_NANGO_OUTLOOK_CONFIG_KEY }}
+      NXCORE_BROWSER_EXTENSION_STORE_URL: ${{ vars.NXCORE_BROWSER_EXTENSION_STORE_URL }}
+      NXCORE_BROWSER_EXTENSION_ID: ${{ vars.NXCORE_BROWSER_EXTENSION_ID }}
+      NXCORE_UPDATE_CHANNEL: fa
+
+    steps:
+      - name: Check out FA branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache npm tarballs for submodule builds
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-tarballs-${{ runner.os }}-${{ hashFiles('apps/desktop/vendor/genoffice/package-lock.json') }}
+          restore-keys: npm-tarballs-${{ runner.os }}-
+
+      - name: Cache Rust build for xlsx sidecar
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          workspaces: apps/desktop/vendor/genoffice/apps/sheets/native/xlsx-engine
+
+      - name: Check types
+        run: pnpm typecheck
+
+      - name: Build app and bundled runtimes
+        shell: bash
+        run: |
+          pnpm build
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-open-connector.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-oo-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-lark-cli.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-ntn.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/prepare-acp-adapters.mjs
+          pnpm --filter @nxcore/desktop exec node scripts/generate-packaged-env.mjs
+
+      - name: Package Windows x64
+        shell: bash
+        env:
+          FULL_VERSION: ${{ needs.version.outputs.full-version }}
+        run: |
+          # npmRebuild=false: better-sqlite3 走 N-API prebuilds，无需 Electron-ABI 重建
+          pnpm --filter @nxcore/desktop exec electron-builder --win nsis --x64 --publish never --config.npmRebuild=false \
+            --config.win.artifactName="\${productName}-${FULL_VERSION}-windows-\${arch}.\${ext}" \
+            --config.extraMetadata.version="$FULL_VERSION"
+          # verify-windows-package.mjs 靠此变量定位 fa 后缀的安装包（缺失时回退
+          # package.json 版本，找不到 0.1.9-fa.* 产物，audit 误报 Missing）
+          echo "EVERROOM_FULL_VERSION=$FULL_VERSION" >> "$GITHUB_ENV"
+
+      - name: Audit package contents
+        shell: bash
+        run: |
+          pnpm --filter @nxcore/desktop exec node scripts/verify-windows-package.mjs
+          # FA 渠道标记必须烙进包（release 目录由 verify 脚本同口径解析：仓库根/release）
+          grep -Fq '"NXCORE_UPDATE_CHANNEL": "fa"' release/win-unpacked/resources/packaged-env.json || {
+            echo "FA channel flag missing from packaged-env.json" >&2
+            exit 1
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-assets
+          path: |
+            release/*.exe
+            release/*.exe.blockmap
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  publish:
+    needs: [version, macos, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-assets
+          path: release-assets
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-assets
+          path: release-assets
+
+      - name: Publish FA prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FULL_VERSION: ${{ needs.version.outputs.full-version }}
+        run: |
+          version="$FULL_VERSION"
+          tag="fa-v$version"
+          expected=(
+            "release-assets/EverRoom-$version-arm64.dmg"
+            "release-assets/EverRoom-$version-arm64.zip"
+            "release-assets/EverRoom-$version-arm64.zip.blockmap"
+            "release-assets/EverRoom-$version-windows-x64.exe"
+            "release-assets/EverRoom-$version-windows-x64.exe.blockmap"
+          )
+          files=(release-assets/*)
+          test "${#files[@]}" -eq "${#expected[@]}" || {
+            printf 'Unexpected release assets:\n%s\n' "${files[*]}" >&2
+            exit 1
+          }
+          for asset in "${expected[@]}"; do
+            test -f "$asset" || { echo "Missing release asset: $asset" >&2; exit 1; }
+          done
+          notes="FA 试点构建（不签名）。macOS 首次启动需在 Finder 中右键打开以放行 Gatekeeper；Windows 可能触发 SmartScreen 提示。"
+          notes="$notes"$'\n'"注意：FA 构建与正式版共用安装标识，安装会覆盖本机正式版 EverRoom；应用内自动更新已禁用，更新请从 Releases 页手动下载，退出试点请重装正式版。"
+          gh release create "$tag" "${expected[@]}" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --latest=false \
+            --title "FA 试点 $version" \
+            --notes "$notes"

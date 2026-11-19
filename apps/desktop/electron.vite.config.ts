@@ -78,6 +78,8 @@ export default defineConfig({
       dedupe: ['react', 'react-dom'],
       alias: {
         '@': resolve('src/renderer/src'),
+        // 移植组件用 '@/shared/*' 引用主进程/渲染层共享类型（与 tsconfig paths 对齐）。
+        '@/shared': resolve('src/shared'),
       },
     },
     // 进 room 时才加载的图组件依赖，不预打包会触发 vite 运行时重打包并整页刷新

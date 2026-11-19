@@ -24,6 +24,9 @@
       "@/*": [
         "src/renderer/src/*"
       ],
+      "@/shared/*": [
+        "src/shared/*"
+      ],
       "@nxcore/connector-contract": [
         "../../submodules/everroom-connectors/connector-contract/src/index.ts"
       ],

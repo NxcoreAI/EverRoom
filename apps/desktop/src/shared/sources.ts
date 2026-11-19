@@ -85,7 +85,7 @@ import type {
 } from '@nxcore/agent-contract'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from './browser-extension'
 import type { ObsidianVaultApi } from './obsidian'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from './office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent } from './office'
 import type {
   AgentAuthEnvironmentStatus,
   AgentAuthEventFrame,
@@ -870,7 +870,7 @@ export interface OfficeWorkspaceBounds {
 }
 
 /** 内嵌 Office 预览的实例类型（genoffice docs / sheets / slides / pdf 运行时）。 */
-export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf'
+export type OfficePreviewKind = 'docx' | 'spreadsheet' | 'slides' | 'pdf' | 'markdown'
 
 /** 顶栏 Office 预览标签（对齐 ContextRoomWorkspaceTab 的标签形状）。 */
 export interface OfficePreviewTab {
@@ -903,6 +903,7 @@ export function officePreviewKindForFileName(fileName: string): OfficePreviewKin
   if (extension === '.pptx' || extension === '.ppt') return 'slides'
   if (extension === '.xlsx' || extension === '.xlsm' || extension === '.xls') return 'spreadsheet'
   if (extension === '.pdf') return 'pdf'
+  if (extension === '.md' || extension === '.markdown') return 'markdown'
   return null
 }
 
@@ -975,7 +976,7 @@ export interface NxcoreDesktopApi {
   }
   updater: {
     /** 当前版本、渠道与安装标识（诊断/白名单登记用） */
-    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly'; installId: string; supported: boolean; lastError: string | null }>
+    getStatus(): Promise<{ version: string; channel: 'stable' | 'nightly' | 'fa'; installId: string; supported: boolean; lastError: string | null }>
     /** 手动检查更新：update-found=有新版正在后台下载（完成后弹窗）；no-update=已是最新 */
     checkNow(): Promise<'update-found' | 'no-update' | 'busy' | 'error'>
     /** 订阅下载进度（percent 0-100、bytesPerSecond），返回取消函数 */
@@ -1003,8 +1004,23 @@ export interface NxcoreDesktopApi {
     onPreviewRequest(listener: (request: OfficePreviewRequest) => void): () => void
     /** Agent 生成 Office 文件的进度/完成事件（完成带 fileId 用于自动打开预览）。 */
     onAgentFile(listener: (event: OfficeAgentFileEvent) => void): () => void
-    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    /** slides/Word/Excel/PDF「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk(listener: (event: OfficeAgentAskEvent) => void): () => void
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
+    syncAskQueue(input: {
+      fileId: string
+      items: Array<{
+        id: string
+        instruction: string
+        excerpt?: string
+        /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+        anchor?: OfficeAskAnchor
+      }>
+    }): void
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction(listener: (event: OfficeAskQueueActionEvent) => void): () => void
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded(listener: (event: { id: string; kind: OfficePreviewKind }) => void): () => void
   }
   locale: {
     system: string
@@ -1658,6 +1674,8 @@ export interface NxcoreDesktopApi {
     importArtifacts(files: File[], roomId: string): Promise<Array<{ fileId: string; originalName: string }>>
     importAgentAttachments(files: File[]): Promise<AgentAttachmentReference[]>
     onImportProgress(listener: (event: FileImportProgressEvent) => void): () => void
+    /** 取消进行中的导入（进度条取消按钮）：当前文件完成后停批，返回是否命中活动批。 */
+    cancelImport(batchId?: string): Promise<{ cancelled: boolean; batchId: string | null }>
     listHighRiskReviews(): Promise<{ items: HighRiskImportReview[] }>
     resolveHighRiskReview(id: string, accepted: boolean): Promise<HighRiskImportResolution>
     onHighRiskReviewsChanged(listener: () => void): () => void
@@ -1741,6 +1759,8 @@ export interface NxcoreDesktopApi {
     updateFilterPreference(content: string): Promise<IngestFilterRulesDto>
     /** 误杀恢复：filtered 事件重新放行扇出（FilesPage「恢复」按钮）。 */
     reinstateEvent(eventId: string): Promise<IngestEventDto>
+    /** 台账事件级删除：级联清记忆/知识归属（邮件类数据的手动删除入口）。 */
+    deleteEvent(eventId: string): Promise<{ deleted: number }>
     /** 事件归一化产物全文（台账详情查看）。 */
     getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }>
     /** 记忆引擎暂停闸读取（记忆页顶部「继续/暂停」）。 */

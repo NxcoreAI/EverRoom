@@ -156,9 +156,10 @@ describe("③′⑤ LLM 输出解析", () => {
       ],
     }));
     // 同内容保留后到形态（实体引用更全的通常在后）；空内容跳过。
+    // FA 分级（fa-industry-iteration）：未标注 grade 的事实回落 opinion。
     expect(result.facts).toEqual([
-      { content: "林薇负责 V1 视觉设计", type: "关系", entities: ["林薇"] },
-      { content: "未知类型回落属性", type: "属性", entities: ["林薇"] },
+      { content: "林薇负责 V1 视觉设计", type: "关系", entities: ["林薇"], grade: "opinion" },
+      { content: "未知类型回落属性", type: "属性", entities: ["林薇"], grade: "opinion" },
     ]);
   });
 

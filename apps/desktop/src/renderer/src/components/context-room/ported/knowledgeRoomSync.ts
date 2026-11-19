@@ -7,6 +7,7 @@ import type { ContextRoomKind, ContextRoomRecord } from './types'
 const KNOWLEDGE_ROOM_KINDS = new Set<ContextRoomKind>([
   '人物',
   '项目',
+  '机构',
   '主题',
   '长期目标',
   '议题',

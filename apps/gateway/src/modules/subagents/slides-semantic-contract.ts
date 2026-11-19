@@ -140,8 +140,15 @@ export function checkSemanticStoryboard(pages: unknown[], sources: ContentSource
       if (block.type === "table" && block.rows.some(r => r.length !== block.headers.length)) errors.push(`${prefix}: 表格行列不一致`);
       if (block.type === "chart" && block.series.some(s => s.values.length !== block.labels.length)) errors.push(`${prefix}: 图表序列长度不一致`);
       const original = block.sourceRefs.map(ref => known.get(ref)?.value ?? "").join("\n");
-      if (block.type !== "image") for (const n of numbers(payloadStrings(block).join("\n"))) {
-        if (!numbers(original).includes(n)) errors.push(`${prefix}: block ${block.id} 数值 ${n} 无来源`);
+      if (block.type !== "image") {
+        // metric 的 value 与 unit 是拆开存的：来源里是「30%」，裸 value「30」按数字比对永远
+        // 不中（误报"数值无来源"，编辑器也无法修复）。数字口径按拼合后的 value+unit 提取。
+        const payloadJoined = block.type === "metric"
+          ? [block.label, `${String(block.value)}${block.unit ?? ""}`].join("\n")
+          : payloadStrings(block).join("\n");
+        for (const n of numbers(payloadJoined)) {
+          if (!numbers(original).includes(n)) errors.push(`${prefix}: block ${block.id} 数值 ${n} 无来源`);
+        }
       }
       if (block.type === "quotation" && !original.includes(block.text)) errors.push(`${prefix}: 引用不符原文`);
       if (block.type === "metric" && block.unit) {
@@ -169,7 +176,11 @@ export function checkSemanticStoryboard(pages: unknown[], sources: ContentSource
     if (!covered.has(source.id)) errors.push(`来源未交代: ${source.id}`);
     if (source.mustShow && !shown.has(source.id)) errors.push(`必留来源未展示: ${source.id}`);
     if (source.mustShow) {
-      const output = pages.filter(p => validate(p)).flatMap(p => (p as SemanticPage).blocks.filter(b => b.mustShow && b.sourceRefs.includes(source.id)).flatMap(payloadStrings)).join("\n");
+      // 输出侧 metric 的 value/unit 拼合后提取数字，与 block 级检查同口径（防 30% ↔ 30 误报）。
+      const output = pages.filter(p => validate(p)).flatMap(p => (p as SemanticPage).blocks.filter(b => b.mustShow && b.sourceRefs.includes(source.id))
+        .flatMap(b => b.type === "metric"
+          ? [b.label, `${String(b.value)}${b.unit ?? ""}`]
+          : payloadStrings(b))).join("\n");
       for (const n of numbers(source.value)) if (!numbers(output).includes(n)) errors.push(`必留数据缺失 ${n}: ${source.id}`);
     }
   }

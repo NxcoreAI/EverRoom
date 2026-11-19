@@ -544,8 +544,8 @@ export class ContextRoomService {
   async createRoom(input: CreateContextRoomInput): Promise<CreateContextRoomResult> {
     const title = optionalText(input.title, 120);
     if (!title) throw new Error("context_room_title_required");
-    const description = optionalText(input.description, 2_000);
-    if (!description) throw new Error("context_room_description_required");
+    // 极简创建弹窗只填名称：描述缺省用标题兜底，enrich/重复检测照常工作。
+    const description = optionalText(input.description, 2_000) ?? title;
     const duplicateOverrideAccepted = await this.duplicateService?.assertCreationAllowed({
       title,
       description,

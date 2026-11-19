@@ -1,10 +1,9 @@
 /**
  * teamGrid 组件（editorial）：2~6 人团队卡。≤4 人单行、5~6 人两行（每行 3）。
  *
- * 版式（每张卡）：标本索引 → 首字徽章（衬线首字 + 色调圆，72–150px）→ 姓名 20
- * → 职位（强调色全大写微标签）→ 简介 14。卡内按「上索引 / 中徽章 / 下署名」均分
- * 竖向余量：内容从卡顶排到卡底，不留大片空纸。
- * 头像位不再画通用 user 图标：无图者一律衬线首字徽章（avatar 变体只换色调语义）。
+ * 版式（每张卡）：首字徽章/头像（全组统一尺寸 → 姓名基线对齐）→ 姓名 → 职位
+ * （强调色全大写微标签）→ 简介自然向下；有简介时署名与简介之间留发丝线分层。
+ * 头像位不画通用 user 图标：无图者一律首字徽章（avatar 变体只换色调语义）。
  */
 
 import { padFrame, splitColumns, splitRows, type Frame } from "../../grid.js";
@@ -41,8 +40,6 @@ function cardBox(skin: ComponentSkin, frame: Frame, pad: number): Frame {
   return inset > 0 ? padFrame(base, inset) : base;
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
-
 export function expandTeamGrid(
   members: TeamMember[],
   frame: Frame,
@@ -65,129 +62,104 @@ export function expandTeamGrid(
   const align = skin.alignExplicit ? skin.paragraphAlign : "center";
   const pad = cardPad(skin, frame);
   const elements: SpecElement[] = [];
-  const memberIndex = new Map<TeamMember, number>();
-  members.forEach((member, i) => memberIndex.set(member, i));
 
-  rows.forEach((row, r) => {
+  // 先规划全部卡框：头像尺寸全组统一（姓名基线随之对齐）。
+  const planned = rows.flatMap((row, r) => {
     const rowFrame = rowFrames[r]!;
     const cells = splitColumns(rowFrame, row.length, gutter);
-    row.forEach((member, i) => {
-      const cell = cells[i]!;
-      const index = memberIndex.get(member) ?? r * cols + i;
-      elements.push(...skin.paint(cell));
-      const box = cardBox(skin, cell, pad);
-      const cx = box.x + box.w / 2;
+    return row.map((member, i) => ({ member, cell: cells[i]!, box: cardBox(skin, cells[i]!, pad) }));
+  });
+  const nameHs = planned.map(({ member, box }) => estimateLines(member.name, nameSize, box.w) * estimateLineHeight(nameSize) + 12);
+  const roleHs = planned.map(({ member }) => (member.role ? singleLineBoxHeight(roleSize) : 0));
+  const bioHs = planned.map(({ member, box }) => (member.bio
+    ? estimateLines(member.bio, bioSize, box.w) * estimateLineHeight(bioSize) + 2
+    : 0));
 
-      const indexH = singleLineBoxHeight(roleSize);
-      const avatarSize = Math.min(
-        150,
-        Math.max(72, Math.min(Math.round(box.w * 0.78), Math.round(box.h * 0.3))),
-      );
-      const nameH = estimateLines(member.name, nameSize, box.w) * estimateLineHeight(nameSize) + 12;
-      const roleH = member.role ? singleLineBoxHeight(roleSize) : 0;
-      const bioH = member.bio
-        ? estimateLines(member.bio, bioSize, box.w) * estimateLineHeight(bioSize) + 2
-        : 0;
-      let total = indexH + avatarSize + nameH + roleH + bioH;
-      // 小格保护：先丢索引，再缩徽章，保证内容不溢出。
-      let showIndex = true;
-      if (total > box.h) {
-        showIndex = false;
-        total -= indexH;
-      }
-      let avatarFit = avatarSize;
-      while (total > box.h && avatarFit > 56) {
-        avatarFit -= 4;
-        total -= 4;
-      }
-      if (total > box.h) {
-        bad(`${what}「${member.name}」内容高约 ${Math.round(total)}px 超过 ${Math.round(box.h)}px——精简简介或减少人数`);
-      }
+  // 统一头像尺寸：从最紧的卡反推，全部成员共用（≥56px 下限）。
+  const avatarCeil = (box: Frame) => Math.min(150, Math.max(72, Math.min(Math.round(box.w * 0.78), Math.round(box.h * 0.3))));
+  let avatarFit = Math.min(...planned.map(({ box }) => avatarCeil(box)));
+  const gapA = Math.round(m.tightGap * 1.1);
+  const gapB = Math.round(m.tightGap * 0.8);
+  const fits = (size: number) => planned.every(({ box }, i) =>
+    size + gapA + nameHs[i]! + roleHs[i]! + bioHs[i]! + (bioHs[i] ? gapB : 0) <= box.h);
+  while (avatarFit > 56 && !fits(avatarFit)) avatarFit -= 4;
+  if (!fits(avatarFit)) {
+    const { member, box } = planned[0]!;
+    bad(`${what}「${member.name}」内容高超过 ${Math.round(box.h)}px——精简简介或减少人数`);
+  }
 
-      // 竖向均分：索引 / 徽章 / 署名 / 简介四段，上下留同档呼吸，从卡顶铺到卡底。
-      const contentH = (showIndex ? indexH : 0) + avatarFit + nameH + roleH + bioH;
-      const gaps = member.bio ? 5 : 4;
-      const space = Math.max(0, (box.h - contentH) / gaps);
-      let y = box.y + space;
-      if (showIndex) {
-        const runs = skin.numeralRun(pad2(index + 1), Math.max(16, Math.round(roleSize * 1.4)), skin.colors.muted, false)
-          ?? skin.body(pad2(index + 1), roleSize, skin.colors.muted);
-        elements.push(
-          textElement({ x: box.x, y: Math.round(y), w: box.w, h: indexH }, [{ runs, align }]),
-        );
-        y += indexH + space;
-      }
+  planned.forEach(({ member, cell, box }, i) => {
+    elements.push(...skin.paint(cell));
+    const cx = box.x + box.w / 2;
+    let y = box.y;
 
-      const avatarX = align === "center" ? Math.round(cx - avatarFit / 2) : Math.round(box.x);
-      const avatarY = Math.round(y);
-      if (member.image) {
-        elements.push({
-          type: "image",
-          url: member.image,
-          fit: skin.imageFit,
-          circle: true,
-          x: avatarX,
-          y: avatarY,
-          w: avatarFit,
-          h: avatarFit,
-        });
-      } else {
-        // avatar:circle（缺省）= 主色实心圆 + 纸色衬线首字（最强头像占位）；
-        // avatar:initial = 浅强调圆 + 强调色衬线首字（编辑感标本徽章）。
-        const solid = avatar === "circle";
-        elements.push({
-          type: "shape",
-          shape: "ellipse",
-          fill: solid ? skin.colors.primary : skin.colors.emphasisSoft,
-          x: avatarX,
-          y: avatarY,
-          w: avatarFit,
-          h: avatarFit,
-        });
-        const initialSize = Math.max(18, Math.round(avatarFit * 0.42));
-        elements.push(
-          textElement(
-            { x: avatarX, y: Math.round(avatarY + (avatarFit - singleLineBoxHeight(initialSize)) / 2), w: avatarFit, h: singleLineBoxHeight(initialSize) },
-            [{
-              runs: skin.heading(
-                skin.initials(member.name),
-                initialSize,
-                solid ? skin.colors.background : skin.colors.emphasis,
-              ),
-              align: "center",
-            }],
-          ),
-        );
-      }
-      y += avatarFit + space;
-
+    const avatarX = align === "center" ? Math.round(cx - avatarFit / 2) : Math.round(box.x);
+    if (member.image) {
+      elements.push({
+        type: "image",
+        url: member.image,
+        fit: skin.imageFit,
+        circle: true,
+        x: avatarX,
+        y: Math.round(y),
+        w: avatarFit,
+        h: avatarFit,
+      });
+    } else {
+      // avatar:circle（缺省）= 主色实心圆 + 纸色首字（最强头像占位）；
+      // avatar:initial = 浅强调圆 + 强调色首字（编辑感徽章）。
+      const solid = avatar === "circle";
+      elements.push({
+        type: "shape",
+        shape: "ellipse",
+        fill: solid ? skin.colors.primary : skin.colors.emphasisSoft,
+        x: avatarX,
+        y: Math.round(y),
+        w: avatarFit,
+        h: avatarFit,
+      });
+      const initialSize = Math.max(18, Math.round(avatarFit * 0.42));
       elements.push(
-        textElement({ x: box.x, y: Math.round(y), w: box.w, h: nameH }, [
-          { runs: skin.heading(member.name, nameSize, skin.colors.text), align },
+        textElement(
+          { x: avatarX, y: Math.round(y + (avatarFit - singleLineBoxHeight(initialSize)) / 2), w: avatarFit, h: singleLineBoxHeight(initialSize) },
+          [{
+            runs: skin.heading(
+              skin.initials(member.name),
+              initialSize,
+              solid ? skin.colors.background : skin.colors.emphasis,
+            ),
+            align: "center",
+          }],
+        ),
+      );
+    }
+    y += avatarFit + gapA;
+
+    elements.push(
+      textElement({ x: box.x, y: Math.round(y), w: box.w, h: nameHs[i]! }, [
+        { runs: skin.heading(member.name, nameSize, skin.colors.text), align },
+      ]),
+    );
+    y += nameHs[i]!;
+    if (member.role) {
+      elements.push(
+        textElement({ x: box.x, y: Math.round(y), w: box.w, h: roleHs[i]! }, [
+          { runs: [{ ...skin.micro(member.role, skin.colors.emphasis), sizePt: roleSize }], align },
         ]),
       );
-      y += nameH;
-      if (member.role) {
-        elements.push(
-          textElement({ x: box.x, y: Math.round(y), w: box.w, h: roleH }, [
-            { runs: [{ ...skin.micro(member.role, skin.colors.emphasis), sizePt: roleSize }], align },
-          ]),
-        );
-        y += roleH;
-      }
-      if (member.bio) {
-        // 署名与简介之间一条发丝线：把「身份」与「说明」分层（结构件，不是装饰）。
-        const ruleY = y + Math.round(space / 2);
-        const line = skin.dividerH(box, ruleY);
-        if (line) elements.push(line);
-        y += space;
-        elements.push(
-          textElement({ x: box.x, y: Math.round(y), w: box.w, h: bioH }, [
-            { runs: skin.body(member.bio, bioSize, skin.colors.muted), align },
-          ]),
-        );
-      }
-    });
+      y += roleHs[i]!;
+    }
+    if (member.bio) {
+      // 署名与简介之间一条发丝线：把「身份」与「说明」分层（结构件，不是装饰）。
+      const line = skin.dividerH(box, Math.round(y + gapB / 2));
+      if (line) elements.push(line);
+      y += gapB;
+      elements.push(
+        textElement({ x: box.x, y: Math.round(y), w: box.w, h: bioHs[i]! }, [
+          { runs: skin.body(member.bio, bioSize, skin.colors.muted), align },
+        ]),
+      );
+    }
   });
   return elements;
 }

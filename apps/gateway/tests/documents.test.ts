@@ -471,6 +471,40 @@ describe('document transactions', () => {
     expect(db.select().from(jobs).all().filter((job) => job.type === 'document.delete')).toHaveLength(2)
   })
 
+  it('trash 入队知识侧清理 job；restore 撤销清理并重新入队 ingest（事实投影不残留）', async () => {
+    const { db, service } = await createHarness()
+    const imported = await service.import({
+      id: 'doc-trash-cleanup',
+      roomId: 'room-1',
+      title: '资料',
+      contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '事实内容' }] }] },
+    })
+
+    // trash：回收站对知识侧不可见，须入队 document.delete 清理 job
+    await service.delete(imported.id)
+    const cleanupJobs = () => db.select().from(jobs).all()
+      .filter((job) => job.type === 'document.delete'
+        && (job.payload as { documentId?: string }).documentId === imported.id
+        && job.status === 'pending')
+    expect(cleanupJobs()).toHaveLength(1)
+
+    // restore：撤销 pending 清理（避免与重新 ingest 竞争删掉新投影），
+    // 并重新入队 ingest 让知识侧按当前版本重建投影
+    const restored = await service.restore(imported.id)
+    expect(restored.deletedAt).toBeNull()
+    expect(cleanupJobs()).toHaveLength(0)
+    // import 创建时也会入队一个 ingest job（outbox 常态）；restore 额外补一个
+    // 同版本 job：断言 trash 之后存在携带当前版本的 pending ingest
+    const trashedAt = imported.deletedAt ?? service.get(imported.id)!.updatedAt
+    const reingest = db.select().from(jobs).all().filter((job) =>
+      job.type === 'document.ingest'
+      && job.status === 'pending'
+      && (job.payload as { documentId?: string }).documentId === imported.id
+      && (job.payload as { version?: number }).version === imported.version
+      && job.createdAt.getTime() >= new Date(trashedAt).getTime())
+    expect(reingest.length).toBeGreaterThanOrEqual(1)
+  })
+
   it('lists available Rooms and refuses to create a draft before the user selects one', async () => {
     const { db, service } = await createHarness()
     const roomRegistry = new ContextRoomService(db)

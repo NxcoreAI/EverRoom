@@ -35,9 +35,13 @@ export function manifest(
   type: DocumentCapabilityManifest["type"],
   interactionMode: DocumentCapabilityManifest["interactionMode"],
   presenterKey: string | null,
-  requiresRoom: boolean,
-  requiresDocument: boolean,
+  requiresRoomOrDocument: boolean,
+  requiresDocument?: boolean,
 ): DocumentCapabilityManifest {
+  // 兼容两种调用形态：老 6 参（requiresRoom, requiresDocument）与本仓新 5 参
+  // （requiresDocument 单布尔，Office 类能力不要求先选 Room）。
+  const requiresRoom = requiresDocument === undefined ? false : requiresRoomOrDocument;
+  const requiresDocumentFinal = requiresDocument === undefined ? requiresRoomOrDocument : requiresDocument;
   return {
     id,
     version: 1,
@@ -48,7 +52,7 @@ export function manifest(
       ? ["room:read", "document:read"]
       : ["room:read", "document:read", "document:write"],
     requiresRoom,
-    requiresDocument,
+    requiresDocument: requiresDocumentFinal,
   };
 }
 

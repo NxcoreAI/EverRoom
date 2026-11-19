@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
@@ -185,6 +185,7 @@ export class IngestService {
 
   /** 暂停闸切换（PUT /v1/ingest/pause）：写穿 dataDir 状态文件，重启后保持。 */
   setPause(paused: boolean): { paused: boolean; updatedAt: string } {
+    const changed = this.gatePaused !== paused;
     this.gatePaused = paused;
     this.gateUpdatedAt = new Date().toISOString();
     if (this.gateStatePath) {
@@ -195,6 +196,7 @@ export class IngestService {
         "utf8",
       );
     }
+    if (changed) this.onGateChanged();
     this.logger.info({ event: "ingest.gate", paused }, paused ? "ingest gate paused" : "ingest gate resumed");
     return { paused: this.gatePaused, updatedAt: this.gateUpdatedAt };
   }
@@ -355,6 +357,34 @@ export class IngestService {
   }
 
   /**
+   * 台账事件级手动删除（issue: 无法手动删除数据源导入的数据——邮件类）：
+   * 按事件反查 (sourceKind, sourceId)，级联清记忆文档（callerRef=sourceId）+
+   * knowledge 实体/wiki 归属 + 台账软删。文件类此前在文件中心可删（fileId 级
+   * 级联），邮件/日程类没有任何删除入口——统一走这里。
+   * 返回删除的台账行数（0 = 事件不存在或已删）。
+   */
+  async deleteEventCascade(eventId: string): Promise<{ deleted: number } | null> {
+    const row = this.db.select().from(ingestEvents)
+      .where(eq(ingestEvents.id, eventId)).get();
+    if (!row || row.deletedAt) return null;
+    const sourceKind = row.sourceKind as LedgerSourceKind;
+    const sourceId = row.sourceId;
+    // 记忆删除必须先行：软删台账后 ledgerHit 不再命中，但记忆文档按
+    // callerRef 直查，顺序无碍——先删记忆保证 knowledge 清理失败重试时
+    // 台账行还在（幂等可重放）。
+    try {
+      await this.memory.deleteDocumentsByCallerRef(sourceId);
+    } catch (error) {
+      this.logger.warn(
+        { event: "ingest.event.delete.memory_failed", eventId, err: (error as Error).message },
+        "memory cascade delete failed on event delete",
+      );
+    }
+    this.cleanupSources([{ sourceKind, sourceId }]);
+    return { deleted: 1 };
+  }
+
+  /**
    * 批量版（整源删除级联用）：knowledge 批量入队 + 台账一次软删。
    * 记忆删除不在此处（调用方已按 callerRef 集合批量先行）。
    */
@@ -362,9 +392,14 @@ export class IngestService {
     if (items.length === 0) return;
     if (this.knowledge.routerEnabled) this.knowledge.requestSourceCleanups(items);
     const now = new Date();
+    // (sourceKind, sourceId) 成对匹配：不同来源体系的 id 空间互不串扰
+    // （file 的 UUID 与 connector 域行 id 理论上可碰撞）。任一对命中即软删。
     this.db.update(ingestEvents).set({ deletedAt: now, updatedAt: now }).where(and(
-      inArray(ingestEvents.sourceId, items.map((item) => item.sourceId)),
       isNull(ingestEvents.deletedAt),
+      or(...items.map((item) => and(
+        eq(ingestEvents.sourceKind, item.sourceKind),
+        eq(ingestEvents.sourceId, item.sourceId),
+      ))),
     )).run();
   }
 
@@ -931,8 +966,11 @@ export class IngestService {
     }
 
     // 扇出 ②：Room 链路（knowledge.route job；wiki 沉淀在晋升/ingest 时按快照判定）
+    // 暂停闸兜底：releasePending 已在暂停时改判 held 不走扇出，这里防御性再拦
+    // 一次（reinstate 手动恢复等路径在暂停中触发时不派发新 route job——
+    // Knowledge Agent 会继续烧 token，与「暂停」的用户预期相悖）。
     let routeJobId: string | null = null;
-    if (unit.pipelines.room) {
+    if (unit.pipelines.room && !this.gatePaused) {
       const entrySignals = unit.entrySignals ?? (unit.filename
         ? { filenamePrefix: unit.filename }
         : undefined);
@@ -1000,9 +1038,10 @@ export class IngestService {
 
   // ───────────────────────── 过滤闸 worker（去抖批） ─────────────────────────
 
-  /** 去抖：攒 batchSize 条或 batchDelayMs 触发一次 agent 批量判定。 */
+  /** 去抖：攒 batchSize 条或 batchDelayMs 触发一次 agent 批量判定。
+   * 暂停期间不排批（恢复时 onGateChanged 重新调度）。 */
   private scheduleFilterBatch(): void {
-    if (!this.filter) return;
+    if (!this.filter || this.gatePaused) return;
     const batchFull = this.pendingFanouts.size >= this.filter.batchSizeOf();
     if (this.filterTimer && !batchFull) return;
     if (this.filterTimer) {
@@ -1016,8 +1055,24 @@ export class IngestService {
     this.filterTimer.unref?.();
   }
 
+  /** 暂停闸切换钩子：暂停时清掉去抖定时器（批未跑的不送 agent 判定），
+   * 恢复时重新调度（pending 队列还在，恢复后接着跑）。 */
+  private onGateChanged(): void {
+    if (this.gatePaused) {
+      if (this.filterTimer) {
+        clearTimeout(this.filterTimer);
+        this.filterTimer = null;
+      }
+    } else if (this.pendingFanouts.size > 0) {
+      this.scheduleFilterBatch();
+    }
+  }
+
   private async runFilterBatch(): Promise<void> {
     if (!this.filter || this.filterRunning || this.pendingFanouts.size === 0) return;
+    // 暂停闸期间不送 agent 判定（用户已按暂停，Knowledge/过滤器 agent 都不该继续烧）：
+    // pending 队列保留，恢复时 onGateChanged 重新调度。
+    if (this.gatePaused) return;
     this.filterRunning = true;
     const batch = [...this.pendingFanouts.values()].slice(0, this.filter.batchSizeOf());
     try {
@@ -1067,7 +1122,8 @@ export class IngestService {
       }
     } finally {
       this.filterRunning = false;
-      if (this.pendingFanouts.size > 0) this.scheduleFilterBatch();
+      // 暂停期间不续批（onGateChanged 恢复时重新调度）。
+      if (this.pendingFanouts.size > 0 && !this.gatePaused) this.scheduleFilterBatch();
     }
   }
 
@@ -1077,6 +1133,25 @@ export class IngestService {
     status: "passed" | "bypassed",
     verdict: IngestFilterVerdict,
   ): Promise<void> {
+    // 判定期间用户按了暂停：不扇出，改判 held（category=paused，与暂停闸
+    // 暂存同语义，可在导入记录里手动恢复）。agent 已跑完，verdict 原样保留。
+    if (this.gatePaused) {
+      this.pendingFanouts.delete(pending.eventId);
+      const heldVerdict: IngestFilterVerdict = {
+        informative: false,
+        reason: "记忆引擎暂停期间收到的内容，未进入记忆库",
+        category: "paused",
+        confidence: 1,
+      };
+      this.db.update(ingestEvents)
+        .set({ filterStatus: "filtered", filterVerdict: heldVerdict, updatedAt: new Date() })
+        .where(eq(ingestEvents.id, pending.eventId)).run();
+      this.logger.info(
+        { event: "ingest.filter.held_by_pause", eventId: pending.eventId },
+        "filter verdict held by pause gate",
+      );
+      return;
+    }
     const pipelines = rescueMemoryPipeline(pending.pipelines, verdict);
     this.db.update(ingestEvents)
       .set({
@@ -1114,6 +1189,9 @@ export class IngestService {
       .where(eq(ingestEvents.id, eventId)).get();
     if (!row) return null;
     if (row.filterStatus !== "filtered") throw new IngestError("仅 filtered 状态的事件可恢复", "not_filtered", 409);
+    // 暂停中不允许恢复：恢复会触发记忆导入 + Knowledge route（agent 继续跑），
+    // 与暂停语义冲突。先「继续」再恢复。
+    if (this.gatePaused) throw new IngestError("记忆引擎已暂停，恢复前请先点击「继续」", "gate_paused", 409);
     const parsed = this.db.select().from(parsedContents)
       .where(eq(parsedContents.id, row.parsedId)).get();
     if (!parsed) throw new IngestError("归一化产物缺失，无法恢复", "parsed_missing", 410);
@@ -1144,9 +1222,20 @@ export class IngestService {
     return this.getEvent(eventId);
   }
 
-  /** 启动恢复：pending 滞留（进程被杀时去抖批未跑）重新入队。 */
+  /** 启动恢复：pending 滞留（进程被杀时去抖批未跑）重新入队。
+   * 暂停闸处于暂停态时不启动判定（scheduleFilterBatch 会拦，这里显式跳过日志更清晰）。 */
   recoverPendingFilters(): void {
     if (!this.filter?.enabled) return;
+    if (this.gatePaused) {
+      const held = this.db.select({ id: ingestEvents.id })
+        .from(ingestEvents)
+        .where(eq(ingestEvents.filterStatus, "pending"))
+        .all().length;
+      if (held > 0) {
+        this.logger.info({ count: held }, "pending filter fanouts held by pause gate (resume to drain)");
+      }
+      return;
+    }
     const rows = this.db.select({ id: ingestEvents.id })
       .from(ingestEvents)
       .where(eq(ingestEvents.filterStatus, "pending"))

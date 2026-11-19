@@ -94,6 +94,7 @@
 .settings-content[data-active-setting='settings-runtime-config'] > #settings-runtime-config { display: block; }
 .settings-content[data-active-setting='settings-extensions'] > #settings-extensions { display: block; }
 .settings-content[data-active-setting='settings-update'] > #settings-update { display: block; }
+.settings-content[data-active-setting='settings-data-management'] > #settings-data-management { display: block; }
 .browser-extension-settings { min-height: 320px; }
 .browser-extension-status-row { display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
 .browser-extension-status-row > div:last-child { display: grid; gap: 4px; min-width: 0; }
@@ -1972,4 +1973,78 @@
   min-height: 58px;
   gap: 16px;
   padding: 14px 20px;
+}
+
+/* 「数据管理」区块：危险操作视觉（红系图标 + 危险按钮 + 确认弹窗）。 */
+.danger-section-icon { border-color: color-mix(in srgb, var(--danger, #c83232) 35%, var(--border)) !important; color: var(--danger, #c83232) !important; }
+
+.danger-button {
+  display: inline-flex;
+  min-height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger, #c83232) 55%, transparent);
+  border-radius: 6px;
+  background: var(--danger, #c83232);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.danger-button svg { width: 15px; height: 15px; }
+
+.danger-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #c83232) 85%, #000);
+}
+
+.danger-button:disabled { cursor: default; opacity: 0.55; }
+
+.settings-danger-error { color: var(--danger, #c83232); white-space: normal; }
+
+.data-wipe-confirm-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(24, 28, 36, 0.42);
+  animation: data-wipe-overlay-in 0.16s ease;
+}
+
+.data-wipe-confirm-dialog {
+  display: grid;
+  width: min(460px, 100%);
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid color-mix(in srgb, var(--danger, #c83232) 30%, var(--border-strong));
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(21, 26, 34, 0.3);
+  animation: data-wipe-dialog-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.data-wipe-confirm-heading { display: flex; align-items: center; gap: 10px; color: var(--danger, #c83232); }
+
+.data-wipe-confirm-heading svg { flex: 0 0 auto; width: 20px; height: 20px; }
+
+.data-wipe-confirm-heading h3 { margin: 0; color: var(--text); font-size: 15px; }
+
+.data-wipe-confirm-dialog > p { margin: 0; color: var(--text); font-size: 12.5px; line-height: 1.6; }
+
+.data-wipe-confirm-list { display: grid; gap: 6px; margin: 0; padding: 12px 14px 12px 30px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+
+.data-wipe-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+@keyframes data-wipe-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes data-wipe-dialog-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .data-wipe-confirm-overlay,
+  .data-wipe-confirm-dialog { animation: none; }
 }

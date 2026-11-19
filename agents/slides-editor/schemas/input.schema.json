@@ -64,7 +64,7 @@
     },
     "repairPageIds": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 12,
       "items": {
         "type": "string"
       },

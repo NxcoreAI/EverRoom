@@ -144,6 +144,25 @@ describe('ContextRoomService', () => {
     sqlite.close()
   })
 
+  it('creates a Room without a description, falling back to the title', async () => {
+    const { dispatcher, calls } = gatedDispatcher()
+    const { service, sqlite } = await createHarness(dispatcher)
+
+    const created = await service.createRoom({ title: '官网改版' })
+
+    expect(created).toMatchObject({ created: true, room: { title: '官网改版' } })
+    expect(created.room.data).toMatchObject({
+      brief: { background: '官网改版', goal: '官网改版' },
+      roomAgentTask: 'room-enrich',
+    })
+    // enrich 调度照常发出，描述用标题兜底。
+    expect(calls[0]?.input).toMatchObject({
+      task: 'room-enrich',
+      taskInput: { roomId: created.room.id, title: '官网改版', description: '官网改版' },
+    })
+    sqlite.close()
+  })
+
   it('creates the Room immediately with fallback content and applies the async enrichment', async () => {
     const { dispatcher, calls } = gatedDispatcher()
     const { service, sqlite } = await createHarness(dispatcher)

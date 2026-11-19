@@ -23,6 +23,7 @@ const officeTabIcons: Record<OfficePreviewKind, LucideIcon> = {
   spreadsheet: FileSpreadsheet,
   slides: Presentation,
   pdf: FileType,
+  markdown: FileText,
 }
 
 export function TopBar({

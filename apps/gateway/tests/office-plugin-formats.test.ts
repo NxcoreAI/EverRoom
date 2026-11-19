@@ -45,16 +45,24 @@ function createHarness(options?: { reviewer?: SlidesVisualReviewer | null }) {
 const context: DocumentExecutionContext = { agentSessionId: "session-1", runId: "run-1", roomId: "room-1" };
 
 describe("office 工具：PPT / Excel 扩展", () => {
-  it("插件暴露六个工具：word / slides 骨架 + 逐页填充 / sheets 生成 + slides 读 / 编辑", () => {
+  it("插件暴露 Room 六件套 + EverOffice 直生/编辑工具面", () => {
     const { tools } = createHarness();
-    expect([...tools.keys()].sort()).toEqual([
+    const names = [...tools.keys()];
+    // Room 两段式 4 件套照旧在场（slides-builder 子代理独占）。
+    for (const name of [
       "context_room_office_create",
       "context_room_sheets_create",
       "context_room_slides_create",
-      "context_room_slides_edit",
-      "context_room_slides_read",
       "context_room_slides_set_page",
-    ]);
+      "context_room_slides_read",
+      "context_room_slides_edit",
+    ]) {
+      expect(names).toContain(name);
+    }
+    // EverOffice 移植面：脚本直生 PPT + 主 Agent 读改工具 + 界面打开。
+    for (const name of ["office_create", "slides_create", "slides_read", "slides_edit", "sheets_create", "file_open"]) {
+      expect(names).toContain(name);
+    }
   });
 
   it("slides create：只落 1 页首页骨架（含演示标题与首页标题）、outline 原样回传作页序蓝图、format=pptx、幂等键前缀 agent-slides、nextAction=fill_pages", async () => {
@@ -188,7 +196,7 @@ describe("office 工具：PPT / Excel 扩展", () => {
     expect(input.idempotencyKey!.startsWith("agent-word:")).toBe(true);
   });
 
-  it("六个工具都要求先选 Room", async () => {
+  it("Room 六件套要求先选 Room；EverOffice 移植工具不要求", async () => {
     const { tools } = createHarness();
     const noRoom = { ...context, roomId: null };
     const args: Record<string, Record<string, unknown>> = {

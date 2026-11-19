@@ -150,8 +150,11 @@ export interface ComponentSkin {
   surfaceExplicit: boolean;
 
   /**
-   * 组件排版尺度：按 frame 高度推导的语义字号/间距（pt / px）。
-   * 取值口径见 docs/slides-component-visual-system.zh-CN.md。
+   * 组件排版尺度：语义字号固定在 1280×720 设计基准（见 docs/slides-component-visual-system.zh-CN.md），
+   * 不随组件框高度缩放——同一风格卡下同级文字保持一致；间距按 frame 尺寸推导。
+   * 字号角色：核心数据 display 80（组件按数字长度向下适配至 56）、组件内标题 24、
+   * 正文 18、标签 14、注释 12、序号 28。溢出优先换行/压间距，字号收缩不低于角色下限
+   * （正文 16、标题 20、注释 12）。
    */
   metrics(frame: Frame): {
     display: number;
@@ -233,7 +236,7 @@ export function resolveComponentSkin(
   const numeralFont = numeral === "none"
     ? undefined
     : numeral === "sans"
-      ? (theme.fonts.body || theme.fonts.heading)
+      ? (theme.fonts.body || theme.fonts.heading || undefined)
       : (theme.fonts.heading || theme.fonts.body || "Songti SC");
 
   const inkFill = theme.colors.text;
@@ -283,29 +286,27 @@ export function resolveComponentSkin(
     surfaceExplicit: style?.surface !== undefined,
 
     metrics(frame) {
-      const h = Math.max(1, frame.h);
       const minDim = Math.max(1, Math.min(frame.w, frame.h));
       const densityScale = DENSITY_SCALE[density];
-      // 风格卡 typeScale/spacing 是锚点，frame 高度做等比放大：同一份风格卡在大页上更有气势，
-      // 在小框里不会爆版；density 只乘间距，不乘字号。
-      const frameScale = clamp(h / 576, 0.48, 1.4);
-      const ts = theme.typeScale;
+      // 文字角色固定在 1280×720 设计基准，不随 frame 高度缩放（同级文字一致）；
+      // density 只乘间距，不乘字号。溢出由组件换行/压间距，字号不低于角色下限。
       return {
-        display: clamp(Math.round(ts.hero * 1.55 * frameScale), 34, 140),
-        title: clamp(Math.round(ts.h3 * 1.24 * frameScale), 15, 40),
-        body: clamp(Math.round(ts.body * 1.06 * frameScale), 11, 22),
-        label: clamp(Math.round(ts.label * frameScale), 8, 16),
-        caption: clamp(Math.round(ts.caption * frameScale), 8, 15),
-        serial: clamp(Math.round(ts.h1 * frameScale), 17, 64),
+        display: 80,
+        title: 24,
+        body: 18,
+        label: 14,
+        caption: 12,
+        serial: 28,
         pad: clamp(Math.round(Math.max(theme.spacing.cardPadding * 1.4, minDim * 0.045) * densityScale), 10, 46),
         gap: Math.max(snap4(Math.round(Math.max(theme.spacing.gutter * 1.2, minDim * 0.05) * densityScale)), 8),
         tightGap: Math.max(snap4(Math.round(Math.max(theme.spacing.gutter * 0.6, minDim * 0.025) * densityScale)), 6),
       };
     },
     micro(text, color, sizePt) {
+      // 标签角色固定 14pt（显式传入时尊重调用方，但不低于 10）。
       return {
         text,
-        sizePt: Math.max(10, Math.round(sizePt ?? clamp(theme.sizes.caption, 10, 13))),
+        sizePt: Math.max(10, Math.round(sizePt ?? 14)),
         bold: true,
         color: color ?? theme.colors.textMuted,
         letterSpacing: 1.6,
@@ -344,8 +345,9 @@ export function resolveComponentSkin(
       return bodyRuns(text, sizePt, color ?? theme.colors.textMuted, theme, bold);
     },
     numeralRun(text, sizePt, color, bold = true) {
-      if (!numeralFont) return undefined;
-      return [{ text, sizePt, bold, color, font: numeralFont }];
+      // numeral:none 时返回 undefined，调用方应省略该元素；字体未配置时回落引擎默认（正文字体）。
+      if (numeral === "none") return undefined;
+      return [{ text, sizePt, bold, color, ...(numeralFont ? { font: numeralFont } : {}) }];
     },
 
     paint(frame) {

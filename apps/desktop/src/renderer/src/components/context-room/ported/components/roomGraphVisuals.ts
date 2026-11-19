@@ -13,6 +13,11 @@ export const ROOM_RELATION_TYPE_COLORS: Record<RoomRelationType, number> = {
   supports: 0x3d8557,
   blocks: 0xb65353,
   owns: 0x985a82,
+  // FA 语义关系（fa-industry-iteration）：暖色区分于通用类型
+  employed_by: 0x2a7ab8,
+  invested_in: 0xb87a1e,
+  founder_of: 0x8a5a2e,
+  introduced_by: 0x5a7a3d,
   custom: 0x9a673d,
 }
 

@@ -436,7 +436,16 @@ async function runStyleSelect(
   //    两字段在 styler input schema 里均非必填）。
   const draftPages = readStyleDraft(session, deps);
   const deckContext = deckContextFromPages(draftPages);
-  const outlineRoles = outlineRolesFromDraft(draftPages);
+  const outlineRoles = (() => {
+    const draftId = session.draftDocumentId;
+    if (!draftId || !deps.resolveDraftDocument) return null;
+    try {
+      const doc = deps.resolveDraftDocument(draftId, session.roomId);
+      return doc ? outlineRolesFromDraft(parseDraftMarkdown(doc.markdown)) : null;
+    } catch {
+      return null;
+    }
+  })();
   let outcome = styleParamsFromStyler(null, extraction);
   let settleDispatched = false;
   try {

@@ -9,7 +9,7 @@ export interface CloudDocBinding {
   selectionEnd?: number;
 }
 
-export type ContextRoomKind = '人物' | '项目' | '主题' | '长期目标' | '议题' | '事件';
+export type ContextRoomKind = '人物' | '项目' | '机构' | '主题' | '长期目标' | '议题' | '事件';
 export type ContextRoomTone = 'sky' | 'emerald' | 'amber' | 'rose' | 'zinc';
 export type ViewState =
   | { name: 'home' }

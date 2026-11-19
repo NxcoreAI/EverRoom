@@ -1,5 +1,5 @@
 import { createReadStream, readFileSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, parse, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, accessSync, constants as fsConstants } from 'node:fs'
@@ -27,6 +27,7 @@ import { officePreviewKindForFileName, type OfficePreviewKind } from '../shared/
 import { CURSOR_COMPLETION_AGENT_ERROR_KEY } from '../shared/cursor-completion'
 import type { OpenConnectorExecutionInput } from '../shared/open-connector'
 import { ConnectorRegistry } from './connectors/connector-registry'
+import { wipePreservingLogin } from './clear-user-data'
 import { LocalFolderConnector } from './connectors/local-folder-connector'
 import { GitHubConnector, type GitHubConfig } from './connectors/github-connector'
 import { GoogleDocsConnector, type GoogleDocsConfig } from './connectors/google-docs-connector'
@@ -88,8 +89,15 @@ import { SessionLeaseKeeper } from './cloud/session-lease-keeper'
 import { AiRelayKeeper, type AiRelayKeeperEvent } from './cloud/ai-relay-keeper'
 import { RemoteAgentCommandClient } from './cloud/remote-agent-command-client'
 import { AgentNotificationBridgeServer } from './cloud/agent-notification-bridge'
-import { OfficeBridgeServer } from './gateway/office-bridge'
-import type { OfficeAgentFileEvent } from '../shared/office'
+import {
+  OfficeBridgeServer,
+  type OfficeAgentToolsRequest,
+  type OfficeExportPdfRequest,
+  type OfficeExportPdfResult,
+  type OfficeOpenRequest,
+} from './gateway/office-bridge'
+import { exportDocxToPdf } from './office/docx-pdf-export'
+import type { OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent } from '../shared/office'
 import type { AgentAskForwardEvent } from './office/office-generation'
 import { createEverroomMaterialResolver } from './office/office-material-resolver'
 import { MacosPushNotificationService } from './cloud/macos-push-notifications'
@@ -162,7 +170,7 @@ import { LocalAgentWorkspaceBindingStore } from './local-agents/workspace-bindin
 import type { LocalAgentInstallation, LocalAgentWorkspaceBinding } from '../shared/local-agents'
 import { MigrationsGatewayBridge } from './gateway/migrations-gateway-bridge'
 import { MigrationCoordinator } from './migrations/coordinator'
-import { OfficePreviewRegistry } from './office/office-preview-registry'
+import { OfficePreviewRegistry, type AgentArtifactFailureReason } from './office/office-preview-registry'
 import { notifyPreviewRequested, previewRequestFromOpenResult } from './office/preview-request'
 
 const APP_NAME = 'EverRoom'
@@ -653,6 +661,7 @@ const FILES_CHANNELS = {
   pickAndImport: 'files:pick-and-import',
   pickPaths: 'files:pick-paths',
   importPathsOnce: 'files:import-paths-once',
+  cancelImport: 'files:cancel-import',
   importArtifacts: 'files:import-artifacts',
   importAgentAttachments: 'files:import-agent-attachments',
   importProgress: 'files:import-progress',
@@ -666,6 +675,7 @@ const INGEST_CHANNELS = {
   getFilterRules: 'ingest:filter-rules:get',
   updateFilterPreference: 'ingest:filter-rules:update-preference',
   reinstateEvent: 'ingest:events:reinstate',
+  deleteEvent: 'ingest:events:delete',
   getEventContent: 'ingest:events:content',
   getPause: 'ingest:pause:get',
   setPause: 'ingest:pause:set',
@@ -957,6 +967,67 @@ function broadcastAgentAskEvent(event: AgentAskForwardEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('office:agent-ask', event)
   }
+}
+
+/** office:ask-queue-action 扇出：编辑器内批注锚点的动作（全部发送 / 移除 / 改写）→ 渲染层队列事实。 */
+function broadcastAskQueueActionEvent(event: OfficeAskQueueActionEvent): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('office:ask-queue-action', event)
+  }
+}
+
+/** 数值锚点字段：有限数字才收（渲染层可能传 NaN/字符串）。 */
+function askAnchorNumber(value: unknown): number | undefined {
+  return Number.isFinite(Number(value)) ? Number(value) : undefined
+}
+
+/** 文本锚点字段：截断长度上限，避免渲染层把长文本塞进编辑器 IPC。 */
+function askAnchorText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  return text ? text.slice(0, max) : undefined
+}
+
+/**
+ * office:ask-queue-sync 的单条归一化：只保留四种编辑器契约里的锚点字段。
+ * 队列事实在渲染层，主进程只做透传，不理解的字段一律丢弃。
+ */
+function normalizeAskQueueAnchor(raw: unknown): OfficeAskAnchor | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const value = raw as Record<string, unknown>
+  const anchor: OfficeAskAnchor = {}
+  const fromBlockIndex = askAnchorNumber(value.fromBlockIndex)
+  const toBlockIndex = askAnchorNumber(value.toBlockIndex)
+  if (fromBlockIndex !== undefined) anchor.fromBlockIndex = Math.max(0, Math.trunc(fromBlockIndex))
+  if (toBlockIndex !== undefined) anchor.toBlockIndex = Math.max(0, Math.trunc(toBlockIndex))
+  const kind = askAnchorText(value.kind, 24)
+  if (kind) anchor.kind = kind
+  const sheetId = askAnchorText(value.sheetId, 120)
+  if (sheetId) anchor.sheetId = sheetId
+  const sheetName = askAnchorText(value.sheetName, 120)
+  if (sheetName) anchor.sheetName = sheetName
+  const range = askAnchorText(value.range, 64)
+  if (range) anchor.range = range
+  const slideIndex = askAnchorNumber(value.slideIndex)
+  if (slideIndex !== undefined) anchor.slideIndex = Math.max(0, Math.trunc(slideIndex))
+  if (Array.isArray(value.elementIds)) {
+    const elementIds = value.elementIds
+      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .slice(0, 20)
+      .map((id) => id.slice(0, 120))
+    if (elementIds.length > 0) anchor.elementIds = elementIds
+  }
+  const pageIndex = askAnchorNumber(value.pageIndex)
+  if (pageIndex !== undefined) anchor.pageIndex = Math.max(0, Math.trunc(pageIndex))
+  if (Array.isArray(value.quads)) {
+    const quads = value.quads
+      .filter((quad): quad is unknown[] => Array.isArray(quad))
+      .slice(0, 200)
+      .map((quad) => quad.slice(0, 8).map((entry) => Number(entry)))
+      .filter((quad) => quad.length >= 4 && quad.every((entry) => Number.isFinite(entry)))
+    if (quads.length > 0) anchor.quads = quads
+  }
+  return Object.keys(anchor).length > 0 ? anchor : undefined
 }
 
 const queuedProtocolUrls: string[] = []
@@ -1971,7 +2042,10 @@ async function reconcileSaasConnectorConnections(attempt = 1): Promise<void> {
         continue
       }
       if (await connectorTombstones.has(userId, provider)) continue
-      await bridge.registerConnection({ provider, service, connectionName }).catch((error: unknown) => {
+      // 云端凭证后台对账注册：登记但不启用（registerPaused）——授权不是用户
+      // 在本设备主动发起的，静默开同步会在无意识时导入大量杂乱数据。
+      // 用户在数据源页看到连接卡（显示「已停用」），点「启用连接」才开始同步。
+      await bridge.registerConnection({ provider, service, connectionName, registerPaused: true }).catch((error: unknown) => {
         console.warn('[connector-mode] connector reconcile register failed:', error instanceof Error ? error.message : error)
       })
     }
@@ -3043,6 +3117,24 @@ function registerThesisFormatHandlers(
  * 不依赖具体 IPC 事件（面板的宿主钩子拿不到 event）——目标窗口取第一个存活的
  * 主窗口；同一 fileId 复用预览实例，内容变化原地重建。
  */
+/** 同一 Room 内同名的 agent 生成 PDF：导出复用该条目走版本链，不新增重复文件。 */
+async function findReusableAgentPdf(
+  files: FilesGatewayBridge | null,
+  name: string,
+  roomId: string | null | undefined,
+): Promise<string | null> {
+  if (!files || !name || !roomId) return null
+  try {
+    const catalog = await files.list(200, 0)
+    const hits = (catalog?.items ?? []).filter(
+      (item) => item.originalName === name && item.sourceKind === 'agent-generated',
+    )
+    return hits.length === 1 ? hits[0]!.id : null
+  } catch {
+    return null
+  }
+}
+
 async function openFileInAppPreview(
   bridge: FilesGatewayBridge,
   fileId: string,
@@ -3150,6 +3242,7 @@ function registerFilesHandlers(
     (_event, paths: string[], options?: { pipelines?: IngestPipelines; roomId?: string }) =>
       bridge.importPathsOnce(paths, options),
   )
+  handle(FILES_CHANNELS.cancelImport, (_event, batchId?: string) => bridge.cancelImport(batchId))
   handle(
     FILES_CHANNELS.importArtifacts,
     (_event, paths: string[], roomId: string) => {
@@ -3191,6 +3284,7 @@ function registerIngestHandlers(bridge: IngestGatewayBridge): void {
   )
   // 误杀恢复（导入记录页「恢复」按钮）
   handle(INGEST_CHANNELS.reinstateEvent, (_event, eventId: string) => bridge.reinstateEvent(eventId))
+  handle(INGEST_CHANNELS.deleteEvent, (_event, eventId: string) => bridge.deleteEvent(eventId))
   // 事件详情：归一化产物全文
   handle(INGEST_CHANNELS.getEventContent, (_event, eventId: string) => bridge.getEventContent(eventId))
   // 记忆引擎暂停闸（记忆页顶部「继续/暂停」按钮）
@@ -4462,6 +4556,163 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       () => (fileId, req) => officePreviewRegistry.editSlidesArtifact(fileId, req),
       // 视觉复检：已打开 slides 产物的一页 → 1x PNG（渲染层离屏栅格化）。
       () => (fileId, slideIndex) => officePreviewRegistry.renderSlidesPagePng(fileId, slideIndex),
+      // Agent 改写当前打开的 Word/Excel：字节 → 工作副本 → 版本链（含访达写回）→ 重开视图。
+      () => (fileId, bytes, expectedContentHash) =>
+        officePreviewRegistry.applyAgentFileBytes(fileId, bytes, expectedContentHash),
+      // 活 Word/Excel/PDF 宿主执行器：read = describe（上下文+词汇表+指南）；
+      // apply = 渲染层执行 docs/sheets AI 工具调用 + 静默保存（fileSaved → 版本链回填）。
+      () => async (req: OfficeAgentToolsRequest): Promise<
+        | { ok: true; data: Record<string, unknown> }
+        | {
+          ok: false
+          reason: AgentArtifactFailureReason
+          message?: string
+          open?: unknown[]
+        }
+      > => {
+        const hints = { roomId: req.roomId ?? null }
+        if (req.mode === 'read') {
+          const outcome = req.kind === 'docx'
+            ? await officePreviewRegistry.describeDocArtifact(req.fileId, hints)
+            : req.kind === 'pdf'
+              ? await officePreviewRegistry.describePdfArtifact(req.fileId, hints)
+              : await officePreviewRegistry.describeSpreadsheetArtifact(req.fileId, hints)
+          return outcome.ok
+            ? { ok: true, data: { describe: outcome.describe } as unknown as Record<string, unknown> }
+            : outcome
+        }
+        const calls = (req.calls ?? []).map((call) => ({
+          id: call.id,
+          name: call.name,
+          input: call.input ?? {},
+        }))
+        const outcome = req.kind === 'docx'
+          ? await officePreviewRegistry.applyDocAgentTools(req.fileId, calls, hints)
+          : req.kind === 'pdf'
+            ? await officePreviewRegistry.applyPdfAgentTools(req.fileId, calls, hints)
+            : await officePreviewRegistry.applySpreadsheetAgentTools(req.fileId, calls, hints)
+        return outcome.ok
+          ? {
+            ok: true,
+            data: {
+              results: outcome.results,
+              ...(outcome.error ? { error: outcome.error } : {}),
+              ...(outcome.version ? { version: outcome.version } : {}),
+            } as unknown as Record<string, unknown>,
+          }
+          : outcome
+      },
+      // Word → PDF 导出并入库（word_export_pdf）：优先 genoffice 进程内渲染
+      // （无外部依赖），老运行时/渲染失败回退 LibreOffice；转换 catalog 里的
+      // docx 后把 PDF 作为新文件导入文件库（不覆盖原 Word）。未注入则不暴露。
+      () => async (req: OfficeExportPdfRequest): Promise<
+        OfficeExportPdfResult | { ok: false; message: string }
+      > => {
+        const files = officeFilesBridge
+        if (!files) return { ok: false, message: '文件网关不可用，暂时无法导出 PDF。' }
+        try {
+          const catalogEntry = await files.catalogEntry(req.fileId).catch(() => null)
+          const legacyEntry = catalogEntry ? null : await files.get(req.fileId).catch(() => null)
+          const originalName = catalogEntry?.originalName ?? legacyEntry?.originalName ?? ''
+          if (!originalName) return { ok: false, message: `文件 ${req.fileId} 不在文件库中（可能已删除）。` }
+          if (!/\.docx$/i.test(originalName)) {
+            return { ok: false, message: `《${originalName}》不是 Word 文档，无法导出 PDF。` }
+          }
+          const storagePath = await files.storagePath(req.fileId)
+          const exportDirectory = join(app.getPath('userData'), 'office-exports')
+          const converted = await exportDocxToPdf({
+            registry: officePreviewRegistry,
+            fileId: req.fileId,
+            storagePath,
+            originalName,
+            targetDir: exportDirectory,
+            ...(req.roomId ? { hints: { roomId: req.roomId } } : {}),
+          })
+          if (!converted.ok) {
+            return { ok: false, message: converted.message }
+          }
+          const rawName = (req.fileName ?? '').trim()
+            || `${basename(originalName, extname(originalName))}.pdf`
+          const safeName = (rawName.replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120) || 'document.pdf')
+          const pdfName = /\.pdf$/i.test(safeName) ? safeName : `${safeName}.pdf`
+          // 同一 Room 已有同名（agent 生成的）PDF：这次导出按「更新那份文件」走版本链，
+          // 不再新增重复条目——用户要的是「改完还是那份文件」。
+          const reuseEntryId = await findReusableAgentPdf(files, pdfName, req.roomId)
+          try {
+            const imported = await files.importAgentGeneratedFile({
+              filePath: converted.pdfPath,
+              originalName: pdfName,
+              sourceKey: reuseEntryId
+                ? `agent:word:pdf:update:${reuseEntryId}`
+                : `agent:word:pdf:${req.fileId}:${Date.now()}`,
+              ...(reuseEntryId ? { fileEntryId: reuseEntryId } : {}),
+              ...(req.roomId ? { roomId: req.roomId } : {}),
+            })
+            // 导出完成即「打开」：按与对话文件卡同一条预览管线建实例，再补一条
+            // 预览请求让工作台在归属 Room 的产物区里显示它。打开失败不改变导出
+            // 成功的语义（文件已入库，文件卡仍是可靠入口）。
+            const opened = await openFileInAppPreview(files, imported.fileEntryId, pdfName, {
+              ...(req.roomId ? { roomId: req.roomId } : {}),
+              // 从对话/文档面板发起：把主窗口提到前台，否则右侧开了也看不见。
+              focusWindow: true,
+            }).catch((error: unknown) => {
+              console.warn('[office] 导出 PDF 后自动打开失败：', error instanceof Error ? error.message : String(error))
+              return null
+            })
+            return {
+              ok: true,
+              fileId: imported.fileEntryId,
+              originalName,
+              ...(imported.contentHash ? { contentHash: imported.contentHash } : {}),
+            }
+          } finally {
+            await rm(converted.pdfPath, { force: true }).catch(() => undefined)
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            message: `导出 PDF 失败：${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
+      },
+      // Agent 在界面打开文件（gateway file_open 工具 → /v1/office-open）：
+      // 与资料库「打开」同一条 openFileInAppPreview 链路，并补 office:preview-request
+      // 通知让工作台开标签接管实例（否则实例建好了也不可见）。
+      () => async (req: OfficeOpenRequest): Promise<
+        | { ok: true; openedWith: 'office' | 'external'; fileId: string; originalName: string; kind?: string }
+        | { ok: false; code: 'not_found' | 'error'; message: string }
+      > => {
+        const bridge = officeFilesBridge
+        if (!bridge) return { ok: false, code: 'error', message: '文件网关不可用，暂时无法打开文件。' }
+        try {
+          const entry = await bridge.catalogEntry(req.fileId).catch(() => null)
+          const originalName = entry?.originalName?.trim() || ''
+          if (!originalName) {
+            return { ok: false, code: 'not_found', message: `文件 ${req.fileId} 不在文件库中（可能已删除）。` }
+          }
+          const opened = await openFileInAppPreview(bridge, req.fileId, originalName, {
+            ...(req.editable ? { editable: true } : {}),
+            ...(req.roomId ? { roomId: req.roomId } : {}),
+            // Agent 打开是用户明确要看的动作：把交互窗口提到前台，页签才可见。
+            focusWindow: true,
+          })
+          const previewRequest = previewRequestFromOpenResult(opened)
+          if (previewRequest) notifyPreviewRequested(previewRequest)
+          return {
+            ok: true,
+            openedWith: opened.openedWith,
+            fileId: req.fileId,
+            originalName,
+            ...(opened.kind ? { kind: opened.kind } : {}),
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            code: 'error',
+            message: `打开失败：${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
+      },
     )
     const officeBridge = await officeBridgeServer.start().catch((error) => {
       console.warn('Office bridge unavailable; office generation tool stays disabled.', error)
@@ -4636,6 +4887,37 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     void migrationCoordinator.restoreCherrySync()
     clipperAssetBridge = filesGatewayBridge
     officeFilesBridge = filesGatewayBridge
+    // 后台 Office 会话的文件解析入口（word_agent_* / sheets_agent_* / pdf_agent_*）：
+    // catalog 直查（拿当前版本指纹），legacy 条目回退 get；解析失败返回 null。
+    officePreviewRegistry.setAgentFileResolver(async (fileId) => {
+      try {
+        let originalName = ''
+        let contentHash = ''
+        try {
+          const entry = await filesGatewayBridge.catalogEntry(fileId)
+          if (entry) {
+            originalName = entry.originalName
+            contentHash = entry.contentHash
+          }
+        } catch {
+          /* fall through to legacy get */
+        }
+        if (!originalName) {
+          const legacy = await filesGatewayBridge.get(fileId)
+          originalName = legacy.originalName
+        }
+        if (!originalName) return null
+        const storagePath = await filesGatewayBridge.storagePath(fileId)
+        if (!contentHash) contentHash = await hashFileBytes(storagePath)
+        return { fileId, originalName, storagePath, contentHash, roomId: null }
+      } catch (error) {
+        console.warn('office: 后台 Office 会话解析文件失败', {
+          fileId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return null
+      }
+    })
     // Room 产物 docx 人手编辑：保存 → 去抖重导入（fileEntryId 钉条目走版本链）→ 广播刷新。
     officePreviewRegistry.setEditSync({
       importAgentFile: (input) => {
@@ -4646,6 +4928,30 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     // slides「AI 修改」弹层 → 反查 Room → 渲染层注入对话框（hook 在运行时首用时懒装）。
     officePreviewRegistry.setAgentAskForward(broadcastAgentAskEvent)
+    officePreviewRegistry.setAskQueueActionForward(broadcastAskQueueActionEvent)
+
+    // 批注队列快照（渲染层→主进程→对应文件的编辑器视图）：文档内锚点据此渲染。
+    // 空数组同样下发，用来清掉已发送/已移除的锚点。锚点字段按实例格式透传。
+    ipcMain.on('office:ask-queue-sync', (_event, payload?: unknown) => {
+      const value = (payload ?? {}) as { fileId?: unknown; items?: unknown }
+      if (typeof value.fileId !== 'string' || !value.fileId || !Array.isArray(value.items)) return
+      const items = value.items
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .slice(0, 20)
+        .map((item) => {
+          const anchor = normalizeAskQueueAnchor(item.anchor)
+          return {
+            id: String(item.id ?? '').slice(0, 80),
+            instruction: String(item.instruction ?? '').slice(0, 2000),
+            ...(typeof item.excerpt === 'string' && item.excerpt
+              ? { excerpt: item.excerpt.slice(0, 400) }
+              : {}),
+            ...(anchor ? { anchor } : {}),
+          }
+        })
+        .filter((item) => item.id && item.instruction)
+      officePreviewRegistry.pushAskQueue(value.fileId, items)
+    })
     browserExtensionService?.setCaptureHandlers({
       create: (capture) => filesGatewayBridge.createClipCapture(capture),
       uploadAsset: (captureId, assetId, data) => filesGatewayBridge.uploadClipAsset(captureId, assetId, data),
@@ -4727,7 +5033,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     macosPushNotifications.install()
     registerNotificationHandlers(saasClient)
     agentStatusReporter = new AgentStatusReporter(saasClient)
-    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter)
+    agentGatewayBridge = new AgentGatewayBridge(gatewaySupervisor, agentStatusReporter, {
+      // 当前浏览的 Office 文件页签：registry 的焦点实例 → run context.activeFile，
+      // 打开的全部页签 → context.openFiles（Agent 感知“这份文档”指谁）。
+      openFiles: () => officePreviewRegistry.openOfficeFiles(),
+    })
     agentStatusReporter.setSessionsProvider(async () => (await agentGatewayBridge!.listAllSessionSnapshots()).map((snapshot) => ({
       ...snapshot.session,
       activeRun: snapshot.activeRun,
@@ -5054,15 +5364,24 @@ app.on('before-quit', (event) => {
     knowledgeService?.shutdown(),
   ]).then(async () => {
     await flushDesktopLogs()
-    if (clearUserDataOnQuit) {
-      try {
-        await rm(resolvedDataDirectory, { recursive: true, force: true })
-      } catch (error) {
-        console.error('Failed to clear EverRoom user data', error)
-        clearUserDataOnQuit = false
-      }
-    }
-    if (clearUserDataOnQuit) app.relaunch()
   }).finally(() => app.quit())
+})
+
+// 数据清理放在 will-quit（所有窗口已销毁、Chromium 释放自身缓存句柄后）执行：
+// 在 before-quit 里直接删，Windows 上会因句柄未释放而整目录删除失败。
+// 重试/登录态备份还原的完整语义见 clear-user-data.ts。
+app.on('will-quit', (event) => {
+  if (!clearUserDataOnQuit) return
+  event.preventDefault()
+  void wipePreservingLogin({ dataDirectory: resolvedDataDirectory, pid: process.pid })
+    .catch((error) => {
+      console.error('EverRoom data wipe failed unexpectedly', error)
+      return { wiped: false, preservedFiles: [] as string[] }
+    })
+    .then((result) => {
+      if (result.wiped) app.relaunch()
+      // 直接 exit：绕过再一次的 will-quit，避免清理流程重入。
+      app.exit(0)
+    })
 })
 app.on('window-all-closed', () => app.quit())

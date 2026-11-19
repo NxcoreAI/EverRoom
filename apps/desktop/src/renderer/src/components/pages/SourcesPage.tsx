@@ -612,9 +612,20 @@ export function SourcesPage() {
   }
   const toggleConnectionEnabled = (connection: ConnectorConnection) => {
     if (connection.status === 'active' && !window.confirm(t('surface:connector.disablingThisConnectionStopsAutomaticSyncContinue'))) return
-    void runCloudAction(connection.id, () => connection.status === 'active'
-      ? window.nxcore!.nangoConnector.disableConnection(connection.id)
-      : window.nxcore!.nangoConnector.enableConnection(connection.id))
+    void runCloudAction(connection.id, async () => {
+      if (connection.status === 'active') {
+        await window.nxcore!.nangoConnector.disableConnection(connection.id)
+        return
+      }
+      // 启用（含首次对账登记的 paused 连接）：启用后立即触发同步——
+      // 否则要等下一个轮询周期（默认 5 分钟），「点了启用但什么都不发生」。
+      // 模式按 run 历史判定：从未同步过（对账新登记）→ full；禁用前同步过 → incremental。
+      await window.nxcore!.nangoConnector.enableConnection(connection.id)
+      const status = await window.nxcore!.nangoConnector.status()
+      const enabled = status.scopes.filter((item) => item.connectionId === connection.id)
+      const everRan = new Set(status.runs.filter((run) => run.status === 'completed').map((run) => run.scopeId))
+      await Promise.all(enabled.map((scope) => window.nxcore!.nangoConnector.triggerSync(scope.id, everRan.has(scope.id) ? 'incremental' : 'full')))
+    })
   }
   const purgeConnectionData = (connection: ConnectorConnection) => {
     if (!window.confirm(t('surface:connector.clearThisConnectorSLocalDataThisCannot'))) return

@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X } from 'lucide-react'
+import { ArrowLeft, ChevronRight, ExternalLink, FileSpreadsheet, FileText as FileTextIcon, FileType2, FolderOpen, HardDrive, Image as ImageIcon, Search, Trash2, Upload, X, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -255,9 +255,23 @@ export function FilesPage({
   useEffect(() => {
     if (!filesApi || typeof filesApi.onImportProgress !== 'function') return
     return filesApi.onImportProgress((progress) => {
-      setImportProgress(progress.status === 'completed' ? null : progress)
+      if (progress.status === 'completed' || progress.status === 'cancelled') {
+        if (progress.status === 'cancelled') setMessage(t('surface:files.importCancelled', { completed: progress.completed }))
+        setImportProgress(null)
+        return
+      }
+      setImportProgress(progress)
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filesApi])
+
+  // 进度条「取消」：请求主进程停批（当前文件完成后不再继续）。
+  const cancelImport = useCallback(async () => {
+    if (!filesApi || typeof filesApi.cancelImport !== 'function') return
+    try {
+      await filesApi.cancelImport(importProgress?.batchId)
+    } catch { /* 主进程无活动批（刚结束）：进度条随 completed/cancelled 事件收口 */ }
+  }, [filesApi, importProgress])
 
   // Agent 面板 @ 文件跳转：确保目录已加载后选中该文件所属分类并高亮定位。
   useEffect(() => {
@@ -536,6 +550,15 @@ export function FilesPage({
             </div>
           </div>
           <b>{t('surface:files.importProgressCount', { completed: importProgress.completed, total: importProgress.total })}</b>
+          <button
+            type="button"
+            className="file-import-cancel"
+            onClick={() => void cancelImport()}
+            title={t('surface:files.cancelImportTitle')}
+          >
+            <XCircle aria-hidden="true" strokeWidth={1.8} />
+            <span>{t('surface:files.cancelImport')}</span>
+          </button>
         </div>
       ) : message ? <div className="source-feedback" role="status">{message}</div> : null}
 

@@ -50,6 +50,7 @@ interface RoomGraphCanvasProps {
 
 const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
   项目: 0x3d6ff6,
+  机构: 0x2a6fbd,
   主题: 0x7658d6,
   人物: 0x2f8a68,
   长期目标: 0xc67a25,
@@ -59,6 +60,7 @@ const ROOM_KIND_COLORS: Record<ContextRoomKind, number> = {
 
 const ROOM_KIND_GRAPH_ICONS: Record<ContextRoomKind, PixiForceGraphCanvasNode['icon']> = {
   项目: 'target',
+  机构: 'landmark',
   主题: 'book',
   人物: 'user',
   长期目标: 'flag',

@@ -50,7 +50,7 @@ export function contextRoomRoutes(
           tags: ["context-rooms"],
           body: Type.Object({
             title: Type.String({ minLength: 1, maxLength: 120 }),
-            description: Type.String({ minLength: 1, maxLength: 2_000 }),
+            description: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })),
             duplicateOverrideToken: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
           }, { additionalProperties: false }),
         },
@@ -66,13 +66,10 @@ export function contextRoomRoutes(
               ...error.result,
             });
           }
-          if (error instanceof Error && (
-            error.message === "context_room_title_required"
-            || error.message === "context_room_description_required"
-          )) {
+          if (error instanceof Error && error.message === "context_room_title_required") {
             return reply.code(400).send({
               error: "invalid_room",
-              message: "Context Room title and description cannot be blank",
+              message: "Context Room title cannot be blank",
             });
           }
           throw error;

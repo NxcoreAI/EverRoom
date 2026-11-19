@@ -40,7 +40,7 @@ describe("theme design tokens (style card → components)", () => {
     expect(card.design.surface).toBe("card");
     expect(card.design.separator).toBe("gap");
     expect(card.design.accent).toBe("accent");
-    expect(card.design.numeral).toBe("serif");
+    expect(card.design.numeral).toBe("sans");
     const immersive = resolveTheme({ composition: "immersive" });
     expect(immersive.design.surface).toBe("tint");
     const swiss = resolveTheme({ composition: "swiss" });

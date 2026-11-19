@@ -1,5 +1,6 @@
 import type {
   AgentActiveDocumentContext,
+  AgentActiveFileContext,
   AgentRoomReference,
   CreateContextRoomInput,
   CreateContextRoomResult,
@@ -19,6 +20,8 @@ export interface DocumentExecutionContext {
   roomId: string | null;
   availableRooms?: AgentRoomReference[];
   activeDocument?: AgentActiveDocumentContext;
+  /** 用户当前浏览的 Office 文件（file_entries）：编辑工具默认指向它。 */
+  activeFile?: AgentActiveFileContext;
 }
 
 /**

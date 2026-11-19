@@ -74,3 +74,6 @@ coverage/
 /scratch/
 /.dsh-office.*/
 /.workbuddy-ai/
+
+# FA 分析控制台验证用本地网关数据（真实数据快照，只在本机，不入库）
+.data/

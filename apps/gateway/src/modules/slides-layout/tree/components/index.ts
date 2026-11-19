@@ -571,40 +571,17 @@ function dispatchComponent(leaf: ComponentLeaf, frame: Frame, theme: ResolvedThe
   }
 }
 
-/** 小框降级：把风格卡字号整体缩一档（颜色/间距不变），用于组件在窄槽里溢出时自动收敛。 */
-function scaledTheme(theme: ResolvedTheme, factor: number): ResolvedTheme {
-  const scaleRecord = <T extends Record<string, number>>(record: T): T =>
-    Object.fromEntries(Object.entries(record).map(([key, value]) => [key, Math.max(8, Math.round(value * factor))])) as T;
-  return {
-    ...theme,
-    typeScale: scaleRecord(theme.typeScale),
-    sizes: scaleRecord(theme.sizes),
-  };
-}
-
 /**
  * 展开分发：组件 → 普通 PageSpec 元素（量测与上限对产物照常生效）。
  * 样式先经 resolveComponentSkin 解析：agent 的 style 覆盖风格卡默认值，组件只读 skin。
- * 框太小时先按 0.85/0.72/0.6 三档缩整体字号重试，仍装不下才抛缺陷——窄槽里组件优雅降级，
- * 避免整页因一个组件溢出而重排。
+ * 装不下直接抛 LAYOUT_LEAF_INVALID（沿用布局错误通道，提示扩大区域或减少内容）；
+ * 字号收敛由组件内部按角色下限完成（换行 → 压间距 → 正文 16/标题 20），
+ * 不再整体缩字号重试。
  */
 export function expandComponent(leaf: ComponentLeaf, frame: Frame, theme: ResolvedTheme, what: string): SpecElement[] {
   if (isAtomName(leaf.name)) {
     return expandAtomLeaf(leaf.name, leaf as unknown as Record<string, unknown>, frame, theme, what, resolveComponentSkin(leaf.style, theme, what));
   }
-  const firstSkin = resolveComponentSkin(leaf.style, theme, what);
-  try {
-    return dispatchComponent(leaf, frame, theme, what, firstSkin);
-  } catch (error) {
-    if (!(error instanceof Error) || !error.message.startsWith("LAYOUT_LEAF_INVALID:")) throw error;
-    for (const factor of [0.85, 0.72, 0.6]) {
-      const scaled = scaledTheme(theme, factor);
-      try {
-        return dispatchComponent(leaf, frame, scaled, what, resolveComponentSkin(leaf.style, scaled, what));
-      } catch (retryError) {
-        if (!(retryError instanceof Error) || !retryError.message.startsWith("LAYOUT_LEAF_INVALID:")) throw retryError;
-      }
-    }
-    throw error;
-  }
+  const skin = resolveComponentSkin(leaf.style, theme, what);
+  return dispatchComponent(leaf, frame, theme, what, skin);
 }

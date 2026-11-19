@@ -489,3 +489,150 @@ describe("过滤 prompt 偏好化注入", () => {
     expect(prompt).toContain("宁漏勿错杀");
   });
 });
+
+describe("暂停闸 × 过滤闸联动", () => {
+  it("暂停期间新事件直接落 held（filtered/paused），不进过滤闸", async () => {
+    const stub = filterStub({ verdicts: { "邮件": verdict(true) } });
+    const { service, db, sqlite, submitEnvelope, importToMemoryCore } = await harness({ filter: stub.service });
+    service.setPause(true);
+
+    const result = await service.ingestConnector({
+      kind: "mail",
+      sourceId: "mail-held-1",
+      dataType: "mail",
+      title: "暂停期间的邮件",
+      markdown: "内容",
+    });
+    expect(result.filterStatus).toBe("filtered");
+    expect(result.filterVerdict?.category).toBe("paused");
+    expect(submitEnvelope).not.toHaveBeenCalled();
+    expect(importToMemoryCore).not.toHaveBeenCalled();
+
+    const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+    expect(row?.filterStatus).toBe("filtered");
+    sqlite.close();
+  });
+
+  it("判定跑批前用户暂停：批不送 agent，恢复后重新调度跑批", async () => {
+    const judgeBatch = vi.fn(async (items: FilterItem[]) => {
+      // 按真实 eventId 回 verdict（eventId 是引擎铸造的 ing-…，不能写死）。
+      return new Map(items.map((item) => [item.eventId, { kind: "pass" as const, verdict: verdict(true) }]));
+    });
+    const filter = {
+      enabled: true, mode: "enforce" as const, batchSizeOf: () => 5, delayMsOf: () => 0,
+      enforce: () => true, exempt: () => false, judgeBatch,
+    } as unknown as IngestFilterService;
+    const { service, db, sqlite, submitEnvelope } = await harness({ filter });
+
+    const result = await service.ingestConnector({
+      kind: "mail", sourceId: "mail-mid-1", dataType: "mail",
+      title: "判定中暂停", markdown: "内容",
+    });
+    expect(result.filterStatus).toBe("pending");
+    // 判定前按下暂停。
+    service.setPause(true);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    expect(judgeBatch).not.toHaveBeenCalled();
+    expect(submitEnvelope).not.toHaveBeenCalled();
+
+    // 恢复：pending 队列重新调度，批跑完放行。
+    service.setPause(false);
+    await vi.waitFor(() => {
+      const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+      expect(row?.filterStatus).toBe("passed");
+    });
+    expect(judgeBatch).toHaveBeenCalled();
+    expect(submitEnvelope).toHaveBeenCalled();
+    sqlite.close();
+  });
+
+  it("暂停中 reinstate 被拒绝（先继续再恢复）", async () => {
+    const { service, sqlite } = await harness({ filter: null });
+    service.setPause(true);
+    const result = await service.ingestConnector({
+      kind: "mail", sourceId: "mail-r-1", dataType: "mail", title: "暂停条目", markdown: "内容",
+    });
+    await expect(service.reinstate(result.eventId)).rejects.toMatchObject({ code: "gate_paused" });
+    sqlite.close();
+  });
+});
+
+describe("台账事件级手动删除（邮件类数据删除入口）", () => {
+  it("deleteEventCascade：记忆文档 + knowledge 清理 + 台账软删", async () => {
+    const requestSourceCleanups = vi.fn();
+    const submitEnvelope = vi.fn().mockReturnValue({ queued: true, jobId: "route-job-1" });
+    const importToMemoryCore = vi.fn().mockResolvedValue({
+      document: { id: "mdoc-del-1" }, chunkCount: 1, deduplicated: false,
+    });
+    const deleteDocumentsByCallerRef = vi.fn().mockResolvedValue(["mdoc-del-1"]);
+    const knowledge = {
+      enabled: true, routerEnabled: true, submitEnvelope,
+      requestSourceCleanups,
+    } as unknown as KnowledgeService;
+    const memory = {
+      enabled: true, importToMemoryCore, deleteDocumentsByCallerRef,
+    } as unknown as MemoryService;
+
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-ingest-delete-"));
+    temporaryDirectories.push(dataDir);
+    const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const service = new IngestService(
+      db, new FilesService(db, dataDir), knowledge, memory, silentLogger, undefined, null,
+    );
+
+    // 无过滤（filter=null 直通扇出）：邮件进台账 + 记忆 + route。
+    const result = await service.ingestConnector({
+      kind: "mail", sourceId: "mail-del-1", dataType: "mail", title: "要删的邮件", markdown: "内容",
+    });
+    expect(result.memoryResult).toMatchObject({ documentId: "mdoc-del-1" });
+
+    // 手动删除该事件：级联清记忆 + knowledge + 台账软删。
+    await expect(service.deleteEventCascade(result.eventId)).resolves.toEqual({ deleted: 1 });
+    expect(deleteDocumentsByCallerRef).toHaveBeenCalledWith("mail-del-1");
+    expect(requestSourceCleanups).toHaveBeenCalledWith([{ sourceKind: "mail", sourceId: "mail-del-1" }]);
+    const row = db.select().from(ingestEvents).where(eq(ingestEvents.id, result.eventId)).get();
+    expect(row?.deletedAt).not.toBeNull();
+
+    // 重复删除：已软删 → null（幂等，不再触发清理）。
+    await expect(service.deleteEventCascade(result.eventId)).resolves.toBeNull();
+    sqlite.close();
+  });
+
+  it("删除同 sourceId 的多版本事件一次清干净，且不误伤其他来源", async () => {
+    const submitEnvelope = vi.fn().mockReturnValue({ queued: true, jobId: "route-job-1" });
+    const importToMemoryCore = vi.fn().mockResolvedValue({
+      document: { id: "mdoc-x" }, chunkCount: 1, deduplicated: false,
+    });
+    const deleteDocumentsByCallerRef = vi.fn().mockResolvedValue([]);
+    const knowledge = {
+      enabled: true, routerEnabled: true, submitEnvelope, requestSourceCleanups: vi.fn(),
+    } as unknown as KnowledgeService;
+    const memory = {
+      enabled: true, importToMemoryCore, deleteDocumentsByCallerRef,
+    } as unknown as MemoryService;
+    const dataDir = await mkdtemp(join(tmpdir(), "nxcore-ingest-delete2-"));
+    temporaryDirectories.push(dataDir);
+    const { db, sqlite } = createDatabase(join(dataDir, "gateway.sqlite"), resolve("drizzle"));
+    const service = new IngestService(
+      db, new FilesService(db, dataDir), knowledge, memory, silentLogger, undefined, null,
+    );
+
+    const target = await service.ingestConnector({
+      kind: "mail", sourceId: "mail-multi-1", dataType: "mail", title: "v1", markdown: "版本一",
+    });
+    // 同 sourceId 新版本（不同内容 hash）→ 第二条台账行。
+    await service.ingestConnector({
+      kind: "mail", sourceId: "mail-multi-1", dataType: "mail", title: "v2", markdown: "版本二",
+    });
+    const other = await service.ingestConnector({
+      kind: "mail", sourceId: "mail-other-1", dataType: "mail", title: "别动我", markdown: "内容",
+    });
+
+    await service.deleteEventCascade(target.eventId);
+    const rows = db.select().from(ingestEvents).all();
+    // 目标 source 的两行都软删；其他来源不动。
+    expect(rows.filter((row) => row.sourceId === "mail-multi-1" && row.deletedAt === null)).toHaveLength(0);
+    expect(rows.find((row) => row.id === other.eventId)?.deletedAt).toBeNull();
+    sqlite.close();
+  });
+});

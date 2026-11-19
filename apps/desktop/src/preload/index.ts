@@ -35,7 +35,8 @@ import type {
 } from '../shared/search'
 import type { IngestPipelines } from '../shared/ingest'
 import type { McpServersSnapshot } from '../shared/mcp'
-import type { OfficeAgentAskEvent, OfficeAgentFileEvent } from '../shared/office'
+import type { OfficeAgentAskEvent, OfficeAgentFileEvent, OfficeAskAnchor, OfficeAskQueueActionEvent } from '../shared/office'
+import type { OfficePreviewKind } from '../shared/sources'
 import type { SlidesPageImagesStatus } from '../shared/slides'
 import { OFFICE_PREVIEW_REQUEST_CHANNEL, OIDC_LOGIN_CANCELLED_MESSAGE, type AiRelayKeeperEventType, type AsrResult, type CloudAccountStatus, type DesktopRequestError, type NxcoreDesktopApi, type OfficePreviewRequest, type RoomAgentSelectionRewriteInput } from '../shared/sources'
 import type { BrowserExtensionMessage, BrowserExtensionStatus } from '../shared/browser-extension'
@@ -249,11 +250,31 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('office:agent-file', handler)
       return () => ipcRenderer.removeListener('office:agent-file', handler)
     },
-    /** slides「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
+    /** 批注队列快照：渲染层（队列事实）→ 主进程 → 对应文件的编辑器视图（文档内锚点）。 */
+    syncAskQueue: (input: { fileId: string; items: Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      /** 各格式自己的定位字段（Word 块索引 / Excel 区域 / PPT 元素 / PDF 页面 quads）。 */
+      anchor?: OfficeAskAnchor
+    }> }) => ipcRenderer.send('office:ask-queue-sync', input),
+    /** 文档内批注面板动作（全部发送 / 移除 / 改写一条）→ 渲染层队列事实。 */
+    onAskQueueAction: (listener: (event: OfficeAskQueueActionEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAskQueueActionEvent) => listener(payload)
+      ipcRenderer.on('office:ask-queue-action', handler)
+      return () => ipcRenderer.removeListener('office:ask-queue-action', handler)
+    },
+    /** slides/Word/Excel/PDF「AI 修改」弹层转发事件（切到对应 Room 并自动发送注入消息）。 */
     onAgentAsk: (listener: (event: OfficeAgentAskEvent) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: OfficeAgentAskEvent) => listener(payload)
       ipcRenderer.on('office:agent-ask', handler)
       return () => ipcRenderer.removeListener('office:agent-ask', handler)
+    },
+    /** Agent 改写后实例被重开：重新挂一次视口，把新原生视图的矩形上报给主进程。 */
+    onInstanceReloaded: (listener: (event: { id: string; kind: OfficePreviewKind }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: { id: string; kind: OfficePreviewKind }) => listener(payload)
+      ipcRenderer.on('office:instance-reloaded', handler)
+      return () => ipcRenderer.removeListener('office:instance-reloaded', handler)
     },
     /**
      * 主进程主动打开的预览实例（排版面板 👁 预览模版原文件等）：
@@ -1029,6 +1050,7 @@ const api: NxcoreDesktopApi = {
       ipcRenderer.on('files:import-progress', handleProgress)
       return () => ipcRenderer.removeListener('files:import-progress', handleProgress)
     },
+    cancelImport: (batchId?: string) => invoke('files:cancel-import', batchId),
     listHighRiskReviews: () => invoke('files:high-risk-reviews:list'),
     resolveHighRiskReview: (id: string, accepted: boolean) =>
       invoke('files:high-risk-reviews:resolve', id, accepted),
@@ -1100,6 +1122,7 @@ const api: NxcoreDesktopApi = {
     updateFilterPreference: (content: string) =>
       invoke('ingest:filter-rules:update-preference', content),
     reinstateEvent: (eventId: string) => invoke('ingest:events:reinstate', eventId),
+    deleteEvent: (eventId: string) => invoke('ingest:events:delete', eventId),
     getEventContent: (eventId: string) => invoke('ingest:events:content', eventId),
     getPause: () => invoke('ingest:pause:get'),
     setPause: (paused: boolean) => invoke('ingest:pause:set', paused),

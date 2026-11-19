@@ -15,7 +15,7 @@ import { BUILTIN_AGENT_IDS, type AgentResolver } from "../agent/resolver.js";
 const CHAT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_CHARS = 4_000;
 
-export const ENTITY_KINDS = ["人物", "项目", "主题", "长期目标", "议题", "事件"] as const;
+export const ENTITY_KINDS = ["人物", "项目", "机构", "主题", "长期目标", "议题", "事件"] as const;
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 export class KnowledgeLlmError extends Error {
@@ -40,12 +40,59 @@ export interface ExtractedFact {
   content: string;
   type: "属性" | "关系";
   entities: string[];
+  /** FA 可信度分级（fa-industry-iteration 工作项二）：缺省 opinion。 */
+  grade?: "fact" | "analysis" | "forecast" | "opinion" | "unknown";
+  /** 数字元数据：content 含关键数字时尽量携带。 */
+  numeric?: {
+    value?: number;
+    unit?: string;
+    period?: string;
+    currency?: string;
+    audited?: boolean;
+    verifiedBy?: string;
+  };
+}
+
+/** FA 结构化关系类型（entity-extraction Skill 五类；方向约束见 Skill 硬规则）。 */
+export const FA_RELATION_TYPES = ["founder_of", "employed_by", "invested_in", "introduced_by", "partner_of"] as const;
+export type FaRelationType = (typeof FA_RELATION_TYPES)[number];
+
+/** type → [subjectKind, objectKind] 的方向约束；校验失败的候选丢弃，不猜。 */
+export const FA_RELATION_KIND_RULES: Record<FaRelationType, readonly [EntityKind, EntityKind]> = {
+  founder_of: ["人物", "项目"],
+  employed_by: ["人物", "机构"],
+  invested_in: ["机构", "项目"],
+  introduced_by: ["主题", "人物"], // subject 放宽：项目/人物/机构都可能是被介绍方，object 固定介绍人
+  partner_of: ["人物", "人物"],
+};
+
+/** 抽取出的实体间结构化关系候选（FA 工作项一：语义关系自动抽取）。 */
+export interface ExtractedRelation {
+  type: FaRelationType;
+  /** subject 规范名（必须在 entities 数组内）。 */
+  subject: string;
+  /** object 规范名（必须在 entities 数组内）。 */
+  object: string;
+  /** 任职职位 / 创始头衔等（employed_by/founder_of）。 */
+  title?: string;
+  /** 任职起始年（employed_by）。 */
+  from?: number;
+  /** 任职止年（employed_by；null/省略 = 在任）。 */
+  to?: number;
+  /** 投资轮次（invested_in，如 "B轮"）。 */
+  round?: string;
+  /** 领投/跟投（invested_in）。 */
+  role?: "lead" | "co_follow";
+  /** 资料原句支撑。 */
+  evidence: string;
 }
 
 export interface ExtractionResult {
   summary: string;
   entities: ExtractedEntity[];
   facts: ExtractedFact[];
+  /** FA 关系候选（可空：资料不含业务关系时为空数组）。 */
+  relations: ExtractedRelation[];
 }
 
 export interface RoomContextResult {
@@ -392,18 +439,76 @@ export function parseExtractionResponse(content: string): ExtractionResult {
     if (!factContent) continue;
     const typeRaw = typeof fact.type === "string" ? fact.type.trim() : "";
     const type: ExtractedFact["type"] = typeRaw === "关系" ? "关系" : "属性";
+    const gradeRaw = typeof fact.grade === "string" ? fact.grade.trim() : "";
+    const grade: ExtractedFact["grade"] = gradeRaw === "fact" || gradeRaw === "analysis"
+      || gradeRaw === "forecast" || gradeRaw === "unknown" ? gradeRaw : "opinion";
+    const numericRaw = (typeof fact.numeric === "object" && fact.numeric !== null ? fact.numeric : null) as Record<string, unknown> | null;
+    const numeric: ExtractedFact["numeric"] | undefined = numericRaw
+      ? {
+          ...(typeof numericRaw.value === "number" && Number.isFinite(numericRaw.value) ? { value: numericRaw.value } : {}),
+          ...(typeof numericRaw.unit === "string" && numericRaw.unit.trim() ? { unit: numericRaw.unit.trim().slice(0, 16) } : {}),
+          ...(typeof numericRaw.period === "string" && numericRaw.period.trim() ? { period: numericRaw.period.trim().slice(0, 20) } : {}),
+          ...(typeof numericRaw.currency === "string" && numericRaw.currency.trim() ? { currency: numericRaw.currency.trim().slice(0, 8) } : {}),
+          ...(typeof numericRaw.audited === "boolean" ? { audited: numericRaw.audited } : {}),
+          ...(typeof numericRaw.verifiedBy === "string" && numericRaw.verifiedBy.trim() ? { verifiedBy: numericRaw.verifiedBy.trim().slice(0, 60) } : {}),
+        }
+      : undefined;
     const entities = (Array.isArray(fact.entities) ? fact.entities : [])
       .flatMap((name) => (typeof name === "string" ? [name.trim().slice(0, 120)] : []))
       .filter((name) => name.length > 0)
       .slice(0, 4);
     // 同内容只保留一条（后到覆盖：保留最新形态，实体引用更全的通常在后）
-    factsByContent.set(factContent, { content: factContent, type, entities });
+    factsByContent.set(factContent, { content: factContent, type, entities, grade, ...(numeric ? { numeric } : {}) });
+  }
+
+  const relationsRaw = Array.isArray(raw.relations) ? raw.relations : [];
+  const relationsByFingerprint = new Map<string, ExtractedRelation>();
+  for (const item of relationsRaw) {
+    if (typeof item !== "object" || item === null) continue;
+    const relation = item as Record<string, unknown>;
+    const typeRaw = typeof relation.type === "string" ? relation.type.trim() : "";
+    if (!(FA_RELATION_TYPES as readonly string[]).includes(typeRaw)) continue;
+    const type = typeRaw as FaRelationType;
+    const subject = typeof relation.subject === "string" ? relation.subject.trim().slice(0, 120) : "";
+    const object = typeof relation.object === "string" ? relation.object.trim().slice(0, 120) : "";
+    if (!subject || !object || subject === object) continue;
+    // subject/object 必须都在本次抽取的实体集合里（引用规范名）
+    const subjectEntity = byName.get(subject);
+    const objectEntity = byName.get(object);
+    if (!subjectEntity || !objectEntity) continue;
+    // 方向/类别校验：introduced_by 的 subject 放宽（项目/人物/机构均可），object 固定人物；
+    // 其余类型按 FA_RELATION_KIND_RULES 严格校验，方向反了或类别不符直接丢弃，不做自动翻转
+    if (type === "introduced_by") {
+      if (objectEntity.kind !== "人物") continue;
+    } else {
+      const [subjectKind, objectKind] = FA_RELATION_KIND_RULES[type];
+      if (subjectEntity.kind !== subjectKind || objectEntity.kind !== objectKind) continue;
+    }
+    const evidence = typeof relation.evidence === "string" ? relation.evidence.trim().slice(0, 300) : "";
+    if (!evidence) continue;
+    const fromRaw = Number(relation.from);
+    const toRaw = Number(relation.to);
+    const candidate: ExtractedRelation = {
+      type,
+      subject,
+      object,
+      ...(typeof relation.title === "string" && relation.title.trim() ? { title: relation.title.trim().slice(0, 60) } : {}),
+      ...(Number.isFinite(fromRaw) && fromRaw >= 1900 && fromRaw <= 2100 ? { from: Math.round(fromRaw) } : {}),
+      ...(Number.isFinite(toRaw) && toRaw >= 1900 && toRaw <= 2100 ? { to: Math.round(toRaw) } : {}),
+      ...(typeof relation.round === "string" && relation.round.trim() ? { round: relation.round.trim().slice(0, 24) } : {}),
+      ...(relation.role === "lead" || relation.role === "co_follow" ? { role: relation.role } : {}),
+      evidence,
+    };
+    // 同 type+subject+object 只留一条（先到优先，避免后到的残缺形态覆盖完整形态）
+    const fingerprint = `${type}\u0000${subject}\u0000${object}`;
+    if (!relationsByFingerprint.has(fingerprint)) relationsByFingerprint.set(fingerprint, candidate);
   }
 
   return {
     summary,
     entities: [...byName.values()].slice(0, 10),
     facts: [...factsByContent.values()].slice(0, 10),
+    relations: [...relationsByFingerprint.values()].slice(0, 5),
   };
 }
 

@@ -50,10 +50,12 @@ import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
 import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiDetail, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
+import { FaRelationStore } from "./fa-relations.js";
 import { KnowledgeRouter, fallbackSummary } from "./router.js";
 import {
   ROOM_RELATION_INDEX_JOB_TYPE,
   RoomRelationRegistry,
+  type RelationIndexFactInput,
   type RelationIndexInput,
   type RoomGraphDto,
   type RoomRelationDto,
@@ -94,6 +96,8 @@ export interface KnowledgeServiceConfig {
 export interface KnowledgeServiceOptions {
   /** Agent 调试页数据面：知识模块自建 resolver 的 runtime 也接入 trace。 */
   agentDebugStore?: AgentDebugTraceStore;
+  /** 测试注入替身 KS 客户端（缺省构造真实 KsAdminClient）。 */
+  ksClient?: KsAdminClient;
 }
 
 export interface KnowledgeServiceLogger {
@@ -433,6 +437,8 @@ export class KnowledgeService {
   private readonly registry: RoomWikiRegistry;
   private readonly entityRegistry: EntityRegistry;
   private readonly relationRegistry: RoomRelationRegistry;
+  /** FA 实体级语义关系（工作项一：抽取候选 → 待确认 → 确认后投影房边）。 */
+  private readonly faRelations: FaRelationStore;
   private readonly router: KnowledgeRouter;
   private llm: KnowledgeLlm | null;
   private readonly externalAgentResolver: AgentResolver | null;
@@ -485,7 +491,7 @@ export class KnowledgeService {
   ) {
     this.agentDebugStore = options.agentDebugStore;
     this.files = new FilesService(db, config.dataDir);
-    this.ks = new KsAdminClient({
+    this.ks = options.ksClient ?? new KsAdminClient({
       baseUrl: config.baseUrl,
       serviceId: config.serviceId,
       teamId: config.teamId,
@@ -496,6 +502,7 @@ export class KnowledgeService {
       promoteSources: config.entityPromoteSources,
     });
     this.relationRegistry = new RoomRelationRegistry(this.db, config.roomRelationMinScore ?? 1);
+    this.faRelations = new FaRelationStore(this.db, this.logger);
     this.ownedAgentResolver = config.llm && !agentResolver
       ? createKnowledgeAgentResolver(config.dataDir, config.llm, this.agentDebugStore)
       : null;
@@ -517,6 +524,8 @@ export class KnowledgeService {
       },
       // M3 注入点：路由抽取的建议性偏好摘要（开关关闭时空串）。
       preferenceDigest: () => this.knowledgePreferences?.digestForInjection() ?? "",
+      // FA 语义关系候选落库（fa-relations；工作项一）。
+      faRelations: this.faRelations,
       logger: {
         info: (bindings, message) => this.logger.info(bindings, message),
         warn: (bindings, message) => this.logger.warn(bindings, message),
@@ -531,6 +540,11 @@ export class KnowledgeService {
 
   setRoomDuplicateIndexTrigger(trigger: () => void): void {
     this.roomDuplicateIndexTrigger = trigger;
+  }
+
+  /** FA 实体级语义关系 store（fa-archive 路由消费：待确认队列/确认/忽略）。 */
+  get faRelationStore(): FaRelationStore {
+    return this.faRelations;
   }
 
   setRoomOverviewRefreshTrigger(trigger: (roomIds: string[], reason: string) => void): void {
@@ -1923,7 +1937,7 @@ export class KnowledgeService {
     )).orderBy(desc(routeDecisions.createdAt)).get();
     const evidence = (decision?.evidence ?? {}) as {
       entities?: Array<{ entityId?: unknown; role?: unknown; salience?: unknown; evidence?: unknown }>;
-      facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[] }>;
+      facts?: Array<{ content?: unknown; type?: unknown; entityIds?: unknown[]; grade?: unknown; numeric?: unknown }>;
     };
     let sourceTitle = decision?.sourceTitle ?? payload.sourceId;
     let mentions: RelationIndexInput["mentions"] = [];
@@ -1938,10 +1952,16 @@ export class KnowledgeService {
     if (Array.isArray(evidence.facts)) {
       facts = evidence.facts.flatMap((item) => {
         if (typeof item.content !== "string" || !item.content.trim()) return [];
+        const grade = (item as { grade?: unknown }).grade;
+        const numericRaw = (item as { numeric?: unknown }).numeric;
         return [{
           content: item.content,
           type: item.type === "关系" ? "关系" as const : "属性" as const,
           entityIds: (item.entityIds ?? []).flatMap((entityId) => typeof entityId === "string" ? [entityId] : []),
+          ...(grade === "fact" || grade === "analysis" || grade === "forecast" || grade === "unknown"
+            ? { grade: grade as "fact" | "analysis" | "forecast" | "unknown" } : {}),
+          ...(numericRaw && typeof numericRaw === "object"
+            ? { numeric: numericRaw as NonNullable<RelationIndexFactInput["numeric"]> } : {}),
         }];
       });
     }
@@ -1979,6 +1999,8 @@ export class KnowledgeService {
               const entityId = extractedEntityIds.get(name);
               return entityId ? [entityId] : [];
             }),
+            ...(fact.grade ? { grade: fact.grade } : {}),
+            ...(fact.numeric ? { numeric: fact.numeric } : {}),
           }));
         }
       }
@@ -2104,6 +2126,8 @@ export class KnowledgeService {
         reason: collision.reason,
       });
       this.relationRegistry.rewriteEntity(entity.id, collision.target.id);
+      // fa_relations 跟随实体合并迁移（from 的关系行改指 target；撞唯一索引的行删除）
+      try { this.faRelations.rewriteEntity(entity.id, collision.target.id); } catch { /* best-effort */ }
       const queued = this.enqueueEntityBacklog(collision.target.id);
       if (collision.target.roomId) this.enqueueEntityRelationBacklog(collision.target.id, collision.target.roomId);
       this.setPromotionProgress(
@@ -2144,6 +2168,8 @@ export class KnowledgeService {
     }).onConflictDoNothing().run();
     enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.entityRegistry.promoteToRoom(entity.id, roomId);
+    // FA 关系端点回填：实体晋升后，其作为 subject/object 的关系才能投影房边
+    try { this.faRelations.backfillRoomIds(entity.id, roomId); } catch { /* best-effort */ }
 
     // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
     // 后台 Wiki 处理不会继续占用高优先级 promotion worker。
@@ -2513,8 +2539,13 @@ export class KnowledgeService {
     if (decisions.length === 0) return;
 
     // 按落盘账本逐房清理：多对多沉淀下一份资料会进多个 wiki（路由命中
-    // 多个已晋升实体 + mention 实体后晋升的补账），只看最新 primaryRoomId 会漏
+    // 多个已晋升实体 + mention 实体后晋升的补账），只看最新 primaryRoomId 会漏。
+    // 源文件删尽后 KS 会拒绝 ingest（"wiki has no source files"→400），且决策
+    // 必须及时 revert（否则启动 rebuildFromFacts 会按 confirmed 决策复活
+    // membership 投影）——因此 rawRm 成功即记为已清，KS 重 ingest 失败只降级
+    // 告警，不阻断 revert、不让 job 失败重试（源已删，重试无意义）。
     const handledWikis = new Set<string>();
+    const degradedWikis: string[] = [];
     for (const decision of decisions) {
       for (const entry of ingestLedgerOf(decision)) {
         const key = `${entry.roomId}:${entry.filename}`;
@@ -2523,8 +2554,22 @@ export class KnowledgeService {
         const knowledgeId = this.registry.resolveRoomWikiId(entry.roomId);
         if (!knowledgeId) continue;
         await this.ks.rawRm(knowledgeId, [entry.filename]);
-        await this.ks.ingest(knowledgeId);
-        await this.waitUntilSettled(knowledgeId);
+        try {
+          await this.ks.ingest(knowledgeId);
+          await this.waitUntilSettled(knowledgeId);
+        } catch (error) {
+          // 源删尽（400 no source files）或 KS 暂不可用：源已删是终态，
+          // 页面级联是 KS 侧的降级残留（下次有新源 ingest 时会整体重建）。
+          const message = error instanceof Error ? error.message : String(error);
+          const noSourcesLeft = /no source files/i.test(message);
+          this.logger[noSourcesLeft ? "info" : "warn"](
+            { event: "knowledge.cleanup.wiki_ingest_degraded", knowledgeId, sourceId: payload.sourceId, reason: message },
+            noSourcesLeft
+              ? "wiki has no source files left; skipped re-ingest (pages rebuilt on next upload)"
+              : "wiki re-ingest after cleanup failed; kept source removal only",
+          );
+          if (!noSourcesLeft) degradedWikis.push(knowledgeId);
+        }
       }
     }
     this.db.update(routeDecisions).set({ status: "reverted", updatedAt: new Date() })
@@ -2535,7 +2580,7 @@ export class KnowledgeService {
       ))
       .run();
     this.logger.info(
-      { event: "knowledge.cleanup.done", sourceId: payload.sourceId, wikis: [...handledWikis] },
+      { event: "knowledge.cleanup.done", sourceId: payload.sourceId, wikis: [...handledWikis], degradedWikis },
       "document removed from room wikis",
     );
   }
