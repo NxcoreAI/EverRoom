@@ -91,6 +91,7 @@ const RawConfigSchema = Type.Object(
     cursorCompletionAiReasoning: AiReasoningSchema,
     piBuiltinTools: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     webSearchEnabled: Type.Boolean(),
+    webSearchProvider: Type.Union([Type.Literal("dashscope"), Type.Literal("parallel")]),
     webSearchBaseUrl: Type.String(),
     webSearchModel: Type.String({ minLength: 1 }),
     webSearchApiKey: Type.String(),
@@ -358,8 +359,10 @@ export interface GatewayConfig {
   subagents?: SubagentFrameworkConfig;
   /** agent MCP 配置文件绝对路径（设置页管理用）。 */
   mcpConfigPath: string;
-  /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
+  /** 百炼（DashScope）联网搜索工具配置。 */
   webSearch: WebSearchConfig | null;
+  /** Gateway 环境选择的匿名后端，不覆盖已保存的百炼配置。 */
+  parallelWebSearch?: boolean;
   vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
@@ -790,6 +793,7 @@ export function loadConfig(
     webSearchEnabled: env.NXCORE_WEB_SEARCH == null
       ? true
       : parseBoolean("NXCORE_WEB_SEARCH", env.NXCORE_WEB_SEARCH.trim()),
+    webSearchProvider: env.NXCORE_WEB_SEARCH_PROVIDER?.trim() || "dashscope",
     webSearchBaseUrl: env.NXCORE_WEB_SEARCH_BASE_URL?.trim()
       ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
     webSearchModel: env.NXCORE_WEB_SEARCH_MODEL?.trim() ?? "qwen-plus",
@@ -1302,6 +1306,7 @@ export function loadConfig(
         : { slidesReasoning: rawConfig.subagentSlidesReasoning }),
     },
     mcpConfigPath,
+    parallelWebSearch: Boolean(pi && rawConfig.webSearchEnabled && rawConfig.webSearchProvider === "parallel"),
     webSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchApiKey
       ? {
           baseUrl: rawConfig.webSearchBaseUrl,

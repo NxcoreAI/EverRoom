@@ -6,6 +6,7 @@ export interface InvokeAgentOptions {
   sessionId?: string;
   pageLabel?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export async function invokeAgent(
@@ -18,28 +19,36 @@ export async function invokeAgent(
     sessionId: options.sessionId ?? `${agentId}:${randomUUID()}`,
     pageLabel: options.pageLabel ?? agentId,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
 }
 
 export async function invokeRuntime(
   runtime: AgentRuntime,
   prompt: string,
-  options: Required<Pick<InvokeAgentOptions, "sessionId" | "pageLabel">> & Pick<InvokeAgentOptions, "timeoutMs">,
+  options: Required<Pick<InvokeAgentOptions, "sessionId" | "pageLabel">> & Pick<InvokeAgentOptions, "timeoutMs" | "signal">,
 ): Promise<string> {
   const runId = randomUUID();
   const controller = new AbortController();
-  const timeout = options.timeoutMs
-    ? setTimeout(() => {
-        controller.abort();
-        // ACP 渠道的 cancel 会向 adapter 子进程 stdin 写 JSON-RPC：子进程已死
-        // 时 write 照样 reject（child.stdin 的 'error' 监听只吞流事件），漏接
-        // 即未处理拒绝、杀进程（2026-10-17 排障）。超时本就要放弃本次调用，
-        // cancel 失败只记日志。
-        runtime.cancel(runId).catch((error: unknown) => {
-          console.warn(`[agent-invoke] cancel after timeout failed (${options.pageLabel}):`, error);
-        });
-      }, options.timeoutMs)
-    : null;
+  let started = false;
+  const cancel = () => {
+    if (!started) return;
+    // An ACP adapter may have exited before it can receive the cancellation.
+    void runtime.cancel(runId).catch((error: unknown) => {
+      console.warn(`[agent-invoke] cancel failed (${options.pageLabel}):`, error);
+    });
+  };
+  const abort = (message: string) => {
+    controller.abort(new Error(message));
+    cancel();
+  };
+  const onAbort = () => abort(`Agent invocation cancelled: ${options.pageLabel}`);
+  if (options.signal?.aborted) onAbort();
+  controller.signal.throwIfAborted();
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  const timeout = options.timeoutMs ? setTimeout(() => {
+    abort(`Agent invocation timed out: ${options.pageLabel}`);
+  }, options.timeoutMs) : null;
   timeout?.unref();
   let runtimeSessionRef: string | null = null;
   try {
@@ -53,10 +62,12 @@ export async function invokeRuntime(
       captureMemory: false,
       recallMemory: false,
     });
+    started = true;
     runtimeSessionRef = run.runtimeSessionRef;
+    if (controller.signal.aborted) cancel();
     let content = "";
     for await (const event of run.events) {
-      if (controller.signal.aborted) throw new Error(`Agent invocation timed out: ${options.pageLabel}`);
+      controller.signal.throwIfAborted();
       if (event.type === "message.completed") {
         const value = (event.payload as { content?: unknown }).content;
         if (typeof value === "string") content = value;
@@ -66,10 +77,12 @@ export async function invokeRuntime(
         throw new Error(typeof message === "string" ? message : `Agent invocation failed: ${options.pageLabel}`);
       }
     }
+    controller.signal.throwIfAborted();
     if (!content.trim()) throw new Error(`Agent returned empty content: ${options.pageLabel}`);
     return content;
   } finally {
     if (timeout) clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", onAbort);
     if (runtimeSessionRef) await runtime.deleteSession(runtimeSessionRef).catch(() => undefined);
   }
 }

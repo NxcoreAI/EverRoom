@@ -102,7 +102,7 @@ import { ContextRoomAgentDispatcher } from "../modules/context-rooms/room-agent.
 import { DocWriterAgentDispatcher, isSelectionRewriteInvocationAuthorized } from "../modules/subagents/doc-writer-dispatcher.js";
 import { createContextRoomAgentTools } from "../modules/context-rooms/room-agent-tools.js";
 import { createDocumentPiTools } from "../modules/documents/pi-tools.js";
-import { createWebSearchPiTools } from "../modules/agent/web-search-tools.js";
+import { createWebSearchPiTools, isWebSearchConfigured } from "../modules/agent/web-search-tools.js";
 import { createDocWriterAgentTools } from "../modules/subagents/doc-writer-tools.js";
 import { SlidesGenerationCheckpointStore } from "../modules/subagents/slides-generation-checkpoints.js";
 import { createSlidesPlannerAgentTools, createSlidesBuilderAgentTools, createSlidesLayouterAgentTools, createSlidesTreeResultValidator } from "../modules/subagents/slides-agent-tools.js";
@@ -920,8 +920,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
           roomExists: (roomId) => documentMcpHost.roomExists(roomId),
         })
       : [],
-    webSearchTools: config.webSearch
-      ? createWebSearchPiTools(agentResolver, externalCalls)
+    webSearchTools: isWebSearchConfigured(config)
+      ? createWebSearchPiTools(agentResolver, externalCalls, config.parallelWebSearch)
       : [],
   }));
   // slides 两段式子代理工具面（create：slides-planner 出内容方案 → slides-builder
@@ -931,8 +931,8 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   subagentRuntimeManager.registerAgentTools("slides-planner", () => createSlidesPlannerAgentTools({
     roomTools: createContextRoomAgentTools({ db, memory: memoryService, overview: roomOverviewService }),
     documentTools: createDocumentPiTools(documentMcpHost),
-    webSearchTools: config.webSearch
-      ? createWebSearchPiTools(agentResolver, externalCalls)
+    webSearchTools: isWebSearchConfigured(config)
+      ? createWebSearchPiTools(agentResolver, externalCalls, config.parallelWebSearch)
       : [],
   }));
   subagentRuntimeManager.registerAgentTools("slides-builder", () => createSlidesBuilderAgentTools({
