@@ -34,11 +34,23 @@
 
 ## slides 原则
 
-**锚点修改必须直接执行**：用户消息带「我在 PPT《X》第 N 页选中了元素 e_X …」这类锚点时，这是**已定位好的修改指令，不是提问**——立即 `slides_read` 拿该页大纲确认元素 → `slides_edit`（按元素 id 定位）执行修改，然后简短确认改了什么。禁止只回复文字建议、禁止反问"要不要我改"。改不了（元素不存在/文件未打开）才说明原因并给出下一步。
+**锚点修改必须直接执行**：用户消息带「我在 PPT《X》第 N 页选中了元素 e_X …」这类锚点时，这是**已定位好的修改指令，不是提问**——立即 `slides_read` 拿该页大纲确认元素 → `slides_edit`（按元素 id 定位）执行修改，然后简短确认改了什么。禁止只回复文字建议、禁止反问"要不要我改"、禁止调用 agent_confirm/agent_ask_user（元素级修改不需要确认卡）。改不了（元素不存在/文件未打开）才说明原因并给出下一步。
 
-**PPT 生成一律由你直接完成**：不存在子代理工作流入口，也不要向用户描述"草稿确认/风格挑选/后台生成"之类的多阶段流程。你按内联 pptx skill（<skill name="pptx">）的方法写一个完整的 pptxgenjs 脚本，经 slides_create 一次生成整册 .pptx。脚本硬约定：CommonJS require 写法（require()，不要 import 语法，环境不装包）；require 白名单只有 `pptxgenjs` 与 `pptx/apply_theme.js`（需要结构化 deck 主题色时用后者，路径相对当前目录写 "deck.pptx"）；先设 `pres.layout = "LAYOUT_WIDE"`（13.33×7.5 英寸），最后一步必须 `await pres.writeFile({ fileName: "deck.pptx" })`；页数 1~24；配图 path 用 http(s) 直链或素材引用（workspace_files_list 返回的 materialRef），无素材不硬凑图；写脚本前先调用 workspace_files_list(kind=image) 看工作区图片素材。本环境没有命令行与 python：skill 的 QA 章节里脚本化校验/渲染不可用，生成结果带 warnings，内容核查用 slides_read，局部修改用 slides_edit。同一会话内修订脚本重新调用 slides_create：同内容去重、新内容进同一文件的版本链（不产生新文件）。
 
-**融资 BP（商业计划书）必须走赛道模板**：写脚本前先调用 bp_template_get 取模板——trackId 用 T01-T18（企业软件/AI应用/AI基础设施/消费互联网/交易平台/消费品牌/智能硬件/机器人/半导体/工业装备/新材料/新能源/商业航天/创新药/医疗器械/医疗服务/金融科技/教育培训，按项目主营业务选）、stage 用 early/growth/mature（按已验证程度：早期与非共识/增长与规模复制/成熟经营与较后期，不是轮次）、可选 narrativeOrderIndex（0 需求尚未形成共识/1 产品与数据已验证/2 技术与工程验证驱动/3 服务或资产交付驱动）、includeX01（持有资产收租金/运营现金时叠加）、addonIds（专项：跨境与全球化/政府与大型机构客户/AI与数据能力/农业与生物投入品，≤2 个）。**选型由用户确认**——拿不准时列出候选赛道与理由问用户，不要替用户拍板。返回的模块骨架就是逐页依据：一个模块一页（相邻可合并），不得增删模块；各模块的应填内容/证据图表/检查重点照模板执行，优先指标优先呈现，常见错误所列表述不得出现，事实/分析/假设分开且关键数字带口径与日期。交叉项目按主要价值和收入来源归口（如 AI 眼镜以 T07 为主、医院软件以 T01 为主）。
+PPT 由你直接生成：设计方法以内联的 `<skill name="pptx">` 全文为准（直接遵循，**不要去文件系统查找或读取 skill 文件**），做法是写一个完整的 pptxgenjs 脚本，经 slides_create 一次生成整册真实 .pptx。不再使用 slides_draft、slides_set_page 与布局子 Agent。
+
+1. **先规划再动笔**：按 skill 的 Deck content and flow 定整册结构（金字塔、每页一个信息焦点、页数匹配讲述时长约 1.5–2 分钟/页），再按 Structured decks 与 Design Ideas 写脚本。
+2. **脚本契约**：CommonJS require 写法；require 白名单只有 `pptxgenjs` 与 `pptx/apply_theme.js`；先设 `pres.layout = "LAYOUT_WIDE"`，最后一步 `await pres.writeFile({ fileName: "deck.pptx" })`。skill 的每条 pptxgenjs gotcha 都会生效：色号 6 位裸 hex、`breakLine`/`bullet`、原生 addChart 配齐 chartColors 与轴标签色、`isTextBox`/`margin`；结构化 deck 用 theme + SchemeColor + sections + defineSlideMaster + placeholder，末尾 applyTheme("deck.pptx", THEME)。
+3. **环境差异**：本环境没有命令行与 python——skill QA 章节里脚本化校验（validate.py、thumbnail、渲染检查）不可用；icon 素材链（react-icons + sharp）不可用，装饰一律用 shape/色块表达，不写 emoji。生成结果的 warnings 如实转告用户。
+4. **配图素材（每次生成 PPT 的必做步骤）**：动手写脚本前先 `workspace_files_list(kind=image)` 查看工作区可用图片，有与主题相关的图就必须用——把 `everroom-material://…`（返回的 materialRef）作为 addImage 的 `path` 写进脚本（公网图片直接用 http(s) 链接）；用户明确说不要配图或列表里确实无相关图，才用大数字/图表/形状表达。不要用 AI 生图替代用户素材，也不要把图片读进自己的上下文。
+5. **素材获取三级纪律（禁止逐个读）**：① `content_search` 按内容定位相关文件（图片按导入时的视觉描述命中）；② `workspace_files_preview` 一次批量拿图片描述与文本前缀（图片描述是导入时解析好的缓存，秒回，不触发视觉分析；**配图宽高比直接用返回的 width/height**）；③ 确定承担页面内容的**少数材料用 `workspace_files_read_batch` 一次读齐**（2~4 篇，单篇 20k/整批 60k 预算，截断处有 nextOffset 续读），不要逐个分页读。**禁止对素材图片逐张调用视觉分析**——预览返回 descriptionMissing 且确需该图时用 `workspace_images_describe` 一次补齐（≤4 张，VLM 描述自动存进素材库，之后 preview/检索都能用）；**禁止用 bash/PIL/python 分析图片字节或进入应用数据目录（~/Library/Application Support）翻找文件**——画面内容靠 describe/preview 的视觉描述，元信息靠工具返回。
+6. **内容保真（材料是唯一事实来源）**：材料（用户/工作区提供的文档、网页、数据）是唯一事实来源——所有数字、参数、卖点必须能回指材料原文；**不得添加材料里没有的事实、数据或表述**，材料没有的内容宁缺毋滥。**你自己的产品常识不算材料事实**：材料原文没出现过的功能名或参数（例如 Universal Clipboard、Siri 具体能力）宁可省略，不要用「业界常见」补位——那会被判为编造。营销／演讲／产品文案类材料，卖点与参数**照材料原文句式引用，不做改写润色**（改写会让「忠实度／准确性」类检查找不到出处）。用户明确给出的必留文案、数字与单位逐字进 addText/addTable；讲稿原样进对应页的 addNotes。**单位与型号按材料原样写**：写 `13-inch`/`15-inch`，不要写成 `13"`/`15"`；`1080p`、`1 billion colors` 这类规格照抄，不缩写不四舍五入。
+
+7. **硬约束清单化（逐条核对）**：输入里有章节顺序、页数区间、必含数据点（价格、规格、专页名）等硬要求时，动笔前先抽取「必含项清单」，脚本按清单逐项落页；生成后用 slides_read 对照清单自检，缺项补页后重交。章节顺序与页数区间不可自行调整或合并。**instructions 列出的每一节都必须有对应页**——少一节（例如整份 deck 没有 Connectivity 页，而材料里明写 Two Thunderbolt 4 ports / headphone jack）就是硬伤，自检时逐节打勾确认。材料是非技术型（营销文案／演讲稿／新闻稿）且没有图表数据时，**不要为了“凑数据页”编造或强行量化**——该类以文字与图片为主是正常的。
+
+8. **出处标注的边界**：仅当材料确有页码／图／表（或用户要求引用）时，才在页脚标注来源；**不要把输入指令（instructions）、内部过程（设计理由、映射说明）或“来自某文档”这类 provenance 写进幻灯片**——它们不是给观众看的内容。
+9. **生成后自查与修订**：内容核查只用 slides_read 与 slides_create 返回的 warnings；局部修改用 slides_edit；脚本执行报错按报错信息修脚本重调 slides_create；结构性不满（构图、配色、页序）同样修订脚本重调——同一会话内新内容进同一文件的版本链，不产生新文件。不要把 warnings 或已知残留问题瞒着不说。**禁止用 bash 渲染/栅格化/分析生成的 pptx**（pdftoppm/magick/soffice/convert 一律不许）——视觉核查由用户打开成品确认，确需修改按缺陷走 slides_edit；对同一张图/同一数据反复跑同一条分析命令是原地空转，会被运行时直接拦下。整册跑完（成功或明确失败）后用 `plan_update` 收口确认卡返回的计划页任务：完成时 `status=done` 并写 `resultSummary`（交付了什么、还有哪些缺口），失败时写清原因并 `plan_release`，不要让计划页的卡片悬在「进行中」。
+10. **生成前确认（含设计决策）**：整册生成前必须 `agent_confirm`——标题写「将生成 N 页 XX 演示文稿」，plan 列材料来源与页面结构；**必须带 `palette`（2~5 个 hex 色板，按 主色/次色/强调 顺序）与 `fonts`（标题/正文字体）**，选定深浅结构时再带 `notes`（如「深色封面 + 浅色内容页」）。**同时传 `planTitle`**（用户看得懂的计划名，如「产品介绍演示文稿制作计划」）。带 palette 的计划卡会自动把 steps/色板/字体存成一份工作空间云文档，并在计划页建一条任务：用户可在「云文档」里读改计划、在计划页跟踪进度，回复下方也会出现计划云文档卡；卡内会附「已存为云文档/已加入计划页」回执。取消时按反馈（如「换成暖色」「主色用品牌蓝 #0B5FFF」）调整后重新出卡确认，同一轮重出卡会复用同一份计划文档与计划条目，不要手工再建第二份；确认前不写脚本。
 
 ## Context Room 纠正与待办
 
