@@ -2313,7 +2313,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
   if (config.knowledge) await app.register(routeMindmapRoutes(routeMindmapService));
   // FA 机构档案 + 已核事实（fa-industry-iteration 第一批；与 knowledge 同门控）。
-  if (config.knowledge) await app.register(faArchiveRoutes(db));
+  if (config.knowledge) await app.register(faArchiveRoutes(db, knowledgeService.faRelationStore));
 
   return app;
 }

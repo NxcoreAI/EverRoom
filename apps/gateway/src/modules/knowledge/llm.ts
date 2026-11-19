@@ -53,10 +53,46 @@ export interface ExtractedFact {
   };
 }
 
+/** FA 结构化关系类型（entity-extraction Skill 五类；方向约束见 Skill 硬规则）。 */
+export const FA_RELATION_TYPES = ["founder_of", "employed_by", "invested_in", "introduced_by", "partner_of"] as const;
+export type FaRelationType = (typeof FA_RELATION_TYPES)[number];
+
+/** type → [subjectKind, objectKind] 的方向约束；校验失败的候选丢弃，不猜。 */
+export const FA_RELATION_KIND_RULES: Record<FaRelationType, readonly [EntityKind, EntityKind]> = {
+  founder_of: ["人物", "项目"],
+  employed_by: ["人物", "机构"],
+  invested_in: ["机构", "项目"],
+  introduced_by: ["主题", "人物"], // subject 放宽：项目/人物/机构都可能是被介绍方，object 固定介绍人
+  partner_of: ["人物", "人物"],
+};
+
+/** 抽取出的实体间结构化关系候选（FA 工作项一：语义关系自动抽取）。 */
+export interface ExtractedRelation {
+  type: FaRelationType;
+  /** subject 规范名（必须在 entities 数组内）。 */
+  subject: string;
+  /** object 规范名（必须在 entities 数组内）。 */
+  object: string;
+  /** 任职职位 / 创始头衔等（employed_by/founder_of）。 */
+  title?: string;
+  /** 任职起始年（employed_by）。 */
+  from?: number;
+  /** 任职止年（employed_by；null/省略 = 在任）。 */
+  to?: number;
+  /** 投资轮次（invested_in，如 "B轮"）。 */
+  round?: string;
+  /** 领投/跟投（invested_in）。 */
+  role?: "lead" | "co_follow";
+  /** 资料原句支撑。 */
+  evidence: string;
+}
+
 export interface ExtractionResult {
   summary: string;
   entities: ExtractedEntity[];
   facts: ExtractedFact[];
+  /** FA 关系候选（可空：资料不含业务关系时为空数组）。 */
+  relations: ExtractedRelation[];
 }
 
 export interface RoomContextResult {
@@ -425,10 +461,54 @@ export function parseExtractionResponse(content: string): ExtractionResult {
     factsByContent.set(factContent, { content: factContent, type, entities, grade, ...(numeric ? { numeric } : {}) });
   }
 
+  const relationsRaw = Array.isArray(raw.relations) ? raw.relations : [];
+  const relationsByFingerprint = new Map<string, ExtractedRelation>();
+  for (const item of relationsRaw) {
+    if (typeof item !== "object" || item === null) continue;
+    const relation = item as Record<string, unknown>;
+    const typeRaw = typeof relation.type === "string" ? relation.type.trim() : "";
+    if (!(FA_RELATION_TYPES as readonly string[]).includes(typeRaw)) continue;
+    const type = typeRaw as FaRelationType;
+    const subject = typeof relation.subject === "string" ? relation.subject.trim().slice(0, 120) : "";
+    const object = typeof relation.object === "string" ? relation.object.trim().slice(0, 120) : "";
+    if (!subject || !object || subject === object) continue;
+    // subject/object 必须都在本次抽取的实体集合里（引用规范名）
+    const subjectEntity = byName.get(subject);
+    const objectEntity = byName.get(object);
+    if (!subjectEntity || !objectEntity) continue;
+    // 方向/类别校验：introduced_by 的 subject 放宽（项目/人物/机构均可），object 固定人物；
+    // 其余类型按 FA_RELATION_KIND_RULES 严格校验，方向反了或类别不符直接丢弃，不做自动翻转
+    if (type === "introduced_by") {
+      if (objectEntity.kind !== "人物") continue;
+    } else {
+      const [subjectKind, objectKind] = FA_RELATION_KIND_RULES[type];
+      if (subjectEntity.kind !== subjectKind || objectEntity.kind !== objectKind) continue;
+    }
+    const evidence = typeof relation.evidence === "string" ? relation.evidence.trim().slice(0, 300) : "";
+    if (!evidence) continue;
+    const fromRaw = Number(relation.from);
+    const toRaw = Number(relation.to);
+    const candidate: ExtractedRelation = {
+      type,
+      subject,
+      object,
+      ...(typeof relation.title === "string" && relation.title.trim() ? { title: relation.title.trim().slice(0, 60) } : {}),
+      ...(Number.isFinite(fromRaw) && fromRaw >= 1900 && fromRaw <= 2100 ? { from: Math.round(fromRaw) } : {}),
+      ...(Number.isFinite(toRaw) && toRaw >= 1900 && toRaw <= 2100 ? { to: Math.round(toRaw) } : {}),
+      ...(typeof relation.round === "string" && relation.round.trim() ? { round: relation.round.trim().slice(0, 24) } : {}),
+      ...(relation.role === "lead" || relation.role === "co_follow" ? { role: relation.role } : {}),
+      evidence,
+    };
+    // 同 type+subject+object 只留一条（先到优先，避免后到的残缺形态覆盖完整形态）
+    const fingerprint = `${type}\u0000${subject}\u0000${object}`;
+    if (!relationsByFingerprint.has(fingerprint)) relationsByFingerprint.set(fingerprint, candidate);
+  }
+
   return {
     summary,
     entities: [...byName.values()].slice(0, 10),
     facts: [...factsByContent.values()].slice(0, 10),
+    relations: [...relationsByFingerprint.values()].slice(0, 5),
   };
 }
 

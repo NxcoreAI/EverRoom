@@ -50,6 +50,7 @@ import { loadBuiltinAgentBundle } from "../agent/builtin-bundles.js";
 import { bundledAgentDefinitionsDir } from "../../config.js";
 import { KsAdminClient, KsBusyError, type KsWikiDetail, type KsWikiPageItem } from "./ks-client.js";
 import { RoomWikiRegistry } from "./registry.js";
+import { FaRelationStore } from "./fa-relations.js";
 import { KnowledgeRouter, fallbackSummary } from "./router.js";
 import {
   ROOM_RELATION_INDEX_JOB_TYPE,
@@ -434,6 +435,8 @@ export class KnowledgeService {
   private readonly registry: RoomWikiRegistry;
   private readonly entityRegistry: EntityRegistry;
   private readonly relationRegistry: RoomRelationRegistry;
+  /** FA 实体级语义关系（工作项一：抽取候选 → 待确认 → 确认后投影房边）。 */
+  private readonly faRelations: FaRelationStore;
   private readonly router: KnowledgeRouter;
   private llm: KnowledgeLlm | null;
   private readonly externalAgentResolver: AgentResolver | null;
@@ -497,6 +500,7 @@ export class KnowledgeService {
       promoteSources: config.entityPromoteSources,
     });
     this.relationRegistry = new RoomRelationRegistry(this.db, config.roomRelationMinScore ?? 1);
+    this.faRelations = new FaRelationStore(this.db, this.logger);
     this.ownedAgentResolver = config.llm && !agentResolver
       ? createKnowledgeAgentResolver(config.dataDir, config.llm, this.agentDebugStore)
       : null;
@@ -518,6 +522,8 @@ export class KnowledgeService {
       },
       // M3 注入点：路由抽取的建议性偏好摘要（开关关闭时空串）。
       preferenceDigest: () => this.knowledgePreferences?.digestForInjection() ?? "",
+      // FA 语义关系候选落库（fa-relations；工作项一）。
+      faRelations: this.faRelations,
       logger: {
         info: (bindings, message) => this.logger.info(bindings, message),
         warn: (bindings, message) => this.logger.warn(bindings, message),
@@ -532,6 +538,11 @@ export class KnowledgeService {
 
   setRoomDuplicateIndexTrigger(trigger: () => void): void {
     this.roomDuplicateIndexTrigger = trigger;
+  }
+
+  /** FA 实体级语义关系 store（fa-archive 路由消费：待确认队列/确认/忽略）。 */
+  get faRelationStore(): FaRelationStore {
+    return this.faRelations;
   }
 
   setRoomOverviewRefreshTrigger(trigger: (roomIds: string[], reason: string) => void): void {
@@ -2113,6 +2124,8 @@ export class KnowledgeService {
         reason: collision.reason,
       });
       this.relationRegistry.rewriteEntity(entity.id, collision.target.id);
+      // fa_relations 跟随实体合并迁移（from 的关系行改指 target；撞唯一索引的行删除）
+      try { this.faRelations.rewriteEntity(entity.id, collision.target.id); } catch { /* best-effort */ }
       const queued = this.enqueueEntityBacklog(collision.target.id);
       if (collision.target.roomId) this.enqueueEntityRelationBacklog(collision.target.id, collision.target.roomId);
       this.setPromotionProgress(
@@ -2153,6 +2166,8 @@ export class KnowledgeService {
     }).onConflictDoNothing().run();
     enqueueSearchIndex(this.db, { itemType: "room", refId: roomId, priority: "high" });
     this.entityRegistry.promoteToRoom(entity.id, roomId);
+    // FA 关系端点回填：实体晋升后，其作为 subject/object 的关系才能投影房边
+    try { this.faRelations.backfillRoomIds(entity.id, roomId); } catch { /* best-effort */ }
 
     // 资料沉淀拆为 per-room 串行的普通 ingest job。Room 创建在这里即可完成，
     // 后台 Wiki 处理不会继续占用高优先级 promotion worker。
