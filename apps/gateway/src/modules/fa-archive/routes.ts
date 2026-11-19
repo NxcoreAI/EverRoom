@@ -14,6 +14,7 @@ import { FaArchiveService, FaArchiveError } from "./service.js";
 import { FaFeedbackService, FaFeedbackError, FA_PASS_REASONS } from "./feedback.js";
 import { buildMeetingBrief } from "./brief.js";
 import { screenInstitutions } from "./matching.js";
+import type { FaRelationStore } from "../knowledge/fa-relations.js";
 
 const iso = (value: Date | number | null): string | null =>
   value === null ? null : (value instanceof Date ? value : new Date(value)).toISOString();
@@ -145,7 +146,7 @@ function faErrorReply(reply: any, error: unknown): void {
   throw error;
 }
 
-export function faArchiveRoutes(db: GatewayDatabase): FastifyPluginAsyncTypebox {
+export function faArchiveRoutes(db: GatewayDatabase, faRelations?: FaRelationStore): FastifyPluginAsyncTypebox {
   const service = new FaArchiveService(db);
   const feedback = new FaFeedbackService(db);
   return async function routes(app) {
@@ -474,5 +475,88 @@ export function faArchiveRoutes(db: GatewayDatabase): FastifyPluginAsyncTypebox 
         })),
       };
     });
+
+    // ── FA 实体级语义关系（工作项一：抽取候选 → 待确认 → 确认后投影房边）──
+    if (faRelations) {
+      const FaRelationDtoSchema = Type.Object({
+        id: Type.String(),
+        type: Type.String(),
+        subjectEntityId: Type.String(),
+        objectEntityId: Type.String(),
+        subjectRoomId: Type.Union([Type.String(), Type.Null()]),
+        objectRoomId: Type.Union([Type.String(), Type.Null()]),
+        title: Type.Union([Type.String(), Type.Null()]),
+        fromYear: Type.Union([Type.Number(), Type.Null()]),
+        toYear: Type.Union([Type.Number(), Type.Null()]),
+        round: Type.Union([Type.String(), Type.Null()]),
+        role: Type.Union([Type.String(), Type.Null()]),
+        evidence: Type.Union([Type.String(), Type.Null()]),
+        status: Type.String(),
+        subjectName: Type.Union([Type.String(), Type.Null()]),
+        objectName: Type.Union([Type.String(), Type.Null()]),
+        subjectKind: Type.Union([Type.String(), Type.Null()]),
+        objectKind: Type.Union([Type.String(), Type.Null()]),
+        createdAt: Type.String(),
+      });
+
+      app.get("/v1/fa/relations", {
+        schema: {
+          tags: ["fa"],
+          querystring: Type.Object({
+            status: Type.Optional(Type.Union([
+              Type.Literal("pending"), Type.Literal("confirmed"), Type.Literal("dismissed"), Type.Literal("all"),
+            ])),
+            limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+          }),
+          response: { 200: Type.Object({ items: Type.Array(FaRelationDtoSchema) }) },
+        },
+      }, async (request) => ({
+        items: faRelations.list(request.query.status ?? "pending", request.query.limit ?? 50)
+          .map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })),
+      }));
+
+      app.post("/v1/fa/relations/:id/confirm", {
+        schema: {
+          tags: ["fa"],
+          params: IdParams,
+          body: Type.Object({ confirmedBy: Type.Optional(Type.String({ maxLength: 60 })) }),
+          response: { 200: FaRelationDtoSchema, 404: Type.Object({ error: Type.String() }) },
+        },
+      }, async (request, reply) => {
+        const relation = faRelations.confirm(request.params.id, request.body.confirmedBy ?? "user");
+        if (!relation) return reply.code(404).send({ error: "fa_relation_not_found" });
+        // employed_by 确认 → 联动落 fa_positions（结构化任职档案；人物/机构 Room 齐备时）
+        if (relation.type === "employed_by" && relation.subjectRoomId && relation.objectRoomId) {
+          try {
+            service.upsertPosition({
+              personRoomId: relation.subjectRoomId,
+              institutionRoomId: relation.objectRoomId,
+              ...(relation.title ? { title: relation.title } : {}),
+              ...(relation.fromYear != null ? { fromYear: relation.fromYear } : {}),
+              ...(relation.toYear != null ? { toYear: relation.toYear } : {}),
+              ...(relation.sourceKind ? { sourceKind: relation.sourceKind } : {}),
+              ...(relation.sourceId ? { sourceId: relation.sourceId } : {}),
+            });
+          } catch { /* 联动失败不回滚确认；任职可在档案面板手动补 */ }
+        }
+        const dto = faRelations.listByIds([relation.id])[0] ?? null;
+        if (!dto) return reply.code(404).send({ error: "fa_relation_not_found" });
+        return { ...dto, createdAt: dto.createdAt.toISOString() };
+      });
+
+      app.post("/v1/fa/relations/:id/dismiss", {
+        schema: {
+          tags: ["fa"],
+          params: IdParams,
+          response: { 200: FaRelationDtoSchema, 404: Type.Object({ error: Type.String() }) },
+        },
+      }, async (request, reply) => {
+        const relation = faRelations.dismiss(request.params.id);
+        if (!relation) return reply.code(404).send({ error: "fa_relation_not_found" });
+        const dto = faRelations.listByIds([relation.id])[0] ?? null;
+        if (!dto) return reply.code(404).send({ error: "fa_relation_not_found" });
+        return { ...dto, createdAt: dto.createdAt.toISOString() };
+      });
+    }
   };
 }

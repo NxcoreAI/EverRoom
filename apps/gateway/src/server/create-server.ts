@@ -2316,7 +2316,9 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // FA 机构档案 + 已核事实（fa-industry-iteration 第一批）。fa-archive 全部
   // 读写网关本地表（fa_* / room_entity_facts），不依赖外部 knowledge 服务，
   // 与控制台一样放开 knowledge 门控——独立 `pnpm dev` 网关也能跑 FA 全链。
-  await app.register(faArchiveRoutes(db));
+  // faRelationStore 语义关系队列随 knowledgeService 常驻构建（fa-relations
+  // 也只写本地表，router 关闭时队列空转、无害）。
+  await app.register(faArchiveRoutes(db, knowledgeService.faRelationStore));
   // FA 全阶段分析控制台：节点注册表 + 模板纯读 + Room/事实流。只读网关本地
   // 表（rooms/room_entity_facts）与 bp-template 配置库，不依赖外部 knowledge
   // 服务，因此不做 knowledge 门控——独立 `pnpm dev` 网关也能用控制台。

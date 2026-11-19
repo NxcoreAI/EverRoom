@@ -8,10 +8,12 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { GatewayDatabase } from "../../infrastructure/database/client.js";
 import {
+  entities,
   faFunds,
   faInvestments,
   faPositions,
   faMeetingFeedbacks,
+  faRelations,
   roomEntityFacts,
   rooms,
 } from "../../infrastructure/database/schema.js";
@@ -43,6 +45,8 @@ export interface FaMeetingBrief {
   pendingReopenConditions: string[];
   /** 项目房的已核事实（grade=fact，路演素材底稿；≤20 条）。 */
   verifiedProjectFacts: string[];
+  /** 已确认的介绍路径（fa_relations introduced_by；会前"谁引荐"）。 */
+  introPaths: Array<{ introducer: string; note: string | null }>;
 }
 
 export function buildMeetingBrief(db: GatewayDatabase, input: FaMeetingBriefInput): FaMeetingBrief {
@@ -106,6 +110,20 @@ export function buildMeetingBrief(db: GatewayDatabase, input: FaMeetingBriefInpu
     .orderBy(desc(roomEntityFacts.createdAt)).limit(20).all()
     .map((r) => r.content);
 
+  // 已确认的介绍路径：项目 → 介绍人（introduced_by 的 object 是人物实体）
+  const introPaths = db.select({
+    introducer: entities.name,
+    note: faRelations.evidence,
+  }).from(faRelations)
+    .innerJoin(entities, eq(entities.id, faRelations.objectEntityId))
+    .where(and(
+      eq(faRelations.type, "introduced_by"),
+      eq(faRelations.status, "confirmed"),
+      eq(faRelations.subjectRoomId, projectRoomId),
+      isNull(faRelations.deletedAt),
+    ))
+    .limit(5).all();
+
   return {
     institution: institution ?? { id: institutionRoomId, title: "" },
     funds,
@@ -116,5 +134,6 @@ export function buildMeetingBrief(db: GatewayDatabase, input: FaMeetingBriefInpu
     personSignals,
     pendingReopenConditions,
     verifiedProjectFacts,
+    introPaths,
   };
 }

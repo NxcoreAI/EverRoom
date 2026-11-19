@@ -32,6 +32,7 @@ import {
 } from "./entity-registry.js";
 import { embeddingInputText, nearestByCentroid, type EmbeddingClient } from "./embedding.js";
 import type { DocEnvelope } from "./envelope.js";
+import { FaRelationStore } from "./fa-relations.js";
 import { KnowledgeLlm } from "./llm.js";
 import type { ExtractedEntity } from "./llm.js";
 
@@ -52,6 +53,8 @@ export interface RouterDeps {
   thresholds: RouterThresholds;
   /** M3 注入点：知识整理偏好摘要提供者（注入开关关闭时返回空串=不注入）。 */
   preferenceDigest?: () => string;
+  /** FA 语义关系候选落库（fa-relations store；未注入=关闭该链路）。 */
+  faRelations?: FaRelationStore;
   logger: {
     info(bindings: Record<string, unknown>, message: string): void;
     warn(bindings: Record<string, unknown>, message: string): void;
@@ -322,6 +325,37 @@ export class KnowledgeRouter {
         return entityId ? [entityId] : [];
       }),
     }));
+
+    // ── FA 语义关系候选（工作项一：实体名 → 已解析 id，落待确认队列）
+    if (this.deps.faRelations && extraction.relations.length > 0) {
+      const relationCandidates = extraction.relations.flatMap((relation) => {
+        const subjectEntityId = factEntityIds.get(relation.subject);
+        const objectEntityId = factEntityIds.get(relation.object);
+        if (!subjectEntityId || !objectEntityId) return []; // 端点实体未注册（含用户 pinned）则丢弃
+        return [{
+          type: relation.type,
+          subjectEntityId,
+          objectEntityId,
+          ...(relation.title ? { title: relation.title } : {}),
+          ...(relation.from != null ? { fromYear: relation.from } : {}),
+          ...(relation.to != null ? { toYear: relation.to } : {}),
+          ...(relation.round ? { round: relation.round } : {}),
+          ...(relation.role ? { role: relation.role } : {}),
+          sourceKind: envelope.ref.kind,
+          sourceId: envelope.ref.id,
+          evidence: relation.evidence,
+        }];
+      });
+      try {
+        this.deps.faRelations.ingestCandidates(relationCandidates);
+      } catch (error) {
+        // 候选落库失败不阻塞主路由（关系是增量价值，路由归属是主干）
+        this.deps.logger.warn(
+          { event: "knowledge.fa.relation_ingest_failed", sourceId: envelope.ref.id, error: String(error) },
+          "FA 关系候选落库失败（不阻塞路由）",
+        );
+      }
+    }
 
     const updatedEntities = new Map(this.deps.registry.replaceResolutionLinks(
       envelope.ref.kind,

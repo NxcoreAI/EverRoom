@@ -20,4 +20,13 @@ description: Extract searchable entities and a concise summary from a document f
 
 content 含关键数字时，尽量给 numeric 对象：`{"value":数字,"unit":"单位","period":"口径期间如2025H1","currency":"币种如CNY","audited":是否经审计}`；没有数字或不确定就不给。
 
-只输出：`{"summary":"不超过300字的资料概括","entities":[{"name":"...","kind":"人物|项目|机构|主题|长期目标|议题|事件","salience":0.9,"evidence":"..."}],"facts":[{"content":"...","type":"属性|关系","grade":"fact|analysis|forecast|opinion|unknown","numeric":{"value":1.2,"unit":"亿元","period":"2025H1"},"entities":["..."]}]}`。
+再抽取实体间的**结构化关系**（FA 业务关系，可选段）。只收五类，全部要有资料原句支撑，宁缺毋滥：
+- `founder_of`（创始人/联合创始人）：subject=人物，object=项目；
+- `employed_by`（任职）：subject=人物，object=机构或项目，title 记职位，from/to 记年份（资料只说"至今"则 to 省略）；
+- `invested_in`（投资）：subject=机构或人物，object=项目，round 记轮次（如"B轮"），role 为 lead/co_follow，票面拿不准就不给；
+- `introduced_by`（介绍）：subject=项目或人物，object=人物（介绍人）；
+- `partner_of`（合作/同事）：subject=人物，object=人物。
+
+关系硬规则：subject/object 必须都在 entities 数组里（引用规范名）；方向必须按上面定义，不得反向；头衔≠任职（"创始人"头衔应抽 founder_of）；每份资料最多 5 条关系，重复出现的关系只留一条；拿不准方向或类型就丢弃，不猜。
+
+只输出：`{"summary":"不超过300字的资料概括","entities":[{"name":"...","kind":"人物|项目|机构|主题|长期目标|议题|事件","salience":0.9,"evidence":"..."}],"facts":[{"content":"...","type":"属性|关系","grade":"fact|analysis|forecast|opinion|unknown","numeric":{"value":1.2,"unit":"亿元","period":"2025H1"},"entities":["..."]}],"relations":[{"type":"founder_of","subject":"沈屿","object":"星析科技","title":"CEO","from":2019,"round":null,"role":null,"evidence":"沈屿于2019年创立星析科技"}]}`。relations 可省略或为空数组。

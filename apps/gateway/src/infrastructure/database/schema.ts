@@ -2103,6 +2103,75 @@ export const faPositions = sqliteTable(
 );
 
 /**
+ * FA 实体级语义关系（fa-industry-iteration 工作项一：语义关系自动抽取）。
+ * 与 room_relations（房级共现统计）互补：本表是实体间的业务三元组，
+ * 由 entity-extraction 抽出、经实体解析落到已注册实体上，确认制入档。
+ * subject/object 两端实体晋升为 Room 后，可投影为房图谱的类型化边。
+ */
+export const faRelations = sqliteTable(
+  "fa_relations",
+  {
+    id: text("id").primaryKey(),
+    /** 关系类型（与 room_relations.manualType 的 FA 子集对齐，另加 partner_of）。 */
+    type: text("type", {
+      enum: ["founder_of", "employed_by", "invested_in", "introduced_by", "partner_of"],
+    }).notNull(),
+    /** subject 实体 id（entities 表引用；晋升后回填 roomId）。 */
+    subjectEntityId: text("subject_entity_id").notNull(),
+    /** object 实体 id。 */
+    objectEntityId: text("object_entity_id").notNull(),
+    /** subject 晋升后的 Room id（可空：实体未晋升）。 */
+    subjectRoomId: text("subject_room_id"),
+    /** object 晋升后的 Room id。 */
+    objectRoomId: text("object_room_id"),
+    /** 职位/头衔（employed_by/founder_of）。 */
+    title: text("title"),
+    /** 起始年。 */
+    fromYear: integer("from_year"),
+    /** 止年（null = 在任/至今）。 */
+    toYear: integer("to_year"),
+    /** 投资轮次（invested_in）。 */
+    round: text("round"),
+    /** 领投/跟投（invested_in）。 */
+    role: text("role", { enum: ["lead", "co_follow"] }),
+    /** 首见来源（抽取时的资料引用）。 */
+    sourceKind: text("source_kind"),
+    sourceId: text("source_id"),
+    /** 原句支撑（可解释性）。 */
+    evidence: text("evidence"),
+    /** 待确认队列：pending → confirmed / dismissed；确认制对齐 FA 三表。 */
+    status: text("status", { enum: ["pending", "confirmed", "dismissed"] })
+      .notNull()
+      .default("pending"),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+    /** 确认后投影的房关系 id（回填，避免重复投影）。 */
+    roomRelationId: text("room_relation_id"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [
+    index("fa_relations_subject_idx").on(table.subjectEntityId),
+    index("fa_relations_object_idx").on(table.objectEntityId),
+    index("fa_relations_status_idx").on(table.status),
+    index("fa_relations_subject_room_idx").on(table.subjectRoomId),
+    index("fa_relations_object_room_idx").on(table.objectRoomId),
+    // 同 type+subject+object 去重（首轮插入确定；重复候选靠指纹跳过）
+    uniqueIndex("fa_relations_triple_idx").on(
+      table.type,
+      table.subjectEntityId,
+      table.objectEntityId,
+    ),
+  ],
+);
+
+/**
  * FA 会后反馈（fa-industry-iteration 工作项三）：一场会议的结构化整理与
  * 三路待确认变更（项目/人物/机构）。确认制核心：AI 只产建议，未确认的
  * 变更不回写档案；反馈结论用统一分类，拒绝必须带标准原因与可重启条件。

@@ -1671,5 +1671,9 @@
   "thesisFormat.reformat": "排版",
   "thesisFormat.reformatting": "排版中…",
   "thesisFormat.reformatFailed": "论文排版失败",
-  "thesisFormat.reformatDone": "论文排版完成"
+  "thesisFormat.reformatDone": "论文排版完成",
+  "relations.type.employed_by": "任职",
+  "relations.type.invested_in": "投资",
+  "relations.type.founder_of": "创始",
+  "relations.type.introduced_by": "介绍"
 }
