@@ -16,6 +16,7 @@ import type { FormatMappingService } from "../connectors/format-mapping-service.
 import type { ConnectorManager } from "@nxcore/connectors-module/manager.js";
 import type { DiaryAgentGenerator } from "../diary/agent-generator.js";
 import { createWebSearchPiTools } from "./web-search-tools.js";
+import { createKeenableWebSearchPiTools } from "./keenable-web-search-tools.js";
 import { createLiteDelegatePiTools } from "./lite-delegate-tools.js";
 import { OpenAiCompletionAgentRuntime } from "./openai-completion-runtime.js";
 import { AgentResolver, BUILTIN_AGENT_IDS, type AgentDefinition } from "./resolver.js";
@@ -148,9 +149,11 @@ function createUserFacingRuntime(
       ...(config.cliConnector?.baseUrl
         ? createOpenConnectorPiTools(config.cliConnector, undefined, knowledge?.externalCalls)
         : []),
-      ...(config.webSearch && knowledge?.agentResolver
-        ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
-        : []),
+      ...(config.keenableWebSearch
+        ? createKeenableWebSearchPiTools(config.keenableWebSearch, knowledge?.externalCalls)
+        : config.webSearch && knowledge?.agentResolver
+          ? createWebSearchPiTools(knowledge.agentResolver, knowledge.externalCalls)
+          : []),
       // Smart 档专属：轻量模型可用时才暴露委派工具（primary/lite 档不挂）。
       ...(liteDelegate && knowledge?.agentResolver && isPiRuntimeConfigured(config.litePi)
         ? createLiteDelegatePiTools(knowledge.agentResolver)
