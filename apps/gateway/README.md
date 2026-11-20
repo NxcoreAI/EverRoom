@@ -20,6 +20,10 @@ the name `gateway.YYYY-MM-DD.N.log`. The active file is rolled at midnight and
 
 In production Electron should generate a fresh high-entropy token, start the gateway with `--port 0 --token <token>`, and wait for the runtime manifest before loading application data.
 
+## Web search
+
+With the Pi runtime configured, set `NXCORE_WEB_SEARCH_PROVIDER=keenable` in the Gateway environment and restart it to use [Keenable](https://docs.keenable.ai/api-reference/search) for the built-in `web_search` tool. It works without an account; set `KEENABLE_API_KEY` to use your own key and limits. Unset it or set it to `dashscope` to keep the existing provider configuration. `NXCORE_WEB_SEARCH=false` turns web search off for both. When Keenable is selected, the agent's search queries are sent to `https://api.keenable.ai`.
+
 ## Alibaba Cloud ASR
 
 Long-recording ASR is disabled by default. Users enable it with their own Alibaba Cloud Model Studio credentials:

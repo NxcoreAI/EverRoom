@@ -399,6 +399,35 @@ describe("loadConfig", () => {
     });
   });
 
+  it("enables keyless Keenable web search only when selected", () => {
+    const env = {
+      NXCORE_AGENT_RUNTIME: "pi",
+      NXCORE_AI_PROVIDER: "openai",
+      NXCORE_AI_MODEL: "gpt-main",
+      NXCORE_AI_BASE_URL: "https://api.openai.com/v1",
+      NXCORE_AI_API_KEY: "main-model-key",
+    };
+    expect(loadConfig(["--token", "0123456789abcdef"], env).keenableWebSearch).toBeNull();
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      ...env,
+      NXCORE_WEB_SEARCH_PROVIDER: "keenable",
+    }).keenableWebSearch).toEqual({});
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      ...env,
+      NXCORE_WEB_SEARCH_PROVIDER: "keenable",
+      KEENABLE_API_KEY: "keenable-key",
+    }).keenableWebSearch).toEqual({ apiKey: "keenable-key" });
+    expect(loadConfig(["--token", "0123456789abcdef"], {
+      ...env,
+      NXCORE_WEB_SEARCH_PROVIDER: "keenable",
+      NXCORE_WEB_SEARCH: "false",
+    }).keenableWebSearch).toBeNull();
+    expect(() => loadConfig(["--token", "0123456789abcdef"], {
+      ...env,
+      NXCORE_WEB_SEARCH_PROVIDER: "unknown",
+    })).toThrow();
+  });
+
   it("rejects incomplete or unsafe Aliyun ASR configuration", () => {
     expect(() => loadConfig(["--token", "0123456789abcdef"], {
       NXCORE_ASR_PROVIDER: "aliyun",

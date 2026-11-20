@@ -94,6 +94,8 @@ const RawConfigSchema = Type.Object(
     webSearchBaseUrl: Type.String(),
     webSearchModel: Type.String({ minLength: 1 }),
     webSearchApiKey: Type.String(),
+    webSearchProvider: Type.Union([Type.Literal("dashscope"), Type.Literal("keenable")]),
+    keenableApiKey: Type.String(),
     asrProvider: AsrProviderSchema,
     asrAliyunApiKey: Type.String(),
     asrAliyunBaseUrl: Type.String(),
@@ -191,6 +193,11 @@ export interface WebSearchConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
+}
+
+/** Keenable 联网搜索；apiKey 为空时走免密钥 public 端点。 */
+export interface KeenableWebSearchConfig {
+  apiKey?: string;
 }
 
 export interface PiRuntimeConfig {
@@ -360,6 +367,8 @@ export interface GatewayConfig {
   mcpConfigPath: string;
   /** 百炼（DashScope）联网搜索工具配置；null 时 agent 不提供 web_search。 */
   webSearch: WebSearchConfig | null;
+  /** NXCORE_WEB_SEARCH_PROVIDER=keenable 时由 Keenable 提供 web_search，不覆盖已保存的百炼配置。 */
+  keenableWebSearch?: KeenableWebSearchConfig | null;
   vlm?: VlmConfig | null;
   asrInputDir: string;
   asr: AliyunAsrConfig | null;
@@ -793,6 +802,8 @@ export function loadConfig(
     webSearchBaseUrl: env.NXCORE_WEB_SEARCH_BASE_URL?.trim()
       ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
     webSearchModel: env.NXCORE_WEB_SEARCH_MODEL?.trim() ?? "qwen-plus",
+    webSearchProvider: env.NXCORE_WEB_SEARCH_PROVIDER?.trim() || "dashscope",
+    keenableApiKey: env.KEENABLE_API_KEY?.trim() ?? "",
     webSearchApiKey: env.NXCORE_WEB_SEARCH_API_KEY?.trim()
       ?? env.DASHSCOPE_API_KEY?.trim()
       ?? env.NXCORE_ASR_ALIYUN_API_KEY?.trim()
@@ -1308,6 +1319,9 @@ export function loadConfig(
           apiKey: rawConfig.webSearchApiKey,
           model: rawConfig.webSearchModel,
         }
+      : null,
+    keenableWebSearch: pi && rawConfig.webSearchEnabled && rawConfig.webSearchProvider === "keenable"
+      ? (rawConfig.keenableApiKey ? { apiKey: rawConfig.keenableApiKey } : {})
       : null,
     vlm: rawConfig.vlmBaseUrl && rawConfig.vlmApiKey && rawConfig.vlmModel
       ? { baseUrl: rawConfig.vlmBaseUrl, apiKey: rawConfig.vlmApiKey, model: rawConfig.vlmModel }
