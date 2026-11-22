@@ -44,6 +44,11 @@ export class IngestGatewayBridge {
     return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/reinstate`, { method: 'POST' })
   }
 
+  /** 台账事件级手动删除：级联清记忆/知识归属 + 台账软删（邮件类数据的删除入口）。 */
+  deleteEvent(eventId: string): Promise<{ deleted: number }> {
+    return this.request(`/v1/ingest/${encodeURIComponent(eventId)}`, { method: 'DELETE' })
+  }
+
   /** 事件归一化产物全文（台账详情查看——被过滤条目"到底拦了什么"）。 */
   getEventContent(eventId: string): Promise<{ markdown: string; parsedAt: string }> {
     return this.request(`/v1/ingest/${encodeURIComponent(eventId)}/content`)

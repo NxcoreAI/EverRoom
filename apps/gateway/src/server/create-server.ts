@@ -56,6 +56,8 @@ import { documentOverviewRoutes } from "../modules/documents/overview-routes.js"
 import { documentSectionPreviewRoutes } from "../modules/documents/section-preview-routes.js";
 import { createSelectionRewriteContentResolver } from "../modules/documents/capabilities/selection-rewrite-content.js";
 import { createBuiltinDocumentCapabilityRegistry } from "../modules/documents/capabilities/builtins.js";
+import type { DocumentIllustrationPorts } from "../modules/documents/capabilities/office-plugin.js";
+import { createFileReadPiTool, createFileSearchPiTool } from "../modules/files/pi-tools.js";
 import { SlidesVisualReviewer } from "../modules/slides-visual-review/review.js";
 import { OfficeBridgeClient } from "../modules/documents/capabilities/office-bridge-client.js";
 import { DocumentReadAuthority } from "../modules/documents/capabilities/read-authority.js";
@@ -146,6 +148,8 @@ import { DocumentListSyncWorker } from "../modules/documents/import/list-sync-wo
 import { DocumentHistoryBackfillWorker } from "../modules/ingest/document-history-backfill-worker.js";
 import { loadPolicyOverrides, loadProjectDefaults } from "../modules/ingest/policy.js";
 import { knowledgeRoutes } from "../modules/knowledge/routes.js";
+import { faArchiveRoutes } from "../modules/fa-archive/routes.js";
+import { faConsoleRoutes } from "../modules/fa-console/routes.js";
 import { KnowledgeService } from "../modules/knowledge/service.js";
 import { KnowledgePreferences } from "../modules/knowledge/preferences.js";
 import { KnowledgeLlm } from "../modules/knowledge/llm.js";
@@ -197,6 +201,7 @@ import { SubagentRuntimeManager } from "../modules/subagents/runtime-manager.js"
 import { SubagentOrchestrator } from "../modules/subagents/orchestrator.js";
 import { SlidesProgressTracker } from "../modules/subagents/slides-progress-tracker.js";
 import { createSubagentPiTools, inferMaterialSourcesFromReads } from "../modules/subagents/tools.js";
+import { createBpTemplatePiTool } from "../modules/bp-template/tool.js";
 import { createDocWriterResultValidator } from "../modules/subagents/document-draft.js";
 import { createDocWriterDraftResolver } from "../modules/subagents/doc-writer-content.js";
 import { LocalAgentRuntimeRegistry } from "../modules/local-agents/runtime-registry.js";
@@ -729,6 +734,18 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // Office 桥与视觉复检器共享单实例：office-plugin 工具与 slides-layout-tail 落页尾部共用。
   const officeBridgeClient = config.officeBridge ? new OfficeBridgeClient(config.officeBridge) : null;
   const slidesVisualReviewer = new SlidesVisualReviewer({ vlm: () => createVlmProvider(config) });
+  // Word 配图（word_agent_illustration）：生图走 ai-relay 中转、字节按内容哈希进
+  // 素材对象库（与 PPT 配图同一套 CAS）；materialsService 在更后面创建，getter 惰性取。
+  const illustrationRef: { current: DocumentIllustrationPorts | null } = { current: null };
+  const documentIllustration: DocumentIllustrationPorts = {
+    generate: async (prompt) => {
+      const images = illustrationRef.current;
+      if (!images) throw new Error("illustration_unavailable: 素材服务尚未就绪");
+      const generated = await images.generate(prompt);
+      return { contentHash: generated.contentHash };
+    },
+    read: (contentHash) => illustrationRef.current?.read(contentHash) ?? Promise.resolve(null),
+  };
   // 无模版风格管线依赖 filesService/materials（晚于工具装配创建）：getter 惰性取。
   const slidesStyleDepsRef: { current: SlidesStyleStageDeps | null } = { current: null };
   const documentMcpHost = new DocumentMcpHost(
@@ -755,6 +772,10 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
       // PPT 落页视觉复检：配置 vlm 时启用（内部自带降级）。惰性解析——
       // 设置页保存 vlm 段后 runtime config 热替换，复检无需重启网关即生效。
       slidesVisualReviewer,
+      // 改任意已入库 Word/Excel/PDF：filesService 在更后面创建，惰性取。
+      () => filesService,
+      // Word 配图：宿主生图（ai-relay）+ 素材对象库，一步生成并插入。
+      documentIllustration,
     ),
     documentOperationService,
     (diagnostic) => {
@@ -1159,9 +1180,20 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     return materials.saveImageBlob(buffer, mime);
   }, config.dataDir);
   screenMemoryService.initialize();
+  const filesServiceRef: { current: FilesService | null } = { current: null };
+  const documentUnderstandingRef: { current: DocumentUnderstandingService | null } = { current: null };
   const primaryIntegrations: AgentRuntimeIntegrationOptions = {
     externalCalls,
     tools: [
+      // 当前浏览的 Office 文件正文读取 + 按文件名定位 fileId：filesService 与
+      // documentUnderstanding 都晚于本对象创建，惰性取（office 工具链的读入口）。
+      createFileReadPiTool({
+        files: () => filesServiceRef.current,
+        understanding: () => documentUnderstandingRef.current,
+      }),
+      createFileSearchPiTool({ files: () => filesServiceRef.current }),
+      // BP 赛道模板读取（PPT 直生路径）：主 Agent 写 pptxgenjs 脚本前按赛道取模块骨架。
+      createBpTemplatePiTool(),
       ...createRoomOverviewAgentTools(roomOverviewService),
       ...createScreenMemorySearchPiTools(screenMemoryService),
       ...createDocumentExportPiTools(agentDocumentExportService),
@@ -1508,6 +1540,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   // 文件管理中心（U9 唯一字节入口）：对象库 + uploaded/parsed 登记；
   // 删除级联经钩子回调 knowledge（wiki 清理）与 memory（文档删除）。
   const filesService = new FilesService(db, config.dataDir);
+  filesServiceRef.current = filesService;
   // 论文排版管线：模版解析与装订映射走子代理，渲染走桌面 office-bridge。
   const thesisFormatService = new ThesisFormatService({
     db,
@@ -1520,6 +1553,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   const materialsService = new MaterialsService(db, config.dataDir);
   screenMemoryMaterialsRef.current = materialsService;
   materialsSearchRef.current = materialsService;
+  // Word 配图（word_agent_illustration）与 PPT 配图共用素材对象库：
+  // 生图产物按内容哈希入库，读回字节再插进文档。
+  const illustrationImageGenerator = new SlidesStyleImageGenerator(aiRelaySessions, materialsService);
+  illustrationRef.current = {
+    generate: async (prompt) => {
+      const generated = await illustrationImageGenerator.generateImage({ prompt });
+      return { contentHash: generated.contentHash };
+    },
+    read: (contentHash) => materialsService.readByHash(contentHash),
+  };
   filesService.initializeCatalog();
   // PPT 无模版风格管线装配：生图走 ai-relay 会话、读图走素材按哈希回源、
   // 演示页渲染走桌面 office-bridge 的只渲染端点、VLM 走 runtime vlm 槽位。
@@ -1579,6 +1622,7 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
     createVlmProvider(config),
     config.dataDir,
   );
+  documentUnderstandingRef.current = documentUnderstandingService;
   resolveFileMarkdown = async (fileId) => {
     const deadline = Date.now() + 120_000;
     while (Date.now() <= deadline) {
@@ -2269,6 +2313,16 @@ export async function createServer(config: GatewayConfig, overrides: ServerOverr
   if (config.knowledge) await app.register(knowledgeRoutes(knowledgeService));
   if (config.knowledge) await app.register(emergenceRoutes(emergenceService));
   if (config.knowledge) await app.register(routeMindmapRoutes(routeMindmapService));
+  // FA 机构档案 + 已核事实（fa-industry-iteration 第一批）。fa-archive 全部
+  // 读写网关本地表（fa_* / room_entity_facts），不依赖外部 knowledge 服务，
+  // 与控制台一样放开 knowledge 门控——独立 `pnpm dev` 网关也能跑 FA 全链。
+  // faRelationStore 语义关系队列随 knowledgeService 常驻构建（fa-relations
+  // 也只写本地表，router 关闭时队列空转、无害）。
+  await app.register(faArchiveRoutes(db, knowledgeService.faRelationStore));
+  // FA 全阶段分析控制台：节点注册表 + 模板纯读 + Room/事实流。只读网关本地
+  // 表（rooms/room_entity_facts）与 bp-template 配置库，不依赖外部 knowledge
+  // 服务，因此不做 knowledge 门控——独立 `pnpm dev` 网关也能用控制台。
+  await app.register(faConsoleRoutes(db));
 
   return app;
 }

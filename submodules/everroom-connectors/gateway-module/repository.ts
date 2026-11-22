@@ -55,6 +55,8 @@ export class ConnectorRepository {
     filters?: Record<string, unknown>;
     authMethod?: "nango-oauth" | "api-token" | "webcal-url" | "password" | "manual-import";
     credentialsRef?: string | null;
+    /** 登记为 disabled（云端凭证对账注册：等用户显式启用）。仅影响新建行。 */
+    registerPaused?: boolean;
   }): ConnectorConnection {
     const t = now();
     // 幂等（单槽位顶替语义）：同 (provider, connectionName) 重授权/重连复用既有
@@ -82,9 +84,13 @@ export class ConnectorRepository {
       return this.getConnection(existing.id)!;
     }
     const id = randomUUID();
+    // registerPaused：连接行以 disabled 建立（UI 显示「已停用」，点「启用连接」
+    // 才开始同步）——云端已有凭证的后台对账注册不该默认开同步。
     this.sqlite
       .prepare(
-        "INSERT INTO connector_connections(id,provider,service,connection_name,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        input.registerPaused
+          ? "INSERT INTO connector_connections(id,provider,service,connection_name,filters_json,auth_method,credentials_ref,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'disabled',?,?)"
+          : "INSERT INTO connector_connections(id,provider,service,connection_name,filters_json,auth_method,credentials_ref,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
@@ -172,6 +178,8 @@ export class ConnectorRepository {
     connectionId: string,
     providerScopeId: string,
     displayName: string,
+    /** 以 disabled 建立（云端凭证对账注册：等用户显式启用才开始同步）。已存在的 scope 不动。 */
+    disabled = false,
   ) {
     const found = this.listScopes().find(
       (s) =>
@@ -183,7 +191,9 @@ export class ConnectorRepository {
       t = now();
     this.sqlite
       .prepare(
-        "INSERT INTO sync_scopes(id,connection_id,provider_scope_id,display_name,updated_at) VALUES(?,?,?,?,?)",
+        disabled
+          ? "INSERT INTO sync_scopes(id,connection_id,provider_scope_id,display_name,state,updated_at) VALUES(?,?,?,?, 'disabled',?)"
+          : "INSERT INTO sync_scopes(id,connection_id,provider_scope_id,display_name,updated_at) VALUES(?,?,?,?,?)",
       )
       .run(id, connectionId, providerScopeId, displayName, t);
     return this.getScope(id)!;

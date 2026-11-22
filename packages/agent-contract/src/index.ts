@@ -125,7 +125,28 @@ export interface AgentMessage {
   /** Present for Agent-authored messages; user messages intentionally have no Agent author. */
   authorAgentId?: string | null;
   content: string;
+  /**
+   * 文档批注卡片（Office「AI 修改」队列发出）：存在时用户气泡渲染成
+   * 「原文摘录 + 我的注释」卡片而不是纯文本。content 仍是合并文案（搜索/复制用）。
+   */
+  noteCards?: AgentNoteCard[];
+  /**
+   * 气泡正文（只影响气泡展示）：有批注卡片的消息气泡只显示输入框正文——
+   * 空串＝不渲染气泡（只剩浮在上方、与气泡分离的批注卡片）；缺省回退 content。
+   * content 仍存合并文案（标题/检索/重试语义不变）。
+   */
+  displayContent?: string;
   createdAt: string;
+}
+
+/** 一条文档批注的展示结构（气泡内卡片，只读）。 */
+export interface AgentNoteCard {
+  /** 被批注的原文摘录（选区文本快照）。 */
+  excerpt: string;
+  /** 用户敲的批注原话。 */
+  note: string;
+  /** 来源文件标题（缺省不展示来源行）。 */
+  title?: string;
 }
 
 export interface AgentSessionParticipant {
@@ -256,6 +277,8 @@ export interface SubagentInvocation {
   result: SubagentInvocationResult | null;
   errorCode: string | null;
   errorMessage: string | null;
+  /** 续会话链路：pi 会话 ref（deck 级续跑用；普通一次性调用为 null）。 */
+  runtimeSessionRef?: string | null;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
@@ -531,7 +554,8 @@ export interface SaveContextRoomSnapshotInput {
 
 export interface CreateContextRoomInput {
   title: string;
-  description: string;
+  /** 缺省时网关用标题兜底（极简创建弹窗只填名称）。 */
+  description?: string;
   duplicateOverrideToken?: string;
 }
 
@@ -868,6 +892,13 @@ export interface StartAgentRunInput {
    * 用本字段传用户真正能看懂的一句话。运行时仍只收 prompt；落库消息、会话标题用本字段。
    */
   displayPrompt?: string;
+  /**
+   * 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。
+   * 运行时仍只收 prompt；落库消息带本字段。
+   */
+  displayContent?: string;
+  /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+  noteCards?: AgentNoteCard[];
   idempotencyKey: string;
   /** Stable local Agent installation id selected by an explicit composer mention. */
   targetAgentId?: string;
@@ -899,6 +930,24 @@ export interface StartAgentRunInput {
     /** Explicit UI-confirmed target for a global Agent session. */
     selectedRoomId?: string | null;
     activeDocument?: AgentActiveDocumentContext;
+    /**
+     * 用户当前正在浏览的 Office 文件页签（Word/Excel/PPT/PDF）。
+     * 与 activeDocument（文档内核里的文稿）是两套对象：Office 文件是 file_entries，
+     * 没有 documentId/version，读取正文走 fileId。
+     */
+    activeFile?: AgentActiveFileContext;
+    /**
+     * 当前打开的全部 Office 页签（含焦点项，active=true）。
+     * 让 Agent 知道“一共开着哪些文件”，而不只是用户眼前的这一份。
+     */
+    openFiles?: AgentOpenFileContext[];
+    /**
+     * 文档批注卡片（Office「AI 修改」队列发出）：与 prompt 一起持久化到用户消息，
+     * 渲染层据此把气泡渲染成「原文摘录 + 注释」卡片。运行时只见 prompt。
+     */
+    noteCards?: AgentNoteCard[];
+    /** 批注消息的气泡正文（空＝只有卡片没有气泡）；缺省回退 prompt。 */
+    displayContent?: string;
     /** Files uploaded from the conversation composer and parsed by the unified file engine. */
     attachments?: AgentFileAttachment[];
     /** Read-only imported conversation to use once when this native session starts. */
@@ -1279,6 +1328,23 @@ export interface AgentActiveDocumentContext {
   version: number;
   defaultAnchor: "end";
   cursorAnchorCandidate?: AgentDocumentCursorAnchor;
+}
+
+/** 内嵌 Office 视图的文件形态（与桌面端 OfficePreviewKind 同构）。 */
+export type AgentActiveFileKind = "docx" | "spreadsheet" | "slides" | "pdf" | "markdown";
+
+/** 用户当前正在浏览的 Office 文件（页签）：Agent 感知“这份文档”指谁的最小事实。 */
+export interface AgentActiveFileContext {
+  fileId: string;
+  title: string;
+  kind: AgentActiveFileKind;
+  /** 打开时是否可编辑（只读打开的文件不承诺能改，但可以读正文）。 */
+  editable?: boolean;
+}
+
+/** 当前打开的一个 Office 页签；active = 用户此刻正在看的那一个。 */
+export interface AgentOpenFileContext extends AgentActiveFileContext {
+  active: boolean;
 }
 
 export interface TiptapJsonContent {

@@ -91,8 +91,8 @@ export interface FileImportOutcome {
 /** 手动导入批次的桌面端实时进度。 */
 export interface FileImportProgressEvent {
   batchId: string
-  /** scanning = 目录展开阶段（尚无文件计数，界面应显示「正在扫描目录」而非 0/0）。 */
-  status: 'started' | 'scanning' | 'file-started' | 'file-completed' | 'completed'
+  /** scanning = 目录展开阶段（尚无文件计数，界面应显示「正在扫描目录」而非 0/0）；cancelled = 用户取消（界面收口并提示已取消）。 */
+  status: 'started' | 'scanning' | 'file-started' | 'file-completed' | 'completed' | 'cancelled'
   total: number
   completed: number
   filename: string | null

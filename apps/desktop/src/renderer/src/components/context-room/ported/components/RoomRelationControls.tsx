@@ -19,6 +19,10 @@ export const ROOM_RELATION_TYPES: KnowledgeRoomRelationManualType[] = [
   'supports',
   'blocks',
   'owns',
+  'employed_by',
+  'invested_in',
+  'founder_of',
+  'introduced_by',
   'custom',
 ]
 

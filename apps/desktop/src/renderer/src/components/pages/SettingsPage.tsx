@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   Sparkles,
   Smartphone,
+  Trash2,
   WalletCards,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -42,6 +43,7 @@ import appleLogo from '@/assets/apple-logo.svg'
 import googleLogo from '@/assets/google-logo.svg'
 import { formatLlmUsd, type AiGatewayStatus, type CloudOidcProvider } from '../../../../shared/sources'
 import { ScreenMemorySettingsSection } from '../settings/ScreenMemorySettingsSection'
+import { DataManagementSettingsSection } from '../settings/DataManagementSettingsSection'
 import type { AccountKeyringStatus, CloudDevice, PerceptionSettings, WindowScreenshotStatus } from '../../../../shared/sources'
 import { PageHeader } from './PageHeader'
 import { McpSettingsSection } from '@/components/settings/McpSettingsSection'
@@ -67,6 +69,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'settings-editor', label: 'surface:settings.documentEditing', icon: Sparkles },
   { id: 'settings-interface', label: 'surface:settings.interfaceLanguage', icon: Languages },
   { id: 'settings-update', label: 'surface:settings.navigationUpdate', icon: RefreshCw },
+  { id: 'settings-data-management', label: 'surface:settings.dataManagementTitle', icon: Trash2 },
 ]
 
 type PendingAction = CloudOidcProvider | 'refresh' | 'logout' | 'keyring' | 'sync' | 'admission' | null
@@ -556,6 +559,8 @@ export function SettingsPage({ onStartFullOnboarding }: { onStartFullOnboarding?
       </section>
 
       <UpdateSection />
+
+      <DataManagementSettingsSection />
 
       <ConnectorModeSection />
       <section id="settings-account" className="cloud-account-section settings-anchor-section" aria-labelledby="cloud-account-title">

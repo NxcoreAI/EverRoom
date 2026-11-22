@@ -136,3 +136,51 @@ describe("节点级对比度守门（v2 编译期）", () => {
     expect(JSON.stringify(compile(tree))).toBe(JSON.stringify(compile(tree)));
   });
 });
+
+describe("页面级 stats 帧感知降档", () => {
+  const statsTree = (slot: { col: [number, number]; row: [number, number] }): unknown => ({
+    version: 2, role: "data", composition: "swiss",
+    nodes: [{
+      type: "stats",
+      items: [
+        { value: "63", unit: "万美金", label: "众筹金额" },
+        { value: "774", unit: "名", label: "支持者" },
+      ],
+      slot,
+    }],
+  });
+  const runSize = (elements: SpecElement[]) =>
+    Math.max(...textElements(elements).flatMap(e => e.paragraphs.flatMap(p => p.runs.map(r => r.sizePt ?? 0))));
+
+  it("宽槽保持 h2 大数字", () => {
+    const elements = compile(statsTree({ col: [1, 12], row: [4, 8] }));
+    expect(runSize(elements)).toBe(CONTRACT.theme.typeScale.h2);
+  });
+
+  it("窄槽自动降档到放得下的字号（group 深处的小帧不再必然溢出）", () => {
+    // 复现线上案例：group 切出的 ~330×130px 小帧，h2(32pt) 两行 87px 装不下。
+    const elements = compile({
+      version: 2, role: "cover", composition: "swiss", dark: true,
+      nodes: [{
+        type: "group", direction: "row",
+        slot: { col: [1, 12], row: [5, 8] },
+        children: [{
+          type: "group", direction: "column", weights: [1, 1.1], gapScale: 0.6,
+          children: [
+            { type: "text", token: "body", text: "众筹验证全球付费需求" },
+            { type: "stats", items: [
+              { value: "63", unit: "万美金", label: "众筹金额" },
+              { value: "774", unit: "名", label: "支持者" },
+            ] },
+          ],
+        }],
+      }],
+    });
+    const size = runSize(elements);
+    expect(size).toBeLessThan(CONTRACT.theme.typeScale.h2);
+    // 降档后估算高度必须放得进格子，否则 overflow/overlap 缺陷依旧。
+    const boxes = textElements(elements).filter(e => e.paragraphs.some(p => p.runs.some(r => r.text === "63")));
+    const h2 = CONTRACT.theme.typeScale.h2 * 1.8;
+    expect(boxes.every(box => box.h >= Math.min(h2, size * 1.8 + 30))).toBe(true);
+  });
+});

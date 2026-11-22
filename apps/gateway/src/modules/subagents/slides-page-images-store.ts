@@ -121,4 +121,14 @@ export class SlidesPageImageSessionStore {
       .where(eq(slidesPageImageSessions.id, id))
       .run();
   }
+  /** 最新一条 waiting 会话（不限 draft；上下文压缩把 draft id 冲掉后的兜底）。 */
+  latestWaiting(): SlidesPageImageSessionData | null {
+    const row = this.db.select().from(slidesPageImageSessions)
+      .where(eq(slidesPageImageSessions.stage, "confirm"))
+      .orderBy(desc(slidesPageImageSessions.updatedAt))
+      .limit(1)
+      .get();
+    return row ? toData(row) : null;
+  }
+
 }

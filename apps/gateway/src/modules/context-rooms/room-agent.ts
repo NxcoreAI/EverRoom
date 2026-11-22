@@ -4,7 +4,8 @@ import type { SubagentOrchestrator } from "../subagents/orchestrator.js";
 
 export const CONTEXT_ROOM_AGENT_ID = "context-room";
 
-export const CONTEXT_ROOM_KINDS = ["人物", "项目", "主题", "长期目标", "议题", "事件"] as const;
+/** 渲染器/实体库对齐的七值枚举（FA 行业版新增"机构"）。 */
+export const CONTEXT_ROOM_KINDS = ["人物", "项目", "机构", "主题", "长期目标", "议题", "事件"] as const;
 export type ContextRoomKind = typeof CONTEXT_ROOM_KINDS[number];
 
 // selection-rewrite 已迁往 doc-writer 子 Agent 的 rewrite task

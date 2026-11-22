@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Flag,
+  Landmark,
   MessageSquare,
   Target,
   UserRound,
@@ -17,6 +18,7 @@ export function roomKindIcon(kind: ContextRoomKind): LucideIcon {
   if (kind === '事件') return Zap;
   if (kind === '人物') return UserRound;
   if (kind === '项目') return Target;
+  if (kind === '机构') return Landmark;
   if (kind === '长期目标') return Flag;
   return BookOpen;
 }
@@ -26,6 +28,7 @@ export function roomKindTone(kind: ContextRoomKind) {
   if (kind === '事件') return 'calendar';
   if (kind === '人物') return 'people';
   if (kind === '项目') return 'room';
+  if (kind === '机构') return 'data';
   if (kind === '长期目标') return 'memory';
   return 'document';
 }

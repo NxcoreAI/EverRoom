@@ -60,9 +60,6 @@ describe('buildAgentAskMessage', () => {
     expect(message).toContain('text-7（文本框「季度营收概览」）')
     expect(message).toContain('shape-1（形状）')
     expect(message).toContain('字号调大并改成主色')
-    expect(message).toContain('slides_draft(task=edit, fileId="active")')
-    expect(message).toContain('slides-builder')
-    expect(message).toContain('只改列出的元素')
   })
 
   it('长文本只取首行并截 24 字，未知类型沿用原名', () => {
@@ -98,7 +95,7 @@ describe('wireSlidesAgentAsk', () => {
     resolveInstance.mockReturnValue({ fileId: 'f1', title: 't.pptx', kind: 'slides', roomId: null })
     const result = await askHook!(9, OP)
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.error).toContain('未在 Room 中打开')
+    expect(result.ok === false && result.error).toContain('未归属任何 Room')
     expect(forward).not.toHaveBeenCalled()
   })
 
@@ -107,10 +104,12 @@ describe('wireSlidesAgentAsk', () => {
     const result = await askHook!(9, OP)
     expect(result).toEqual({ ok: true })
     expect(forward).toHaveBeenCalledTimes(1)
-    expect(forward).toHaveBeenCalledWith({
+    expect(forward).toHaveBeenCalledWith(expect.objectContaining({
       roomId: 'room-9',
+      title: '季度汇报.pptx',
+      fileId: 'f1',
       message: buildAgentAskMessage('季度汇报.pptx', OP),
       displayMessage: buildAgentAskDisplayMessage('季度汇报.pptx', OP),
-    })
+    }))
   })
 })

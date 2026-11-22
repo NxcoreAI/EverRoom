@@ -1,9 +1,9 @@
 /**
  * persona 组件（editorial）：人物画像双栏。
  *
- * 左栏：150px 首字徽章/头像 + 强调短规则 + 姓名 32 + 职位（强调色全大写微标签），
- * 整块在卡内垂直居中；右栏：衬线序号 + 要点 18，按行均分并压发丝线，铺满整栏高度；
- * 栏间一条全高竖线承担结构。卡面/内边距/字号全部来自 ComponentSkin。
+ * 左栏：首字徽章/头像 + 姓名 + 职位（强调色全大写微标签），整块在卡内垂直居中；
+ * 右栏：要点按行均分并压发丝线，铺满整栏高度；栏间一条全高竖线承担结构。
+ * 卡面/内边距/字号全部来自 ComponentSkin。
  */
 
 import { padFrame, type Frame } from "../../grid.js";
@@ -13,7 +13,6 @@ import { textElement, type SpecElement } from "../../elements.js";
 import {
   estimateLineHeight,
   estimateLines,
-  estimateTextWidth,
   singleLineBoxHeight,
   textBoxHeight,
 } from "../../text-metrics.js";
@@ -44,8 +43,6 @@ function cardBox(skin: ComponentSkin, frame: Frame, pad: number): Frame {
   return inset > 0 ? padFrame(base, inset) : base;
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
-
 export function expandPersona(
   input: PersonaInput,
   frame: Frame,
@@ -73,14 +70,11 @@ export function expandPersona(
   const nameSize = Math.max(28, Math.min(36, m.title + 2));
   const roleSize = m.label;
   const pointSize = Math.max(18, m.body);
-  const serialSize = Math.min(Math.round(m.serial * 0.62), 30);
-  const ruleH = Math.max(3, Math.round(m.label * 0.24));
-  const ruleW = Math.max(36, Math.round(m.display * 0.32));
 
   const nameLines = estimateLines(input.person.name, nameSize, leftW);
   const nameH = nameLines * estimateLineHeight(nameSize) + 8;
   const roleH = input.person.role ? singleLineBoxHeight(roleSize) : 0;
-  const leftContentH = avatarSize + Math.round(m.tightGap * 1.4) + ruleH + Math.round(m.tightGap * 1.2) + nameH + roleH;
+  const leftContentH = avatarSize + Math.round(m.tightGap * 1.4) + nameH + roleH;
   if (leftContentH > box.h) {
     bad(`${what} 左栏内容高约 ${Math.round(leftContentH)}px 超过 ${Math.round(box.h)}px——精简姓名或加大权重`);
   }
@@ -123,8 +117,6 @@ export function expandPersona(
     );
   }
   y += avatarSize + Math.round(m.tightGap * 1.4);
-  elements.push(skin.accentRule(box, { x: Math.round(box.x), y: Math.round(y), width: ruleW, height: ruleH }));
-  y += ruleH + Math.round(m.tightGap * 1.2);
   elements.push(
     textElement({ x: box.x, y: Math.round(y), w: leftW, h: nameH }, [
       { runs: skin.heading(input.person.name, nameSize, skin.colors.text), align },
@@ -139,10 +131,9 @@ export function expandPersona(
     );
   }
 
-  // 右栏：序号 + 要点，行高均分铺满；行间发丝线。
-  const serialW = Math.max(48, Math.round(estimateTextWidth("00", serialSize)) + Math.round(m.tightGap * 0.9));
-  const textX = rightX + serialW;
-  const textW = Math.max(80, rightW - serialW);
+  // 右栏：要点按行均分铺满；行间发丝线承担分组。
+  const textX = rightX;
+  const textW = Math.max(80, rightW);
   const rowCount = Math.max(1, input.points.length);
   const rowH = Math.floor(box.h / rowCount);
   if (rowH < textBoxHeight(input.points[0] ?? "", pointSize, textW)) {
@@ -152,14 +143,6 @@ export function expandPersona(
     const rowY = box.y + rowH * j;
     const textH = textBoxHeight(point, pointSize, textW);
     const textY = rowY + Math.max(0, Math.round((rowH - textH) / 2));
-    if (rowH > estimateLineHeight(pointSize) * 1.5) {
-      const runs = skin.numeralRun(pad2(j + 1), serialSize, skin.colors.divider, false);
-      if (runs) {
-        elements.push(
-          textElement({ x: rightX, y: textY - 2, w: serialW - Math.round(m.tightGap * 0.5), h: singleLineBoxHeight(serialSize) }, [{ runs }]),
-        );
-      }
-    }
     elements.push(
       textElement({ x: textX, y: textY, w: textW, h: textH }, [
         { runs: skin.body(point, pointSize, skin.colors.text), ...(align === "center" ? { align } : {}) },

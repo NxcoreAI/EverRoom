@@ -3,6 +3,7 @@ import type { AgentModelPreference, AgentNavigationTarget, AgentRoomReference, A
 
 import { AgentChatView } from '@/components/agent/AgentChatView'
 import { AgentComposer } from '@/components/agent/AgentComposer'
+import { NoteQueueChip } from './agent/NoteQueueChip'
 import { AgentSessionSwitcher } from '@/components/agent/AgentSessionSwitcher'
 import { AgentToolbar } from '@/components/agent/AgentToolbar'
 import { WritingStyleInsightBanner } from '@/components/agent/WritingStyleInsightBanner'
@@ -59,6 +60,10 @@ export function AgentPanel({
   navigationRequest,
   sessionRouteRequest,
   askRequest,
+  noteDrafts,
+  onRemoveNoteDraft,
+  onUpdateNoteDraft,
+  noteDraftsSendNonce,
   prefillRequest,
   onPrefillConsumed,
   onNavigate,
@@ -82,7 +87,29 @@ export function AgentPanel({
   roomBackendReady: boolean
   navigationRequest: AgentNavigationRequest | null
   sessionRouteRequest: AgentSessionRouteRequest | null
-  askRequest: { key: string; roomId: string; message: string; displayMessage?: string } | null
+  askRequest: {
+    key: string
+    roomId: string
+    message: string
+    displayMessage?: string
+    noteCards?: Array<{ excerpt: string; note: string; title?: string }>
+  } | null
+  /** Office「AI 修改」待发送批注队列（NoteQueueChip 展示；按 Room 过滤）。 */
+  noteDrafts: Array<{
+    id: string
+    roomId: string
+    fileId?: string
+    title?: string
+    instruction?: string
+    excerpt?: string
+    anchor?: Record<string, unknown>
+    message: string
+    displayMessage?: string
+  }>
+  onRemoveNoteDraft: (id: string) => void
+  onUpdateNoteDraft: (id: string, instruction: string) => void
+  /** 批注队列「全部发送」nonce：变化时把队列合并成一条消息发出。 */
+  noteDraftsSendNonce: number
   /** 统一搜索「加入上下文/交给 Agent」预填：注入文本与可选附件，不自动发送。 */
   prefillRequest: {
     key: string
@@ -549,6 +576,10 @@ export function AgentPanel({
     mentioned: MentionedItem[] = [],
     /** 用户可见文案：prompt 是技术指令时用它渲染气泡/标题。 */
     displayPrompt?: string,
+    /** 文档批注卡片（结构化展示）：存在时气泡按卡片渲染。 */
+    noteCards?: Array<{ excerpt: string; note: string; title?: string }>,
+    /** 气泡正文（批注场景可传空串＝纯批注无气泡）。 */
+    displayContent?: string,
   ) => {
     if ((!prompt.trim() && !citationPrompt && files.length === 0) || !agentAvailable) return
     const mentionedAgents: MentionedAgent[] = mentioned
@@ -636,6 +667,8 @@ export function AgentPanel({
         mentionedAgents,
         mentioned,
         displayPrompt,
+        noteCards,
+        displayContent,
       )
       if (externalConversation) setSelectedExternalConversation(null)
       if (roomCitations.length) onClearRoomCitations()
@@ -767,7 +800,14 @@ export function AgentPanel({
     : session.channelAgentIdDefault
 
   const composer = (
-    <AgentComposer
+    <div className="agent-composer-stack">
+      <NoteQueueChip
+        roomId={roomId}
+        drafts={noteDrafts}
+        onRemove={onRemoveNoteDraft}
+        onUpdate={onUpdateNoteDraft}
+      />
+      <AgentComposer
       ref={composerRef}
       contextSummary={contextSummary}
       contextItems={citationItems}
@@ -803,8 +843,30 @@ export function AgentPanel({
       onClearContext={onClearRoomCitations}
       onRemoveContext={onRemoveRoomCitation}
       onStop={() => void session.stop()}
-      onSubmit={(files, mentioned) => void sendPrompt(draft, undefined, files, mentioned)}
+      onSubmit={(files, mentioned) => {
+        // 输入框发送时，把当前 Room 的待发送批注一并发出去（批注等价于一条消息）。
+        const drafts = noteDrafts.filter((d) => d.roomId === roomId)
+        const noteCards = drafts.map((draft) => ({
+          excerpt: (draft.excerpt ?? '').replace(/\s+/g, ' ').trim() || '（该批注未选中文字内容）',
+          note: (draft.instruction ?? draft.displayMessage ?? draft.message).trim(),
+          ...(draft.title?.trim() ? { title: draft.title.trim() } : {}),
+        }))
+        if (noteCards.length > 0) {
+          drafts.forEach((draft) => onRemoveNoteDraft(draft.id))
+          const batchMessage = drafts.length === 1
+            ? drafts[0]!.message
+            : `我在打开的文件的 ${drafts.length} 处内容上做了批注，请逐条看原话处理：\n${drafts.map((d, i) => `${i + 1}) ${d.message}`).join('\n')}`
+          const combined = draft.trim() ? `${draft.trim()}\n\n${batchMessage}` : batchMessage
+          const displayBatch = drafts.length === 1
+            ? (drafts[0]!.displayMessage ?? drafts[0]!.message)
+            : `我对这几处做了批注：${drafts.map((d, i) => `${['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩'][i] ?? `(${i + 1})`} ${(d.displayMessage ?? d.message).replace(/[。.]$/, '')}`).join(' ')}`
+          const displayCombined = draft.trim() ? `${draft.trim()} ${displayBatch}` : displayBatch
+          return void sendPrompt(combined, undefined, files, mentioned, displayCombined, noteCards, draft.trim() ? draft.trim() : '')
+        }
+        return void sendPrompt(draft, undefined, files, mentioned)
+      }}
     />
+    </div>
   )
 
   return (

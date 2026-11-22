@@ -133,7 +133,39 @@ export function App() {
   const [agentNavigationRequest, setAgentNavigationRequest] = useState<AgentNavigationRequest | null>(null)
   const [agentSessionRouteRequest, setAgentSessionRouteRequest] = useState<AgentSessionRouteRequest | null>(null)
   // displayMessage：给用户看的人话；message 仍是交给 Agent 的完整指令（不渲染成用户气泡）。
-  const [agentAskRequest, setAgentAskRequest] = useState<{ key: string; roomId: string; message: string; displayMessage?: string } | null>(null)
+  const [agentAskRequest, setAgentAskRequest] = useState<{
+    key: string
+    roomId: string
+    message: string
+    displayMessage?: string
+    /** 批注消息的结构化卡片（气泡渲染用；普通转发消息无）。 */
+    noteCards?: Array<{ excerpt: string; note: string; title?: string }>
+  } | null>(null)
+  /** Office「AI 修改」待发送批注队列（选区浮层攒批）：NoteQueueChip 展示/编辑/移除。 */
+  const [agentNoteDrafts, setAgentNoteDrafts] = useState<Array<{
+    id: string
+    roomId: string
+    fileId?: string
+    title?: string
+    instruction?: string
+    excerpt?: string
+    anchor?: Record<string, unknown>
+    message: string
+    displayMessage?: string
+  }>>([])
+  const agentAskDraftsNonceRef = useRef(0)
+  const [agentAskDraftsNonce, setAgentAskDraftsNonce] = useState(0)
+  const requestAgentAskDraftsSend = useCallback(() => {
+    agentAskDraftsNonceRef.current += 1
+    setAgentAskDraftsNonce(agentAskDraftsNonceRef.current)
+  }, [])
+  const removeAgentNoteDraft = useCallback((id: string) => {
+    setAgentNoteDrafts((drafts) => drafts.filter((draft) => draft.id !== id))
+  }, [])
+  const updateAgentNoteDraft = useCallback((id: string, instruction: string) => {
+    setAgentNoteDrafts((drafts) => drafts.map((draft) => (draft.id === id ? { ...draft, instruction } : draft)))
+  }, [])
+
   const [searchOpen, setSearchOpen] = useState(false)
   const [agentPrefillRequest, setAgentPrefillRequest] = useState<{
     key: string
@@ -754,6 +786,25 @@ export function App() {
       if (room) openContextRoomTab(room)
       else activateContextRoomTab(payload.roomId)
       setAgentOpen(true)
+      // 'queue' = 攒成批注（选区浮层提交）：先收进待发送清单（NoteQueueChip
+      // 展示），用户一次全发；缺省 = 立即发送。
+      if (payload.mode === 'queue') {
+        setAgentNoteDrafts((drafts) => [
+          ...drafts,
+          {
+            id: `ask-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            roomId: payload.roomId,
+            fileId: payload.fileId ?? undefined,
+            title: payload.title ?? undefined,
+            instruction: payload.instruction ?? undefined,
+            excerpt: payload.excerpt ?? undefined,
+            anchor: payload.anchor as Record<string, unknown> | undefined,
+            message: payload.message,
+            displayMessage: payload.displayMessage ?? undefined,
+          },
+        ])
+        return
+      }
       setAgentAskRequest({
         key: `agent-ask-${Date.now()}`,
         roomId: payload.roomId,
@@ -762,6 +813,50 @@ export function App() {
       })
     })
   }, [activateContextRoomTab, availableContextRooms, openContextRoomTab])
+
+  // 批注队列事实只有渲染层：把当前队列按 fileId 分组下发给主进程，转发进
+  // 对应文件的编辑器视图（文档内锚点/面板据此渲染；空数组 = 清空锚点）。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.syncAskQueue) return
+    const byFile = new Map<string, Array<{
+      id: string
+      instruction: string
+      excerpt?: string
+      anchor?: Record<string, unknown>
+    }>>()
+    for (const draft of agentNoteDrafts) {
+      if (!draft.fileId) continue
+      const list = byFile.get(draft.fileId) ?? []
+      list.push({
+        id: draft.id,
+        instruction: draft.instruction ?? draft.displayMessage ?? draft.message,
+        ...(draft.excerpt ? { excerpt: draft.excerpt } : {}),
+        ...(draft.anchor ? { anchor: draft.anchor } : {}),
+      })
+      byFile.set(draft.fileId, list)
+    }
+    for (const [fileId, items] of byFile) office.syncAskQueue({ fileId, items })
+  }, [agentNoteDrafts])
+
+  // 编辑器内批注面板动作（全部发送 / 移除 / 改写）→ 更新渲染层队列事实。
+  useEffect(() => {
+    const office = window.nxcore?.office
+    if (!office?.onAskQueueAction) return
+    return office.onAskQueueAction((event) => {
+      if (event.action.kind === 'send-all') {
+        requestAgentAskDraftsSend()
+        return
+      }
+      if (event.action.kind === 'remove') {
+        removeAgentNoteDraft(event.action.draftId)
+        return
+      }
+      if (event.action.kind === 'update') {
+        updateAgentNoteDraft(event.action.draftId, event.action.instruction)
+      }
+    })
+  }, [removeAgentNoteDraft, updateAgentNoteDraft, requestAgentAskDraftsSend])
 
   // 产物库「新建 Office」：经 Room 会话派发生成请求（自动展开对应 Room 会话）。
   useEffect(() => {
@@ -1165,6 +1260,10 @@ export function App() {
           navigationRequest={agentNavigationRequest}
           sessionRouteRequest={agentSessionRouteRequest}
           askRequest={agentAskRequest}
+          noteDrafts={agentNoteDrafts}
+          onRemoveNoteDraft={removeAgentNoteDraft}
+          onUpdateNoteDraft={updateAgentNoteDraft}
+          noteDraftsSendNonce={agentAskDraftsNonce}
           prefillRequest={agentPrefillRequest}
           onPrefillConsumed={() => setAgentPrefillRequest(null)}
           onAskConsumed={(key) => setAgentAskRequest((current) => current?.key === key ? null : current)}

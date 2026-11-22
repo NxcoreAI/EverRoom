@@ -25,6 +25,8 @@ export interface ConnectorConnectionInput {
   service: string
   connectionName: string
   filters?: Record<string, unknown>
+  /** 登记但不启用：scope 以 disabled 建立、不触发首同步（云端凭证对账注册用）。 */
+  registerPaused?: boolean
 }
 
 export interface ConnectorMailQuery {

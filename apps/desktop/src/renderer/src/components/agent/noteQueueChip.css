@@ -1,0 +1,151 @@
+/* Office「AI 修改」待发送批注徽章：EverRoom 版样式（无 --ui-* token 体系，
+   用 AgentChat 同源的 muted/text/border 变量）。 */
+.wb-note-chip {
+  position: relative;
+  flex: none;
+  align-self: flex-start;
+  margin: 0 0 4px;
+}
+
+.wb-note-chip-pill {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--muted, #7b8088);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.wb-note-chip-pill svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+}
+.wb-note-chip-pill:hover,
+.wb-note-chip[data-open='true'] .wb-note-chip-pill {
+  border-color: var(--border-strong, #98a2b3);
+  color: var(--text, #17191d);
+}
+.wb-note-chip-pill:focus-visible { outline: 2px solid rgba(0, 0, 0, 0.2); outline-offset: 2px; }
+
+/* 浮层卡片：输入框在徽章正下方——浮层向上翻（bottom 锚定），不盖输入框。 */
+.wb-note-chip-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 300px;
+  max-width: calc(100vw - 48px);
+  padding: 6px;
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.14);
+}
+[data-theme='dark'] .wb-note-chip-popover { background: #1d2127; border-color: #3a4048; }
+
+.wb-note-chip-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 最多同时露出 4 张卡片，更多滚动。 */
+  max-height: calc(62px * 4 + 6px);
+  overflow-y: auto;
+}
+
+.wb-note-chip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+.wb-note-chip-item:hover { background: rgba(127, 127, 127, 0.1); }
+
+.wb-note-chip-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 原文摘录：灰色小字（截断到一行），先于评论出现 */
+.wb-note-chip-excerpt {
+  color: var(--muted, #7b8088);
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 我的评论：正文色；限两行封顶（长评论截断），保证卡片行高稳定。 */
+.wb-note-chip-note {
+  color: var(--text, #17191d);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  cursor: text;
+}
+
+.wb-note-chip-edit {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong, #98a2b3);
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--text, #17191d);
+  background: transparent;
+}
+
+/* 行尾动作：hover 才出现（铅笔改写 / 垃圾桶删除） */
+.wb-note-chip-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.wb-note-chip-item:hover .wb-note-chip-actions,
+.wb-note-chip-item:focus-within .wb-note-chip-actions { opacity: 1; }
+
+.wb-note-chip-iconbtn {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted, #7b8088);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.wb-note-chip-iconbtn svg {
+  width: 12px;
+  height: 12px;
+}
+.wb-note-chip-iconbtn:hover { background: rgba(127, 127, 127, 0.15); color: var(--text, #17191d); }
+
+.wb-note-chip-hint {
+  padding: 4px 6px 2px;
+  color: var(--muted, #7b8088);
+  font-size: 10.5px;
+}

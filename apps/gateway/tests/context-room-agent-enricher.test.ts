@@ -90,6 +90,10 @@ describe('Context Room Agent enrichment parsing', () => {
     })
   })
 
+  it('accepts the FA institution room kind (机构)', () => {
+    expect(parseContextRoomEnrichment('{"kind":"机构","facts":[]}', fallback).kind).toBe('机构')
+  })
+
   it('rejects output without a JSON object', () => {
     expect(() => parseContextRoomEnrichment('No structured result', fallback))
       .toThrow('invalid JSON')

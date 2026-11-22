@@ -29,7 +29,17 @@ export const ROOM_RELATION_SCORING_VERSION = 1;
 export const ROOM_RELATION_INDEX_JOB_TYPE = "knowledge.relation-index";
 
 export type RoomRelationVisibility = "active" | "hidden" | "all";
-export type RoomRelationManualType = "related" | "depends_on" | "part_of" | "supports" | "blocks" | "owns" | "custom";
+/** 手动关系类型：通用 + FA 语义（fa-industry-iteration 工作项一）。 */
+export type RoomRelationManualType =
+  | "related" | "depends_on" | "part_of" | "supports" | "blocks" | "owns" | "custom"
+  // FA：人物任职于机构（manualNote 记角色与时间）
+  | "employed_by"
+  // FA：机构/基金投资了项目
+  | "invested_in"
+  // FA：人物是项目创始人
+  | "founder_of"
+  // FA：经某人介绍（manualNote 记介绍人）
+  | "introduced_by";
 export type RoomRelationStrength = "weak" | "medium" | "strong";
 
 export interface RelationIndexMentionInput {
@@ -43,6 +53,21 @@ export interface RelationIndexFactInput {
   content: string;
   type: "属性" | "关系";
   entityIds: string[];
+  /**
+   * FA 可信度分级（fa-industry-iteration 工作项二）：fact 有来源可核验的事实；
+   * analysis 基于事实的分析；forecast 管理层预测；opinion 主观判断；
+   * unknown 未知。缺省 opinion——未标注不冒充事实。
+   */
+  grade?: "fact" | "analysis" | "forecast" | "opinion" | "unknown";
+  /** 数字元数据：content 含关键数字时由抽取侧尽量填写。 */
+  numeric?: {
+    value?: number;
+    unit?: string;
+    period?: string;
+    currency?: string;
+    audited?: boolean;
+    verifiedBy?: string;
+  };
 }
 
 export interface RelationIndexInput {
@@ -261,6 +286,8 @@ export class RoomRelationRegistry {
             factId: factFingerprint(content),
             content,
             type: fact.type === "关系" ? "关系" : "属性",
+            grade: fact.grade ?? "opinion",
+            numeric: fact.numeric ?? null,
             entityIds,
             sourceKind: input.sourceKind,
             sourceId: input.sourceId,
@@ -538,6 +565,8 @@ export class RoomRelationRegistry {
       factId: factFingerprint(content),
       content,
       type: (input.fact.type === "关系" ? "关系" : "属性") as "属性" | "关系",
+      grade: input.fact.grade ?? "opinion",
+      numeric: input.fact.numeric ?? null,
       entityIds: [...new Set(input.fact.entityIds)].slice(0, 8),
       sourceVersion: input.sourceVersion,
       evidenceGroupKey: membership.evidenceGroupKey,

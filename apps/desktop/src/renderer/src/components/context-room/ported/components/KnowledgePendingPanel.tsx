@@ -16,13 +16,11 @@ import {
   EyeOff,
   RotateCcw,
 } from 'lucide-react';
-import { createVersionedLocalStorageStore } from '@nxcore/migration-kit/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import '../../ContextRoomHomeSkeleton.css';
 
 import { showToast } from '@/state/toast';
-import { useContextRoomState } from '../../ContextRoomStateProvider';
 import { useLocale } from '../../../../i18n/LocaleContext';
 import type { Translate } from '../../../../i18n/LocaleContext';
 import {
@@ -34,12 +32,6 @@ import { localizedUiText } from '../adapters';
 import { waitForKnowledgeEntityPromotion } from '../knowledgePromotion';
 import { UnmatchedDocsSection } from './UnmatchedDocsSection';
 import { ReferenceDialog } from './shared';
-import {
-  ROOM_RECOMMENDATION_RUN_EVENT,
-  type RoomRecommendationRunPayload,
-  type StagedPath,
-  type UploadedFile,
-} from '../roomRecommendationRun';
 import { scheduleRoomMarkdownImport } from '../../knowledgeMarkdownImport';
 
 function promotionPercent(progress: KnowledgePromotionProgressDto): number {
@@ -158,185 +150,6 @@ let knowledgeSnapshotCache: KnowledgeSnapshot | null = null;
  */
 const EVIDENCE_READY_SCORE: Record<'standard' | 'strong', number> = { standard: 2.4, strong: 2.0 };
 
-/** 推荐生成会话轮询节奏：2s 一拍，路由或候选实体任一增长即视为有进度。 */
-const RUN_POLL_INTERVAL_MS = 2_000;
-/**
- * 无进度超时：连续 60 拍（约 2 分钟）路由与候选都无增长才转超时。网关路由
- * 是串行 LLM（实测约 15-20s/个），绝对超时会在积压时误杀仍在推进的会话。
- */
-const RUN_IDLE_TIMEOUT_TICKS = 60;
-/** 快照到轮询的时钟漂移余量：实体 updatedAt 在此窗口内即计入本次会话。 */
-const RUN_TOUCHED_SLACK_MS = 5_000;
-/** 导入断点续传：内容寻址去重让重跑幂等；网络波动自动重试。 */
-const IMPORT_RETRY_ATTEMPTS = 3;
-const IMPORT_RETRY_DELAY_MS = 2_000;
-/** 完成态停留时长：进度条打满 100% 让用户看到收尾，再撤蒙层。 */
-const RUN_DONE_LINGER_MS = 900;
-/** 明细回报上限：计数始终精确，明细最多展示/存储 N 条（防大目录撑爆蒙层与清单）。 */
-const RUN_DETAIL_LIMIT = 20;
-/** 蒙层上每组明细的可见条数（其余折叠为「等 N 项」）。 */
-const RUN_DETAILS_SHOWN = 5;
-
-type SkipReason = 'unsupported_format' | 'pending_review' | 'duplicate';
-
-interface ImportFailureDetail {
-  filename: string;
-  error: string;
-}
-
-interface ImportSkipDetail {
-  filename: string;
-  reason: SkipReason;
-}
-
-/** 三类计数文案（成功/跳过/失败）：只拼接非零段，与旧「已导入 X 项，Y 项失败」文案兼容。 */
-function runImportSummaryText(ok: number, skipped: number, failed: number, t: Translate): string {
-  const segments: string[] = [];
-  if (ok > 0) segments.push(t('contextRoom:creation.countImported', { count: ok }));
-  if (skipped > 0) segments.push(t('contextRoom:creation.countSkipped', { count: skipped }));
-  if (failed > 0) segments.push(t('contextRoom:creation.countFailed', { count: failed }));
-  return segments.join(t('contextRoom:creation.countSeparator'));
-}
-
-function skipReasonLabel(reason: SkipReason, t: Translate): string {
-  const keys: Record<SkipReason, string> = {
-    unsupported_format: 'contextRoom:creation.skipReasonUnsupported',
-    pending_review: 'contextRoom:creation.skipReasonReview',
-    duplicate: 'contextRoom:creation.skipReasonDuplicate',
-  };
-  return t(keys[reason]);
-}
-
-/** 创建弹窗提交后的推荐生成会话：导入 → 路由 → 证据累积，整卡蒙层展示进度。 */
-interface RecommendationRun {
-  id: number;
-  intent: string | null;
-  paths: StagedPath[];
-  startedAt: number;
-  /** 会话开始前已在推荐池的实体：之后新出现的 ready 实体即本次产出。 */
-  readySnapshot: ReadonlySet<string>;
-  phase: 'importing' | 'routing' | 'accumulating' | 'done' | 'timeout' | 'failed';
-  imported: { completed: number; total: number };
-  /** 主进程正在展开目录（尚无文件计数）：横幅显示「正在扫描目录」而非 0/0。 */
-  scanning: boolean;
-  files: UploadedFile[];
-  /** 导入阶段无法解析的文件数（如扫描版 PDF）：蒙层显性展示，不再静默丢弃。 */
-  failedImports: number;
-  /** 非错误性跳过数：格式不支持 / 高风险待人工确认 / 内容已存在（去重）。 */
-  skippedImports: number;
-  /** 真正新导入的文件数（files 含去重命中的旧文件，计数分账以其为准）。 */
-  okImports: number;
-  /** 逐文件失败原因（截断存储，计数保持精确）。 */
-  failureDetails: ImportFailureDetail[];
-  /** 逐文件跳过原因（截断存储，计数保持精确）。 */
-  skipDetails: ImportSkipDetail[];
-  routed: number;
-  candidates: number;
-  error: string | null;
-}
-
-/** 蒙层进度条刻度：导入 5-30%，解析 30-70%，累积 85%，完成打满 100%。 */
-function runPercentOf(run: RecommendationRun): number {
-  if (run.phase === 'done') return 100;
-  if (run.phase === 'importing') {
-    return run.imported.total > 0
-      ? 5 + 25 * Math.min(1, run.imported.completed / run.imported.total)
-      : 5;
-  }
-  if (run.phase === 'routing') {
-    const total = Math.max(run.files.length, 1);
-    return 30 + 40 * Math.min(1, run.routed / total);
-  }
-  if (run.phase === 'failed') {
-    return run.imported.total > 0
-      ? 5 + 25 * Math.min(1, run.imported.completed / run.imported.total)
-      : 5;
-  }
-  return 85;
-}
-
-/** 后台横幅一行状态摘要：按阶段给一句话，超时按导入/路由分岔。 */
-function runPhaseSummary(run: RecommendationRun, t: Translate): string {
-  if (run.phase === 'failed') return t('contextRoom:creation.runImportFailed');
-  if (run.phase === 'importing') {
-    if (run.scanning) return t('contextRoom:creation.scanning');
-    return run.imported.total > 0
-      ? t('contextRoom:creation.importProgress', { current: run.imported.completed, total: run.imported.total })
-      : t('contextRoom:creation.stepImport');
-  }
-  if (run.phase === 'timeout') {
-    return run.files.length === 0
-      ? t('contextRoom:creation.runImportTimeoutHint')
-      : t('contextRoom:creation.runTimeoutHint');
-  }
-  if (run.phase === 'done') return t('contextRoom:creation.runDone');
-  if (run.phase === 'accumulating') return t('contextRoom:creation.runCandidates', { count: run.candidates });
-  return t('contextRoom:creation.stepRoute');
-}
-
-/** 从 localStorage 恢复未完会话；已完结（timeout/failed）或损坏的清单丢弃。
- *  旧裸 key（无版本后缀）在首次读取时认领为规范 v1 key，裸 key 保留供旧二进制回滚。
- *  落盘形态 readySnapshot 为数组（Set 不可序列化），读取时转回 Set。 */
-type PersistedRun = Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot: string[] }
-
-function adoptPersistedRun(raw: unknown): PersistedRun | null {
-  const parsed = raw as Omit<RecommendationRun, 'readySnapshot'> & { readySnapshot?: unknown };
-  if (!parsed || typeof parsed?.id !== 'number' || !Array.isArray(parsed.paths) || typeof parsed.startedAt !== 'number') {
-    return null;
-  }
-  if (parsed.phase !== 'importing' && parsed.phase !== 'routing' && parsed.phase !== 'accumulating') {
-    return null;
-  }
-  return {
-    ...parsed,
-    failedImports: typeof parsed.failedImports === 'number' ? parsed.failedImports : 0,
-    skippedImports: typeof parsed.skippedImports === 'number' ? parsed.skippedImports : 0,
-    okImports: typeof parsed.okImports === 'number' ? parsed.okImports : 0,
-    scanning: parsed.phase === 'importing' && parsed.scanning !== false,
-    failureDetails: Array.isArray(parsed.failureDetails)
-      ? parsed.failureDetails.filter((item) => item && typeof item.filename === 'string' && typeof item.error === 'string')
-      : [],
-    skipDetails: Array.isArray(parsed.skipDetails)
-      ? parsed.skipDetails.filter((item) => item && typeof item.filename === 'string')
-      : [],
-    readySnapshot: Array.isArray(parsed.readySnapshot)
-      ? parsed.readySnapshot.filter((item): item is string => typeof item === 'string')
-      : [],
-  };
-}
-
-function createRunStore() {
-  return createVersionedLocalStorageStore<PersistedRun | null>({
-    keyBase: 'everroom:room-recommendation-run',
-    version: 1,
-    adoptBaseline: adoptPersistedRun,
-    fallback: null,
-    migrations: [],
-  });
-}
-
-function readPersistedRun(): RecommendationRun | null {
-  try {
-    const persisted = createRunStore().get();
-    return persisted ? { ...persisted, readySnapshot: new Set(persisted.readySnapshot) } : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistRun(run: RecommendationRun | null): void {
-  try {
-    const store = createRunStore();
-    if (run && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating')) {
-      const { readySnapshot, ...rest } = run;
-      store.set({ ...rest, readySnapshot: [...readySnapshot] });
-    } else {
-      store.clear();
-    }
-  } catch {
-    // 存储不可用（隐私模式等）：仅失去重启恢复，会话本体不受影响。
-  }
-}
 
 /**
  * 推荐 Room 面板（entity-room-plan 推荐确认制）：达阈值实体进 ready
@@ -355,7 +168,6 @@ export function KnowledgePendingPanel({
   onOpenCreateRoom: () => void;
 }) {
   const { t } = useLocale();
-  const { refreshFromBackend } = useContextRoomState();
   const [recommended, setRecommended] = useState<KnowledgeEntityDto[]>(
     () => knowledgeSnapshotCache?.recommended ?? [],
   );
@@ -377,7 +189,6 @@ export function KnowledgePendingPanel({
    */
   const [completedFlash, setCompletedFlash] = useState<{ id: string; name: string } | null>(null);
   /** 横幅收起态：关闭≠丢弃——进行中的会话收成小状态点，点开即找回。 */
-  const [runCollapsed, setRunCollapsed] = useState(false);
   const detailSnapshotRef = useRef<{ id: string | null; promoting: boolean; name: string }>({ id: null, promoting: false, name: '' });
   useEffect(() => {
     const snapshot = detailSnapshotRef.current;
@@ -524,340 +335,6 @@ export function KnowledgePendingPanel({
     const timer = window.setInterval(() => void refresh(), 1_000);
     return () => window.clearInterval(timer);
   }, [hasActivePromotion, refresh]);
-
-  const [run, setRun] = useState<RecommendationRun | null>(null);
-  const runIdRef = useRef(0);
-  // 蒙层展示中的会话（含导入阶段）；轮询只在路由/累积阶段进行。
-  const runActive = run !== null
-    && (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating');
-  const runPolling = run !== null && (run.phase === 'routing' || run.phase === 'accumulating');
-
-  /**
-   * #241：按用途描述直接创建空 Room（无文件也允许，后续可再添加内容）。
-   * 标题取描述首行截断；创建失败（含重复审查 409）返回 null 交由调用方兜底。
-   * 创建成功后重拉网关快照，让 My Rooms 立即出现新 Room（本地列表由
-   * ContextRoomStateProvider 持有，网关直建不会自动进入本地态）。
-   */
-  const createEmptyRoomFromIntent = useCallback(async (rawIntent: string | null) => {
-    const description = (rawIntent ?? '').trim();
-    if (!description) return null;
-    const title = description.split(/\r?\n/)[0]!.trim().slice(0, 60)
-      || translateRef.current('contextRoom:creation.emptyRoomTitle');
-    try {
-      const result = await window.nxcore?.contextRooms?.create({ title, description });
-      const room = result?.room ?? null;
-      if (room) {
-        await refreshFromBackend().catch(() => undefined);
-        return { id: room.id, title: room.title || title };
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }, [refreshFromBackend]);
-
-  /**
-   * 执行/重试会话导入：内容寻址去重使重跑幂等（已传文件直接复用），
-   * 网络波动自动重试；成功文件进入路由轮询。断点续传与失败重试共用。
-   */
-  const continueImport = useCallback(async (session: RecommendationRun) => {
-    const filesApi = window.nxcore?.files;
-    const patchRun = (patch: Partial<RecommendationRun>) =>
-      setRun((current) => (current && current.id === session.id ? { ...current, ...patch } : current));
-    if (!filesApi?.importPaths) {
-      patchRun({ phase: 'failed', error: 'files api unavailable' });
-      return;
-    }
-    patchRun({ phase: 'importing', imported: { completed: 0, total: 0 }, scanning: true, error: null });
-    const unsubscribeProgress = filesApi.onImportProgress((event) => {
-      setRun((current) => current && current.id === session.id
-        ? {
-            ...current,
-            imported: { completed: event.completed, total: event.total },
-            scanning: event.status === 'scanning',
-          }
-        : current);
-    });
-    let outcomes: Awaited<ReturnType<typeof filesApi.importPaths>> | null = null;
-    for (let attempt = 1; attempt <= IMPORT_RETRY_ATTEMPTS; attempt += 1) {
-      try {
-        outcomes = await filesApi.importPaths(session.paths);
-        break;
-      } catch (cause) {
-        if (attempt >= IMPORT_RETRY_ATTEMPTS) {
-          unsubscribeProgress();
-          patchRun({ phase: 'failed', error: cause instanceof Error ? cause.message : String(cause) });
-          return;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, IMPORT_RETRY_DELAY_MS));
-      }
-    }
-    unsubscribeProgress();
-    if (outcomes === null) return;
-    // 三类分账：成功（进入路由）/ 跳过（格式不支持、待人工确认、内容已存在）/ 失败（带原因）
-    const failures = outcomes.filter((item) => item.error);
-    const duplicates = outcomes.filter((item) => !item.error && item.fileId && item.deduped);
-    const skipped = outcomes.filter((item) => item.skippedReason === 'unsupported_format' || item.skippedReason === 'pending_review');
-    const skippedCount = skipped.length + duplicates.length;
-    const okCount = outcomes.length - failures.length - skippedCount;
-    if (failures.length > 0 || skippedCount > 0) {
-      // 逐文件 toast 在批量导入（如整仓扫描件）时会刷屏：聚合成一条计数摘要。
-      showToast({
-        title: runImportSummaryText(okCount, skippedCount, failures.length, translateRef.current),
-        message: failures.length > 0
-          ? translateRef.current('contextRoom:creation.runImportFailedHint')
-          : translateRef.current('contextRoom:creation.runImportSkippedHint'),
-      });
-    }
-    const files = outcomes
-      .filter((item) => item.fileId && !item.error)
-      .map((item) => ({ fileId: item.fileId as string, filename: item.filename }));
-    if (files.length === 0) {
-      // #241：全部文件解析失败也不阻断创建——按意图兜底创建空 Room，
-      // 失败/跳过明细保留在蒙层（failureDetails）供用户查看。
-      const created = await createEmptyRoomFromIntent(session.intent);
-      patchRun({
-        files,
-        failedImports: failures.length,
-        skippedImports: skippedCount,
-        okImports: okCount,
-        failureDetails: failures.slice(0, RUN_DETAIL_LIMIT).map((item) => ({
-          filename: item.filename,
-          error: String(item.error),
-        })),
-        skipDetails: [
-          ...skipped.map((item) => ({
-            filename: item.filename,
-            reason: item.skippedReason === 'pending_review' ? 'pending_review' as const : 'unsupported_format' as const,
-          })),
-          ...duplicates.map((item) => ({ filename: item.filename, reason: 'duplicate' as const })),
-        ].slice(0, RUN_DETAIL_LIMIT),
-        phase: created ? 'done' : 'failed',
-        routed: 0,
-        candidates: 0,
-        error: created ? null : 'no files imported',
-      });
-      if (created) {
-        showToast({
-          title: translateRef.current('contextRoom:creation.emptyRoomCreated', { title: created.title }),
-          message: failures.length > 0
-            ? translateRef.current('contextRoom:creation.runImportFailedHint')
-            : undefined,
-        });
-      }
-      return;
-    }
-    patchRun({
-      files,
-      failedImports: failures.length,
-      skippedImports: skippedCount,
-      okImports: okCount,
-      failureDetails: failures.slice(0, RUN_DETAIL_LIMIT).map((item) => ({
-        filename: item.filename,
-        error: String(item.error),
-      })),
-      skipDetails: [
-        ...skipped.map((item) => ({
-          filename: item.filename,
-          reason: item.skippedReason === 'pending_review' ? 'pending_review' as const : 'unsupported_format' as const,
-        })),
-        ...duplicates.map((item) => ({ filename: item.filename, reason: 'duplicate' as const })),
-      ].slice(0, RUN_DETAIL_LIMIT),
-      phase: 'routing',
-      error: null,
-    });
-    window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
-  }, [createEmptyRoomFromIntent]);
-
-  /**
-   * 弹窗提交后接手：先统一导入暂存路径（蒙层显示 x/y），成功文件进入
-   * 路由轮询，再由实体证据累积推进到推荐。全程只用原有机制。
-   */
-  const startRecommendationRun = useCallback(async (payload: RoomRecommendationRunPayload) => {
-    if (payload.paths.length === 0) {
-      // #241：空提交（无文件）= 直接创建空 Room，不走导入/推荐会话。
-      const created = await createEmptyRoomFromIntent(payload.intent);
-      if (created) {
-        showToast({
-          title: translateRef.current('contextRoom:knowledgePending.roomCreated'),
-          message: translateRef.current(
-            'contextRoom:knowledgePending.nameWasAddedToContextRoom', { name: created.title }),
-        });
-      }
-      return;
-    }
-    const startedAt = Date.now();
-    const knowledge = window.nxcore?.knowledge;
-    let readySnapshot: ReadonlySet<string> = new Set();
-    try {
-      if (knowledge) {
-        readySnapshot = new Set((await knowledge.listEntities('ready')).items.map((entity) => entity.id));
-      }
-    } catch {
-      // 快照失败按空集兜底：之后出现的 ready 实体即视为本次新推荐。
-    }
-    runIdRef.current += 1;
-    const session: RecommendationRun = {
-      id: runIdRef.current,
-      intent: payload.intent,
-      paths: payload.paths,
-      startedAt,
-      readySnapshot,
-      phase: 'importing',
-      imported: { completed: 0, total: 0 },
-      scanning: true,
-      files: [],
-      failedImports: 0,
-      skippedImports: 0,
-      okImports: 0,
-      failureDetails: [],
-      skipDetails: [],
-      routed: 0,
-      candidates: 0,
-      error: null,
-    };
-    setRun(session);
-    setRunCollapsed(false);
-    void refresh();
-    void continueImport(session);
-  }, [continueImport, createEmptyRoomFromIntent, refresh]);
-
-  // 应用重启恢复：真实进度都在网关（决策 + 实体池），清单只负责重挂蒙层；
-  // 导入中被打断则重跑导入（内容去重幂等，不重复存储）。
-  // 注意：必须先于 persistRun 效果执行，否则挂载时的空状态会先清掉清单。
-  const resumedRef = useRef(false);
-  useEffect(() => {
-    if (resumedRef.current) return;
-    resumedRef.current = true;
-    const persisted = readPersistedRun();
-    if (!persisted) return;
-    runIdRef.current = Math.max(runIdRef.current, persisted.id);
-    setRun(persisted);
-    setRunCollapsed(false);
-    void refresh();
-    if (persisted.phase === 'importing') {
-      void continueImport(persisted);
-    }
-  }, [continueImport, refresh]);
-
-  // 会话清单持久化：进行中写入，结束（完成/超时/失败/关闭）清除。
-  useEffect(() => {
-    persistRun(run);
-  }, [run]);
-
-  useEffect(() => {
-    const onStart = (event: Event) => {
-      const detail = (event as CustomEvent<RoomRecommendationRunPayload>).detail;
-      if (!detail || !Array.isArray(detail.paths)) return;
-      void startRecommendationRun(detail);
-    };
-    window.addEventListener(ROOM_RECOMMENDATION_RUN_EVENT, onStart);
-    return () => window.removeEventListener(ROOM_RECOMMENDATION_RUN_EVENT, onStart);
-  }, [startRecommendationRun]);
-
-  // 会话推进完全由真实机制驱动：路由决策落库 → routed；实体池出现新 ready → 完成撤蒙层。
-  // 超时只看「无进度」：路由/候选连续 RUN_IDLE_TIMEOUT_TICKS 拍无增长才转超时，
-  // 绝对时长上限会在路由积压（串行 LLM）时误杀仍在推进的会话。
-  useEffect(() => {
-    if (!run || !runPolling) return;
-    const session = run;
-    let lastRouted = -1;
-    let lastCandidates = -1;
-    let idleTicks = 0;
-    let cancelled = false;
-    let timer: number | null = null;
-    const stall = () => {
-      setRun((current) => current && current.id === session.id
-        ? { ...current, phase: 'timeout' }
-        : current);
-      cancelled = true;
-      if (timer !== null) window.clearInterval(timer);
-    };
-    const poll = async () => {
-      const knowledge = window.nxcore?.knowledge;
-      if (!knowledge || cancelled) return;
-      try {
-        const [routedIds, weak, ready] = await Promise.all([
-          // 按 fileId 直查最新决策（任意状态）。新落库的 awaiting_review 就算已解析；
-          // listRecentDecisions 只回 confirmed，用它判断会永远停在路由阶段。
-          knowledge.routeStatus
-            ? knowledge.routeStatus(session.files.map((file) => file.fileId))
-              .then((status) => new Set(status.items.map((item) => item.sourceId)))
-            : knowledge.listRecentDecisions(100).then((decisions) => new Set(decisions.items
-              .filter((decision) => decision.sourceKind === 'file')
-              .map((decision) => decision.sourceId))),
-          knowledge.listEntities('weak'),
-          knowledge.listEntities('ready'),
-        ]);
-        if (cancelled) return;
-        const routed = session.files.filter((file) => routedIds.has(file.fileId)).length;
-        const touchedSince = session.startedAt - RUN_TOUCHED_SLACK_MS;
-        const candidates = [...weak.items, ...ready.items]
-          .filter((entity) => Date.parse(entity.updatedAt) >= touchedSince).length;
-        const hasNewReady = ready.items.some((entity) => !session.readySnapshot.has(entity.id));
-        const nextPhase = hasNewReady ? 'done' as const
-          : routed >= session.files.length ? 'accumulating' as const
-          : 'routing' as const;
-        if (nextPhase === 'done') {
-          // 新推荐落池：转入完成态（进度条打满、第三步打勾），停留后由 done 效果撤蒙层。
-          setRun((current) => current && current.id === session.id
-            ? { ...current, routed, candidates, phase: 'done' }
-            : current);
-          return;
-        }
-        setRun((current) => current && current.id === session.id
-          ? { ...current, routed, candidates, phase: nextPhase }
-          : current);
-        if (routed > lastRouted || candidates > lastCandidates) {
-          idleTicks = 0;
-        } else {
-          idleTicks += 1;
-        }
-        lastRouted = routed;
-        lastCandidates = candidates;
-        if (idleTicks >= RUN_IDLE_TIMEOUT_TICKS) stall();
-      } catch {
-        // 网关短暂不可用：下一轮重试；连续不可用同样计入无进度，超时兜底。
-        idleTicks += 1;
-        if (idleTicks >= RUN_IDLE_TIMEOUT_TICKS) stall();
-      }
-    };
-    void poll();
-    timer = window.setInterval(() => {
-      if (!cancelled) void poll();
-    }, RUN_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearInterval(timer);
-    };
-  }, [run?.id, runPolling]);
-
-  // 导入中同用「无进度」判停：completed 连续 RUN_IDLE_TIMEOUT_TICKS 拍不前进
-  // （importPaths 是单次 IPC，单文件挂起时永不 settle）转超时，给出关闭出口。
-  // 每有一份文件完成（completed 前进）即重置倒计时，推进中的慢导入不会被误杀。
-  useEffect(() => {
-    if (run?.phase !== 'importing') return
-    const timer = window.setTimeout(() => {
-      setRun((current) => current && current.phase === 'importing'
-        ? { ...current, phase: 'timeout' }
-        : current)
-    }, RUN_POLL_INTERVAL_MS * RUN_IDLE_TIMEOUT_TICKS)
-    return () => window.clearTimeout(timer)
-  }, [run?.id, run?.phase, run?.imported.completed]);
-
-  // 完成态收尾：进度条先打满停留 RUN_DONE_LINGER_MS，再撤蒙层放行确认操作。
-  useEffect(() => {
-    if (run?.phase !== 'done') return;
-    const timer = window.setTimeout(() => {
-      showToast({
-        title: translateRef.current('contextRoom:creation.runDone'),
-        message: translateRef.current('contextRoom:creation.runDoneBody'),
-      });
-      window.dispatchEvent(new CustomEvent('everroom:knowledge-changed'));
-      setRun((current) => current && current.id === run.id ? null : current);
-    }, RUN_DONE_LINGER_MS);
-    return () => window.clearTimeout(timer);
-  }, [run?.id, run?.phase]);
 
   useEffect(() => () => {
     for (const controller of promotionControllers.current.values()) controller.abort();
@@ -1134,250 +611,6 @@ export function KnowledgePendingPanel({
     );
   };
 
-  /** 推荐生成蒙层：strip 区与管理面板都挂在各自容器内（dialog 打开时双处可见）。 */
-  /** 导入停滞转的超时（files 仍空）与路由停滞的超时在步骤条上表现不同。 */
-  const importStalled = run !== null && run.phase === 'timeout' && run.files.length === 0
-  const runOverlay = run ? (
-    <div
-      className="context-room-knowledge-overlay"
-      data-testid="context-room-recommendation-run"
-      data-phase={run.phase}
-    >
-    <div className="context-room-knowledge-overlay-card">
-      <header>
-        {run.phase === 'failed'
-          ? <AlertCircle aria-hidden="true" />
-          : run.phase === 'timeout'
-            ? <Clock3 aria-hidden="true" />
-            : run.phase === 'done'
-              ? <Check aria-hidden="true" />
-              : <LoaderCircle className="spin" aria-hidden="true" />}
-        <strong>{run.intent
-          ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
-          : t('contextRoom:creation.runTitle')}</strong>
-      </header>
-      <div
-        className="context-room-knowledge-overlay-bar"
-        role="progressbar"
-        aria-label={t('contextRoom:creation.runTitle')}
-      >
-        <div style={{ width: `${Math.round(runPercentOf(run))}%` }} />
-      </div>
-      <ol className="context-room-creation-steps" data-testid="context-room-creation-steps">
-        <li data-state={run.phase === 'importing' || importStalled ? 'active' : 'done'}>
-          <span className="context-room-creation-step-icon">
-            {run.phase === 'importing'
-              ? <LoaderCircle className="spin" aria-hidden="true" />
-              : importStalled
-                ? <Clock3 aria-hidden="true" />
-                : <Check aria-hidden="true" />}
-          </span>
-          <span className="context-room-creation-step-body">
-            <b>{t('contextRoom:creation.stepImport')}</b>
-            <small>{run.phase === 'importing'
-              ? run.scanning
-                ? t('contextRoom:creation.scanning')
-                : t('contextRoom:creation.importProgress', {
-                    current: run.imported.completed,
-                    total: run.imported.total,
-                  })
-              : importStalled
-                ? t('contextRoom:creation.runImportTimeoutHint')
-                : run.failedImports > 0 || run.skippedImports > 0
-                  ? runImportSummaryText(run.okImports, run.skippedImports, run.failedImports, t)
-                  : t('contextRoom:creation.filesSelected', { count: run.files.length })}</small>
-          </span>
-        </li>
-        <li data-state={run.phase === 'routing' ? 'active' : run.phase === 'importing' || importStalled ? undefined : 'done'}>
-          <span className="context-room-creation-step-icon">
-            {run.phase === 'routing'
-              ? <LoaderCircle className="spin" aria-hidden="true" />
-              : run.phase === 'importing' || importStalled ? <span aria-hidden="true" /> : <Check aria-hidden="true" />}
-          </span>
-          <span className="context-room-creation-step-body">
-            <b>{t('contextRoom:creation.stepRoute')}</b>
-            {/* 不展示「已解析 x/y」计数：路由决策落库节奏与用户感知不一致，只标等待/进行。 */}
-            {run.phase === 'importing' || importStalled
-              ? <small>{t('contextRoom:creation.stepWaiting')}</small>
-              : null}
-          </span>
-        </li>
-        <li data-state={(run.phase === 'accumulating' || run.phase === 'timeout') && !importStalled ? 'active' : run.phase === 'done' ? 'done' : undefined}>
-          <span className="context-room-creation-step-icon">
-            {run.phase === 'timeout' && !importStalled
-              ? <Clock3 aria-hidden="true" />
-              : run.phase === 'done'
-                ? <Check aria-hidden="true" />
-                : run.phase === 'accumulating'
-                  ? <LoaderCircle className="spin" aria-hidden="true" />
-                  : <span aria-hidden="true" />}
-          </span>
-          <span className="context-room-creation-step-body">
-            <b>{t('contextRoom:creation.stepAccumulate')}</b>
-            <small>{run.phase === 'timeout' && !importStalled
-              ? t('contextRoom:creation.runTimeoutHint')
-              : run.phase === 'done'
-                ? t('contextRoom:creation.runDone')
-                : run.phase === 'accumulating'
-                  ? t('contextRoom:creation.runCandidates', { count: run.candidates })
-                  : t('contextRoom:creation.stepWaiting')}</small>
-          </span>
-        </li>
-      </ol>
-      {run.phase !== 'importing' && (run.failureDetails.length > 0 || run.skipDetails.length > 0) ? (
-        <div
-          className="context-room-knowledge-overlay-details"
-          data-testid="context-room-import-details"
-        >
-          {run.failureDetails.length > 0 ? (
-            <ul>
-              {run.failureDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
-                <li key={`failure:${item.filename}`}>
-                  <AlertCircle aria-hidden="true" />
-                  <span title={item.filename}>{item.filename}</span>
-                  <small>{item.error}</small>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {run.skipDetails.length > 0 ? (
-            <ul>
-              {run.skipDetails.slice(0, RUN_DETAILS_SHOWN).map((item) => (
-                <li key={`skip:${item.filename}`}>
-                  <EyeOff aria-hidden="true" />
-                  <span title={item.filename}>{item.filename}</span>
-                  <small>{skipReasonLabel(item.reason, t)}</small>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
-            + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN) > 0 ? (
-            <p className="context-room-knowledge-overlay-details-more">
-              {t('contextRoom:creation.countMore', {
-                count: Math.max(0, run.failureDetails.length - RUN_DETAILS_SHOWN)
-                  + Math.max(0, run.skipDetails.length - RUN_DETAILS_SHOWN),
-              })}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-      {run.phase === 'failed' ? (
-        <p className="context-room-knowledge-overlay-note">{t('contextRoom:creation.runImportFailed')}</p>
-      ) : null}
-      <div className="context-room-knowledge-overlay-actions">
-        {run.phase === 'failed' ? (
-          <button
-            type="button"
-            className="context-room-knowledge-overlay-retry"
-            onClick={() => void continueImport(run)}
-          >
-            {t('contextRoom:creation.runImportRetry')}
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="context-room-knowledge-overlay-dismiss"
-          onClick={() => {
-            // 与横幅同一语义：进行中收起（后台照跑），已结束清会话。
-            if (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating') {
-              setRunCollapsed(true);
-            } else {
-              setRun(null);
-            }
-          }}
-        >
-          {t('contextRoom:creation.runDismiss')}
-        </button>
-      </div>
-    </div>
-  </div>
-  ) : null;
-
-  /** 后台进度横幅（strip 用）：不蒙层不挡推荐卡，只占一行；关闭仅收起界面，
-   *  导入/推荐链路在后台照常推进，完成后以 toast 汇报。 */
-  const runBanner = run ? (
-    <div
-      className="context-room-knowledge-run-banner"
-      data-testid="context-room-recommendation-run"
-      data-phase={run.phase}
-      role="status"
-    >
-      {run.phase === 'failed'
-        ? <AlertCircle aria-hidden="true" />
-        : run.phase === 'timeout'
-          ? <Clock3 aria-hidden="true" />
-          : run.phase === 'done'
-            ? <Check aria-hidden="true" />
-            : <LoaderCircle className="spin" aria-hidden="true" />}
-      <div className="context-room-knowledge-run-banner-body">
-        <strong>{run.intent
-          ? t('contextRoom:creation.runIntentTitle', { intent: run.intent })
-          : t('contextRoom:creation.runTitle')}</strong>
-        <span>{runPhaseSummary(run, t)}</span>
-      </div>
-      <span className="context-room-knowledge-run-banner-percent">{runPercentOf(run)}%</span>
-      {run.phase === 'failed' ? (
-        <button
-          type="button"
-          className="context-room-knowledge-overlay-retry"
-          onClick={() => void continueImport(run)}
-        >
-          {t('contextRoom:creation.runImportRetry')}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        className="context-room-knowledge-overlay-dismiss"
-        onClick={() => {
-          // 进行中：收起为小状态点（后台照跑，可再点开）；已结束：清掉会话。
-          if (run.phase === 'importing' || run.phase === 'routing' || run.phase === 'accumulating') {
-            setRunCollapsed(true);
-          } else {
-            setRun(null);
-          }
-        }}
-      >
-        {t('contextRoom:creation.runDismiss')}
-      </button>
-    </div>
-  ) : null;
-
-  /** 收起态小状态点：会话仍在后台推进，点开找回进度横幅。 */
-  const runChip = run && runCollapsed ? (
-    <button
-      type="button"
-      className="context-room-knowledge-run-chip"
-      data-testid="context-room-recommendation-run-chip"
-      data-phase={run.phase}
-      title={t('contextRoom:creation.runCollapsedExpand')}
-      aria-label={t('contextRoom:creation.runCollapsedExpand')}
-      onClick={() => setRunCollapsed(false)}
-    >
-      {run.phase === 'timeout'
-        ? <Clock3 aria-hidden="true" />
-        : run.phase === 'failed'
-          ? <AlertCircle aria-hidden="true" />
-          : run.phase === 'done'
-            ? <Check aria-hidden="true" />
-            : <LoaderCircle className="spin" aria-hidden="true" />}
-      <span>{run.phase === 'importing'
-        ? run.scanning
-          ? t('contextRoom:creation.scanning')
-          : t('contextRoom:creation.stepImport')
-        : run.phase === 'routing'
-          ? t('contextRoom:creation.stepRoute')
-          : run.phase === 'accumulating'
-            ? t('contextRoom:creation.stepAccumulate')
-            : run.phase === 'timeout'
-              ? t('contextRoom:creation.runStalledShort')
-              : run.phase === 'failed'
-                ? t('contextRoom:creation.runImportFailed')
-                : t('contextRoom:creation.runDone')}</span>
-      <b>{runPercentOf(run)}%</b>
-    </button>
-  ) : null;
-
   const manageView = (
     <section className="context-room-knowledge-panel" data-testid="context-room-knowledge-pending">
       <div className="context-room-my-title">
@@ -1389,7 +622,7 @@ export function KnowledgePendingPanel({
           <button
             type="button"
             aria-label={t('contextRoom:home.newRoom')}
-            title={t('contextRoom:knowledgePending.newRoomFromUpload')}
+            title={t('contextRoom:home.newRoom')}
             className="context-room-add-room"
             onClick={onOpenCreateRoom}
           >
@@ -1407,9 +640,7 @@ export function KnowledgePendingPanel({
         </div>
       </div>
 
-      {runOverlay}
-
-      {loadError && recommended.length === 0 && !runActive ? (
+      {loadError && recommended.length === 0 ? (
         <div className="context-room-knowledge-empty" data-error="true">
           <AlertCircle aria-hidden="true" />
           <h3>{t('contextRoom:knowledgePending.loadFailedTitle')}</h3>
@@ -1421,7 +652,7 @@ export function KnowledgePendingPanel({
             <span>{t('contextRoom:knowledgePending.loadFailedRetry')}</span>
           </button>
         </div>
-      ) : recommended.length === 0 && !runActive ? (
+      ) : recommended.length === 0 ? (
         <div className="context-room-knowledge-empty">
           <Inbox aria-hidden="true" />
           <h3>{t('contextRoom:knowledgePending.understandingResources')}</h3>
@@ -1571,7 +802,7 @@ export function KnowledgePendingPanel({
         </button>
       </div>
       <div className="context-room-knowledge-strip-body">
-        {loadError && recommended.length === 0 && !runActive ? (
+        {loadError && recommended.length === 0 ? (
           <div className="context-room-rec-empty" data-error="true">
             <AlertCircle aria-hidden="true" />
             <h3>{t('contextRoom:knowledgePending.loadFailedTitle')}</h3>
@@ -1626,8 +857,6 @@ export function KnowledgePendingPanel({
           </div>
         )}
       </div>
-
-      {runCollapsed ? runChip : runBanner}
 
       <ReferenceDialog
         open={manageOpen}

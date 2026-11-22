@@ -25,6 +25,21 @@ import {
   type StartRuntimeRunInput,
 } from "@nxcore/agent-runtime";
 import { clampToolResultText, guardRunMessages, type RunContextGuardOptions } from "./context-budget.js";
+import { DEFAULT_MAX_NOOP_TOOL_CALLS, isNoOpToolCall } from "./noop-tool-call.js";
+import { officeBashViolation } from "./office-bash-guard.js";
+import {
+  createRepeatedCallState,
+  DEFAULT_MAX_REPEATED_CALLS,
+  resolveStallAction,
+  trackRepeatedCall,
+  type RepeatedCallState,
+} from "./tool-loop-guard.js";
+import {
+  createToolResultDedupeState,
+  dedupeToolResult,
+  type ToolResultDedupeState,
+} from "./tool-result-dedupe.js";
+import { buildActiveFileContext, buildOpenFilesContext } from "./active-file-context.js";
 import { KnowledgeServiceClient } from "./knowledge/client.js";
 import { createKnowledgeTools, KNOWLEDGE_TOOL_NAMES } from "./knowledge/tools.js";
 import type { KnowledgeRuntimeConfig } from "./knowledge/types.js";
@@ -122,6 +137,17 @@ export interface PiAgentRuntimeConfig {
   systemPrompt?: string;
   includeBashTool?: boolean;
   maxToolCallsPerRun?: number;
+  /**
+   * 同一工具用完全相同参数连续调用的次数上限（默认 5，0 关闭）。命中先纠偏一次：
+   * 连续同样的命令重复刷，说明模型在转圈而不是在推进。
+   */
+  maxRepeatedCalls?: number;
+  /**
+   * 连续多少次"无副作用工具调用"（echo/printf/read /dev/null 之类打点）判定为空转。
+   * 模型偶尔用 echo 当心跳，实测有 run 连刷 269 次直到用户手动取消。
+   * 缺省 DEFAULT_MAX_NOOP_TOOL_CALLS；0/负数关闭。
+   */
+  maxNoOpToolCalls?: number;
   /**
    * 单条工具结果进入上下文的字符预算（JSON 感知截断）；缺省/0 = 不截断。
    * 建议只在子 Agent runtime 配置：主 Agent 的文档 read/patch 需要完整结果。
@@ -267,12 +293,36 @@ interface ActivePiRun {
   cancelled: boolean;
   toolCallCount: number;
   toolLimitExceeded: boolean;
+  /** 连续无副作用工具调用计数与超限标记（空转守卫）。 */
+  noOpStreak: number;
+  noOpLimitExceeded: boolean;
+  /** 本 run 已见过的工具结果指纹（重复的大结果折叠成占位，省上下文）。 */
+  toolResults: ToolResultDedupeState;
+  /** 连续相同调用的计数（原地打转守卫）。 */
+  repeated: RepeatedCallState;
+  repeatLimitExceeded: boolean;
+  /** 已就空转 / 打转向模型纠偏过一次（第二次命中才中止）。 */
+  noOpSteered: boolean;
+  repeatSteered: boolean;
   terminal: boolean;
   finishPromise: Promise<void> | null;
 }
 
 const EMPTY_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const TOOL_HISTORY_SUMMARY_MAX_CHARS = 8_000;
+
+/**
+ * 空转/打转的纠偏提示：用用户口吻说清楚"别打点、直接干活"，并点名可用工具。
+ * 只在第一次命中时注入一次；再犯才中止。
+ */
+const STALL_STEER_TEXT = [
+  "停一下：你刚才连续在用 echo、读取 /dev/null 这类没有任何作用的调用打点，任务没有推进。",
+  "不要再做这类调用，也不要重复同一条命令。",
+  "Office 文件（PPT/Excel/Word）的内容读写一律用对应工具：PPT 用 context_room_slides_read / context_room_slides_edit，",
+  "Excel 用 sheets_agent_read / sheets_agent_edit，Word 用 word_agent_read / word_agent_edit。",
+  "现在直接继续把用户要求的修改做完；如果缺少必要信息，就用一句话说明缺什么。",
+].join("");
+
 function createBashSandboxExtension(
   config: PiAgentRuntimeConfig,
   runtime: PiAgentRuntime,
@@ -296,6 +346,10 @@ function createBashSandboxExtension(
       if (deniedPatterns.some((pattern) => pattern.test(command))) {
         throw new Error("shell_command_denied_by_policy");
       }
+      // Office 文件只读放行，写入/重打包直接拦：提示词劝不住模型时，这里能省掉上百次
+      // 无效调用（实测有 run 连发 120 条 python heredoc 改 pptx，直到撞上调用上限）。
+      const officeViolation = officeBashViolation(command);
+      if (officeViolation) throw new Error(officeViolation);
       const input = getInput();
       if (!input) throw new Error("shell_run_context_missing");
       const approved = await runtime.requestBashApproval({
@@ -627,6 +681,13 @@ export class PiAgentRuntime implements AgentRuntime {
       cancelled: false,
       toolCallCount: 0,
       toolLimitExceeded: false,
+      noOpStreak: 0,
+      noOpLimitExceeded: false,
+      toolResults: createToolResultDedupeState(),
+      repeated: createRepeatedCallState(),
+      repeatLimitExceeded: false,
+      noOpSteered: false,
+      repeatSteered: false,
       terminal: false,
       finishPromise: null,
     };
@@ -790,10 +851,12 @@ export class PiAgentRuntime implements AgentRuntime {
             ),
             signal,
           );
+          const clamped = clampToolResultText(result.content, this.config.maxToolResultChars ?? 0);
           return {
             content: [{
               type: "text" as const,
-              text: clampToolResultText(result.content, this.config.maxToolResultChars ?? 0),
+              // 同一 run 内字节级相同的大结果只保留一份，避免重复快照反复进上下文。
+              text: active ? dedupeToolResult(active.toolResults, tool.name, clamped) : clamped,
             }],
             details: result.details ?? {},
           };
@@ -1090,7 +1153,16 @@ export class PiAgentRuntime implements AgentRuntime {
               ? `仅在用户明确要求当前位置时可使用光标候选：块 ${input.activeDocument.cursorAnchorCandidate.blockId}，UTF-16 偏移 ${input.activeDocument.cursorAnchorCandidate.offset}。`
               : "本轮没有可靠的光标候选锚点。",
           ].join("\n")
-        : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
+        : input.activeFile
+          // 有 Office 页签时不要再说“没有活动文稿，去翻文稿库”：
+          // 用户说的“这份文档”几乎必然指页签里的文件，指南会误导模型去猜。
+          ? "当前视口没有文档内核里的活动文档；用户正在浏览的是 Office 文件（见下一条），按它的 fileId 读取，不要先去搜索文档。"
+          : "当前视口没有已确认的活动文档；若用户明确要求修改已有文档，应调用 context_room_document_list 触发选择。";
+      // Office 文件（Word/Excel/PPT/PDF）是 file_entries，不是文档内核的 activeDocument：
+      // 这里给出“用户正在看哪一份”的唯一事实，并指明读取正文的工具（file_read）。
+      const activeFileContext = buildActiveFileContext(input.activeFile);
+      // 「一共开了哪些页签」：只认识当前这份时，用户问“另一个文件”模型会失明。
+      const openFilesContext = buildOpenFilesContext(input.openFiles, input.activeFile);
       const runBoundary = input.toolsEnabled === false
         ? null
         : [
@@ -1103,6 +1175,8 @@ export class PiAgentRuntime implements AgentRuntime {
         `当前工作区：${input.pageLabel}`,
         roomContext,
         documentContext,
+        ...(activeFileContext ? [activeFileContext] : []),
+        ...(openFilesContext ? [openFilesContext] : []),
         ...(runBoundary ? [runBoundary] : []),
         "",
         `用户请求：${input.prompt}`,
@@ -1212,6 +1286,35 @@ export class PiAgentRuntime implements AgentRuntime {
         void this.abortForToolLimit(runId);
         return;
       }
+      // 打转守卫：同一工具 + 完全相同的参数连续多次（实测有任务把同一条 python
+      // heredoc 刷了约 170 次、跑 7 分钟而没有任何文件被改），先纠偏一次再中止。
+      const repeatLimit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+      const repeatHit = trackRepeatedCall(active.repeated, event.toolName, event.args, repeatLimit);
+      const repeatAction = resolveStallAction(repeatHit, active.repeatSteered);
+      if (repeatAction === "steer") {
+        active.repeatSteered = true;
+        active.repeated = createRepeatedCallState();
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (repeatAction === "abort") {
+        active.repeatLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
+      // 空转守卫：连续多次"打点式"调用（echo / read /dev/null）说明模型在原地转圈，
+      // 继续跑只会刷满时间线而不推进任务，先纠偏一次再中止。
+      const noOpLimit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+      active.noOpStreak = isNoOpToolCall(event.toolName, event.args) ? active.noOpStreak + 1 : 0;
+      const noOpHit = noOpLimit > 0 && active.noOpStreak >= noOpLimit;
+      const noOpAction = resolveStallAction(noOpHit, active.noOpSteered);
+      if (noOpAction === "steer") {
+        active.noOpSteered = true;
+        active.noOpStreak = 0;
+        void this.steerStall(runId, STALL_STEER_TEXT);
+      } else if (noOpAction === "abort") {
+        active.noOpLimitExceeded = true;
+        void this.abortForToolLimit(runId);
+        return;
+      }
       active.queue.push({
         type: "tool.started",
         payload: { toolCallId: event.toolCallId, name: event.toolName, args: event.args },
@@ -1251,6 +1354,36 @@ export class PiAgentRuntime implements AgentRuntime {
 
   private toolLimitErrorMessage(): string {
     return `Pi runtime exceeded the maximum tool calls per run (${this.config.maxToolCallsPerRun})`;
+  }
+
+  /** 空转/打转的纠偏提示：第一次命中注入一次，再犯才中止。 */
+  private async steerStall(runId: string, text: string): Promise<void> {
+    const active = this.activeRuns.get(runId);
+    if (!active || active.terminal) return;
+    try {
+      await active.handle.session.steer(text);
+    } catch {
+      active.noOpLimitExceeded = true;
+      await this.abortForToolLimit(runId);
+    }
+  }
+
+  /** 空转中止的用户可读说明。 */
+  private noOpLimitErrorMessage(): string {
+    const limit = this.config.maxNoOpToolCalls ?? DEFAULT_MAX_NOOP_TOOL_CALLS;
+    return (
+      `本次处理在空转：连续 ${limit} 次无副作用的工具调用（echo / read /dev/null 这类打点），`
+      + "没有任何实际进展，已自动中止。可以把任务拆小、或直接说明期望的结果后重试。"
+    );
+  }
+
+  /** 打转中止说明：模型在重复同一条命令。 */
+  private repeatLimitErrorMessage(): string {
+    const limit = this.config.maxRepeatedCalls ?? DEFAULT_MAX_REPEATED_CALLS;
+    return (
+      `本次处理在原地打转：同一条工具调用（参数完全相同）连续重复了 ${limit} 次，`
+      + "没有任何实际进展，已自动中止。可以把任务说得更具体一些，或换个方式描述目标后重试。"
+    );
   }
 
   /** 把 pi 的 getContextUsage 快照 + 占用构成粗估作为 context.usage 事件推入 run 队列（token 数未知时也透传，UI 据此回落）。 */

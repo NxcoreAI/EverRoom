@@ -264,6 +264,39 @@ function isGet(request: IncomingMessage): boolean {
   return request.method === 'GET'
 }
 
+/**
+ * FA 分析控制台允许 POST 的 live 网关前缀（写通道白名单）：
+ * - `/v1/fa-console/bp-template`：模板纯读渲染（无副作用）；
+ * - `/v1/agent/sessions/:id/runs`：提示词节点的真实 agent run 通道；
+ * - `/v1/fa/match`：投资人匹配计算（screenInstitutions 纯读）；
+ * - `/v1/fa/relations/:id/{confirm,dismiss}`：语义关系确认/驳回（写
+ *   fa_relations + 投影 room_relations.manual_type；控制台关系队列节点用）。
+ * 不在白名单的 POST 一律 405，代理仍不开放任何其余写接口。
+ */
+const PROXY_POST_PREFIXES = ['/v1/fa-console/bp-template', '/v1/agent/sessions', '/v1/fa/match', '/v1/fa/relations']
+
+function proxyPostAllowed(restPath: string): boolean {
+  return PROXY_POST_PREFIXES.some((prefix) => restPath === prefix || restPath.startsWith(prefix))
+}
+
+function readRequestBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > 1_000_000) {
+        reject(new Error('request_body_too_large'))
+        request.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    request.on('error', reject)
+  })
+}
+
 function methodNotAllowed(response: ServerResponse): void {
   sendJson(response, 405, { error: 'method_not_allowed', message: '调试代理只支持 GET' }, { allow: 'GET' })
 }
@@ -410,19 +443,29 @@ async function handleAgentDebugRequest(
     sendJson(response, 404, { error: 'not_found', message: `未知调试页接口：${pathname}` })
     return
   }
-  if (!isGet(request)) {
+  const isPost = request.method === 'POST'
+  if (!isGet(request) && !isPost) {
     methodNotAllowed(response)
     return
   }
 
   const sourceId = decodeURIComponent(proxyMatch[1] ?? '')
   const restPath = proxyMatch[2] ?? '/'
+  // POST 只放行 FA 控制台白名单，且只走 live 来源（archive 是本地只读归档）。
+  if (isPost && !proxyPostAllowed(restPath)) {
+    methodNotAllowed(response)
+    return
+  }
   const { sources } = await collectSources(candidates)
   const archiveSources = collectArchiveSources(candidates, archiveSourceFor)
 
   // archive 来源优先：命中就本地读归档（不依赖 Gateway）。
   const archiveSource = archiveSources.find((entry) => entry.id === sourceId)
   if (archiveSource) {
+    if (isPost) {
+      methodNotAllowed(response)
+      return
+    }
     handleArchiveProxy(response, archiveSource.source, restPath, parsedUrl.searchParams)
     return
   }
@@ -444,15 +487,18 @@ async function handleAgentDebugRequest(
   }
 
   const targetUrl = `${source.baseUrl}${restPath}${parsedUrl.search}`
+  const postBody = isPost ? await readRequestBody(request) : null
   let upstream: globalThis.Response
   try {
     upstream = await fetch(targetUrl, {
-      method: 'GET',
+      method: isPost ? 'POST' : 'GET',
       headers: {
         authorization: `Bearer ${source.token}`,
         accept: 'application/json',
+        ...(postBody !== null ? { 'content-type': 'application/json' } : {}),
       },
-      signal: AbortSignal.timeout(15_000),
+      body: postBody,
+      signal: AbortSignal.timeout(300_000),
     })
   } catch (error) {
     sendJson(response, 502, {
@@ -522,7 +568,7 @@ export default defineConfig({
     outDir: resolve(here, 'out/agent-debug'),
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(here, 'debug/agent-debug.html'),
+      input: [resolve(here, 'debug/agent-debug.html'), resolve(here, 'debug/fa-console.html')],
     },
   },
 })

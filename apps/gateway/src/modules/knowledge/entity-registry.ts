@@ -820,6 +820,21 @@ export class EntityRegistry {
   }
 
   /** 手动挂载/转正后回填实体身份材料（登记产出或用户改名）。 */
+  /**
+   * kind 纠正（FA 口径缺口）：抽取判错 kind（如被投公司标「机构」）的
+   * 唯一纠正路径。非法 kind 落「主题」（normalizeKind 收口，与 REST/rooms
+   * 一致）。不触发重算——kind 不参与证据评分，只影响档案归类与展示。
+   */
+  updateEntityKind(entityId: string, kind: string): EntityRow | null {
+    const normalized = normalizeKind(kind);
+    const result = this.db.update(entities).set({
+      kind: normalized,
+      updatedAt: new Date(),
+    }).where(eq(entities.id, entityId)).run() as { changes: number | bigint };
+    if (Number(result.changes) === 0) return null;
+    return this.getEntity(entityId);
+  }
+
   updateEntityIdentity(entityId: string, input: {
     name?: string;
     summary?: string | null;

@@ -6438,35 +6438,6 @@
   margin: 0 0 12px;
 }
 
-.context-room-segmented {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0;
-  border-radius: 6px;
-  background: transparent;
-  box-shadow: none;
-}
-
-.context-room-segmented button {
-  min-height: 28px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--cr-muted);
-  font-size: 13px;
-  font-weight: 400;
-  box-shadow: none;
-}
-
-.context-room-segmented button[aria-pressed='true'] {
-  background: #f3f4f6;
-  color: var(--cr-text);
-  box-shadow: none;
-  font-weight: 500;
-}
-
 .context-room-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -8264,10 +8235,6 @@
     gap: 8px;
   }
 
-  .context-room-list-toolbar .context-room-segmented button {
-    padding-right: 8px;
-    padding-left: 8px;
-  }
 }
 
 @container context-room-shell (max-width: 979px) {
@@ -12975,66 +12942,42 @@
   }
 }
 
-/* ── 新建 Room 统一入口：手动创建 / 智能推荐双页签（RoomCreationStudio） ── */
+/* ── 新建 Room 极简弹窗（RoomCreationStudio）：只有一个名称输入框 ── */
 
-.context-room-creation-studio {
-  display: flex;
-  flex-direction: column;
-  min-width: min(520px, 82vw);
+.context-room-dialog-content.context-room-creation-quick-shell {
+  width: min(380px, calc(100vw - 32px));
 }
 
-/* 头部横带：标题 + 副题 + 模式切换（对齐 ActionConfirmDialog 的对话框头部语言） */
-.context-room-creation-header {
+.context-room-creation-quick {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 50px 14px 18px;
-  border-bottom: 1px solid var(--cr-border);
-  background: var(--cr-surface);
+  gap: 14px;
+  padding: 16px 18px 18px;
 }
 
-.context-room-creation-header h2 {
+.context-room-creation-quick header h2 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
   line-height: 22px;
 }
 
-.context-room-creation-header > p {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.context-room-creation-body {
-  display: flex;
-  flex-direction: column;
-  padding: 16px 18px 18px;
-}
-
-.context-room-creation-tabpanel {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.context-room-creation-description {
+.context-room-creation-quick label {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.context-room-creation-description > span {
+.context-room-creation-quick label > span {
   color: var(--cr-muted);
   font-size: 12px;
   font-weight: 500;
 }
 
-.context-room-creation-description textarea {
+.context-room-creation-quick input {
   width: 100%;
   border: 1px solid var(--cr-border-strong);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--cr-surface);
   color: var(--cr-text);
   font: inherit;
@@ -13042,164 +12985,26 @@
   line-height: 20px;
   outline: 0;
   padding: 8px 10px;
-  resize: vertical;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-.context-room-creation-description textarea:focus {
+.context-room-creation-quick input:focus {
   border-color: var(--cr-blue);
-  box-shadow: 0 0 0 3px var(--cr-blue-soft);
+  box-shadow: 0 0 0 2px rgba(64, 140, 240, 0.12);
 }
 
-.context-room-creation-files {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* 上传区：整卡可点的虚线 dropzone */
-.context-room-creation-dropzone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 16px 12px 14px;
-  border: 1.5px dashed var(--cr-border-strong);
-  border-radius: 10px;
-  background: var(--cr-surface-secondary);
-  color: var(--cr-text);
-  font: inherit;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-
-.context-room-creation-dropzone:hover:not(:disabled) {
-  border-color: var(--cr-blue);
-  background: var(--cr-blue-soft);
-}
-
-.context-room-creation-dropzone:disabled {
-  cursor: default;
+.context-room-creation-quick input:disabled {
   opacity: 0.65;
 }
 
-.context-room-creation-dropzone-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  margin-bottom: 5px;
-  border-radius: 50%;
-  background: var(--cr-blue-soft);
-  color: var(--cr-blue);
-}
-
-.context-room-creation-dropzone-icon svg {
-  width: 16px;
-  height: 16px;
-}
-
-.context-room-creation-dropzone b {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.context-room-creation-dropzone small {
-  color: var(--cr-muted);
-  font-size: 12px;
-}
-
-.context-room-creation-filelist-count {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 12px;
-}
-
-.context-room-creation-files ul {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 148px;
-  overflow-y: auto;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-}
-
-.context-room-creation-files li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 6px;
-}
-
-.context-room-creation-files li:hover {
-  background: var(--cr-surface-hover);
-}
-
-.context-room-creation-files li > svg {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--cr-tertiary);
-}
-
-.context-room-creation-files li > span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.context-room-creation-file-remove {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--cr-tertiary);
-  cursor: pointer;
-}
-
-.context-room-creation-file-remove:hover:not(:disabled) {
-  background: var(--cr-border);
-  color: var(--cr-danger);
-}
-
-.context-room-creation-file-remove:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.context-room-creation-file-remove svg {
-  width: 12px;
-  height: 12px;
-}
-
-/* 主 CTA：整宽，进行中显示转圈 */
-/* 提交按钮：小尺寸、右下角 */
-.context-room-creation-footer {
+.context-room-creation-quick footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
-.context-room-creation-footer > button.context-room-creation-submit {
-  min-height: 0;
-  padding: 6px 14px;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.context-room-creation-footer > button.context-room-creation-submit svg {
-  width: 13px;
-  height: 13px;
+.context-room-creation-quick .spin {
+  animation: context-room-creation-spin 900ms linear infinite;
 }
 
 /* 步骤条：竖向连接线，完成段转蓝，进行中转圈 */
@@ -13299,8 +13104,7 @@
   font-size: 11px;
 }
 
-.context-room-creation-studio .spin,
-.context-room-knowledge-overlay .spin,
+.context-room-creation-quick .spin,
 .context-room-rec-score .spin {
   animation: context-room-creation-spin 900ms linear infinite;
 }
@@ -13312,299 +13116,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .context-room-creation-studio .spin,
-.context-room-knowledge-overlay .spin,
+  .context-room-creation-quick .spin,
 .context-room-rec-score .spin {
     animation: none;
   }
-}
-
-/* 推荐生成蒙层：会话期间整卡禁操作，中央进度条 + 阶段文本 */
-.context-room-knowledge-panel {
-  position: relative;
-}
-
-.context-room-knowledge-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 6;
-  display: flex;
-  /* safe：容器仍矮于进度卡时贴边对齐，不再上下出血溢出。 */
-  align-items: safe center;
-  justify-content: safe center;
-  padding: 18px;
-  border-radius: inherit;
-  background: rgba(255, 255, 255, 0.72);
-  background: color-mix(in srgb, var(--cr-surface) 78%, transparent);
-  backdrop-filter: blur(3px);
-}
-
-.context-room-knowledge-overlay-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(430px, 100%);
-  padding: 16px 18px;
-  border: 1px solid var(--cr-border);
-  border-radius: 12px;
-  background: var(--cr-surface);
-  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.14);
-}
-
-.context-room-knowledge-overlay-card > header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.context-room-knowledge-overlay-card > header > svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  color: var(--cr-blue);
-}
-
-.context-room-knowledge-overlay[data-phase='failed'] > .context-room-knowledge-overlay-card > header > svg {
-  color: var(--cr-danger);
-}
-
-.context-room-knowledge-overlay[data-phase='timeout'] > .context-room-knowledge-overlay-card > header > svg {
-  color: var(--cr-muted);
-}
-
-.context-room-knowledge-overlay-card > header strong {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.context-room-knowledge-overlay-bar {
-  height: 6px;
-  border-radius: 999px;
-  background: var(--cr-surface-secondary);
-  overflow: hidden;
-}
-
-.context-room-knowledge-overlay-bar > div {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--cr-blue);
-  transition: width 300ms ease;
-}
-
-.context-room-knowledge-overlay[data-phase='failed'] > .context-room-knowledge-overlay-card > .context-room-knowledge-overlay-bar > div {
-  background: var(--cr-danger);
-}
-
-/* 步骤条嵌在蒙层卡内：去掉自带卡片底，避免双层描边 */
-.context-room-knowledge-overlay-card .context-room-creation-steps {
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-/* 后台进度横幅（strip 用）：文档流内一行，不蒙层、不挡推荐卡与页面其余交互。 */
-.context-room-knowledge-run-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--cr-border);
-  border-radius: 10px;
-  background: var(--cr-blue-soft);
-}
-
-.context-room-knowledge-run-banner > svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  color: var(--cr-blue);
-}
-
-.context-room-knowledge-run-banner[data-phase='failed'] > svg {
-  color: var(--cr-danger);
-}
-
-.context-room-knowledge-run-banner[data-phase='timeout'] > svg {
-  color: var(--cr-muted);
-}
-
-.context-room-knowledge-run-banner-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.context-room-knowledge-run-banner-body strong {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-knowledge-run-banner-body span {
-  color: var(--cr-muted);
-  font-size: 11px;
-  line-height: 16px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-knowledge-run-banner-percent {
-  flex: none;
-  color: var(--cr-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 收起态小状态点：后台任务常驻入口，点击展开进度横幅。 */
-.context-room-knowledge-run-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 12px;
-  padding: 6px 12px;
-  border: 1px solid var(--cr-border);
-  border-radius: 999px;
-  background: var(--cr-surface);
-  color: var(--cr-muted);
-  font: inherit;
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.context-room-knowledge-run-chip > svg {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  color: var(--cr-blue);
-}
-
-.context-room-knowledge-run-chip[data-phase='timeout'] > svg,
-.context-room-knowledge-run-chip[data-phase='failed'] > svg {
-  color: var(--cr-danger);
-}
-
-.context-room-knowledge-run-chip > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-room-knowledge-run-chip > b {
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-}
-
-.context-room-knowledge-run-chip:hover {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-}
-
-.context-room-knowledge-overlay-note {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-/* 导入结果明细：失败原因 / 跳过原因（各最多 5 行，其余折叠计数）。 */
-.context-room-knowledge-overlay-details {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 132px;
-  overflow-y: auto;
-  padding: 8px 10px;
-  border: 1px solid var(--cr-border);
-  border-radius: 8px;
-  background: var(--cr-sunken, rgba(15, 23, 42, 0.03));
-}
-
-.context-room-knowledge-overlay-details ul {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.context-room-knowledge-overlay-details li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-size: 12px;
-  line-height: 17px;
-}
-
-.context-room-knowledge-overlay-details li > svg {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  color: var(--cr-muted);
-}
-
-.context-room-knowledge-overlay-details li > span {
-  flex: none;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--cr-text);
-}
-
-.context-room-knowledge-overlay-details li > small {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--cr-muted);
-}
-
-.context-room-knowledge-overlay-details-more {
-  margin: 0;
-  color: var(--cr-muted);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.context-room-knowledge-overlay-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.context-room-knowledge-overlay-retry,
-.context-room-knowledge-overlay-dismiss {
-  padding: 5px 12px;
-  border: 1px solid var(--cr-border-strong);
-  border-radius: 7px;
-  background: var(--cr-surface);
-  color: var(--cr-text);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.context-room-knowledge-overlay-retry {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
-}
-
-.context-room-knowledge-overlay-retry:hover,
-.context-room-knowledge-overlay-dismiss:hover {
-  border-color: var(--cr-blue);
-  color: var(--cr-blue);
 }
 
 /* ===== 合并弹窗视觉升级：流向示意 + 影响网格 + 备注条 ===== */

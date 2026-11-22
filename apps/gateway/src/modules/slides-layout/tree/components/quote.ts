@@ -1,6 +1,6 @@
 /**
- * quote：大号衬线引文 + 强调规则 + 署名。无底面语义，默认平铺；
- * 引文是页面主体，居中排布，允许显式 surface 铺底。
+ * quote：大号引文 + 署名。无底面语义，默认平铺；引文正文与署名是主体，
+ * 居中排布，允许显式 surface 铺底。
  */
 
 import type { Frame } from "../../grid.js";
@@ -41,35 +41,31 @@ export function expandQuote(
   let quoteH = textBoxHeight(leaf.text, quoteSize, textW);
   const authorSize = Math.max(12, m.label);
   const authorH = leaf.author ? singleLineBoxHeight(authorSize) : 0;
-  const ruleH = 3;
-  const ruleGap = Math.round(m.gap * 0.7);
   const authorGap = Math.round(m.gap * 0.6);
-  const total = ruleH + ruleGap + quoteH + (authorH ? authorGap + authorH : 0);
+  const total = quoteH + (authorH ? authorGap + authorH : 0);
   // 先缩引文字号，避免「内容高过框」直接报缺陷。
   while (total > box.h && quoteSize > 22) {
     quoteSize -= 2;
     quoteH = textBoxHeight(leaf.text, quoteSize, textW);
   }
-  if (ruleH + ruleGap + quoteH + (authorH ? authorGap + authorH : 0) > box.h) {
-    bad(`${what} 引言内容高约 ${Math.round(ruleH + ruleGap + quoteH + authorGap + authorH)}px 超过区域 ${Math.round(box.h)}px——精简引文`);
+  if (quoteH + (authorH ? authorGap + authorH : 0) > box.h) {
+    bad(`${what} 引言内容高约 ${Math.round(quoteH + authorGap + authorH)}px 超过区域 ${Math.round(box.h)}px——精简引文`);
   }
-  const contentH = ruleH + ruleGap + quoteH + (authorH ? authorGap + authorH : 0);
+  const contentH = quoteH + (authorH ? authorGap + authorH : 0);
   const top = box.y + Math.max(0, (box.h - contentH) / 2);
-  const ruleW = Math.max(36, Math.round(m.serial * 0.9));
-  elements.push(skin.accentRule(box, { x: Math.round(box.x + (box.w - ruleW) / 2), y: Math.round(top), width: ruleW, height: ruleH }));
   const quoteRuns = skin.numeral !== "none"
     ? (skin.numeralRun(leaf.text, quoteSize, skin.colors.text, false) ?? [])
     : [{ text: leaf.text, sizePt: quoteSize, color: skin.colors.text, ...(skin.fonts.body ? { font: skin.fonts.body } : {}) }];
   elements.push(
     textElement(
-      { x: textX, y: top + ruleH + ruleGap, w: textW, h: quoteH },
+      { x: textX, y: top, w: textW, h: quoteH },
       [{ runs: quoteRuns, align: "center", lineSpacingPct: 112 }],
       "middle",
     ),
   );
   if (leaf.author) {
     elements.push(
-      textElement({ x: textX, y: top + ruleH + ruleGap + quoteH + authorGap, w: textW, h: authorH }, [
+      textElement({ x: textX, y: top + quoteH + authorGap, w: textW, h: authorH }, [
         { runs: [skin.micro(leaf.author, skin.colors.muted)], align: "center" },
       ]),
     );

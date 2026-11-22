@@ -126,6 +126,7 @@ describe("风格预热：styler 在用户阅读草稿的窗口里先跑完", () 
 
     const createSlidesDraftDocument = vi.fn(async () => ({ documentId: "doc-draft-1", title: "季度汇报" }));
     const tools = createSubagentPiTools(registryWith(["slides-planner", "slides-builder"]), orchestrator, {
+      slidesDraftToolEnabled: true,
       slidesStyle: deps,
       createSlidesDraftDocument,
     });

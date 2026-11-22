@@ -90,6 +90,8 @@ export interface QueuedAgentSubmission {
   referencedConversationId?: string
   mentionedAgents?: MentionedAgent[]
   mentions?: MentionedItem[]
+  noteCards?: Array<{ excerpt: string; note: string; title?: string }>
+  displayContent?: string
 }
 
 const SESSION_KEY_BASE = 'nxcore-ce:agent-session'
@@ -1064,6 +1066,10 @@ export function useAgentSession(
     mentions?: MentionedItem[],
     /** 用户可见文案：卡片按钮等入口的 prompt 是技术指令，气泡/会话标题用它。 */
     displayPrompt?: string,
+    /** 文档批注卡片（结构化展示）：存在时落库消息带卡片，气泡按卡片渲染。 */
+    noteCards?: Array<{ excerpt: string; note: string; title?: string }>,
+    /** 气泡正文（只影响展示）：批注场景气泡只显示输入框正文，空串＝无气泡。 */
+    displayContent?: string,
   ): Promise<string | null> => {
     const message = prompt.trim()
     const displayPromptValue = displayPrompt?.trim() || undefined
@@ -1078,6 +1084,8 @@ export function useAgentSession(
         sessionId: sessionIdRef.current,
         prompt: message,
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        ...(noteCards?.length ? { noteCards } : {}),
+        ...(noteCards?.length && displayContent !== undefined ? { displayContent } : {}),
         selectedText,
         selectedRoomId,
         activeDocument,
@@ -1143,6 +1151,8 @@ export function useAgentSession(
         ? { referencedAgentNames: mentionedAgents.map((agent) => agent.displayName) }
         : {}),
       ...(mentions?.length ? { mentions } : {}),
+      ...(noteCards?.length ? { noteCards } : {}),
+      ...(noteCards?.length && displayContent !== undefined ? { displayContent } : {}),
     }
 
     setMessages((current) => mergePendingAgentMessages(current, [optimisticMessage]))
@@ -1162,6 +1172,8 @@ export function useAgentSession(
         idempotencyKey: crypto.randomUUID(),
         // 技术指令照旧进运行时；displayPrompt 仅供落库/展示（网关不把它给 runtime）。
         ...(displayPromptValue ? { displayPrompt: displayPromptValue } : {}),
+        ...(noteCards?.length ? { noteCards } : {}),
+        ...(noteCards?.length && displayContent !== undefined ? { displayContent } : {}),
         // 'main' 时省略 targetAgentId：档位锁定在会话上，由网关按 session.activeAgentId 选运行时。
         ...(selectedAgentId !== 'main' ? { targetAgentId: selectedAgentId } : {}),
         invocationMode: 'explicit_switch',
@@ -1277,6 +1289,8 @@ export function useAgentSession(
           next.mentionedAgents,
           next.mentions,
           next.displayPrompt,
+          next.noteCards,
+          next.displayContent,
         )
       } catch {
         // 失败已在 sendPrompt 内 setError；丢弃该条继续排后面的，避免卡队列。

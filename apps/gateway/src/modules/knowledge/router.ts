@@ -22,6 +22,7 @@ import {
   bestMatch,
   bigramDiceSimilarity,
   normalizeEntityName,
+  resolveSurnameTitle,
 } from "./entity-index.js";
 import {
   derivePrimaryRoles,
@@ -32,6 +33,7 @@ import {
 } from "./entity-registry.js";
 import { embeddingInputText, nearestByCentroid, type EmbeddingClient } from "./embedding.js";
 import type { DocEnvelope } from "./envelope.js";
+import { FaRelationStore } from "./fa-relations.js";
 import { KnowledgeLlm } from "./llm.js";
 import type { ExtractedEntity } from "./llm.js";
 
@@ -52,6 +54,8 @@ export interface RouterDeps {
   thresholds: RouterThresholds;
   /** M3 注入点：知识整理偏好摘要提供者（注入开关关闭时返回空串=不注入）。 */
   preferenceDigest?: () => string;
+  /** FA 语义关系候选落库（fa-relations store；未注入=关闭该链路）。 */
+  faRelations?: FaRelationStore;
   logger: {
     info(bindings: Record<string, unknown>, message: string): void;
     warn(bindings: Record<string, unknown>, message: string): void;
@@ -323,6 +327,37 @@ export class KnowledgeRouter {
       }),
     }));
 
+    // ── FA 语义关系候选（工作项一：实体名 → 已解析 id，落待确认队列）
+    if (this.deps.faRelations && extraction.relations.length > 0) {
+      const relationCandidates = extraction.relations.flatMap((relation) => {
+        const subjectEntityId = factEntityIds.get(relation.subject);
+        const objectEntityId = factEntityIds.get(relation.object);
+        if (!subjectEntityId || !objectEntityId) return []; // 端点实体未注册（含用户 pinned）则丢弃
+        return [{
+          type: relation.type,
+          subjectEntityId,
+          objectEntityId,
+          ...(relation.title ? { title: relation.title } : {}),
+          ...(relation.from != null ? { fromYear: relation.from } : {}),
+          ...(relation.to != null ? { toYear: relation.to } : {}),
+          ...(relation.round ? { round: relation.round } : {}),
+          ...(relation.role ? { role: relation.role } : {}),
+          sourceKind: envelope.ref.kind,
+          sourceId: envelope.ref.id,
+          evidence: relation.evidence,
+        }];
+      });
+      try {
+        this.deps.faRelations.ingestCandidates(relationCandidates);
+      } catch (error) {
+        // 候选落库失败不阻塞主路由（关系是增量价值，路由归属是主干）
+        this.deps.logger.warn(
+          { event: "knowledge.fa.relation_ingest_failed", sourceId: envelope.ref.id, error: String(error) },
+          "FA 关系候选落库失败（不阻塞路由）",
+        );
+      }
+    }
+
     const updatedEntities = new Map(this.deps.registry.replaceResolutionLinks(
       envelope.ref.kind,
       envelope.ref.id,
@@ -472,6 +507,25 @@ export class KnowledgeRouter {
         if (nearest) return exact.find((entity) => entity.id === nearest.id)!;
       }
       return [...exact].sort((a, b) => b.evidenceScore - a.evidenceScore)[0]!;
+    }
+
+    // 1.5 称谓解析（FA 场景）："陈总"这类姓氏称谓与全名的 Dice 为 0，
+    // 永远进不了模糊带。仅当抽取名是称谓形态、且池中**唯一**同姓人物
+    // 实体可命中时折叠（两个陈姓人物不猜）；命中即挂 alias 学习。
+    if (item.kind === "人物") {
+      const personPool = pool.filter((entity) => entity.kind === "人物");
+      const resolvedName = resolveSurnameTitle(
+        item.name,
+        personPool.flatMap((entity) => [entity.name, ...entity.aliases]),
+      );
+      if (resolvedName) {
+        const target = personPool.find((entity) =>
+          entity.name === resolvedName || entity.aliases.includes(resolvedName));
+        if (target) {
+          this.deps.registry.updateEntityIdentity(target.id, { addAliases: [item.name] });
+          return this.deps.registry.getEntity(target.id) ?? target;
+        }
+      }
     }
 
     // 2. 模糊：逐实体取 name+aliases 全量最优 Dice（避免跨实体同名 alias 串分）

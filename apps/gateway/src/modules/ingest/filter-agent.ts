@@ -324,12 +324,22 @@ function normalizeVerdict(value: unknown): IngestFilterVerdict {
   };
 }
 
-/** 阈值放行：低置信的 filtered 判定不拦截（宁漏勿错杀）。 */
+/** 阈值放行：低置信的 filtered 判定不拦截（宁漏勿错杀）。
+ * 注意两类放行的语义区别：
+ * - informative=true → kind=pass，台账落 passed；
+ * - informative=false 但置信度不足 → kind=pass 且 verdict 提升为 informative
+ *   （runFilterBatch 按 !informative 拦截——不提升的话，本该放行的低置信
+ *   判定照样被拦，阈值就形同虚设了）。
+ * kind=fail-open 保留给过滤器故障放行（informed 判定缺失/解析失败），
+ * 台账落 bypassed 便于观测。 */
 function applyThreshold(verdict: IngestFilterVerdict, threshold: number): FilterOutcome {
-  if (verdict.informative || verdict.confidence < threshold) {
+  if (verdict.informative) {
     return { kind: "pass", verdict };
   }
-  return { kind: "fail-open", verdict: { ...verdict, informative: false } };
+  if (verdict.confidence < threshold) {
+    return { kind: "pass", verdict: { ...verdict, informative: true, reason: `置信度不足阈值放行（${verdict.confidence.toFixed(2)} < ${threshold}）：${verdict.reason}` } };
+  }
+  return { kind: "fail-open", verdict };
 }
 
 function failOpen(reason: string): FilterOutcome {

@@ -258,13 +258,13 @@ export function ArtifactLibraryPane({
   };
 
   /** Word/PPT/Excel：经 Room 会话派发生成请求（Word/Excel 走 context_room_*_create，
-   *  PPT 走 slides_draft 调度 slides-writer 子 Agent）产物生成后自动进入本栏并打开预览。 */
+   *  PPT 走 slides_create 脚本直生）产物生成后自动进入本栏并打开预览。 */
   const dispatchOfficeCreate = (type: Exclude<CreateType, 'doc'>) => {
     const title = newDocumentTitle.trim() || t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     const createInstruction = type === 'word'
       ? `请用 context_room_office_create 新建`
       : type === 'ppt'
-        ? `请用 slides_draft(task=draft) 新建`
+        ? `请用 slides_create 脚本直生`
         : `请用 context_room_sheets_create 新建`;
     const kindLabel = t(`contextRoom:artifactLibrary.newOfficeDefault.${type}`);
     // message 是内部指令（runtime 用）；displayMessage 是用户看得懂的人话（气泡/会话标题用）。

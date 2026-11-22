@@ -6,8 +6,19 @@ import type { LayouterExistingDeck } from "./slides-layout-tail.js";
 
 export interface SlidesGenerationCheckpoint {
   batches: Record<string, Record<string, unknown>>;
+  /**
+   * 批次上次失败的具体缺陷（batchIndex → 错误文案），随 checkpoint 持久化：
+   * 用户重试 generate 时把缺陷喂回 planner，避免整批从零盲排。
+   */
+  batchErrors?: Record<string, string[]>;
   deck?: LayouterExistingDeck;
   budget?: GenerationBudgetSnapshot;
+  /** 整轮重生成凭据（slides-regenerate:{draftDocumentId}）：最近一次落页的已装配方案与 deck 进度。 */
+  regen?: {
+    plan: Record<string, unknown>;
+    deck: { fileEntryId: string; originalName: string | null; appliedPages: number[]; totalPages: number };
+    previewPages?: number;
+  };
 }
 
 /** SQLite in production; an instance-local memory store for hosts without a database. */

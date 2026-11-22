@@ -12,6 +12,7 @@ interface RoomUsageGuide {
 const focusKeyByKind: Record<ContextRoomKind, string> = {
   人物: 'contextRoom:onboarding.guideFocusPerson',
   项目: 'contextRoom:onboarding.guideFocusProject',
+  机构: 'contextRoom:onboarding.guideFocusTopic',
   主题: 'contextRoom:onboarding.guideFocusTopic',
   长期目标: 'contextRoom:onboarding.guideFocusLongTermGoal',
   议题: 'contextRoom:onboarding.guideFocusIssue',
