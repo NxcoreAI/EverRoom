@@ -42,7 +42,9 @@ jobs:
 
   macos:
     needs: version
-    runs-on: macos-14
+    # macos-14 镜像已于 2026-11-02 从 GitHub Actions 退役（macos-14-arm64-us-default
+    # 不再受支持，job 会被秒取消）；macos-15 即 arm64 runner，为最接近替代。
+    runs-on: macos-15
     env:
       NXCORE_AGENT_RUNTIME: ${{ vars.NXCORE_AGENT_RUNTIME }}
       NXCORE_SAAS_API_URL: ${{ vars.NXCORE_SAAS_API_URL }}
