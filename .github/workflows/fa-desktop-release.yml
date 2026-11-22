@@ -311,6 +311,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          # 本 job 不做 checkout：gh 需要 GH_REPO 才能推断目标仓库，
+          # 否则报 "failed to run git: not a git repository"。
+          GH_REPO: ${{ github.repository }}
           FULL_VERSION: ${{ needs.version.outputs.full-version }}
         run: |
           version="$FULL_VERSION"
