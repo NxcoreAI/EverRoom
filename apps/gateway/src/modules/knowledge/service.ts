@@ -1568,13 +1568,13 @@ export class KnowledgeService {
   requestSourceCleanups(items: Array<{ sourceKind: SourceKind; sourceId: string }>): void {
     if (items.length === 0) return;
     const wanted = new Map<string, { sourceKind: SourceKind; sourceId: string }>();
-    for (const item of items) wanted.set(`${item.sourceKind} ${item.sourceId}`, item);
+    for (const item of items) wanted.set(`${item.sourceKind}:${item.sourceId}`, item);
     const active = this.db.select({ payload: jobs.payload }).from(jobs)
       .where(and(eq(jobs.type, CLEANUP_JOB_TYPE), inArray(jobs.status, ["pending", "running"])))
       .all();
     for (const row of active) {
       const payload = row.payload as CleanupJobPayload;
-      if (payload && typeof payload === "object") wanted.delete(`${payload.sourceKind} ${payload.sourceId}`);
+      if (payload && typeof payload === "object") wanted.delete(`${payload.sourceKind}:${payload.sourceId}`);
     }
     if (wanted.size === 0) return;
     this.db.insert(jobs).values([...wanted.values()].map((item) => ({
@@ -3090,6 +3090,23 @@ export class KnowledgeService {
    * 手动合并（plan §4.5 用户主动治理）：from 并入 into；已晋升侧的 wiki
    * 级联（from Room 的源文件清理 + 目标 re-ingest）走 backlog 补账。
    */
+  /**
+   * 实体 kind 纠正：抽取口径纠错入口。实体已绑 Room 时同步 rooms.kind——
+   * 两张表的 kind 列各自独立写入，不同步会让 Room 列表按 kind 筛选时错位。
+   * room.kind 的更新不碰 title/origin，只改归类。
+   */
+  updateEntityKind(entityId: string, kind: string): { ok: true; kind: string } | { ok: false; error: string } {
+    const entity = this.entityRegistry.getEntity(entityId);
+    if (!entity) return { ok: false, error: "entity_not_found" };
+    const updated = this.entityRegistry.updateEntityKind(entityId, kind);
+    if (!updated) return { ok: false, error: "entity_not_found" };
+    if (updated.roomId) {
+      this.db.update(rooms).set({ kind: updated.kind, updatedAt: new Date() })
+        .where(eq(rooms.id, updated.roomId)).run();
+    }
+    return { ok: true, kind: updated.kind };
+  }
+
   async mergeEntity(fromId: string, intoId: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const from = this.entityRegistry.getEntity(fromId);
     const into = this.entityRegistry.getEntity(intoId);

@@ -20,6 +20,9 @@ import {
   runMatch,
   loadMeetingBrief,
   loadFeedbacks,
+  loadFaRelations,
+  confirmFaRelation,
+  dismissFaRelation,
   listAgentSessions,
   createAgentSession,
   startAgentRun,
@@ -35,6 +38,7 @@ import {
   type MatchCandidate,
   type MeetingBrief,
   type FeedbackRow,
+  type FaRelationRow,
   type AgentSession,
   type DebugRun,
   type DebugEvent,
@@ -267,6 +271,7 @@ function Runner(props: {
   if (node.id === 'matching') return <MatchRunner sourceId={sourceId} projectRooms={props.projectRooms} />
   if (node.id === 'meeting-brief') return <BriefRunner sourceId={sourceId} projectRooms={props.projectRooms} institutionRooms={props.institutionRooms} personRooms={props.personRooms} />
   if (node.id === 'feedback') return <FeedbackRunner sourceId={sourceId} projectRooms={props.projectRooms} />
+  if (node.id === 'fa-relations') return <FaRelationsRunner sourceId={sourceId} />
   return <p className="muted">该节点经其余节点通道执行。</p>
 }
 
@@ -721,6 +726,99 @@ function FeedbackRunner(props: { sourceId: string; projectRooms: FaConsoleRoom[]
                   <td>{(feedback.passReasons ?? []).join('、')}</td>
                   <td>{feedback.reopenConditions ?? ''}</td>
                   <td>{feedback.projectUpdates?.slice(0, 80) ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : null}
+      raw={items ? jsonView({ items }) : null}
+      error={error}
+    />
+  )
+}
+
+/** FA 语义关系队列：列表 + 逐条确认/驳回；确认投影房边（图谱语义标签）。 */
+function FaRelationsRunner(props: { sourceId: string }) {
+  const { sourceId } = props
+  const [status, setStatus] = useState('pending')
+  const [items, setItems] = useState<FaRelationRow[] | null>(null)
+  const [acting, setActing] = useState<string | null>(null)
+  const [ms, setMs] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const run = useCallback(async () => {
+    setError(null)
+    const started = performance.now()
+    try {
+      const result = await loadFaRelations(sourceId, status || undefined)
+      setItems(result.items)
+      setMs(Math.round(performance.now() - started))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [sourceId, status])
+
+  useEffect(() => { void run() }, [run])
+
+  const act = useCallback(async (id: string, action: 'confirm' | 'dismiss') => {
+    setActing(id)
+    setError(null)
+    try {
+      if (action === 'confirm') await confirmFaRelation(sourceId, id)
+      else await dismissFaRelation(sourceId, id)
+      await run()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setActing(null)
+    }
+  }, [sourceId, run])
+
+  const typeLabel: Record<string, string> = {
+    founder_of: '创始人',
+    invested_in: '投资',
+    employed_by: '任职',
+    introduced_by: '介绍',
+    partner_of: '合作',
+  }
+
+  return (
+    <Exec
+      inputs={(
+        <>
+          <label>状态 <select value={status} onChange={(event) => setStatus(event.target.value)}>
+            <option value="pending">待确认</option>
+            <option value="confirmed">已确认</option>
+            <option value="dismissed">已驳回</option>
+            <option value="all">全部</option>
+          </select></label>
+          <button onClick={() => void run()}>读关系</button>
+          {ms !== null && <span className="ms">{ms} ms</span>}
+        </>
+      )}
+      output={items ? (
+        items.length === 0 ? <p className="muted">0 条关系</p> : (
+          <table>
+            <thead><tr><th>类型</th><th>主体</th><th>客体</th><th>轮次/职位</th><th>依据句</th><th>图谱投影</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+              {items.map((relation) => (
+                <tr key={relation.id}>
+                  <td>{typeLabel[relation.type] ?? relation.type}</td>
+                  <td>{relation.subjectName ?? relation.subjectEntityId}</td>
+                  <td>{relation.objectName ?? relation.objectEntityId}</td>
+                  <td>{relation.round ?? relation.title ?? ''}</td>
+                  <td className="evidence">{(relation.evidence ?? '').slice(0, 60)}</td>
+                  <td>{relation.subjectRoomId && relation.objectRoomId ? '两端 Room 齐' : '端点缺 Room'}</td>
+                  <td>{relation.status}</td>
+                  <td>
+                    {relation.status === 'pending' ? (
+                      <>
+                        <button disabled={acting === relation.id} onClick={() => void act(relation.id, 'confirm')}>确认</button>
+                        <button disabled={acting === relation.id} onClick={() => void act(relation.id, 'dismiss')}>驳回</button>
+                      </>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

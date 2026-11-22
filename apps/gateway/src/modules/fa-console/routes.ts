@@ -190,6 +190,22 @@ const NODES: FaConsoleNode[] = [
     execute: null,
   },
   {
+    id: "fa-relations",
+    stage: "archive",
+    name: "语义关系队列（投资/任职/创始）",
+    kind: "data",
+    description: "FA 语义关系候选（founder_of/invested_in/employed_by/introduced_by/partner_of）：确认后两端 Room 齐备时投影为图谱语义边（替代共现推导的「共享实体」标签）。",
+    inputs: [
+      { label: "fa_relations 表", detail: "pending → confirmed/dismissed 全量（含依据句/轮次/职位）" },
+    ],
+    outputs: [
+      { label: "关系队列", detail: "GET /v1/fa/relations?status=" },
+      { label: "图谱语义边", detail: "确认后写 room_relations.manual_type（invested_in 等）" },
+    ],
+    tools: ["FaRelationStore（fa-relations.ts）", "/v1/fa/relations + confirm/dismiss"],
+    execute: { method: "GET", path: "/v1/fa/relations?status=pending" },
+  },
+  {
     id: "matching",
     stage: "matching",
     name: "投资人匹配（硬筛 + 适配排序）",

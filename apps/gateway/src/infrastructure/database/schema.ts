@@ -1500,7 +1500,7 @@ export const agentDocumentExports = sqliteTable(
 export const rooms = sqliteTable("rooms", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
-  /** 对齐渲染器 ContextRoomKind 六值枚举（人物/项目/主题/长期目标/议题/事件）。 */
+  /** 对齐渲染器 ContextRoomKind 七值枚举（人物/项目/机构/主题/长期目标/议题/事件）。 */
   kind: text("kind").notNull().default("议题"),
   /** user = 渲染器上报；auto = 实体证据累积晋升时自动创建。上报命中 auto 行 = 认领，翻转为 user。 */
   origin: text("origin", { enum: ["user", "auto"] }).notNull().default("user"),

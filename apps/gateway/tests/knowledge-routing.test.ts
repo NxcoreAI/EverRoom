@@ -8,6 +8,7 @@ import { entities, rooms } from "../src/infrastructure/database/schema.js";
 import {
   bestMatch,
   bigramDiceSimilarity,
+  resolveSurnameTitle,
   normalizeEntityName,
 } from "../src/modules/knowledge/entity-index.js";
 import {
@@ -68,6 +69,32 @@ describe("③″ 实体名匹配", () => {
     const match = bestMatch("项目备忘录", ["备忘录", "别的名字"]);
     expect(match!.score).toBeGreaterThan(0);
     expect(match!.value).toBe("备忘录");
+  });
+});
+
+describe("FA 称谓解析（resolveSurnameTitle）", () => {
+  it("姓氏称谓命中唯一同姓人物", () => {
+    expect(resolveSurnameTitle("陈总", ["陈砚秋", "沈屿"])).toBe("陈砚秋");
+    expect(resolveSurnameTitle("沈总", ["陈砚秋", "沈屿", "李展萍"])).toBe("沈屿");
+  });
+
+  it("多候选不猜：两个同姓人物返回 null", () => {
+    expect(resolveSurnameTitle("陈总", ["陈砚秋", "陈天桥"])).toBeNull();
+  });
+
+  it("无同姓候选返回 null", () => {
+    expect(resolveSurnameTitle("王总", ["陈砚秋", "沈屿"])).toBeNull();
+  });
+
+  it("非称谓形态不触发（全名、机构名、拉丁串）", () => {
+    expect(resolveSurnameTitle("陈砚秋", ["陈砚秋"])).toBeNull();
+    expect(resolveSurnameTitle("星析科技", ["星析科技"])).toBeNull();
+    expect(resolveSurnameTitle("OK", ["OKR"])).toBeNull();
+  });
+
+  it("双字称谓（老师/教授/博士）与单字称谓都识别", () => {
+    expect(resolveSurnameTitle("王老师", ["王小明"])).toBe("王小明");
+    expect(resolveSurnameTitle("李董", ["李展萍"])).toBe("李展萍");
   });
 });
 

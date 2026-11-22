@@ -268,10 +268,12 @@ function isGet(request: IncomingMessage): boolean {
  * FA 分析控制台允许 POST 的 live 网关前缀（写通道白名单）：
  * - `/v1/fa-console/bp-template`：模板纯读渲染（无副作用）；
  * - `/v1/agent/sessions/:id/runs`：提示词节点的真实 agent run 通道；
- * - `/v1/fa/match`：投资人匹配计算（screenInstitutions 纯读）。
+ * - `/v1/fa/match`：投资人匹配计算（screenInstitutions 纯读）；
+ * - `/v1/fa/relations/:id/{confirm,dismiss}`：语义关系确认/驳回（写
+ *   fa_relations + 投影 room_relations.manual_type；控制台关系队列节点用）。
  * 不在白名单的 POST 一律 405，代理仍不开放任何其余写接口。
  */
-const PROXY_POST_PREFIXES = ['/v1/fa-console/bp-template', '/v1/agent/sessions', '/v1/fa/match']
+const PROXY_POST_PREFIXES = ['/v1/fa-console/bp-template', '/v1/agent/sessions', '/v1/fa/match', '/v1/fa/relations']
 
 function proxyPostAllowed(restPath: string): boolean {
   return PROXY_POST_PREFIXES.some((prefix) => restPath === prefix || restPath.startsWith(prefix))

@@ -22,6 +22,7 @@ import {
   bestMatch,
   bigramDiceSimilarity,
   normalizeEntityName,
+  resolveSurnameTitle,
 } from "./entity-index.js";
 import {
   derivePrimaryRoles,
@@ -506,6 +507,25 @@ export class KnowledgeRouter {
         if (nearest) return exact.find((entity) => entity.id === nearest.id)!;
       }
       return [...exact].sort((a, b) => b.evidenceScore - a.evidenceScore)[0]!;
+    }
+
+    // 1.5 称谓解析（FA 场景）："陈总"这类姓氏称谓与全名的 Dice 为 0，
+    // 永远进不了模糊带。仅当抽取名是称谓形态、且池中**唯一**同姓人物
+    // 实体可命中时折叠（两个陈姓人物不猜）；命中即挂 alias 学习。
+    if (item.kind === "人物") {
+      const personPool = pool.filter((entity) => entity.kind === "人物");
+      const resolvedName = resolveSurnameTitle(
+        item.name,
+        personPool.flatMap((entity) => [entity.name, ...entity.aliases]),
+      );
+      if (resolvedName) {
+        const target = personPool.find((entity) =>
+          entity.name === resolvedName || entity.aliases.includes(resolvedName));
+        if (target) {
+          this.deps.registry.updateEntityIdentity(target.id, { addAliases: [item.name] });
+          return this.deps.registry.getEntity(target.id) ?? target;
+        }
+      }
     }
 
     // 2. 模糊：逐实体取 name+aliases 全量最优 Dice（避免跨实体同名 alias 串分）

@@ -253,6 +253,45 @@ export function loadFeedbacks(
   return getJson(sourceId, `/v1/fa/feedbacks${suffix}`)
 }
 
+// ── FA 语义关系队列（确认后投影为图谱语义边）──
+
+export interface FaRelationRow {
+  id: string
+  type: string
+  subjectEntityId: string
+  objectEntityId: string
+  subjectRoomId: string | null
+  objectRoomId: string | null
+  title: string | null
+  fromYear: number | null
+  toYear: number | null
+  round: string | null
+  role: string | null
+  evidence: string | null
+  status: string
+  subjectName: string | null
+  objectName: string | null
+  subjectKind: string | null
+  objectKind: string | null
+  createdAt: string
+}
+
+export function loadFaRelations(
+  sourceId: string,
+  status?: string,
+): Promise<{ items: FaRelationRow[] }> {
+  const suffix = status ? `?status=${encodeURIComponent(status)}` : ''
+  return getJson(sourceId, `/v1/fa/relations${suffix}`)
+}
+
+export function confirmFaRelation(sourceId: string, id: string): Promise<FaRelationRow> {
+  return postJson(sourceId, `/v1/fa/relations/${encodeURIComponent(id)}/confirm`, { confirmedBy: 'fa-console' })
+}
+
+export function dismissFaRelation(sourceId: string, id: string): Promise<FaRelationRow> {
+  return postJson(sourceId, `/v1/fa/relations/${encodeURIComponent(id)}/dismiss`, {})
+}
+
 // ── 提示词节点：真实 agent run 通道 + trace 读取 ──
 
 export interface AgentSession {

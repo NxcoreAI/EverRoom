@@ -262,6 +262,10 @@ const PromoteEntityQuery = Type.Object({
 
 const EntityIdParams = Type.Object({ id: Type.String({ minLength: 1, maxLength: 100 }) });
 
+const EntityKindUpdateBody = Type.Object({
+  kind: Type.String({ minLength: 1, maxLength: 24 }),
+});
+
 const EntityBatchBody = Type.Object({
   entityIds: Type.Array(Type.String({ minLength: 1, maxLength: 100 }), {
     minItems: 1,
@@ -911,6 +915,31 @@ export function knowledgeRoutes(service: KnowledgeService): FastifyPluginAsyncTy
             updatedAt: iso(link.updatedAt),
           })),
         };
+      },
+    );
+
+    /**
+     * 实体 kind 纠正（FA 口径）：抽取把被投公司判成「机构」这类口径错误，
+     * 推荐池确认前或已建 Room 后都需要纠正入口。kind 经 registry 归一化
+     * （非法值落「主题」）；实体已绑 Room 时同步 rooms.kind，保持两张表一致。
+     */
+    app.patch(
+      "/v1/knowledge/entities/:id/kind",
+      {
+        schema: {
+          tags: ["knowledge"],
+          params: EntityIdParams,
+          body: EntityKindUpdateBody,
+          response: {
+            200: Type.Object({ ok: Type.Boolean(), kind: Type.String() }),
+            404: Type.Object({ error: Type.String() }),
+          },
+        },
+      },
+      async (request, reply) => {
+        const result = service.updateEntityKind(request.params.id, request.body.kind);
+        if (!result.ok) return reply.code(404).send(errorOf(result.error));
+        return { ok: true, kind: result.kind };
       },
     );
 

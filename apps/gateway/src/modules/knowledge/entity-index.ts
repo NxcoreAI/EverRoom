@@ -43,6 +43,46 @@ export function bigramDiceSimilarity(a: string, b: string): number {
   return (2 * overlap) / (gramsA.length + gramsB.length);
 }
 
+/**
+ * 中文姓氏称谓的确定性解析（FA 场景）：「陈总」「沈老师」「李董」这类
+ * 姓氏+称谓指代在 bigram Dice 上与全名相似度为 0（"陈总" vs "陈砚秋"），
+ * 永远进不了模糊合并带。这条纯函数把称谓折叠为姓氏锚点：给定抽取名与
+ * 候选池（name+aliases），当且仅当抽取名是「单姓+称谓后缀」且候选池中
+ * 存在**唯一**同姓的人物实体时，返回该实体名——多候选（两个陈姓）不猜。
+ */
+const SURNAME_TITLES = ["总", "董", "老师", "教授", "博士", "哥", "姐", "叔", "阿姨"];
+
+/** 判定 name 是否为「单姓 + 称谓后缀」形态（如"陈总""王老师"）。 */
+export function isSurnameTitle(name: string): boolean {
+  const trimmed = name.trim();
+  if (trimmed.length < 2 || trimmed.length > 3) return false;
+  const surname = trimmed.slice(0, 1);
+  const title = trimmed.slice(1);
+  // 2 字：姓+称谓（陈总）；3 字仅允许双字称谓（X老师/X教授/X博士）
+  if (trimmed.length === 3 && !["老师", "教授", "博士", "阿姨"].includes(title)) return false;
+  if (trimmed.length === 2 && !SURNAME_TITLES.includes(title)) return false;
+  // 姓氏必须是 CJK（排除"OK""AI"这类拉丁串）
+  return /[\u4e00-\u9fff]/u.test(surname);
+}
+
+/**
+ * 称谓解析：input 为称谓形态时，在 personNames（同池人物实体的 name+aliases
+ * 原样值）里找唯一同姓者。命中返回该实体名；无候选或多候选返回 null。
+ * 复姓（欧阳/司马等）不在本规则处理范围——称谓形态本身已排除。
+ */
+export function resolveSurnameTitle(
+  input: string,
+  personNames: string[],
+): string | null {
+  if (!isSurnameTitle(input)) return null;
+  const surname = input.trim().slice(0, 1);
+  const matches = [...new Set(personNames)].filter((candidate) => {
+    const normalized = candidate.trim();
+    return normalized.startsWith(surname) && /[\u4e00-\u9fff]/u.test(normalized.slice(1, 2));
+  });
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 /** bestMatch 结果：命中的候选（归一化前的原样值）与得分。 */
 export interface NameMatch {
   value: string;
